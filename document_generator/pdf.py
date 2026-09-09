@@ -7,9 +7,12 @@ import os
 import shutil
 import subprocess
 import sys
+from threading import Lock
+from document_generator.office_process import run_office
 from services.placeholders import assert_docx_clean
 
 LOG = logging.getLogger(__name__)
+_CONVERSION_LOCK = Lock()
 
 
 class PdfUnavailable(RuntimeError):
@@ -35,6 +38,19 @@ def libreoffice_path():
 
 
 def convert(content, engine="auto"):
+    # Streamlit sessions share this module: refuse overlap rather than queue bytes.
+    if not _CONVERSION_LOCK.acquire(blocking=False):
+        raise PdfUnavailable(
+            "Outra conversão de PDF está em andamento. Tente novamente em instantes. "
+            "O DOCX permanece disponível."
+        )
+    try:
+        return _convert(content, engine)
+    finally:
+        _CONVERSION_LOCK.release()
+
+
+def _convert(content, engine):
     assert_docx_clean(content)
     if engine not in ("auto", "word", "libreoffice"):
         raise ValueError("Mecanismo PDF inválido.")
@@ -42,10 +58,12 @@ def convert(content, engine="auto"):
     if sys.platform.startswith("linux"):
         engine = "libreoffice"
     failures = []
-    with TemporaryDirectory(prefix="mpc_pdf_") as temp:
-        folder = Path(temp)
+    temporary = TemporaryDirectory(prefix="mpc_pdf_")
+    try:
+        folder = Path(temporary.name)
         source = folder / "portaria.docx"
         source.write_bytes(content)
+        del content
         target = folder / "portaria.pdf"
         if engine in ("auto", "word") and sys.platform == "win32":
             try:
@@ -81,25 +99,20 @@ def convert(content, engine="auto"):
                 try:
                     target.unlink(missing_ok=True)
                     profile = (folder / "profile").as_uri()
-                    subprocess.run(
+                    run_office(
                         [
                             executable,
                             f"-env:UserInstallation={profile}",
                             "--headless",
+                            "--nologo",
+                            "--nodefault",
+                            "--norestore",
                             "--convert-to",
                             "pdf",
                             "--outdir",
                             str(folder),
                             str(source),
                         ],
-                        capture_output=True,
-                        timeout=55,
-                        check=True,
-                        creationflags=(
-                            getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                            if sys.platform == "win32"
-                            else 0
-                        ),
                     )
                     if not target.is_file():
                         raise ValueError("LibreOffice não criou o arquivo PDF")
@@ -120,10 +133,13 @@ def convert(content, engine="auto"):
                 "Não foi possível gerar o PDF com LibreOffice headless. "
                 + detail
                 + ". "
-                "No Streamlit Community Cloud, inclua libreoffice-writer no packages.txt "
+                "No Streamlit Community Cloud, inclua libreoffice-writer-nogui no packages.txt "
                 "e reimplante o aplicativo. O DOCX permanece disponível."
             )
         raise PdfUnavailable(
             "A geração de PDF requer Microsoft Word ou LibreOffice funcionando neste computador. O DOCX permanece disponível."
             + (" " + detail + "." if detail else "")
         )
+
+    finally:
+        temporary.cleanup()

@@ -1,2 +1,2 @@
-libreoffice-writer
+libreoffice-writer-nogui
 fonts-liberation

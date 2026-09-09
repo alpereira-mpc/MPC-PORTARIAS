@@ -4,6 +4,49 @@ import pytest
 from database.store import ROOT, Store
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_pdf_download_does_not_retain_session_bytes(tmp_path, monkeypatch, fails):
+    import database.store as persistence
+    from document_generator.pdf import PdfUnavailable
+    from tests.cases import sample
+    import services.exports as exports
+
+    original = persistence.Store
+    path = tmp_path / "download.db"
+    store = original(path)
+    store.configure(export_dir=str(tmp_path / "exports"))
+    store.set_sequence(2026, 8, True)
+    identifier = store.save_draft(sample(store))
+    store.finalize(identifier)  # Isolated test database only.
+    monkeypatch.setattr(persistence, "Store", lambda: original(path))
+    output = b"%PDF-1.4\nsynthetic"
+
+    def convert(*args):
+        if fails:
+            raise PdfUnavailable("PDF indisponível. O DOCX permanece disponível.")
+        return output, "test"
+
+    monkeypatch.setattr(exports, "convert", convert)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.session_state["old_recordfilepdf"] = ("old.pdf", output)
+    app.sidebar.radio[0].set_value("Histórico").run()
+    next(x for x in app.selectbox if x.label == "Abrir Portaria").set_value(
+        identifier
+    ).run()
+    next(x for x in app.button if x.label == "GERAR PDF").click().run()
+    assert not app.exception
+    assert bool(app.error) is fails
+    assert not any(
+        k.endswith(("filedocx", "filepdf")) for k in app.session_state.filtered_state
+    )
+    assert any(x.label == "Baixar DOCX" for x in app.get("download_button"))
+    app.run()
+    assert not app.exception
+    if not fails:
+        assert any(x.label == "Baixar PDF" for x in app.get("download_button"))
+        assert store.get(identifier)["pdf"] == output
+
+
 def test_ui_administrative_deletion_confirmation(tmp_path, monkeypatch):
     import database.store as persistence
     from tests.cases import sample

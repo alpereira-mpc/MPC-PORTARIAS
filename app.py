@@ -24,6 +24,10 @@ st.set_page_config(
 store = Store()
 setup_logging(store.path.parent)
 settings = store.settings()
+# Drop document byte caches from sessions opened before this update.
+for cached_key in list(st.session_state):
+    if cached_key.endswith(("filedocx", "filepdf")):
+        st.session_state.pop(cached_key, None)
 if "next_nav" in st.session_state:
     st.session_state["nav"] = st.session_state.pop("next_nav")
 
@@ -340,12 +344,12 @@ def download_record(identifier, prefix="record"):
                         path, content = export_record(
                             store, identifier, extension, regenerate=True
                         )
-                    st.session_state[prefix + "file" + extension] = (str(path), content)
+                    record[extension] = content
+                    del content
                     st.success(f"Arquivo salvo: {path}")
                 except Exception as exc:
                     error(exc)
-            saved = st.session_state.get(prefix + "file" + extension)
-            content = record[extension] if not saved else saved[1]
+            content = record[extension]
             if content:
                 if extension == "docx":
                     assert_docx_clean(content)
