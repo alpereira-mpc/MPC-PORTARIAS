@@ -8,4 +8,5 @@ exports/*
 !exports/.gitkeep
 tmp/
 *.log
+.streamlit/secrets.toml
 

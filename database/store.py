@@ -1,4 +1,4 @@
-"""SQLite persistence with immutable finalized snapshots and transactional numbering."""
+"""Shared persistence with immutable snapshots and transactional numbering."""
 
 from contextlib import contextmanager
 from copy import deepcopy
@@ -22,13 +22,42 @@ def encode(value):
 
 
 class Store:
-    def __init__(self, path=DB_PATH):
-        self.path = Path(path)
+    def __init__(
+        self, path=None, *, database_url=None, postgres_schema="mpc_portarias"
+    ):
+        # An explicit path is an isolated SQLite store (tests/backups/tools).
+        if path is not None and database_url is not None:
+            raise ValueError("Informe um caminho SQLite ou DATABASE_URL, não ambos.")
+        if path is None and database_url is None:
+            from database.backend_config import database_url as configured_url
+
+            database_url = configured_url()
+        self._postgres = None
+        self.backend = "postgresql" if database_url is not None else "sqlite"
+        if self.backend == "postgresql":
+            from database.postgresql import PostgresBackend
+
+            self._postgres = PostgresBackend(database_url, postgres_schema)
+            self.path = ROOT / "data" / "postgresql" / "runtime"
+        else:
+            self.path = Path(path if path is not None else DB_PATH)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.initialize()
 
+    @property
+    def location(self):
+        return (
+            "PostgreSQL / " + self._postgres.schema
+            if self._postgres
+            else str(self.path)
+        )
+
     @contextmanager
     def connection(self):
+        if self._postgres is not None:
+            with self._postgres.connection() as c:
+                yield c
+            return
         c = sqlite3.connect(self.path, timeout=30)
         c.row_factory = sqlite3.Row
         # Authorization is connection-local and cannot leak to ordinary SQL callers.
@@ -45,6 +74,9 @@ class Store:
             c.close()
 
     def initialize(self):
+        if self._postgres is not None:
+            self._postgres.initialize(ROOT)
+            return
         with self.connection() as c:
             version = c.execute("PRAGMA user_version").fetchone()[0]
             if version == 2:
@@ -63,8 +95,7 @@ class Store:
                 raise ValueError(
                     "Banco criado por versão mais recente. Atualize o aplicativo."
                 )
-            c.executescript(
-                """
+            c.executescript("""
             CREATE TABLE IF NOT EXISTS procuradores (
                 id INTEGER PRIMARY KEY, nome TEXT NOT NULL, genero TEXT NOT NULL,
                 cargo_base TEXT NOT NULL, funcao TEXT NOT NULL, assento TEXT NOT NULL,
@@ -89,8 +120,7 @@ class Store:
             CREATE TRIGGER IF NOT EXISTS manter_ato BEFORE UPDATE OF numero,ano,payload,docx,status ON portarias
                 WHEN OLD.status != 'Rascunho' AND (NEW.numero IS NOT OLD.numero OR NEW.ano IS NOT OLD.ano OR NEW.payload IS NOT OLD.payload OR NEW.docx IS NOT OLD.docx OR NEW.status='Rascunho' OR (OLD.status='Cancelada' AND NEW.status!='Cancelada'))
                 BEGIN SELECT RAISE(ABORT,'Conteúdo de ato finalizado é imutável'); END;
-            """
-            )
+            """)
             c.execute("BEGIN IMMEDIATE")
             if not c.execute(
                 "SELECT 1 FROM configuracoes WHERE chave='seeded'"
@@ -126,6 +156,9 @@ class Store:
         self.migrate(backup_required=False)
 
     def migrate(self, backup_required=True):
+        if self._postgres is not None:
+            self._postgres.initialize(ROOT)
+            return
         from database.migration import migrate_v2
 
         migrate_v2(self, backup_required)
@@ -152,7 +185,13 @@ class Store:
         ):
             raise ValueError("Catálogo inválido.")
         with self.connection() as c:
-            return [dict(r) for r in c.execute(f"SELECT * FROM {table}")]
+            order = ""
+            if self._postgres is not None and table in (
+                "procuradores",
+                "motivos_afastamento",
+            ):
+                order = " ORDER BY id"
+            return [dict(r) for r in c.execute(f"SELECT * FROM {table}{order}")]
 
     def save_member(self, member):
         fields = (
@@ -173,7 +212,7 @@ class Store:
         if member["genero"] not in ("feminino", "masculino"):
             raise ValueError("Gênero inválido.")
         with self.connection() as c:
-            values = [member[k] for k in fields]
+            values = [int(member[k]) if k == "ativo" else member[k] for k in fields]
             if member.get("id"):
                 c.execute(
                     "UPDATE procuradores SET nome=?,genero=?,cargo_base=?,funcao=?,assento=?,ativo=?,observacoes=? WHERE id=?",
@@ -464,6 +503,8 @@ class Store:
             self.event(c, "cancelar", {"id": identifier, "motivo": reason})
 
     def backup(self, destination):
+        if self._postgres is not None:
+            return self._postgres.backup(destination)
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -483,6 +524,7 @@ class Store:
         except Exception:
             destination.unlink(missing_ok=True)
             raise
+        return destination
 
     def automatic_backup(self, label):
         path = (
@@ -490,8 +532,15 @@ class Store:
             / "backups"
             / f"mpc_{datetime.now():%Y%m%d_%H%M%S_%f}_{label}_{uuid.uuid4().hex[:8]}.db"
         )
-        self.backup(path)
-        return path
+        return self.backup(path)
+
+    def authorize_delete(self, c, identifier):
+        if self._postgres is not None:
+            c.execute("SELECT set_config('mpc.delete_id', ?, true)", (identifier,))
+        else:
+            c.create_function(
+                "mpc_delete_authorized", 1, lambda target: int(target == identifier)
+            )
 
     def delete_portaria(
         self, identifier, reason, confirmed=False, confirmation="", delete_files=True

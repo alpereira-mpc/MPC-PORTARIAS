@@ -206,9 +206,7 @@ def delete_portaria(
             )
         c.execute("DELETE FROM exportacoes WHERE portaria_id=?", (identifier,))
         c.execute("DELETE FROM substituicoes WHERE portaria_id=?", (identifier,))
-        c.create_function(
-            "mpc_delete_authorized", 1, lambda target: int(target == identifier)
-        )
+        store.authorize_delete(c, identifier)
         c.execute("DELETE FROM portarias WHERE id=?", (identifier,))
         before, after, later = recalculate_sequence(c, row["ano"], row["numero"])
         c.execute(

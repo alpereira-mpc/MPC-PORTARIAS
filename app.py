@@ -317,13 +317,13 @@ def configuration():
                 except Exception as exc:
                     error(exc)
     with st.expander("Backup local"):
-        st.code(str(store.path))
+        st.code(store.location)
         if st.button("Criar backup do banco"):
             try:
                 path = (
                     store.path.parent / f"backup_{datetime.now():%Y%m%d_%H%M%S_%f}.db"
                 )
-                store.backup(path)
+                path = store.backup(path)
                 st.success(f"Backup criado: {path}")
             except Exception as exc:
                 error(exc)
