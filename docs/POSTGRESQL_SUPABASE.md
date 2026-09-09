@@ -27,8 +27,8 @@ no código, em arquivos de teste ou em comandos que serão compartilhados.
 - `services/deletion.py`: mantém o fluxo administrativo; delega somente a
   autorização de exclusão à camada comum.
 
-No app, só mudaram a identificação do banco no painel de backup e o uso do
-caminho efetivamente retornado pelo backup. Não foram alterados formulários,
+O app identifica o backend no painel de backup, usa o caminho retornado pelo
+backup e inicia a reutilização de catálogos a cada rerun. Não foram alterados formulários,
 conteúdo jurídico, numeração funcional, templates, DOCX ou PDF.
 
 As tabelas ficam no schema privado `mpc_portarias`, não em `public`.
@@ -63,8 +63,8 @@ são recusadas. Não há `DROP TABLE` no código de inicialização de produçã
 
 ## Numeração e transações
 
-Cada conexão PostgreSQL usa uma transação curta em `READ COMMITTED` e um
-`pg_advisory_xact_lock` por schema. Isso serializa as operações da aplicação,
+Cada operação PostgreSQL usa uma transação em `READ COMMITTED`. As escritas usam
+um `pg_advisory_xact_lock` por schema. Isso serializa as mutações da aplicação,
 incluindo finalização, ajuste de sequência, cancelamento e exclusão.
 O bloqueio é do servidor e vale também entre processos/réplicas.
 
@@ -81,7 +81,10 @@ Nenhuma Portaria posterior é renumerada.
 
 Os locks e `search_path` são transacionais. Prepared statements automáticos
 estão desativados para compatibilidade com pooler em modo de transação.
-As conexões são fechadas ao sair do contexto. Timeout de conexão: 10 s;
+As conexões retornam ao pool ao sair do contexto. Leituras usam `READ ONLY` sem
+lock de escrita. O pool tem no máximo quatro conexões por configuração e processo,
+com verificação antes do empréstimo e espera limitada a 15 s. Conexões ociosas
+são reduzidas após 60 s e renovadas após até 600 s. Timeout de conexão: 10 s;
 espera de lock: 30 s; execução de cada comando: 60 s.
 
 ## Backups e auditoria
@@ -112,14 +115,14 @@ reaplicando o schema e respeitando dependências e sequências IDENTITY.
 
 ## SSL, dependência e implantação
 
-Única dependência adicionada: `psycopg[binary]>=3.2,<4`.
+Dependências PostgreSQL: `psycopg[binary]>=3.2,<4` e `psycopg_pool>=3.2,<4`.
 SSL é obrigatório (`require` no mínimo); `verify-ca` e `verify-full` são
 preservados quando configurados na URL. `require` cifra a conexão, mas não
 valida a identidade do servidor como `verify-full`.
 
 O Supabase disponibiliza URL direta e poolers. Se o Cloud não alcançar o
 endpoint IPv6 direto, use o pooler adequado para IPv4 nos Secrets. Não é preciso
-usar o cliente HTTP Supabase nem adicionar bibliotecas de ORM/pool ao projeto.
+usar o cliente HTTP Supabase nem adicionar um ORM ao projeto.
 
 ## Testes e limites
 
@@ -140,8 +143,8 @@ Foram exercitados bootstrap concorrente, finalizações em threads e processos,
 rollback, virada de ano, cancelamento, hard delete, auditoria, perda da cópia
 local do backup, reconexão e telas Streamlit, além de toda a suíte SQLite.
 
-Limitações: todas as operações da aplicação são serializadas por schema, o que
-prioriza consistência sobre throughput. Alterações SQL feitas fora da aplicação
+Limitações: as escritas da aplicação continuam serializadas por schema, o que
+prioriza consistência sobre throughput de mutações. Alterações SQL feitas fora da aplicação
 não participam automaticamente desse lock. O blob comprimido de um backup ainda
 precisa caber em memória para ser enviado ao PostgreSQL. Arquivos de exportação
 do Cloud continuam efêmeros; snapshots persistidos permitem reexportação.
@@ -152,3 +155,8 @@ Fontes: [conexões Supabase](https://supabase.com/docs/guides/database/connectin
 [SSL Supabase](https://supabase.com/docs/guides/platform/ssl-enforcement),
 [transações psycopg](https://www.psycopg.org/psycopg3/docs/basic/transactions.html),
 [prepared statements](https://www.psycopg.org/psycopg3/docs/advanced/prepare.html).
+
+A auditoria de performance posterior está em [PERFORMANCE_POSTGRESQL.md](PERFORMANCE_POSTGRESQL.md).
+Schema/bootstrap bem-sucedido é lembrado por processo e configuração/schema;
+`migrate()` força nova verificação idempotente. O cache de catálogos dura apenas
+um rerun e é invalidado nas escritas. SQLite, números e documentos não usam esse cache.

@@ -1,6 +1,6 @@
 """PostgreSQL adapter for the existing Store SQL contract.
 
-Connections are short-lived, transaction-scoped and serialized per app schema.
+Connections are pooled; write transactions remain serialized per app schema.
 No credentials are included in public exceptions, logs or backup contents.
 """
 
@@ -144,24 +144,33 @@ class PostgresBackend:
         self._active = ContextVar("mpc_postgres_connection", default=None)
 
     @contextmanager
-    def connection(self):
+    def connection(self, *, read_only=False):
         raw = None
         token = None
+        from database.pool import resource
+
+        pool = resource(self._options).pool
         try:
-            raw = psycopg.connect(**self._options, prepare_threshold=None)
-            raw.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            raw.execute("SET LOCAL statement_timeout = '60s'")
-            raw.execute("SET LOCAL lock_timeout = '30s'")
+            raw = pool.getconn()
+            # One round trip for transaction setup, including transaction-pooler safety.
             raw.execute(
-                sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(
-                    sql.Identifier(self.schema)
+                sql.SQL(
+                    "SET TRANSACTION ISOLATION LEVEL READ COMMITTED {}; "
+                    "SET LOCAL statement_timeout = '60s'; "
+                    "SET LOCAL lock_timeout = '30s'; "
+                    "SET LOCAL search_path TO {}, pg_catalog"
+                ).format(
+                    sql.SQL("READ ONLY" if read_only else "READ WRITE"),
+                    sql.Identifier(self.schema),
+                ),
+                prepare=False,
+            )
+            if not read_only:
+                # Keep the same lock for all mutations, numbering and bootstrap.
+                raw.execute(
+                    "SELECT pg_advisory_xact_lock(64712026, hashtext(%s))",
+                    (self.schema,),
                 )
-            )
-            # Same lock for bootstrap, numbering, deletion and ordinary mutations.
-            # READ COMMITTED reads run after acquisition, seeing the latest commit.
-            raw.execute(
-                "SELECT pg_advisory_xact_lock(64712026, hashtext(%s))", (self.schema,)
-            )
             connection = Connection(raw)
             token = self._active.set(connection)
             yield connection
@@ -179,7 +188,7 @@ class PostgresBackend:
             if token is not None:
                 self._active.reset(token)
             if raw is not None:
-                raw.close()
+                pool.putconn(raw)
 
     @staticmethod
     def _rollback(raw):
@@ -190,7 +199,19 @@ class PostgresBackend:
                 # A lost socket must not expose the original server/DSN message.
                 raw.close()
 
-    def initialize(self, root):
+    def initialize(self, root, *, force=False):
+        from database.pool import resource
+
+        shared = resource(self._options)
+        with shared.lock:
+            if not force and self.schema in shared.initialized:
+                return
+            shared.initialized.discard(self.schema)
+            self._initialize(root)
+            # Only a committed initialization may be remembered; failures are retried.
+            shared.initialized.add(self.schema)
+
+    def _initialize(self, root):
         with self.connection() as c:
             c.raw.execute(
                 sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(

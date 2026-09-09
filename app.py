@@ -22,6 +22,7 @@ st.set_page_config(
     layout="wide",
 )
 store = Store()
+store.begin_rerun()
 setup_logging(store.path.parent)
 settings = store.settings()
 # Drop document byte caches from sessions opened before this update.

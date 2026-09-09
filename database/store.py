@@ -32,6 +32,7 @@ class Store:
             from database.backend_config import database_url as configured_url
 
             database_url = configured_url()
+        self._read_cache = None
         self._postgres = None
         self.backend = "postgresql" if database_url is not None else "sqlite"
         if self.backend == "postgresql":
@@ -53,9 +54,11 @@ class Store:
         )
 
     @contextmanager
-    def connection(self):
+    def connection(self, *, read_only=False):
         if self._postgres is not None:
-            with self._postgres.connection() as c:
+            if not read_only and self._read_cache is not None:
+                self._read_cache.clear()
+            with self._postgres.connection(read_only=read_only) as c:
                 yield c
             return
         c = sqlite3.connect(self.path, timeout=30)
@@ -157,14 +160,14 @@ class Store:
 
     def migrate(self, backup_required=True):
         if self._postgres is not None:
-            self._postgres.initialize(ROOT)
+            self._postgres.initialize(ROOT, force=True)
             return
         from database.migration import migrate_v2
 
         migrate_v2(self, backup_required)
 
     def settings(self):
-        with self.connection() as c:
+        with self.connection(read_only=True) as c:
             return dict(c.execute("SELECT chave,valor FROM configuracoes").fetchall())
 
     def configure(self, **values):
@@ -175,6 +178,10 @@ class Store:
             )
             self.event(c, "configurar", values)
 
+    def begin_rerun(self):
+        """Enable catalogue reuse only for this UI run, never for SQLite or numbering."""
+        self._read_cache = {} if self._postgres is not None else None
+
     def catalog(self, table):
         if table not in (
             "procuradores",
@@ -184,14 +191,19 @@ class Store:
             "bases_legais",
         ):
             raise ValueError("Catálogo inválido.")
-        with self.connection() as c:
+        if self._read_cache is not None and table in self._read_cache:
+            return deepcopy(self._read_cache[table])
+        with self.connection(read_only=True) as c:
             order = ""
             if self._postgres is not None and table in (
                 "procuradores",
                 "motivos_afastamento",
             ):
                 order = " ORDER BY id"
-            return [dict(r) for r in c.execute(f"SELECT * FROM {table}{order}")]
+            rows = [dict(r) for r in c.execute(f"SELECT * FROM {table}{order}")]
+            if self._read_cache is not None:
+                self._read_cache[table] = deepcopy(rows)
+            return rows
 
     def save_member(self, member):
         fields = (
@@ -279,7 +291,7 @@ class Store:
             )
 
     def next_number(self, year):
-        with self.connection() as c:
+        with self.connection(read_only=True) as c:
             row = c.execute(
                 "SELECT ultimo FROM sequencias WHERE ano=?", (year,)
             ).fetchone()
@@ -380,7 +392,7 @@ class Store:
         )
 
     def get(self, identifier):
-        with self.connection() as c:
+        with self.connection(read_only=True) as c:
             row = c.execute(
                 "SELECT * FROM portarias WHERE id=?", (identifier,)
             ).fetchone()
@@ -391,7 +403,7 @@ class Store:
             return result
 
     def history(self):
-        with self.connection() as c:
+        with self.connection(read_only=True) as c:
             rows = c.execute(
                 "SELECT id,numero,ano,status,payload,criada,atualizada,cancelamento FROM portarias ORDER BY criada DESC"
             ).fetchall()
@@ -565,13 +577,13 @@ class Store:
         )
 
     def deletion_history(self):
-        with self.connection() as c:
+        with self.connection(read_only=True) as c:
             return [
                 dict(r) for r in c.execute("SELECT * FROM audit_log ORDER BY id DESC")
             ]
 
     def baseline(self, year):
-        with self.connection() as c:
+        with self.connection(read_only=True) as c:
             row = c.execute(
                 "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
             ).fetchone()

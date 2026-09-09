@@ -64,7 +64,20 @@ def test_ssl_and_pooler_and_no_credentials_in_errors(monkeypatch, caplog):
         captured.update(kwargs)
         raise psycopg.OperationalError(FAKE_URL)
 
-    monkeypatch.setattr(psycopg, "connect", fail)
+    from database.pool import close_pools
+    from psycopg_pool import ConnectionPool
+
+    close_pools()
+    monkeypatch.setattr(
+        psycopg.Connection,
+        "connect",
+        classmethod(lambda cls, *args, **kwargs: fail(**kwargs)),
+    )
+
+    def fast_pool(**kwargs):
+        return ConnectionPool(**dict(kwargs, timeout=0.2, reconnect_timeout=0.1))
+
+    monkeypatch.setattr("database.pool.ConnectionPool", fast_pool)
     backend = PostgresBackend(FAKE_URL + "?sslmode=disable")
     with pytest.raises(DatabaseUnavailable) as error:
         with backend.connection():
@@ -74,6 +87,7 @@ def test_ssl_and_pooler_and_no_credentials_in_errors(monkeypatch, caplog):
     assert captured["connect_timeout"] == 10
     assert "never-a-real-password" not in str(error.value) + caplog.text
     assert error.value.__suppress_context__
+    close_pools()
 
 
 def test_parameter_and_row_compatibility():
