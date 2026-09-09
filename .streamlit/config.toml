@@ -6,8 +6,6 @@ textColor = "#202832"
 font = "sans serif"
 
 [server]
-address = "127.0.0.1"
-port = 8502
 headless = true
 
 [browser]
