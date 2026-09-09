@@ -1,0 +1,93 @@
+{
+  "cenarios": [
+    {
+      "cenario": "isabella",
+      "resultado": "aprovado",
+      "validacoes": [
+        "a Subprocuradora-Geral Isabella Barbosa Marinho Falcão",
+        "1ª Câmara",
+        "8 a 14 de setembro de 2026",
+        "art. 61, § 6º",
+        "ELVIRA SAMARA PEREIRA DE OLIVEIRA",
+        "Procuradora-Geral do Ministério Público de Contas da Paraíba"
+      ],
+      "finalizado": false
+    },
+    {
+      "cenario": "ouvidor",
+      "resultado": "aprovado",
+      "validacoes": [
+        "na função de Ouvidor",
+        "art. 70, § 3º",
+        "ordem de antiguidade"
+      ],
+      "finalizado": false
+    },
+    {
+      "cenario": "corregedor",
+      "resultado": "aprovado",
+      "validacoes": [
+        "na função de Corregedor",
+        "Manoel Antonio dos Santos Neto",
+        "art. 70, § 3º"
+      ],
+      "finalizado": false
+    },
+    {
+      "cenario": "procuradora_geral",
+      "resultado": "aprovado",
+      "validacoes": [
+        "esta Procuradora-Geral",
+        "29 de junho a 9 de julho de 2026"
+      ],
+      "finalizado": false
+    },
+    {
+      "cenario": "sucessivas",
+      "resultado": "aprovado",
+      "validacoes": [
+        "R E S O L V E, ainda,",
+        "durante o período acima mencionado",
+        "Luciano Andrade Farias"
+      ],
+      "finalizado": false
+    },
+    {
+      "cenario": "em_exercicio",
+      "resultado": "aprovado",
+      "validacoes": [
+        "O PROCURADOR-GERAL EM EXERCÍCIO",
+        "BRADSON TIBÉRIO LUNA CAMELO",
+        "Procurador-Geral do Ministério Público de Contas da Paraíba em exercício"
+      ],
+      "finalizado": false
+    },
+    {
+      "cenario": "motivo_personalizado",
+      "resultado": "aprovado",
+      "validacoes": [
+        "por motivo de participação em atividade institucional autorizada."
+      ],
+      "finalizado": false
+    },
+    {
+      "cenario": "assento_outro",
+      "resultado": "aprovado",
+      "validacoes": [
+        "com assento na Câmara Especial"
+      ],
+      "finalizado": false
+    },
+    {
+      "cenario": "entre_anos",
+      "resultado": "aprovado",
+      "validacoes": [
+        "29 de dezembro de 2026 a 9 de janeiro de 2027"
+      ],
+      "finalizado": false
+    }
+  ],
+  "telas": 4,
+  "erros_js": [],
+  "oficiais_emitidas": 0
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "tela": "Nova Portaria",
+    "sem_placeholder": true,
+    "texto": "MPC-PB\nGerador de Portarias PROGE\n\nMinistério Público de Contas do Estado da Paraíba\n\nNova Portaria\n\nIniciar novo formulário\n\nData da Portaria\n\nPress the down arrow key to interact with the calendar and select a date. Press the escape button to close the calendar.\n\nSelected date is 09/09/2026. Select the second date.\n\nPróximo número previsto\n\n9/2026\n\nPrévias e rascunhos não consomem número.\n\nSignatário\n\nElvira Samara Pereira de Oliveira\n\nQualidade do signatário\n\nTitular\n\nCargo na assinatura: Procuradora-Geral\n\nkeyboard_arrow_down\n\nSubstituição 1\n\nProcurador titular\n\nSelecione\n\nCargo/função do titular\n\nProcurador\n\nAssento\n\nNão se aplica\n\nProcurador substituto\n\nSelecione\n\nData inicial do afastamento\n\nPress the down arrow key to interact with the calendar and select a date. Press the escape button to close the calendar.\n\nSelected date is 09/09/2026. Select the second date.\n\nData final do afastamento\n\nPress the down arrow key to interact with the calendar and select a date. Press the escape button to close the calendar.\n\nSelected date is 09/09/2026. Select the second date.\n\nMotivo do afastamento\n\ngozo de férias regulamentares\n\nBase legal sugerida — editável\n\nNota de rodapé — editável\n\nAdicionar outra substituição\n\nSalvar rascunho\n\nPreparar prévia"
+  },
+  {
+    "tela": "Histórico",
+    "sem_placeholder": true,
+    "texto": "MPC-PB\nGerador de Portarias PROGE\n\nMinistério Público de Contas do Estado da Paraíba\n\nHistórico\nkeyboard_arrow_right\n\nRegistro de exclusões\n\nNenhuma Portaria registrada."
+  },
+  {
+    "tela": "Procuradores",
+    "sem_placeholder": true,
+    "texto": "MPC-PB\nGerador de Portarias PROGE\n\nMinistério Público de Contas do Estado da Paraíba\n\nProcuradores\n\nEditar cadastro\n\nNovo procurador\n\nNome completo\n\nGênero gramatical\n\nfeminino\n\nCargo base\n\nFunção atual\n\nAssento atual\n\nNão se aplica\n\nOutro assento\n\nAtivo\n\nObservações\n\nSalvar procurador"
+  },
+  {
+    "tela": "Configurações",
+    "sem_placeholder": true,
+    "texto": "MPC-PB\nGerador de Portarias PROGE\n\nMinistério Público de Contas do Estado da Paraíba\n\nConfigurações\n\nVersão 1.1.0 · Dados armazenados neste computador\n\nkeyboard_arrow_down\n\nNumeração anual\n\nAno da sequência\n\nBaseline administrativo preservado: 8/2026.\n\nÚltima Portaria PROGE emitida no ano\n\nA sugestão 8 para 2026 vem dos modelos. Confirme o número efetivamente emitido antes do primeiro uso.\n\nConfirmo o último número informado\n\nSalvar sequência\n\nkeyboard_arrow_down\n\nExportação e administração\n\nDiretório de exportação\n\nMecanismo PDF\n\nAutomático: Word e depois LibreOffice\n\nHabilitar edição administrativa do número\n\nSalvar configurações\n\nkeyboard_arrow_right\n\nFunções atuais e signatário padrão\n\nkeyboard_arrow_right\n\nMotivos de afastamento\n\nkeyboard_arrow_right\n\nBases legais e notas de rodapé\n\nkeyboard_arrow_right\n\nBackup local"
+  }
+]

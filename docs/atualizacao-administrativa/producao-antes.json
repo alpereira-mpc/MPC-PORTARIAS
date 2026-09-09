@@ -1,0 +1,263 @@
+{
+  "procuradores": [
+    {
+      "id": 1,
+      "nome": "Elvira Samara Pereira de Oliveira",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Procurador-Geral",
+      "assento": "Tribunal Pleno",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 2,
+      "nome": "Isabella Barbosa Marinho Falcão",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Subprocurador-Geral",
+      "assento": "1ª Câmara",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 3,
+      "nome": "Bradson Tibério Luna Camelo",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Subprocurador-Geral",
+      "assento": "2ª Câmara",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 4,
+      "nome": "Marcílio Toscano Franca Filho",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Ouvidor",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 5,
+      "nome": "Manoel Antonio dos Santos Neto",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Corregedor",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 6,
+      "nome": "Luciano Andrade Farias",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Procurador",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 7,
+      "nome": "Sheyla Barreto Braga de Queiroz",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Procurador",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    }
+  ],
+  "funcoes": [
+    {
+      "nome": "Procurador-Geral"
+    },
+    {
+      "nome": "Subprocurador-Geral"
+    },
+    {
+      "nome": "Procurador"
+    },
+    {
+      "nome": "Corregedor"
+    },
+    {
+      "nome": "Ouvidor"
+    },
+    {
+      "nome": "Outro"
+    }
+  ],
+  "assentos": [
+    {
+      "nome": "Tribunal Pleno"
+    },
+    {
+      "nome": "1ª Câmara"
+    },
+    {
+      "nome": "2ª Câmara"
+    },
+    {
+      "nome": "Não se aplica"
+    },
+    {
+      "nome": "Outro"
+    }
+  ],
+  "motivos_afastamento": [
+    {
+      "id": 1,
+      "nome": "gozo de férias regulamentares",
+      "texto": "por motivo de gozo de férias regulamentares"
+    },
+    {
+      "id": 2,
+      "nome": "licença especial",
+      "texto": "por motivo de gozo de licença especial {do_titular}"
+    },
+    {
+      "id": 3,
+      "nome": "licença para tratamento de saúde",
+      "texto": "por motivo de licença para tratamento de saúde"
+    }
+  ],
+  "bases_legais": [
+    {
+      "funcao": "Procurador-Geral",
+      "texto": "art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": ""
+    },
+    {
+      "funcao": "Subprocurador-Geral",
+      "texto": "art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": ""
+    },
+    {
+      "funcao": "Corregedor",
+      "texto": "art. 70, § 3º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": "§ 3º. Em caso de vacância e em suas ausências e impedimentos por motivos de licença, férias ou outro afastamento legal, o Corregedor e o Ouvidor serão substituídos pelos demais membros, observada, no caso, a ordem de antiguidade no cargo, ou a maior idade, no caso de idêntica antiguidade."
+    },
+    {
+      "funcao": "Ouvidor",
+      "texto": "art. 70, § 3º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": "§ 3º. Em caso de vacância e em suas ausências e impedimentos por motivos de licença, férias ou outro afastamento legal, o Corregedor e o Ouvidor serão substituídos pelos demais membros, observada, no caso, a ordem de antiguidade no cargo, ou a maior idade, no caso de idêntica antiguidade."
+    }
+  ],
+  "configuracoes": [
+    {
+      "chave": "seeded",
+      "valor": "1"
+    },
+    {
+      "chave": "pdf_engine",
+      "valor": "auto"
+    },
+    {
+      "chave": "export_dir",
+      "valor": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\exports"
+    },
+    {
+      "chave": "admin_number",
+      "valor": "0"
+    },
+    {
+      "chave": "sequence_confirmed",
+      "valor": "1"
+    }
+  ],
+  "sequencias": [
+    {
+      "ano": 2026,
+      "ultimo": 9
+    }
+  ],
+  "portarias": [
+    {
+      "id": "0ca1991632df4d92ae6a06d386e6d283",
+      "numero": null,
+      "ano": 2026,
+      "status": "Rascunho",
+      "payload": "{\"data\": \"2026-09-09\", \"signatario\": {\"id\": 1, \"nome\": \"Elvira Samara Pereira de Oliveira\", \"genero\": \"feminino\", \"cargo_base\": \"Procuradora\", \"funcao\": \"Procurador-Geral\", \"assento\": \"Tribunal Pleno\", \"ativo\": 1, \"observacoes\": \"\"}, \"em_exercicio\": false, \"qualidade_outro\": \"\", \"substituicoes\": [{\"titular\": {\"id\": 3, \"nome\": \"Bradson Tibério Luna Camelo\", \"genero\": \"masculino\", \"cargo_base\": \"Procurador\", \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"ativo\": 1, \"observacoes\": \"\"}, \"substituto\": {\"id\": 6, \"nome\": \"Luciano Andrade Farias\", \"genero\": \"masculino\", \"cargo_base\": \"Procurador\", \"funcao\": \"Procurador\", \"assento\": \"Não se aplica\", \"ativo\": 1, \"observacoes\": \"\"}, \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"inicio\": \"2026-09-30\", \"fim\": \"2026-10-09\", \"motivo_id\": 1, \"motivo_texto\": \"por motivo de gozo de férias regulamentares\", \"decorrente\": false, \"mesmo_periodo\": false, \"base_legal\": \"art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba\", \"nota\": \"\"}]}",
+      "docx": null,
+      "pdf": null,
+      "criada": "2026-09-09T13:19:58.671394+00:00",
+      "atualizada": "2026-09-09T13:19:58.671394+00:00",
+      "cancelamento": ""
+    },
+    {
+      "id": "fdca049c98d3433098881e9ebfc2dc53",
+      "numero": 9,
+      "ano": 2026,
+      "status": "Finalizada",
+      "payload": "{\"data\": \"2026-09-09\", \"signatario\": {\"id\": 1, \"nome\": \"Elvira Samara Pereira de Oliveira\", \"genero\": \"feminino\", \"cargo_base\": \"Procuradora\", \"funcao\": \"Procurador-Geral\", \"assento\": \"Tribunal Pleno\", \"ativo\": 1, \"observacoes\": \"\"}, \"em_exercicio\": false, \"qualidade_outro\": \"\", \"substituicoes\": [{\"titular\": {\"id\": 3, \"nome\": \"Bradson Tibério Luna Camelo\", \"genero\": \"masculino\", \"cargo_base\": \"Procurador\", \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"ativo\": 1, \"observacoes\": \"\"}, \"substituto\": {\"id\": 7, \"nome\": \"Sheyla Barreto Braga de Queiroz\", \"genero\": \"feminino\", \"cargo_base\": \"Procuradora\", \"funcao\": \"Procurador\", \"assento\": \"Não se aplica\", \"ativo\": 1, \"observacoes\": \"\"}, \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"inicio\": \"2026-09-30\", \"fim\": \"2026-10-09\", \"motivo_id\": 2, \"motivo_texto\": \"por motivo de gozo de licença especial {do_titular}\", \"decorrente\": false, \"mesmo_periodo\": false, \"base_legal\": \"art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba\", \"nota\": \"\"}]}",
+      "docx": "f834baf76c751a3a592cf59b168e988999db5ea29fad030ca855c9bb05249fd5",
+      "pdf": "3d3a4cfc24d1610b0e0e33684e450066b813ebd1a1e3a567eee8db13f14690d2",
+      "criada": "2026-09-09T13:22:17.073829+00:00",
+      "atualizada": "2026-09-09T13:22:59.970961+00:00",
+      "cancelamento": ""
+    }
+  ],
+  "substituicoes": [
+    {
+      "id": 1,
+      "portaria_id": "0ca1991632df4d92ae6a06d386e6d283",
+      "ordem": 0,
+      "payload": "{\"titular\": {\"id\": 3, \"nome\": \"Bradson Tibério Luna Camelo\", \"genero\": \"masculino\", \"cargo_base\": \"Procurador\", \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"ativo\": 1, \"observacoes\": \"\"}, \"substituto\": {\"id\": 6, \"nome\": \"Luciano Andrade Farias\", \"genero\": \"masculino\", \"cargo_base\": \"Procurador\", \"funcao\": \"Procurador\", \"assento\": \"Não se aplica\", \"ativo\": 1, \"observacoes\": \"\"}, \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"inicio\": \"2026-09-30\", \"fim\": \"2026-10-09\", \"motivo_id\": 1, \"motivo_texto\": \"por motivo de gozo de férias regulamentares\", \"decorrente\": false, \"mesmo_periodo\": false, \"base_legal\": \"art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba\", \"nota\": \"\"}"
+    },
+    {
+      "id": 2,
+      "portaria_id": "fdca049c98d3433098881e9ebfc2dc53",
+      "ordem": 0,
+      "payload": "{\"titular\": {\"id\": 3, \"nome\": \"Bradson Tibério Luna Camelo\", \"genero\": \"masculino\", \"cargo_base\": \"Procurador\", \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"ativo\": 1, \"observacoes\": \"\"}, \"substituto\": {\"id\": 7, \"nome\": \"Sheyla Barreto Braga de Queiroz\", \"genero\": \"feminino\", \"cargo_base\": \"Procuradora\", \"funcao\": \"Procurador\", \"assento\": \"Não se aplica\", \"ativo\": 1, \"observacoes\": \"\"}, \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"inicio\": \"2026-09-30\", \"fim\": \"2026-10-09\", \"motivo_id\": 2, \"motivo_texto\": \"por motivo de gozo de licença especial {do_titular}\", \"decorrente\": false, \"mesmo_periodo\": false, \"base_legal\": \"art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba\", \"nota\": \"\"}"
+    }
+  ],
+  "eventos": [
+    {
+      "id": 1,
+      "instante": "2026-09-09T12:41:53.196650+00:00",
+      "acao": "ajustar_sequencia",
+      "detalhes": "{\"ano\": 2026, \"ultimo\": 8}"
+    },
+    {
+      "id": 2,
+      "instante": "2026-09-09T12:42:05.902235+00:00",
+      "acao": "configurar",
+      "detalhes": "{\"export_dir\": \"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\exports\", \"pdf_engine\": \"auto\", \"admin_number\": \"0\"}"
+    },
+    {
+      "id": 3,
+      "instante": "2026-09-09T12:42:15.996536+00:00",
+      "acao": "atribuir_funcoes",
+      "detalhes": "[[\"Procurador-Geral\", \"Tribunal Pleno\", 1], [\"Subprocurador-Geral\", \"1ª Câmara\", 2], [\"Subprocurador-Geral\", \"2ª Câmara\", 3], [\"Ouvidor\", \"Não se aplica\", 4], [\"Corregedor\", \"Não se aplica\", 5]]"
+    },
+    {
+      "id": 4,
+      "instante": "2026-09-09T13:22:59.970961+00:00",
+      "acao": "finalizar",
+      "detalhes": "{\"id\": \"fdca049c98d3433098881e9ebfc2dc53\", \"numero\": 9, \"ano\": 2026, \"avisos\": []}"
+    }
+  ],
+  "backup": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\data\\backups\\mpc_20260909_103534_131529_antes_atualizacao.db",
+  "referencias": {
+    "Portaria 1-25 Substituição Dra Isabella por Dr Luciano - 1a Camara.doc": "0ffb6b43ca7f0ac00c5b0e0ec45f5957fc37a005219bb17df2a9bc54c98f6bdf",
+    "Portaria 1-25 Substituição Dra Isabella por Dr Luciano - 1a Camara.pdf": "17d4feb7d3cdc6acda905a144092b6e6cb509fa775b792320aa6f73afbac6dd3",
+    "Portaria 2-26 Substituição Dr Manoel por Dr Luciano - Corregedoria.doc": "802205633883059a7fa229aebe0f7a820e42df65ffbcc6d3a71d53359b4ff2f3",
+    "Portaria 2-26 Substituição Dr Manoel por Dr Luciano - Corregedoria.pdf": "cdb4f92dcfdd3affe2056300f8ad7b3925d1228af4b4d25c62497a3d41d33aa3",
+    "Portaria 3-26 Substituição Dra Elvira por Dr Bradson - Bradson por Sheyla.doc": "f0968cc7b0b723a7e6103f945fbb54520a7afeac86b9299fe97fe692edbbbce6",
+    "Portaria 3-26 Substituição Dra Elvira por Dr Bradson - Bradson por Sheyla.pdf": "7afbcd1a91e30dfde428680f52faeb80ec638043d9266fac2be305d52205343b",
+    "Portaria 4-26 Substituição Dr Marcílio por Dr Luciano - Ouvidoria.doc": "9d7f174dcfb4a1968c9082906ac0afbfa5f8bf87c08a11ca462b9e97af3ea5f8",
+    "Portaria 4-26 Substituição Dr Marcílio por Dr Luciano - Ouvidoria.pdf": "064d98c8dfdaf3b9a94273d1dd5a1210877c89cb5f3e9156b359e48d96558d13",
+    "Portaria 5-26 Substituição Dr Marcílio por Dr Luciano - Ouvidoria.doc": "cc179e9452a7df2bcf2d295d4d2f57e5edde24e0f1f2ed4e781d47721aae4e54",
+    "Portaria 5-26 Substituição Dr Marcílio por Dr Luciano - Ouvidoria.pdf": "64824dfe59e6c770f1c874608a69c619fbd9ca073af23abf2111f026855ab018",
+    "Portaria 6-26 Substituição Dra Elvira por Dra Isabella - Isabella por Luciano.doc": "40269378c319b6acc027f18921dba87da8762510c8ccf0318c9b2c930f6796ba",
+    "Portaria 6-26 Substituição Dra Elvira por Dra Isabella - Isabella por Luciano.pdf": "e38ddca17e570a56ccac10c48e579522323bc63f9fec0f80fc7a26d3bc2dfe38",
+    "Portaria 7-26 Substituição Bradson por Sheyla.doc": "2808e0d116cc7dab23001220abb0dd25971cd9925f59f002637dab6475a75e27",
+    "Portaria 7-26 Substituição Bradson por Sheyla.pdf": "5c8272402ed97a95488b8350835407a91d38e1b5edcde5378b8f3219a9aa51fe",
+    "Portaria 8-26 Substituição Isabella por Sheyla - 1a camara.doc": "9c4991e139d83ae1509463c02710290fd3e6528613b8734aaff8bf70aa294a40",
+    "Portaria 8-26 Substituição Isabella por Sheyla - 1a camara.pdf": "c8722a519add7c8b2b01164bdb2bbd19410c306d741c3df30fe3932b0651662f"
+  }
+}

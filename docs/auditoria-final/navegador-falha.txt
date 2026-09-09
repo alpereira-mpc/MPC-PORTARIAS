@@ -1,0 +1,19 @@
+locator.check: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByRole('checkbox', { name: 'Usar o mesmo período da substituição anterior', exact: true })[22m
+[2m    - locator resolved to <input value="" type="checkbox" aria-checked="false" class="st-em st-bg st-bh st-c3 st-d1 st-i7 st-bm" aria-label="Usar o mesmo período da substituição anterior"/>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    57 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+    at C:\Users\alpereira\Documents\MPC-PORTARIAS\tmp\auditoria_final\browser_audit.cjs:37:303

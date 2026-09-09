@@ -1,0 +1,21 @@
+{
+  "versao": 2,
+  "baseline": 8,
+  "proximo_antes_exclusao": 10,
+  "integridade": "ok",
+  "arquivos_vinculados": [
+    {
+      "caminho": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\exports\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.docx",
+      "sha256": "f834baf76c751a3a592cf59b168e988999db5ea29fad030ca855c9bb05249fd5",
+      "comparacao_integral_blob": true
+    },
+    {
+      "caminho": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\exports\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.pdf",
+      "sha256": "3d3a4cfc24d1610b0e0e33684e450066b813ebd1a1e3a567eee8db13f14690d2",
+      "comparacao_integral_blob": true
+    }
+  ],
+  "backup_vinculo": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\data\\backups\\mpc_20260909_110435_912709_antes_vinculo_arquivos_teste_9_2026_098f35f6.db",
+  "rascunho_identificado": "0ca1991632df4d92ae6a06d386e6d283",
+  "criterio_rascunho": "Único rascunho; mesmo titular Bradson, 2ª Câmara e período 30/09 a 09/10/2026; criado cerca de 2 minutos antes da Portaria de teste."
+}

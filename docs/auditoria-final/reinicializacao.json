@@ -1,0 +1,36 @@
+[
+  {
+    "ciclo": 1,
+    "pid_antes": 12744,
+    "pid_depois": 20360,
+    "iniciado_por": "Iniciar_MPC.cmd",
+    "health": "ok",
+    "todas_tabelas_iguais": true,
+    "rascunhos_preservados": 17,
+    "cadastros": 7,
+    "sequencias": [
+      {
+        "ano": 2026,
+        "ultimo": 8
+      }
+    ],
+    "integridade": "ok"
+  },
+  {
+    "ciclo": 2,
+    "pid_antes": 20360,
+    "pid_depois": 22008,
+    "iniciado_por": "Iniciar_MPC.cmd",
+    "health": "ok",
+    "todas_tabelas_iguais": true,
+    "rascunhos_preservados": 17,
+    "cadastros": 7,
+    "sequencias": [
+      {
+        "ano": 2026,
+        "ultimo": 8
+      }
+    ],
+    "integridade": "ok"
+  }
+]

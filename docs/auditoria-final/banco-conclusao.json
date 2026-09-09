@@ -1,0 +1,155 @@
+{
+  "banco": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\data\\mpc.db",
+  "somente_leitura": true,
+  "todas_tabelas_e_estrutura_iguais": true,
+  "integridade": "ok",
+  "portarias_totais": 0,
+  "finalizadas_ou_canceladas": 0,
+  "reproducoes_5_6_8_no_banco": false,
+  "dados_removidos": 0,
+  "proxima_numeracao": "9/2026",
+  "sequencia": [
+    {
+      "ano": 2026,
+      "ultimo": 8
+    }
+  ],
+  "cadastros": [
+    {
+      "id": 1,
+      "nome": "Elvira Samara Pereira de Oliveira",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Procurador-Geral",
+      "assento": "Tribunal Pleno",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 2,
+      "nome": "Isabella Barbosa Marinho Falcão",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Subprocurador-Geral",
+      "assento": "1ª Câmara",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 3,
+      "nome": "Bradson Tibério Luna Camelo",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Subprocurador-Geral",
+      "assento": "2ª Câmara",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 4,
+      "nome": "Marcílio Toscano Franca Filho",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Ouvidor",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 5,
+      "nome": "Manoel Antonio dos Santos Neto",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Corregedor",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 6,
+      "nome": "Luciano Andrade Farias",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Procurador",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 7,
+      "nome": "Sheyla Barreto Braga de Queiroz",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Procurador",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    }
+  ],
+  "originais": [
+    {
+      "arquivo": "Portaria 1-25 Substituição Dra Isabella por Dr Luciano - 1a Camara.doc",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 2-26 Substituição Dr Manoel por Dr Luciano - Corregedoria.doc",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 3-26 Substituição Dra Elvira por Dr Bradson - Bradson por Sheyla.doc",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 4-26 Substituição Dr Marcílio por Dr Luciano - Ouvidoria.doc",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 5-26 Substituição Dr Marcílio por Dr Luciano - Ouvidoria.doc",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 6-26 Substituição Dra Elvira por Dra Isabella - Isabella por Luciano.doc",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 7-26 Substituição Bradson por Sheyla.doc",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 8-26 Substituição Isabella por Sheyla - 1a camara.doc",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 1-25 Substituição Dra Isabella por Dr Luciano - 1a Camara.pdf",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 2-26 Substituição Dr Manoel por Dr Luciano - Corregedoria.pdf",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 3-26 Substituição Dra Elvira por Dr Bradson - Bradson por Sheyla.pdf",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 4-26 Substituição Dr Marcílio por Dr Luciano - Ouvidoria.pdf",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 5-26 Substituição Dr Marcílio por Dr Luciano - Ouvidoria.pdf",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 6-26 Substituição Dra Elvira por Dra Isabella - Isabella por Luciano.pdf",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 7-26 Substituição Bradson por Sheyla.pdf",
+      "inalterado": true
+    },
+    {
+      "arquivo": "Portaria 8-26 Substituição Isabella por Sheyla - 1a camara.pdf",
+      "inalterado": true
+    }
+  ]
+}

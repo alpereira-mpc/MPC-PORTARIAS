@@ -1,0 +1,24 @@
+{
+  "procuradores": [
+    ["Elvira Samara Pereira de Oliveira", "feminino", "Procuradora", "Procurador-Geral", "Tribunal Pleno"],
+    ["Isabella Barbosa Marinho Falcão", "feminino", "Procuradora", "Subprocurador-Geral", "1ª Câmara"],
+    ["Bradson Tibério Luna Camelo", "masculino", "Procurador", "Subprocurador-Geral", "2ª Câmara"],
+    ["Marcílio Toscano Franca Filho", "masculino", "Procurador", "Ouvidor", "Não se aplica"],
+    ["Manoel Antonio dos Santos Neto", "masculino", "Procurador", "Corregedor", "Não se aplica"],
+    ["Luciano Andrade Farias", "masculino", "Procurador", "Procurador", "Não se aplica"],
+    ["Sheyla Barreto Braga de Queiroz", "feminino", "Procuradora", "Procurador", "Não se aplica"]
+  ],
+  "funcoes": ["Procurador-Geral", "Subprocurador-Geral", "Procurador", "Corregedor", "Ouvidor", "Outro"],
+  "assentos": ["Tribunal Pleno", "1ª Câmara", "2ª Câmara", "Não se aplica", "Outro"],
+  "motivos": [
+    ["gozo de férias regulamentares", "por motivo de gozo de férias regulamentares"],
+    ["licença especial", "por motivo de gozo de licença especial"],
+    ["licença para tratamento de saúde", "por motivo de licença para tratamento de saúde"]
+  ],
+  "bases": [
+    ["Procurador-Geral", "art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba", ""],
+    ["Subprocurador-Geral", "art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba", ""],
+    ["Corregedor", "art. 70, § 3º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba", "§ 3º. Em caso de vacância e em suas ausências e impedimentos por motivos de licença, férias ou outro afastamento legal, o Corregedor e o Ouvidor serão substituídos pelos demais membros, observada, no caso, a ordem de antiguidade no cargo, ou a maior idade, no caso de idêntica antiguidade."],
+    ["Ouvidor", "art. 70, § 3º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba", "§ 3º. Em caso de vacância e em suas ausências e impedimentos por motivos de licença, férias ou outro afastamento legal, o Corregedor e o Ouvidor serão substituídos pelos demais membros, observada, no caso, a ordem de antiguidade no cargo, ou a maior idade, no caso de idêntica antiguidade."]
+  ]
+}

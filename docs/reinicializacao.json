@@ -1,0 +1,16 @@
+[
+  {
+    "ciclo": 1,
+    "servidor": "ok",
+    "proxima": 10,
+    "numero_preservado": 9,
+    "docx_identico": true
+  },
+  {
+    "ciclo": 2,
+    "servidor": "ok",
+    "proxima": 10,
+    "numero_preservado": 9,
+    "docx_identico": true
+  }
+]

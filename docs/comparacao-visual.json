@@ -1,0 +1,104 @@
+[
+  {
+    "portaria": 5,
+    "original": {
+      "paginas": 1,
+      "dimensoes": [
+        595.32,
+        842.04
+      ],
+      "logo": [
+        {
+          "x0": 243.5,
+          "top": 35.4,
+          "width": 163.8,
+          "height": 105.95
+        }
+      ]
+    },
+    "gerada": {
+      "paginas": 1,
+      "dimensoes": [
+        595.32,
+        842.04
+      ],
+      "logo": [
+        {
+          "x0": 243.6,
+          "top": 35.4,
+          "width": 163.55,
+          "height": 105.7
+        }
+      ]
+    },
+    "logo_identico": false
+  },
+  {
+    "portaria": 6,
+    "original": {
+      "paginas": 1,
+      "dimensoes": [
+        595.32,
+        842.04
+      ],
+      "logo": [
+        {
+          "x0": 243.5,
+          "top": 35.4,
+          "width": 163.8,
+          "height": 105.95
+        }
+      ]
+    },
+    "gerada": {
+      "paginas": 1,
+      "dimensoes": [
+        595.32,
+        842.04
+      ],
+      "logo": [
+        {
+          "x0": 243.6,
+          "top": 35.4,
+          "width": 163.55,
+          "height": 105.7
+        }
+      ]
+    },
+    "logo_identico": false
+  },
+  {
+    "portaria": 8,
+    "original": {
+      "paginas": 1,
+      "dimensoes": [
+        595.32,
+        842.04
+      ],
+      "logo": [
+        {
+          "x0": 243.5,
+          "top": 35.4,
+          "width": 163.8,
+          "height": 105.95
+        }
+      ]
+    },
+    "gerada": {
+      "paginas": 1,
+      "dimensoes": [
+        595.32,
+        842.04
+      ],
+      "logo": [
+        {
+          "x0": 243.6,
+          "top": 35.4,
+          "width": 163.55,
+          "height": 105.7
+        }
+      ]
+    },
+    "logo_identico": false
+  }
+]

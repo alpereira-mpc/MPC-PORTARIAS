@@ -1,0 +1,263 @@
+{
+  "assentos": [
+    {
+      "nome": "Tribunal Pleno"
+    },
+    {
+      "nome": "1ª Câmara"
+    },
+    {
+      "nome": "2ª Câmara"
+    },
+    {
+      "nome": "Não se aplica"
+    },
+    {
+      "nome": "Outro"
+    }
+  ],
+  "bases_legais": [
+    {
+      "funcao": "Procurador-Geral",
+      "texto": "art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": ""
+    },
+    {
+      "funcao": "Subprocurador-Geral",
+      "texto": "art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": ""
+    },
+    {
+      "funcao": "Corregedor",
+      "texto": "art. 70, § 3º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": "§ 3º. Em caso de vacância e em suas ausências e impedimentos por motivos de licença, férias ou outro afastamento legal, o Corregedor e o Ouvidor serão substituídos pelos demais membros, observada, no caso, a ordem de antiguidade no cargo, ou a maior idade, no caso de idêntica antiguidade."
+    },
+    {
+      "funcao": "Ouvidor",
+      "texto": "art. 70, § 3º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": "§ 3º. Em caso de vacância e em suas ausências e impedimentos por motivos de licença, férias ou outro afastamento legal, o Corregedor e o Ouvidor serão substituídos pelos demais membros, observada, no caso, a ordem de antiguidade no cargo, ou a maior idade, no caso de idêntica antiguidade."
+    }
+  ],
+  "configuracoes": [
+    {
+      "chave": "seeded",
+      "valor": "1"
+    },
+    {
+      "chave": "pdf_engine",
+      "valor": "auto"
+    },
+    {
+      "chave": "export_dir",
+      "valor": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\exports"
+    },
+    {
+      "chave": "admin_number",
+      "valor": "0"
+    },
+    {
+      "chave": "sequence_confirmed",
+      "valor": "1"
+    }
+  ],
+  "eventos": [
+    {
+      "id": 1,
+      "instante": "2026-09-09T12:41:53.196650+00:00",
+      "acao": "ajustar_sequencia",
+      "detalhes": "{\"ano\": 2026, \"ultimo\": 8}"
+    },
+    {
+      "id": 2,
+      "instante": "2026-09-09T12:42:05.902235+00:00",
+      "acao": "configurar",
+      "detalhes": "{\"export_dir\": \"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\exports\", \"pdf_engine\": \"auto\", \"admin_number\": \"0\"}"
+    },
+    {
+      "id": 3,
+      "instante": "2026-09-09T12:42:15.996536+00:00",
+      "acao": "atribuir_funcoes",
+      "detalhes": "[[\"Procurador-Geral\", \"Tribunal Pleno\", 1], [\"Subprocurador-Geral\", \"1ª Câmara\", 2], [\"Subprocurador-Geral\", \"2ª Câmara\", 3], [\"Ouvidor\", \"Não se aplica\", 4], [\"Corregedor\", \"Não se aplica\", 5]]"
+    }
+  ],
+  "funcoes": [
+    {
+      "nome": "Procurador-Geral"
+    },
+    {
+      "nome": "Subprocurador-Geral"
+    },
+    {
+      "nome": "Procurador"
+    },
+    {
+      "nome": "Corregedor"
+    },
+    {
+      "nome": "Ouvidor"
+    },
+    {
+      "nome": "Outro"
+    }
+  ],
+  "motivos_afastamento": [
+    {
+      "id": 1,
+      "nome": "gozo de férias regulamentares",
+      "texto": "por motivo de gozo de férias regulamentares"
+    },
+    {
+      "id": 2,
+      "nome": "licença especial",
+      "texto": "por motivo de gozo de licença especial {do_titular}"
+    },
+    {
+      "id": 3,
+      "nome": "licença para tratamento de saúde",
+      "texto": "por motivo de licença para tratamento de saúde"
+    }
+  ],
+  "portarias": [],
+  "procuradores": [
+    {
+      "id": 1,
+      "nome": "Elvira Samara Pereira de Oliveira",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Procurador-Geral",
+      "assento": "Tribunal Pleno",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 2,
+      "nome": "Isabella Barbosa Marinho Falcão",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Subprocurador-Geral",
+      "assento": "1ª Câmara",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 3,
+      "nome": "Bradson Tibério Luna Camelo",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Subprocurador-Geral",
+      "assento": "2ª Câmara",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 4,
+      "nome": "Marcílio Toscano Franca Filho",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Ouvidor",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 5,
+      "nome": "Manoel Antonio dos Santos Neto",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Corregedor",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 6,
+      "nome": "Luciano Andrade Farias",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Procurador",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 7,
+      "nome": "Sheyla Barreto Braga de Queiroz",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Procurador",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    }
+  ],
+  "sequencias": [
+    {
+      "ano": 2026,
+      "ultimo": 8
+    }
+  ],
+  "substituicoes": [],
+  "integrity_check": "ok",
+  "schema": [
+    {
+      "type": "table",
+      "name": "assentos",
+      "sql": "CREATE TABLE assentos (nome TEXT PRIMARY KEY)"
+    },
+    {
+      "type": "table",
+      "name": "bases_legais",
+      "sql": "CREATE TABLE bases_legais (funcao TEXT PRIMARY KEY, texto TEXT NOT NULL, nota TEXT NOT NULL DEFAULT '')"
+    },
+    {
+      "type": "table",
+      "name": "configuracoes",
+      "sql": "CREATE TABLE configuracoes (chave TEXT PRIMARY KEY, valor TEXT NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "eventos",
+      "sql": "CREATE TABLE eventos (id INTEGER PRIMARY KEY, instante TEXT NOT NULL, acao TEXT NOT NULL, detalhes TEXT NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "funcoes",
+      "sql": "CREATE TABLE funcoes (nome TEXT PRIMARY KEY)"
+    },
+    {
+      "type": "table",
+      "name": "motivos_afastamento",
+      "sql": "CREATE TABLE motivos_afastamento (id INTEGER PRIMARY KEY, nome TEXT NOT NULL, texto TEXT NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "portarias",
+      "sql": "CREATE TABLE portarias (\n                id TEXT PRIMARY KEY, numero INTEGER, ano INTEGER NOT NULL,\n                status TEXT NOT NULL CHECK(status IN ('Rascunho','Finalizada','Cancelada')),\n                payload TEXT NOT NULL, docx BLOB, pdf BLOB, criada TEXT NOT NULL,\n                atualizada TEXT NOT NULL, cancelamento TEXT NOT NULL DEFAULT '',\n                UNIQUE(ano,numero), CHECK(numero IS NULL OR numero>0),\n                CHECK((status='Rascunho' AND numero IS NULL) OR (status!='Rascunho' AND numero IS NOT NULL)))"
+    },
+    {
+      "type": "table",
+      "name": "procuradores",
+      "sql": "CREATE TABLE procuradores (\n                id INTEGER PRIMARY KEY, nome TEXT NOT NULL, genero TEXT NOT NULL,\n                cargo_base TEXT NOT NULL, funcao TEXT NOT NULL, assento TEXT NOT NULL,\n                ativo INTEGER NOT NULL DEFAULT 1, observacoes TEXT NOT NULL DEFAULT '')"
+    },
+    {
+      "type": "table",
+      "name": "sequencias",
+      "sql": "CREATE TABLE sequencias (ano INTEGER PRIMARY KEY CHECK(ano BETWEEN 1000 AND 9999), ultimo INTEGER NOT NULL CHECK(ultimo>=0))"
+    },
+    {
+      "type": "table",
+      "name": "substituicoes",
+      "sql": "CREATE TABLE substituicoes (id INTEGER PRIMARY KEY, portaria_id TEXT NOT NULL REFERENCES portarias(id), ordem INTEGER NOT NULL, payload TEXT NOT NULL, UNIQUE(portaria_id,ordem))"
+    },
+    {
+      "type": "trigger",
+      "name": "manter_ato",
+      "sql": "CREATE TRIGGER manter_ato BEFORE UPDATE OF numero,ano,payload,docx,status ON portarias\n                WHEN OLD.status != 'Rascunho' AND (NEW.numero IS NOT OLD.numero OR NEW.ano IS NOT OLD.ano OR NEW.payload IS NOT OLD.payload OR NEW.docx IS NOT OLD.docx OR NEW.status='Rascunho' OR (OLD.status='Cancelada' AND NEW.status!='Cancelada'))\n                BEGIN SELECT RAISE(ABORT,'Conteúdo de ato finalizado é imutável'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "manter_portaria",
+      "sql": "CREATE TRIGGER manter_portaria BEFORE DELETE ON portarias WHEN OLD.status != 'Rascunho'\n                BEGIN SELECT RAISE(ABORT,'Portaria finalizada não pode ser apagada'); END"
+    }
+  ]
+}

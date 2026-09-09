@@ -1,0 +1,604 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="18" skipped="0" tests="56" time="55.749" timestamp="2026-09-09T10:43:41.151678-03:00" hostname="PROGE02"><testcase classname="tests.test_persistence" name="test_draft_preview_finalize_cancel_year" time="1.541"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DA5070&gt;
+
+    def test_draft_preview_finalize_cancel_year(store):
+        p = sample(store)
+&gt;       identifier = store.save_draft(p)
+                     ^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:19: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DA5070&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '0a578410725f4186a6366617a56b36ef'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_unconfigured_database" time="0.852"><failure message="NameError: name 'year' is not defined">tmp_path = WindowsPath('C:/Users/alpereira/AppData/Local/Temp/pytest-of-alpereira/pytest-12/test_unconfigured_database0')
+
+    def test_unconfigured_database(tmp_path):
+        s = Store(tmp_path / "fresh.db")
+        p = sample(s)
+&gt;       identifier = s.save_draft(p)
+                     ^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:42: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE3E673B00&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '2b73728e7150487ba0a2022e6186db4b'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_concurrent_numbering" time="0.825"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DA5D60&gt;
+
+    def test_concurrent_numbering(store):
+&gt;       identifiers = [store.save_draft(sample(store)) for _ in range(6)]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:49: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DA5D60&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = 'b9cb3dff11064544b00699d28aee1bf6'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_same_draft_concurrent" time="1.077"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DA6960&gt;
+
+    def test_same_draft_concurrent(store):
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:60: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DA6960&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '84258e0428f0440e9c8dd346bbd82f46'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_generator_failure_rolls_back" time="1.368"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE4119C0E0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001EE41D65880&gt;
+
+    def test_generator_failure_rolls_back(store, monkeypatch):
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE4119C0E0&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = 'aedce6ac3702427caa50cccd17a3ab1c'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_finalized_immutable" time="1.676"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DA7E30&gt;
+
+    def test_finalized_immutable(store):
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:80: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DA7E30&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '819ae730f06a4bb1bc0a35ed151fac0b'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_restart_real_process" time="2.337"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DA4620&gt;
+
+    def test_restart_real_process(store):
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DA4620&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '09558508da624a11ab67754fe596ff90'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_catalog_edits_preserve_history" time="1.470"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DA77D0&gt;
+
+    def test_catalog_edits_preserve_history(store):
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:110: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DA77D0&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = 'cf476bcef3bf42239c85bd1aa7a721e2'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_duplicate_unique_constraint" time="0.918"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DF3EF0&gt;
+
+    def test_duplicate_unique_constraint(store):
+&gt;       a = store.save_draft(sample(store))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:121: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DF3EF0&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = 'a9cba8b0b8684a578f723f6f76a935f5'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_export_never_overwrites" time="1.035"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DF1F70&gt;
+
+    def test_export_never_overwrites(store):
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:132: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DF1F70&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '64d0b14a7c1d4755b84edfd98501f2a4'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_pdf_absent_is_recoverable" time="0.930"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DA5070&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001EE41DA7FB0&gt;
+
+    def test_pdf_absent_is_recoverable(store, monkeypatch):
+        monkeypatch.setattr("document_generator.pdf.sys.platform", "linux")
+        monkeypatch.setattr("document_generator.pdf.libreoffice_path", lambda: None)
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:143: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;database.store.Store object at 0x000001EE41DA5070&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '90d70701c95c432b9f34d4432802b890'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_sequence_admin_safeguards" time="0.933"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DA7DA0&gt;
+
+    def test_sequence_admin_safeguards(store):
+        with pytest.raises(ValueError):
+            store.set_sequence(2026, 8)
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:155: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DA7DA0&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '8d3d848ac86f497a812ae7374fb86fe6'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_warning_confirmation" time="1.041"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE4119E300&gt;
+
+    def test_warning_confirmation(store):
+&gt;       identifier = store.save_draft(sample(store, 5))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:166: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE4119E300&gt;
+payload = {'data': '2026-05-19', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '7395d5b7020f484d9674d8d3597de0e6'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_backup" time="2.079"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DF2630&gt;
+tmp_path = WindowsPath('C:/Users/alpereira/AppData/Local/Temp/pytest-of-alpereira/pytest-12/test_backup0')
+
+    def test_backup(store, tmp_path):
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:174: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DF2630&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '06719fe5b48544a6a67da0342b1f52a5'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_office_assignment_atomic" time="2.016" /><testcase classname="tests.test_persistence" name="test_inactive_member_blocks_finalization" time="0.822"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DF2AE0&gt;
+
+    def test_inactive_member_blocks_finalization(store):
+&gt;       identifier = store.save_draft(sample(store))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:204: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DF2AE0&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '7197c7a0828248a298c67f5dcfaa2a25'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_persistence" name="test_duplicate_drops_manual_template_override" time="0.779"><failure message="NameError: name 'year' is not defined">store = &lt;database.store.Store object at 0x000001EE41DF12B0&gt;
+
+    def test_duplicate_drops_manual_template_override(store):
+        p = sample(store)
+        p["manual"] = {"signature_name": "NOME EXCEPCIONAL"}
+&gt;       identifier = store.save_draft(p)
+                     ^^^^^^^^^^^^^^^^^^^
+
+tests\test_persistence.py:216: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DF12B0&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'manual': {'signature_name': 'NOME EXCEPCIONAL'}, 'qualidade_outro': '', ...}
+identifier = '9b6cd0aed83d42dd8d185a61b41c0323'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_ui" name="test_member_editor_preserves_custom_seat" time="2.958" /><testcase classname="tests.test_ui" name="test_history_displays_feminine_role_and_draft" time="0.723"><failure message="NameError: name 'year' is not defined">tmp_path = WindowsPath('C:/Users/alpereira/AppData/Local/Temp/pytest-of-alpereira/pytest-12/test_history_displays_feminine0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001EE41DA7140&gt;
+
+    def test_history_displays_feminine_role_and_draft(tmp_path, monkeypatch):
+        import database.store as persistence
+        from tests.cases import sample
+    
+        original = persistence.Store
+        path = tmp_path / "history.db"
+        store = original(path)
+&gt;       store.save_draft(sample(store))
+
+tests\test_ui.py:32: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;database.store.Store object at 0x000001EE41DA6480&gt;
+payload = {'data': '2026-09-08', 'em_exercicio': False, 'qualidade_outro': '', 'signatario': {'assento': 'Tribunal Pleno', 'ativo': 1, 'cargo_base': 'Procuradora', 'funcao': 'Procurador-Geral', ...}, ...}
+identifier = '23d2ea75866a4a9fad42f44d686976c2'
+
+    def save_draft(self, payload, identifier=None):
+        from services.wording import parsed, normalized_payload
+    
+        payload = normalized_payload(payload)
+        identifier = identifier or uuid.uuid4().hex
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            old = c.execute(
+                "SELECT status FROM portarias WHERE id=?", (identifier,)
+            ).fetchone()
+            if old and old["status"] != "Rascunho":
+                raise ValueError(
+                    "Este ato já foi finalizado. Duplique para criar um rascunho."
+                )
+            existing_baseline = c.execute(
+&gt;               "SELECT baseline FROM sequencia_baselines WHERE ano=?", (year,)
+                                                                         ^^^^
+            ).fetchone()
+E           NameError: name 'year' is not defined
+
+database\store.py:303: NameError</failure></testcase><testcase classname="tests.test_ui" name="test_all_screens" time="1.342" /><testcase classname="tests.test_ui" name="test_ui_finalize" time="1.637"><failure message="AssertionError: assert not ElementList(_list=[Error()])&#10; +  where ElementList(_list=[Error()]) = AppTest(\n    _script_path='C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\app.py',\n    default_timeout=30,\n    sessio...: Caption(is_caption=True)\n            }\n        ),\n        2: SpecialBlock(\n            type='event'\n        )\n    }\n).error">tmp_path = WindowsPath('C:/Users/alpereira/AppData/Local/Temp/pytest-of-alpereira/pytest-12/test_ui_finalize0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001EE54BAA8D0&gt;
+
+    def test_ui_finalize(tmp_path, monkeypatch):
+        import database.store as persistence
+    
+        path = tmp_path / "flow.db"
+        original = persistence.Store
+        s = original(path)
+        s.set_sequence(2026, 8, True)
+        s.configure(export_dir=str(tmp_path / "exports"))
+        monkeypatch.setattr(persistence, "Store", lambda: original(path))
+        app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    
+        def select(label, value):
+            next(x for x in app.selectbox if x.label == label).set_value(value).run()
+    
+        select("Procurador titular", 2)
+        select("Procurador substituto", 7)
+        next(x for x in app.button if x.label == "Preparar prévia").click().run()
+&gt;       assert not app.error
+E       AssertionError: assert not ElementList(_list=[Error()])
+E        +  where ElementList(_list=[Error()]) = AppTest(\n    _script_path='C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\app.py',\n    default_timeout=30,\n    sessio...: Caption(is_caption=True)\n            }\n        ),\n        2: SpecialBlock(\n            type='event'\n        )\n    }\n).error
+
+tests\test_ui.py:79: AssertionError</failure></testcase><testcase classname="tests.test_wording" name="test_subprocuradoria" time="0.926" /><testcase classname="tests.test_wording" name="test_ouvidoria" time="0.812" /><testcase classname="tests.test_wording" name="test_cascade" time="0.856" /><testcase classname="tests.test_wording" name="test_acting_signer" time="0.939" /><testcase classname="tests.test_wording" name="test_dates[2026-09-08-2026-09-14-8 a 14 de setembro de 2026]" time="0.007" /><testcase classname="tests.test_wording" name="test_dates[2026-06-29-2026-07-09-29 de junho a 9 de julho de 2026]" time="0.003" /><testcase classname="tests.test_wording" name="test_dates[2026-12-29-2027-01-09-29 de dezembro de 2026 a 9 de janeiro de 2027]" time="0.002" /><testcase classname="tests.test_wording" name="test_dates[2028-02-28-2028-02-29-28 a 29 de fevereiro de 2028]" time="0.001" /><testcase classname="tests.test_wording" name="test_dates[2026-02-28-2026-03-01-28 de fevereiro a 1 de mar\xe7o de 2026]" time="0.002" /><testcase classname="tests.test_wording" name="test_dates[2026-02-01-2026-02-01-1 de fevereiro de 2026]" time="0.001" /><testcase classname="tests.test_wording" name="test_invalid_dates[2026-02-29-2026-03-01]" time="0.001" /><testcase classname="tests.test_wording" name="test_invalid_dates[2026-09-14-2026-09-08]" time="0.001" /><testcase classname="tests.test_wording" name="test_invalid_dates[0202-01-01-2026-01-01]" time="0.001" /><testcase classname="tests.test_wording" name="test_invalid_dates[202-09-08-2026-09-14]" time="0.001" /><testcase classname="tests.test_wording" name="test_validation[funcao-]" time="1.492" /><testcase classname="tests.test_wording" name="test_validation[base_legal-]" time="0.924" /><testcase classname="tests.test_wording" name="test_validation[motivo_texto-]" time="0.773" /><testcase classname="tests.test_wording" name="test_validation[assento-N\xe3o se aplica]" time="1.022" /><testcase classname="tests.test_wording" name="test_validation[substituto-None]" time="1.611" /><testcase classname="tests.test_wording" name="test_validation[titular-None]" time="1.733" /><testcase classname="tests.test_wording" name="test_validation[fim-2026-09-07]" time="0.964" /><testcase classname="tests.test_wording" name="test_same_person" time="0.956" /><testcase classname="tests.test_wording" name="test_manual_is_local" time="0.844" /><testcase classname="tests.test_wording" name="test_docx_package[5]" time="0.874" /><testcase classname="tests.test_wording" name="test_docx_package[6]" time="0.970" /><testcase classname="tests.test_wording" name="test_docx_package[8]" time="0.856" /><testcase classname="tests.test_wording" name="test_conflict_warning" time="1.003" /><testcase classname="tests.test_wording" name="test_absent_substitute_warning_independent_of_order[False]" time="0.813" /><testcase classname="tests.test_wording" name="test_absent_substitute_warning_independent_of_order[True]" time="0.843" /><testcase classname="tests.test_wording" name="test_cascade_is_not_absence_conflict" time="1.109" /><testcase classname="tests.test_wording" name="test_independent_second_period" time="0.912" /><testcase classname="tests.test_wording" name="test_corregedoria_feminine_and_legal_note" time="0.854" /><testcase classname="tests.test_wording" name="test_signer_other_person_uses_nominal_target" time="0.974" /><testcase classname="tests.test_wording" name="test_custom_reason_preserved" time="0.932" /><testcase classname="tests.test_wording" name="test_three_substitutions_and_footnote" time="1.085" /></testsuite></testsuites>

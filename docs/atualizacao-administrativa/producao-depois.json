@@ -1,0 +1,296 @@
+{
+  "procuradores": [
+    {
+      "id": 1,
+      "nome": "Elvira Samara Pereira de Oliveira",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Procurador-Geral",
+      "assento": "Tribunal Pleno",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 2,
+      "nome": "Isabella Barbosa Marinho Falcão",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Subprocurador-Geral",
+      "assento": "1ª Câmara",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 3,
+      "nome": "Bradson Tibério Luna Camelo",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Subprocurador-Geral",
+      "assento": "2ª Câmara",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 4,
+      "nome": "Marcílio Toscano Franca Filho",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Ouvidor",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 5,
+      "nome": "Manoel Antonio dos Santos Neto",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Corregedor",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 6,
+      "nome": "Luciano Andrade Farias",
+      "genero": "masculino",
+      "cargo_base": "Procurador",
+      "funcao": "Procurador",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    },
+    {
+      "id": 7,
+      "nome": "Sheyla Barreto Braga de Queiroz",
+      "genero": "feminino",
+      "cargo_base": "Procuradora",
+      "funcao": "Procurador",
+      "assento": "Não se aplica",
+      "ativo": 1,
+      "observacoes": ""
+    }
+  ],
+  "funcoes": [
+    {
+      "nome": "Procurador-Geral"
+    },
+    {
+      "nome": "Subprocurador-Geral"
+    },
+    {
+      "nome": "Procurador"
+    },
+    {
+      "nome": "Corregedor"
+    },
+    {
+      "nome": "Ouvidor"
+    },
+    {
+      "nome": "Outro"
+    }
+  ],
+  "assentos": [
+    {
+      "nome": "Tribunal Pleno"
+    },
+    {
+      "nome": "1ª Câmara"
+    },
+    {
+      "nome": "2ª Câmara"
+    },
+    {
+      "nome": "Não se aplica"
+    },
+    {
+      "nome": "Outro"
+    }
+  ],
+  "motivos_afastamento": [
+    {
+      "id": 1,
+      "nome": "gozo de férias regulamentares",
+      "texto": "por motivo de gozo de férias regulamentares"
+    },
+    {
+      "id": 2,
+      "nome": "licença especial",
+      "texto": "por motivo de gozo de licença especial"
+    },
+    {
+      "id": 3,
+      "nome": "licença para tratamento de saúde",
+      "texto": "por motivo de licença para tratamento de saúde"
+    }
+  ],
+  "bases_legais": [
+    {
+      "funcao": "Procurador-Geral",
+      "texto": "art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": ""
+    },
+    {
+      "funcao": "Subprocurador-Geral",
+      "texto": "art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": ""
+    },
+    {
+      "funcao": "Corregedor",
+      "texto": "art. 70, § 3º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": "§ 3º. Em caso de vacância e em suas ausências e impedimentos por motivos de licença, férias ou outro afastamento legal, o Corregedor e o Ouvidor serão substituídos pelos demais membros, observada, no caso, a ordem de antiguidade no cargo, ou a maior idade, no caso de idêntica antiguidade."
+    },
+    {
+      "funcao": "Ouvidor",
+      "texto": "art. 70, § 3º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba",
+      "nota": "§ 3º. Em caso de vacância e em suas ausências e impedimentos por motivos de licença, férias ou outro afastamento legal, o Corregedor e o Ouvidor serão substituídos pelos demais membros, observada, no caso, a ordem de antiguidade no cargo, ou a maior idade, no caso de idêntica antiguidade."
+    }
+  ],
+  "configuracoes": [
+    {
+      "chave": "seeded",
+      "valor": "1"
+    },
+    {
+      "chave": "pdf_engine",
+      "valor": "auto"
+    },
+    {
+      "chave": "export_dir",
+      "valor": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\exports"
+    },
+    {
+      "chave": "admin_number",
+      "valor": "0"
+    },
+    {
+      "chave": "sequence_confirmed",
+      "valor": "1"
+    }
+  ],
+  "sequencias": [
+    {
+      "ano": 2026,
+      "ultimo": 8
+    }
+  ],
+  "portarias": [],
+  "substituicoes": [],
+  "eventos": [
+    {
+      "id": 1,
+      "instante": "2026-09-09T12:41:53.196650+00:00",
+      "acao": "ajustar_sequencia",
+      "detalhes": "{\"ano\": 2026, \"ultimo\": 8}"
+    },
+    {
+      "id": 2,
+      "instante": "2026-09-09T12:42:05.902235+00:00",
+      "acao": "configurar",
+      "detalhes": "{\"export_dir\": \"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\exports\", \"pdf_engine\": \"auto\", \"admin_number\": \"0\"}"
+    },
+    {
+      "id": 3,
+      "instante": "2026-09-09T12:42:15.996536+00:00",
+      "acao": "atribuir_funcoes",
+      "detalhes": "[[\"Procurador-Geral\", \"Tribunal Pleno\", 1], [\"Subprocurador-Geral\", \"1ª Câmara\", 2], [\"Subprocurador-Geral\", \"2ª Câmara\", 3], [\"Ouvidor\", \"Não se aplica\", 4], [\"Corregedor\", \"Não se aplica\", 5]]"
+    },
+    {
+      "id": 4,
+      "instante": "2026-09-09T13:22:59.970961+00:00",
+      "acao": "finalizar",
+      "detalhes": "{\"id\": \"fdca049c98d3433098881e9ebfc2dc53\", \"numero\": 9, \"ano\": 2026, \"avisos\": []}"
+    },
+    {
+      "id": 5,
+      "instante": "2026-09-09T14:04:35.833355+00:00",
+      "acao": "migration_v2",
+      "detalhes": "{\"backup\": \"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\data\\\\backups\\\\mpc_20260909_110435_637832_antes_migration_v2_aa234bc0.db\", \"baselines\": [{\"ano\": 2026, \"baseline\": 8}]}"
+    },
+    {
+      "id": 6,
+      "instante": "2026-09-09T14:04:36.016602+00:00",
+      "acao": "vinculo_legado_verificado",
+      "detalhes": "{\"id\": \"fdca049c98d3433098881e9ebfc2dc53\", \"arquivos\": [{\"caminho\": \"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\exports\\\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.docx\", \"sha256\": \"f834baf76c751a3a592cf59b168e988999db5ea29fad030ca855c9bb05249fd5\", \"comparacao_integral_blob\": true}, {\"caminho\": \"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\exports\\\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.pdf\", \"sha256\": \"3d3a4cfc24d1610b0e0e33684e450066b813ebd1a1e3a567eee8db13f14690d2\", \"comparacao_integral_blob\": true}], \"backup\": \"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\data\\\\backups\\\\mpc_20260909_110435_912709_antes_vinculo_arquivos_teste_9_2026_098f35f6.db\"}"
+    },
+    {
+      "id": 7,
+      "instante": "2026-09-09T14:05:16.454164+00:00",
+      "acao": "exclusao_administrativa",
+      "detalhes": "{\"audit_id\": 1, \"id\": \"fdca049c98d3433098881e9ebfc2dc53\", \"backup\": \"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\data\\\\backups\\\\mpc_20260909_110516_332689_antes_exclusao_9_2026_e6a4fe3b.db\", \"arquivos_vinculados\": 2}"
+    },
+    {
+      "id": 8,
+      "instante": "2026-09-09T14:05:22.248300+00:00",
+      "acao": "exclusao_administrativa",
+      "detalhes": "{\"audit_id\": 2, \"id\": \"0ca1991632df4d92ae6a06d386e6d283\", \"backup\": \"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\data\\\\backups\\\\mpc_20260909_110522_137329_antes_exclusao_rascunho_2026_716107d9.db\", \"arquivos_vinculados\": 0}"
+    }
+  ],
+  "sequencia_baselines": [
+    {
+      "ano": 2026,
+      "baseline": 8
+    }
+  ],
+  "audit_log": [
+    {
+      "id": 1,
+      "data_hora": "2026-09-09T14:05:16.417198+00:00",
+      "acao": "EXCLUSAO_DEFINITIVA",
+      "portaria_id_original": "fdca049c98d3433098881e9ebfc2dc53",
+      "numero": 9,
+      "ano": 2026,
+      "status_anterior": "Finalizada",
+      "motivo": "Portaria criada para teste",
+      "dados_resumidos": "{\"data\": \"2026-09-09\", \"signatario\": {\"id\": 1, \"nome\": \"Elvira Samara Pereira de Oliveira\", \"genero\": \"feminino\", \"cargo_base\": \"Procuradora\", \"funcao\": \"Procurador-Geral\", \"assento\": \"Tribunal Pleno\", \"ativo\": 1, \"observacoes\": \"\"}, \"em_exercicio\": false, \"qualidade_outro\": \"\", \"substituicoes\": [{\"titular\": {\"id\": 3, \"nome\": \"Bradson Tibério Luna Camelo\", \"genero\": \"masculino\", \"cargo_base\": \"Procurador\", \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"ativo\": 1, \"observacoes\": \"\"}, \"substituto\": {\"id\": 7, \"nome\": \"Sheyla Barreto Braga de Queiroz\", \"genero\": \"feminino\", \"cargo_base\": \"Procuradora\", \"funcao\": \"Procurador\", \"assento\": \"Não se aplica\", \"ativo\": 1, \"observacoes\": \"\"}, \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"inicio\": \"2026-09-30\", \"fim\": \"2026-10-09\", \"motivo_id\": 2, \"motivo_texto\": \"por motivo de gozo de licença especial {do_titular}\", \"decorrente\": false, \"mesmo_periodo\": false, \"base_legal\": \"art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba\", \"nota\": \"\"}]}",
+      "arquivo_docx": "[\"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\exports\\\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.docx\"]",
+      "arquivo_pdf": "[\"C:\\\\Users\\\\alpereira\\\\Documents\\\\MPC-PORTARIAS\\\\exports\\\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.pdf\"]",
+      "backup": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\data\\backups\\mpc_20260909_110516_332689_antes_exclusao_9_2026_e6a4fe3b.db",
+      "sequencia_antes": 9,
+      "sequencia_depois": 8
+    },
+    {
+      "id": 2,
+      "data_hora": "2026-09-09T14:05:22.248300+00:00",
+      "acao": "EXCLUSAO_RASCUNHO",
+      "portaria_id_original": "0ca1991632df4d92ae6a06d386e6d283",
+      "numero": null,
+      "ano": 2026,
+      "status_anterior": "Rascunho",
+      "motivo": "Rascunho descartado pelo usuário",
+      "dados_resumidos": "{\"data\": \"2026-09-09\", \"signatario\": {\"id\": 1, \"nome\": \"Elvira Samara Pereira de Oliveira\", \"genero\": \"feminino\", \"cargo_base\": \"Procuradora\", \"funcao\": \"Procurador-Geral\", \"assento\": \"Tribunal Pleno\", \"ativo\": 1, \"observacoes\": \"\"}, \"em_exercicio\": false, \"qualidade_outro\": \"\", \"substituicoes\": [{\"titular\": {\"id\": 3, \"nome\": \"Bradson Tibério Luna Camelo\", \"genero\": \"masculino\", \"cargo_base\": \"Procurador\", \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"ativo\": 1, \"observacoes\": \"\"}, \"substituto\": {\"id\": 6, \"nome\": \"Luciano Andrade Farias\", \"genero\": \"masculino\", \"cargo_base\": \"Procurador\", \"funcao\": \"Procurador\", \"assento\": \"Não se aplica\", \"ativo\": 1, \"observacoes\": \"\"}, \"funcao\": \"Subprocurador-Geral\", \"assento\": \"2ª Câmara\", \"inicio\": \"2026-09-30\", \"fim\": \"2026-10-09\", \"motivo_id\": 1, \"motivo_texto\": \"por motivo de gozo de férias regulamentares\", \"decorrente\": false, \"mesmo_periodo\": false, \"base_legal\": \"art. 61, § 6º, do Regimento Interno do Tribunal de Contas do Estado da Paraíba\", \"nota\": \"\"}]}",
+      "arquivo_docx": "[]",
+      "arquivo_pdf": "[]",
+      "backup": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\data\\backups\\mpc_20260909_110522_137329_antes_exclusao_rascunho_2026_716107d9.db",
+      "sequencia_antes": 8,
+      "sequencia_depois": 8
+    }
+  ],
+  "exportacoes": [],
+  "audit_arquivos": [
+    {
+      "id": 1,
+      "audit_id": 1,
+      "caminho": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\exports\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.docx",
+      "quarentena": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\exports\\excluidos\\6cbedfc8475249af8afb1d3cff7fd80b\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.docx",
+      "sha256": "f834baf76c751a3a592cf59b168e988999db5ea29fad030ca855c9bb05249fd5",
+      "estado": "QUARENTENA",
+      "detalhe": ""
+    },
+    {
+      "id": 2,
+      "audit_id": 1,
+      "caminho": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\exports\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.pdf",
+      "quarentena": "C:\\Users\\alpereira\\Documents\\MPC-PORTARIAS\\exports\\excluidos\\6cbedfc8475249af8afb1d3cff7fd80b\\Portaria_PROGE_009_2026_Substituicao_Bradson_por_Sheyla.pdf",
+      "sha256": "3d3a4cfc24d1610b0e0e33684e450066b813ebd1a1e3a567eee8db13f14690d2",
+      "estado": "QUARENTENA",
+      "detalhe": ""
+    }
+  ],
+  "integridade": "ok",
+  "foreign_key_check": [],
+  "versao": 2,
+  "proxima_numeracao": "9/2026",
+  "referencias_inalteradas": true
+}
