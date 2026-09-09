@@ -17,8 +17,14 @@ class PdfUnavailable(RuntimeError):
 
 
 def libreoffice_path():
-    candidates = [os.environ.get("MPC_LIBREOFFICE", ""), shutil.which("soffice")]
-    for key in ("PROGRAMFILES", "PROGRAMFILES(X86)"):
+    candidates = [
+        os.environ.get("MPC_LIBREOFFICE", ""),
+        shutil.which("libreoffice"),
+        shutil.which("soffice"),
+    ]
+    if sys.platform.startswith("linux"):
+        candidates.extend(("/usr/bin/libreoffice", "/usr/bin/soffice"))
+    for key in ("PROGRAMFILES", "PROGRAMFILES(X86)") if sys.platform == "win32" else ():
         if os.environ.get(key):
             candidates.append(
                 str(Path(os.environ[key]) / "LibreOffice/program/soffice.exe")
@@ -32,6 +38,9 @@ def convert(content, engine="auto"):
     assert_docx_clean(content)
     if engine not in ("auto", "word", "libreoffice"):
         raise ValueError("Mecanismo PDF inválido.")
+    # A Windows configuration may accompany the database when deployed on Linux.
+    if sys.platform.startswith("linux"):
+        engine = "libreoffice"
     failures = []
     with TemporaryDirectory(prefix="mpc_pdf_") as temp:
         folder = Path(temp)
@@ -86,8 +95,14 @@ def convert(content, engine="auto"):
                         capture_output=True,
                         timeout=55,
                         check=True,
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                        creationflags=(
+                            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                            if sys.platform == "win32"
+                            else 0
+                        ),
                     )
+                    if not target.is_file():
+                        raise ValueError("LibreOffice não criou o arquivo PDF")
                     result = target.read_bytes()
                     if not result.startswith(b"%PDF-"):
                         raise ValueError("Saída LibreOffice inválida")
@@ -95,7 +110,19 @@ def convert(content, engine="auto"):
                 except (OSError, ValueError, subprocess.SubprocessError):
                     LOG.exception("Conversão LibreOffice indisponível")
                     failures.append("LibreOffice falhou ao converter")
+            else:
+                failures.append(
+                    "LibreOffice não instalado ou executável não encontrado"
+                )
         detail = "; ".join(failures)
+        if sys.platform.startswith("linux"):
+            raise PdfUnavailable(
+                "Não foi possível gerar o PDF com LibreOffice headless. "
+                + detail
+                + ". "
+                "No Streamlit Community Cloud, inclua libreoffice-writer no packages.txt "
+                "e reimplante o aplicativo. O DOCX permanece disponível."
+            )
         raise PdfUnavailable(
             "A geração de PDF requer Microsoft Word ou LibreOffice funcionando neste computador. O DOCX permanece disponível."
             + (" " + detail + "." if detail else "")

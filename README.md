@@ -10,7 +10,7 @@ Execute `Iniciar_MPC.cmd` ou, no PowerShell aberto nesta pasta:
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Abra http://127.0.0.1:8501. Para encerrar, pressione Ctrl+C no terminal. O servidor aceita conexões somente do próprio computador.
+Abra http://127.0.0.1:8502. Para encerrar, pressione Ctrl+C no terminal. O servidor aceita conexões somente do próprio computador.
 
 ## Instalação em outro computador
 
