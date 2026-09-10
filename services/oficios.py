@@ -39,8 +39,35 @@ SERIES = {
         "Ofício BTLC-MPC-PB nº {numero}/{ano}",
         2,
     ),
-    "Luciano Andrade Farias": ("LAF", "", "", 0),
+    **{
+        name: (code, "PROGE", f"Ofício MPC/PB - {code} n. {{numero}}/{{ano}}", 3)
+        for code, name in (
+            ("SBBQ", "Sheyla Barreto Braga de Queiroz"),
+            ("IBMF", "Isabella Barbosa Marinho Falcão"),
+            ("MTFF", "Marcílio Toscano Franca Filho"),
+            ("LAF", "Luciano Andrade Farias"),
+            ("MASN", "Manoel Antonio dos Santos Neto"),
+        )
+    },
 }
+GABINETES = ("PROGE", "SBBQ", "IBMF", "MTFF", "BTLC", "LAF", "MASN")
+
+
+def fingerprint(record, series, context=None):
+    """Bind preview to editable values, institutional configuration and editor context."""
+    import hashlib
+    import json
+
+    return hashlib.sha256(
+        json.dumps(
+            [record, series, context],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 BASELINES = {("PROGE", 2025): 21, ("PROGE", 2026): 8, ("BTLC", 2026): 2}
 MONTHS = (
     "janeiro",

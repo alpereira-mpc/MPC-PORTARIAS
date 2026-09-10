@@ -264,12 +264,10 @@ def test_series_unconfirmed(store):
     s = ready(store)
     laf = next(x for x in s.series() if x["sigla"] == "LAF")
     identifier = s.save(sample(s, laf["membro_id"]))
-    s.confirm_sequence("LAF", 2026, 1, True)
     with pytest.raises(ValueError):
         s.finalize(identifier, files)
-    s.configure_series(
-        laf["membro_id"], "LAF", "BTLC", "Ofício LAF nº {numero}/{ano}", 2, True
-    )
+    assert laf["modelo"] == "PROGE"
+    s.confirm_sequence("LAF", 2026, 1, True)
     assert s.finalize(identifier, files)["numero"] == 1
     with pytest.raises(ValueError):
         s.configure_series(
@@ -294,6 +292,7 @@ def test_home_and_oficios_navigation(store, monkeypatch):
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_oficios").click().run()
+    app.button(key="gabinete_PROGE").click().run()
     assert not app.exception and not app.error
     for page in [
         "Novo Ofício",
@@ -474,6 +473,7 @@ def test_editor_save_reopen_finalize_ui(store, monkeypatch):
     monkeypatch.setattr("document_generator.oficios.official_documents", files)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_oficios").click().run()
+    app.button(key="gabinete_PROGE").click().run()
     app.radio(key="oficio_page").set_value("Novo Ofício").run()
     for label, value in [
         ("Assunto", "Assunto UI"),
@@ -491,6 +491,8 @@ def test_editor_save_reopen_finalize_ui(store, monkeypatch):
     app.button(key="open_oficio_" + identifier).click().run()
     app.button(key="edit_" + identifier).click().run()
     assert app.radio(key="oficio_page").value == "Novo Ofício"
+    assert next(x for x in app.button if x.label == "Finalizar e gerar ofício").disabled
+    next(x for x in app.button if x.label == "Pré-visualizar DOCX").click().run()
     next(x for x in app.button if x.label == "Finalizar e gerar ofício").click().run()
     assert not app.exception and not app.error
     assert s.get(identifier)["numero"] == 8

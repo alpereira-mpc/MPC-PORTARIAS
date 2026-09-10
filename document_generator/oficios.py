@@ -7,16 +7,29 @@ import re
 from docx import Document
 from docx.text.paragraph import Paragraph
 from docx.shared import Pt
-from services.oficios import long_date, safe_name
+from services.oficios import GABINETES, long_date, safe_name
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def template_path(series):
+    """A future cabinet package replaces its fallback without numbering changes."""
+    folder = ROOT / "templates" / "oficios"
+    code = series["sigla"]
+    own = folder / f"{code}.docx" if code in GABINETES else None
+    if own is not None and own.is_file():
+        return own
+    model = series["modelo"]
+    if model not in ("PROGE", "BTLC"):
+        raise ValueError("Confirme o modelo institucional desta série.")
+    return folder / f"{model}.docx"
 
 
 def generate(record, series, number=None):
     model = series["modelo"]
     if model not in ("PROGE", "BTLC"):
         raise ValueError("Confirme o modelo institucional desta série.")
-    doc = Document(ROOT / "templates" / "oficios" / f"{model}.docx")
+    doc = Document(template_path(series))
     number_text = (
         str(number).zfill(series["digitos"]) if number is not None else "RASCUNHO"
     )
@@ -35,7 +48,9 @@ def generate(record, series, number=None):
         "role": record.get("cargo", ""),
         "unit": record.get("unidade", ""),
         "institution": record.get("instituicao", ""),
-        "subject": "Assunto: " + record["assunto"],
+        "subject": "Assunto: "
+        + record["assunto"]
+        + ("\nReferência: " + record["referencia"] if record.get("referencia") else ""),
         "vocative": record.get("vocativo", ""),
         "body": record.get("corpo", ""),
         "closing": record.get("fechamento", "Atenciosamente,"),
@@ -46,7 +61,11 @@ def generate(record, series, number=None):
         if not p.text:
             continue
         key = p.text.strip("{}")
-        chunks = re.split(r"\n\s*\n", values[key]) if key == "body" else [values[key]]
+        chunks = (
+            re.split(r"\r?\n+", values[key])
+            if key in ("body", "subject")
+            else [values[key]]
+        )
         if not chunks[0] and key in (
             "treatment",
             "name",
@@ -85,6 +104,12 @@ def generate(record, series, number=None):
             if key in ("signature", "closing"):
                 target.paragraph_format.keep_with_next = True
             previous = target
+    # Empty paragraphs after the signature can spill onto an otherwise blank page.
+    while doc.paragraphs and not doc.paragraphs[-1].text.strip():
+        tail = doc.paragraphs[-1]._p
+        if tail.xpath(".//w:drawing | .//w:sectPr"):
+            break
+        tail.getparent().remove(tail)
     out = BytesIO()
     doc.save(out)
     return out.getvalue()

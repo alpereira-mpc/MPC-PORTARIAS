@@ -2,7 +2,15 @@
 
 from datetime import date
 import streamlit as st
-from services.oficios import open_service, SENT, RECEIVED, attention, suggest_vocative
+from services.oficios import (
+    open_service,
+    SENT,
+    RECEIVED,
+    attention,
+    suggest_vocative,
+    GABINETES,
+    fingerprint,
+)
 from services.ui_store import display_store
 
 
@@ -10,10 +18,12 @@ from services.ui_store import display_store
 def cached_metadata(key, operation, arguments, _service):
     if operation == "list":
         return _service.list(**dict(arguments))
-    return _service.overview(arguments)
+    return _service.overview(*arguments)
 
 
 def read_list(service, **kwargs):
+    if st.session_state.get("oficio_gabinete_member"):
+        kwargs["member"] = st.session_state["oficio_gabinete_member"]
     if service.store.backend != "postgresql":
         return service.list(**kwargs)
     key = (
@@ -24,10 +34,11 @@ def read_list(service, **kwargs):
 
 
 def read_overview(service, year):
+    member = st.session_state.get("oficio_gabinete_member")
     if service.store.backend != "postgresql":
-        return service.overview(year)
+        return service.overview(year, member)
     key = (service.store.read_cache_key(("oficios",)), date.today().isoformat())
-    return cached_metadata(key, "overview", year, service)
+    return cached_metadata(key, "overview", (year, member), service)
 
 
 def done(message):
@@ -40,12 +51,12 @@ def label(r):
 
 
 def configuration(service, people):
-    with st.expander("Séries e configuração inicial das sequências"):
+    with st.expander("Configuração administrativa da numeração"):
         st.caption(
             "As referências são sugestões incompletas. Confirme o próximo número oficialmente disponível antes de finalizar."
         )
         series = service.series()
-        sigla = st.selectbox("Série", [s["sigla"] for s in series])
+        sigla = st.session_state["oficio_gabinete"]
         year = st.number_input("Ano da sequência", 1000, 9999, date.today().year)
         seq = service.sequence(sigla, year) if sigla else {"proximo": 1}
         with st.form("oficio_sequence"):
@@ -69,119 +80,163 @@ def configuration(service, people):
         if submit:
             service.confirm_sequence(sigla, year, number, confirmed)
             done("Sequência confirmada.")
+        current = next(s for s in series if s["sigla"] == sigla)
         with st.form("oficio_series"):
-            member = st.selectbox(
-                "Membro da série", list(people), format_func=lambda x: people[x]["nome"]
+            st.caption(
+                "Modelo do gabinete — configurações de documentos já emitidos são preservadas."
             )
-            code = st.text_input("Sigla comprovada")
-            model = st.selectbox("Pacote institucional", ["PROGE", "BTLC"])
-            heading = st.text_input("Cabeçalho com {numero} e {ano}")
-            digits = st.number_input("Quantidade mínima de dígitos", 1, 6, 3)
-            confirmed = st.checkbox(
-                "Conferi a sigla e o padrão institucional deste membro"
+            model = st.selectbox(
+                "Pacote institucional",
+                ["PROGE", "BTLC"],
+                index=1 if current["modelo"] == "BTLC" else 0,
             )
-            submit = st.form_submit_button("Salvar configuração da série")
-        if submit:
+            heading = st.text_input(
+                "Cabeçalho com {numero} e {ano}", current["cabecalho"]
+            )
+            digits = st.number_input(
+                "Quantidade mínima de dígitos", 1, 6, max(1, current["digitos"])
+            )
+            confirmed_model = st.checkbox(
+                "Conferi o padrão institucional deste gabinete"
+            )
+            submit_model = st.form_submit_button("Salvar modelo do gabinete")
+        if submit_model:
             service.configure_series(
-                member, code.strip().upper(), model, heading, digits, confirmed
+                current["membro_id"], sigla, model, heading, digits, confirmed_model
             )
-            done("Série configurada.")
+            st.session_state.pop("oficio_preview", None)
+            done("Modelo do gabinete configurado.")
+
+
+def reset_editor():
+    for key in list(st.session_state):
+        if key.startswith("oficio_input_") or key in (
+            "oficio_edit",
+            "oficio_preview",
+            "oficio_final",
+            "oficio_detail",
+            "oficio_day",
+            "oficio_member",
+        ):
+            st.session_state.pop(key, None)
+
+
+def switch_gabinete(code=None, member=None):
+    reset_editor()
+    st.session_state["oficio_gabinete"] = code
+    st.session_state["oficio_gabinete_member"] = member
+    st.session_state["oficio_page"] = "Visão Geral"
 
 
 def editor(service, people):
     identifier = st.session_state.get("oficio_edit")
+    member = st.session_state["oficio_gabinete_member"]
+    series = next(s for s in service.series() if s["membro_id"] == member)
+    final = st.session_state.get("oficio_final")
+    if final:
+        st.success("Ofício finalizado com sucesso.")
+        st.write(
+            f"Ofício {series['sigla']} nº {str(final['numero']).zfill(series['digitos'])}/{final['ano']}"
+        )
+        for f in service.files(final["id"]):
+            st.download_button(
+                "Baixar "
+                + ("PDF" if f["tipo"] == "application/pdf" else "DOCX")
+                + " oficial",
+                service.download(f["id"]),
+                f["nome"],
+                mime=f["tipo"],
+            )
+        st.button(
+            "Ver em Enviados",
+            on_click=lambda: st.session_state.update(oficio_page="Enviados"),
+        )
+        st.button("Iniciar outro rascunho", on_click=reset_editor)
+        return
     seed = service.get(identifier) if identifier else {}
-    if identifier:
-        st.info("Editando rascunho salvo.")
-    member = st.selectbox(
-        "Remetente / signatário",
-        list(people),
-        index=(
-            list(people).index(seed["membro_id"])
-            if seed and seed["membro_id"] in people
-            else 0
-        ),
-        format_func=lambda x: people[x]["nome"],
-        key="oficio_member",
-    )
+    if seed and (seed["membro_id"] != member or seed["status"] != "Rascunho"):
+        raise ValueError(
+            "Rascunho não pertence ao gabinete atual ou já foi finalizado."
+        )
+    st.write(f"NOVO OFÍCIO — {series['sigla']}")
+    st.caption(people[member]["nome"])
     day = st.date_input(
         "Data do ofício",
         date.fromisoformat(seed["data"]) if seed else date.today(),
         format="DD/MM/YYYY",
         key="oficio_day",
     )
-    series = next((s for s in service.series() if s["membro_id"] == member), None)
-    if series:
-        seq = service.sequence(series["sigla"], day.year)
-        st.caption(
-            f"Série {series['sigla']} · próximo previsto: {seq['proximo']} / {day.year} · "
-            + (
-                "sequência confirmada"
-                if seq["confirmada"]
-                else "confirmação inicial pendente"
-            )
+    seq = service.sequence(series["sigla"], day.year)
+    st.caption(
+        f"Próximo número previsto: {str(seq['proximo']).zfill(series['digitos'])}/{day.year}"
+        + ("" if seq["confirmada"] else " · confirmação administrativa pendente")
+    )
+    options = [
+        "A Sua Excelência o Senhor",
+        "A Sua Excelência a Senhora",
+        "Ao Senhor",
+        "À Senhora",
+        "Outro",
+    ]
+    treatment = st.selectbox(
+        "Forma de tratamento",
+        options,
+        index=(
+            options.index(seed["tratamento"])
+            if seed.get("tratamento") in options
+            else (4 if seed.get("tratamento") else 0)
+        ),
+        key="oficio_input_treatment",
+    )
+    if treatment == "Outro":
+        treatment = st.text_input(
+            "Tratamento livre", seed.get("tratamento", ""), key="oficio_input_custom"
         )
-    else:
-        st.warning(
-            "Este membro ainda não possui série configurada. É possível salvar rascunho."
+    record = {
+        "direcao": "ENVIADO",
+        "membro_id": member,
+        "data": day.isoformat(),
+        "tratamento": treatment,
+    }
+    for field, title in [
+        ("destinatario", "Nome do destinatário"),
+        ("cargo", "Cargo"),
+        ("unidade", "Órgão/Unidade"),
+        ("instituicao", "Instituição"),
+        ("assunto", "Assunto"),
+        ("referencia", "Referência (opcional)"),
+    ]:
+        record[field] = st.text_input(
+            title, seed.get(field, ""), key="oficio_input_" + field
         )
-    with st.form("oficio_editor"):
-        options = [
-            "A Sua Excelência o Senhor",
-            "A Sua Excelência a Senhora",
-            "Ao Senhor",
-            "À Senhora",
-            "Outro",
-        ]
-        treatment = st.selectbox(
-            "Forma de tratamento",
-            options,
-            index=(
-                options.index(seed.get("tratamento"))
-                if seed.get("tratamento") in options
-                else 0
-            ),
-        )
-        custom = st.text_input(
-            "Tratamento livre (se Outro)",
-            seed.get("tratamento", "") if seed.get("tratamento") not in options else "",
-        )
-        record = {"direcao": "ENVIADO", "membro_id": member, "data": day.isoformat()}
+    record["vocativo"] = st.text_input(
+        "Vocativo (editável)",
+        seed.get("vocativo", suggest_vocative(treatment, record["cargo"])),
+        key="oficio_input_vocativo",
+    )
+    record["corpo"] = st.text_area(
+        "Corpo do ofício — cada linha forma um parágrafo",
+        seed.get("corpo", ""),
+        height=250,
+        key="oficio_input_corpo",
+    )
+    with st.expander("Informações complementares"):
         for field, title in [
-            ("destinatario", "Nome do destinatário"),
-            ("cargo", "Cargo"),
-            ("unidade", "Órgão/Unidade"),
-            ("instituicao", "Instituição"),
-            ("assunto", "Assunto"),
             ("processo", "Processo relacionado"),
             ("procedimento", "Procedimento/inquérito"),
-            ("referencia", "Ofício de referência"),
+            ("fechamento", "Fechamento"),
+            ("titulo_assinatura", "Título institucional da assinatura (opcional)"),
         ]:
-            record[field] = st.text_input(title, seed.get(field, ""))
-        record["vocativo"] = st.text_input(
-            "Vocativo (editável)",
-            seed.get("vocativo", suggest_vocative(treatment, seed.get("cargo", ""))),
-        )
-        record["corpo"] = st.text_area(
-            "Corpo do ofício — separe parágrafos com linha em branco",
-            seed.get("corpo", ""),
-            height=250,
-        )
-        record["fechamento"] = st.text_input(
-            "Fechamento", seed.get("fechamento", "Atenciosamente,")
-        )
-        record["titulo_assinatura"] = st.text_input(
-            "Título institucional da assinatura (opcional)",
-            seed.get("titulo_assinatura", ""),
-        )
+            record[field] = st.text_input(
+                title,
+                seed.get(field, "Atenciosamente," if field == "fechamento" else ""),
+                key="oficio_input_" + field,
+            )
         related_search = st.text_input(
-            "Pesquisar recebido para vincular (salve o rascunho para atualizar a pesquisa)"
+            "Pesquisar recebido para vincular", key="oficio_input_search"
         )
         received = read_list(
-            service,
-            direction="RECEBIDO",
-            search=st.session_state.get("oficio_related_search", ""),
-            limit=200,
+            service, direction="RECEBIDO", search=related_search, limit=200
         )
         choices = {r["id"]: label(r) for r in received}
         if seed.get("responde_a") and seed["responde_a"] not in choices:
@@ -195,42 +250,78 @@ def editor(service, people):
                 else 0
             ),
             format_func=lambda x: choices[x] if x else "Não",
+            key="oficio_input_related",
         )
-        record["observacoes"] = st.text_area("Observações", seed.get("observacoes", ""))
-        save = st.form_submit_button("Salvar rascunho")
-        preview = st.form_submit_button("Pré-visualizar DOCX")
-    record["tratamento"] = custom if treatment == "Outro" else treatment
-    if save:
-        st.session_state["oficio_edit"] = service.save(record, identifier)
-        st.session_state["oficio_related_search"] = related_search
+        record["observacoes"] = st.text_area(
+            "Observações", seed.get("observacoes", ""), key="oficio_input_observacoes"
+        )
+    document = {
+        **record,
+        "signatario": people[member]["nome"],
+        "cargo_base": people[member]["cargo_base"],
+    }
+    current = fingerprint(document, series, [series["sigla"], identifier])
+    st.write("CONFERÊNCIA E FINALIZAÇÃO")
+    if st.button("Salvar rascunho"):
+        saved = service.save(record, identifier)
+        st.session_state["oficio_edit"] = saved
+        # Saving the same form must not lose an already checked preview.
+        preview = st.session_state.get("oficio_preview")
+        if preview and preview["fingerprint"] == current:
+            preview["fingerprint"] = fingerprint(
+                document, series, [series["sigla"], saved]
+            )
         done("Rascunho salvo sem consumir número.")
-    if preview:
+    a, b = st.columns(2)
+    docx_requested = a.button("Pré-visualizar DOCX")
+    pdf_requested = b.button("Pré-visualizar PDF")
+    if docx_requested or pdf_requested:
         from document_generator.oficios import generate
+        from document_generator.pdf import convert
         from services.oficios import validate
 
-        validate(record)
-        if not series or not series["modelo"]:
-            raise ValueError("Configure um modelo para a prévia.")
-        content = generate(
-            {
-                **record,
-                "signatario": people[member]["nome"],
-                "cargo_base": people[member]["cargo_base"],
-            },
-            series,
+        validate(record, official=True)
+        preview = st.session_state.get("oficio_preview")
+        if not preview or preview["fingerprint"] != current:
+            preview = {"fingerprint": current, "docx": generate(document, series)}
+        if pdf_requested:
+            preview["pdf"], _ = convert(preview["docx"])
+        st.session_state["oficio_preview"] = preview
+    preview = st.session_state.get("oficio_preview")
+    valid = bool(preview and preview["fingerprint"] == current)
+    if preview and not valid:
+        st.warning(
+            "Os dados foram alterados após a última prévia. Gere uma nova prévia antes de finalizar."
         )
-        st.download_button("Baixar prévia sem número oficial", content, "RASCUNHO.docx")
+    if valid:
+        st.success("✓ Prévia gerada. Confira o documento.")
+        st.download_button("Baixar prévia DOCX", preview["docx"], "RASCUNHO.docx")
+        if preview.get("pdf"):
+            st.download_button(
+                "Abrir/Baixar prévia PDF",
+                preview["pdf"],
+                "RASCUNHO.pdf",
+                mime="application/pdf",
+            )
+    if st.button("Finalizar e gerar ofício", type="primary", disabled=not valid):
+        from services.oficios import validate
+
+        validate(record, official=True)
+        if not valid:
+            raise ValueError("Gere uma nova prévia antes de finalizar.")
+        identifier = service.save(record, identifier)
+        st.session_state["oficio_edit"] = identifier
+        # Update the context after assigning a draft ID; failures remain retryable.
+        preview["fingerprint"] = fingerprint(
+            document, series, [series["sigla"], identifier]
+        )
+        final = service.finalize_reviewed(
+            identifier, document, series, preview["fingerprint"]
+        )
+        st.session_state["oficio_final"] = final
+        st.rerun()
     if identifier:
-        if st.button("Finalizar e gerar ofício", type="primary"):
-            service.finalize(identifier)
-            st.session_state.pop("oficio_edit", None)
-            done("Ofício finalizado. DOCX e PDF disponíveis em Enviados.")
-        st.caption(
-            "A finalização usa o rascunho salvo. Salve alterações antes de finalizar."
-        )
-        if st.button("Iniciar outro rascunho"):
-            st.session_state.pop("oficio_edit", None)
-            done("Novo rascunho.")
+        st.button("Iniciar outro rascunho", on_click=reset_editor)
 
 
 def received_form(service, people):
@@ -252,11 +343,7 @@ def received_form(service, people):
             r["data_recebimento"] = st.date_input(
                 "Data de recebimento", format="DD/MM/YYYY"
             ).isoformat()
-            r["membros"] = st.multiselect(
-                "Destinatários internos",
-                list(people),
-                format_func=lambda x: people[x]["nome"],
-            )
+            r["membros"] = [st.session_state["oficio_gabinete_member"]]
             due = st.date_input("Prazo opcional", value=None, format="DD/MM/YYYY")
             r["prazo"] = due.isoformat() if due else None
             r["status"] = st.selectbox("Status inicial", RECEIVED)
@@ -273,6 +360,7 @@ def received_form(service, people):
 
 
 def edit_draft(identifier):
+    reset_editor()
     st.session_state["oficio_edit"] = identifier
     st.session_state["oficio_page"] = "Novo Ofício"
     for key in ("oficio_member", "oficio_day"):
@@ -349,6 +437,25 @@ def details(service, r):
             service.delete_draft(r["id"], confirmed)
             done("Rascunho excluído.")
     elif r["status"] != "Cancelado":
+        if r["status"] == "Gerado":
+            with st.expander("Excluir definitivamente"):
+                reason = st.text_area("Motivo obrigatório", key="reason_" + r["id"])
+                acknowledged = st.checkbox(
+                    "Estou ciente de que este Ofício será excluído e sua numeração poderá ser reutilizada.",
+                    key="ack_" + r["id"],
+                )
+                typed = st.text_input("Digite EXCLUIR", key="typed_" + r["id"])
+                confirmed = st.checkbox(
+                    "Confirmação final da exclusão definitiva",
+                    key="final_delete_" + r["id"],
+                )
+                if st.button("Excluir definitivamente", key="purge_" + r["id"]):
+                    service.delete_generated(
+                        r["id"], reason, acknowledged, typed, confirmed
+                    )
+                    done(
+                        "Ofício preservado em quarentena e número liberado para reutilização."
+                    )
         with st.form("status_" + r["id"]):
             choices = [
                 s
@@ -388,16 +495,8 @@ def listing(service, people, direction=None, tracking=False):
         a, b, c = st.columns(3)
         with a:
             search = st.text_input("Pesquisa textual")
-            member = st.selectbox(
-                "Procurador",
-                [None, *people],
-                format_func=lambda x: people[x]["nome"] if x else "Todos",
-            )
-            series = st.selectbox(
-                "Série do filtro",
-                [None, *[s["sigla"] for s in service.series()]],
-                format_func=lambda x: x or "Todas",
-            )
+            member = st.session_state["oficio_gabinete_member"]
+            series = None
         with b:
             status = st.selectbox(
                 "Status",
@@ -462,7 +561,6 @@ def listing(service, people, direction=None, tracking=False):
 def render():
     from database.store import Store
 
-    st.subheader("Ofícios — Geração e Controle")
     try:
         service = open_service(display_store(Store()))
         people = {
@@ -471,6 +569,27 @@ def render():
         if not people:
             st.warning("Cadastre um membro ativo na base de procuradores.")
             return
+        offices = {s["sigla"]: s for s in service.series() if s["membro_id"] in people}
+        selected = st.session_state.get("oficio_gabinete")
+        if selected not in offices:
+            st.subheader("Ofícios — Geração e Controle")
+            st.write("Selecione o gabinete")
+            for code in GABINETES:
+                if code in offices:
+                    office = offices[code]
+                    st.button(
+                        f"{code} — {office['nome']}",
+                        key="gabinete_" + code,
+                        on_click=switch_gabinete,
+                        args=(code, office["membro_id"]),
+                        use_container_width=True,
+                    )
+            return
+        office = offices[selected]
+        st.session_state["oficio_gabinete_member"] = office["membro_id"]
+        st.subheader(f"OFÍCIOS — GABINETE {selected}")
+        st.caption(office["nome"])
+        st.button("← Trocar gabinete", on_click=switch_gabinete)
         page = st.radio(
             "Ofícios",
             ["Visão Geral", "Novo Ofício", "Enviados", "Recebidos", "Acompanhamento"],
@@ -480,6 +599,11 @@ def render():
         if st.session_state.get("oficio_message"):
             st.success(st.session_state.pop("oficio_message"))
         if page == "Visão Geral":
+            st.button(
+                "Novo Ofício",
+                on_click=lambda: st.session_state.update(oficio_page="Novo Ofício"),
+                type="primary",
+            )
             values = read_overview(service, date.today().year)
             labels = [
                 "Enviados no ano",
@@ -493,6 +617,10 @@ def render():
                 with col:
                     st.metric(title, value)
             configuration(service, people)
+            st.write("Últimas movimentações")
+            for row in read_list(service, limit=5):
+                st.write(label(row))
+                st.caption(row["status"] + " · " + row["atualizada"][:10])
         elif page == "Novo Ofício":
             editor(service, people)
         elif page == "Recebidos":

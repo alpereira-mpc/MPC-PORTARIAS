@@ -4,7 +4,7 @@ The existing PostgreSQL connection holds a schema advisory transaction lock;
 SQLite BEGIN IMMEDIATE provides the equivalent serialized writer transaction.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import json
 import re
 import uuid
@@ -32,7 +32,7 @@ class OficiosStore:
         # Read-only fast path on subsequent reruns; no DDL/writer lock after migration.
         with self.store.connection(read_only=True) as c:
             if c.execute(
-                "SELECT valor FROM configuracoes WHERE chave='oficios_schema_v1'"
+                "SELECT valor FROM configuracoes WHERE chave='oficios_schema_v2'"
             ).fetchone():
                 return
         binary = "BYTEA" if self.store.backend == "postgresql" else "BLOB"
@@ -50,6 +50,8 @@ class OficiosStore:
                 "CREATE INDEX IF NOT EXISTS oficio_arquivo_idx ON oficio_arquivos(oficio_id)",
                 "CREATE INDEX IF NOT EXISTS oficio_movimento_idx ON oficio_movimentacoes(oficio_id,instante)",
                 "CREATE INDEX IF NOT EXISTS oficio_membro_idx ON oficio_destinatarios(membro_id,oficio_id)",
+                "CREATE TABLE IF NOT EXISTS oficio_numeros_liberados (serie TEXT NOT NULL REFERENCES oficio_series(sigla), ano INTEGER NOT NULL, numero INTEGER NOT NULL CHECK(numero>0), PRIMARY KEY(serie,ano,numero))",
+                f"CREATE TABLE IF NOT EXISTS oficio_quarentena (id TEXT PRIMARY KEY, instante TEXT NOT NULL, motivo TEXT NOT NULL, dados TEXT NOT NULL, arquivos {binary} NOT NULL)",
             ]:
                 c.execute(statement)
             people = [dict(r) for r in c.execute("SELECT id,nome FROM procuradores")]
@@ -62,8 +64,15 @@ class OficiosStore:
                         "INSERT INTO oficio_series VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING",
                         (sigla, matches[0]["id"], modelo, heading, digits),
                     )
+                    c.execute(
+                        "UPDATE oficio_series SET modelo=?,cabecalho=?,digitos=? WHERE sigla=? AND modelo='' AND cabecalho='' AND NOT EXISTS (SELECT 1 FROM oficios WHERE serie=? AND numero IS NOT NULL)",
+                        (modelo, heading, digits, sigla, sigla),
+                    )
             c.execute(
                 "INSERT INTO configuracoes VALUES('oficios_schema_v1','1') ON CONFLICT DO NOTHING"
+            )
+            c.execute(
+                "INSERT INTO configuracoes VALUES('oficios_schema_v2','1') ON CONFLICT DO NOTHING"
             )
 
     def series(self):
@@ -121,8 +130,13 @@ class OficiosStore:
                 "SELECT proximo FROM oficio_sequencias WHERE serie=? AND ano=?",
                 (series, year),
             ).fetchone()
+            released = c.execute(
+                "SELECT MIN(numero) FROM oficio_numeros_liberados WHERE serie=? AND ano=?",
+                (series, year),
+            ).fetchone()[0]
             return {
-                "proximo": row["proximo"] if row else BASELINES.get((series, year), 1),
+                "proximo": released
+                or (row["proximo"] if row else BASELINES.get((series, year), 1)),
                 "confirmada": bool(row),
             }
 
@@ -166,9 +180,18 @@ class OficiosStore:
             )
 
     def _movement(self, c, identifier, previous, status, note=""):
+        stamp = now()
+        last = c.execute(
+            "SELECT MAX(instante) FROM oficio_movimentacoes WHERE oficio_id=?",
+            (identifier,),
+        ).fetchone()[0]
+        if last and stamp <= last:
+            stamp = (
+                datetime.fromisoformat(last) + timedelta(microseconds=1)
+            ).isoformat()
         c.execute(
             "INSERT INTO oficio_movimentacoes VALUES(?,?,?,?,?,?)",
-            (uuid.uuid4().hex, identifier, now(), previous, status, note),
+            (uuid.uuid4().hex, identifier, stamp, previous, status, note),
         )
 
     def _get(self, c, identifier):
@@ -299,7 +322,20 @@ class OficiosStore:
             (uuid.uuid4().hex, identifier, name, mime, len(content), now(), content),
         )
 
-    def finalize(self, identifier, generator=None):
+    def finalize_reviewed(self, identifier, document, series, preview_hash):
+        from services.oficios import fingerprint
+
+        if not preview_hash or preview_hash != fingerprint(
+            document, series, [series["sigla"], identifier]
+        ):
+            raise ValueError("Gere uma nova prévia antes de finalizar.")
+        return self.finalize(
+            identifier, expected_record=document, expected_series=series
+        )
+
+    def finalize(
+        self, identifier, generator=None, *, expected_record=None, expected_series=None
+    ):
         from document_generator.oficios import official_documents
 
         generator = generator or official_documents
@@ -325,6 +361,19 @@ class OficiosStore:
             if not series or not series["modelo"] or not series["cabecalho"]:
                 raise ValueError("Configure a série e o modelo institucional.")
             series = dict(series)
+            record.update(signatario=member["nome"], cargo_base=member["cargo_base"])
+            if expected_record is not None and any(
+                record.get(k) != v for k, v in expected_record.items()
+            ):
+                raise ValueError(
+                    "O rascunho foi alterado. Gere uma nova prévia antes de finalizar."
+                )
+            if expected_series is not None and any(
+                series.get(k) != v for k, v in expected_series.items() if k != "nome"
+            ):
+                raise ValueError(
+                    "O modelo foi alterado. Gere uma nova prévia antes de finalizar."
+                )
             seq = c.execute(
                 "SELECT proximo FROM oficio_sequencias WHERE serie=? AND ano=?",
                 (series["sigla"], record["ano"]),
@@ -334,7 +383,11 @@ class OficiosStore:
                     "Confirme o próximo número da série/ano antes de finalizar."
                 )
             record.update(signatario=member["nome"], cargo_base=member["cargo_base"])
-            number = seq["proximo"]
+            released = c.execute(
+                "SELECT MIN(numero) FROM oficio_numeros_liberados WHERE serie=? AND ano=?",
+                (series["sigla"], record["ano"]),
+            ).fetchone()[0]
+            number = released or seq["proximo"]
             files = generator(record, series, number)
             if {x[0] for x in files} != {"docx", "pdf"} or any(not x[2] for x in files):
                 raise ValueError("A geração deve produzir DOCX e PDF.")
@@ -356,8 +409,13 @@ class OficiosStore:
             )
             c.execute(
                 "UPDATE oficio_sequencias SET proximo=? WHERE serie=? AND ano=?",
-                (number + 1, series["sigla"], record["ano"]),
+                (max(number + 1, seq["proximo"]), series["sigla"], record["ano"]),
             )
+            if released:
+                c.execute(
+                    "DELETE FROM oficio_numeros_liberados WHERE serie=? AND ano=? AND numero=?",
+                    (series["sigla"], record["ano"], number),
+                )
             self._movement(
                 c, identifier, "Rascunho", "Gerado", "DOCX e PDF persistidos"
             )
@@ -411,6 +469,79 @@ class OficiosStore:
             if r["numero"] is not None or r["status"] != "Rascunho":
                 raise ValueError("Ofício numerado deve ser cancelado.")
             self.store.event(c, "oficio_excluir_rascunho", {"id": identifier})
+            c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
+
+    def delete_generated(
+        self, identifier, reason, acknowledged=False, typed="", confirmed=False
+    ):
+        """Quarantine and release atomically, retaining evidence independently of FKs."""
+        import base64
+
+        if (
+            not reason.strip()
+            or not acknowledged
+            or typed != "EXCLUIR"
+            or not confirmed
+        ):
+            raise ValueError(
+                "Informe motivo e todas as confirmações da exclusão definitiva."
+            )
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            record = self._get(c, identifier)
+            history = [
+                dict(r)
+                for r in c.execute(
+                    "SELECT * FROM oficio_movimentacoes WHERE oficio_id=?",
+                    (identifier,),
+                )
+            ]
+            if (
+                record["direcao"] != "ENVIADO"
+                or record["status"] != "Gerado"
+                or record["numero"] is None
+                or record.get("data_envio")
+                or any(r["novo"] not in ("Rascunho", "Gerado") for r in history)
+                or c.execute(
+                    "SELECT id FROM oficios WHERE responde_a=? LIMIT 1", (identifier,)
+                ).fetchone()
+            ):
+                raise ValueError(
+                    "Há envio, tramitação ou vínculo impeditivo. Use cancelamento, mantendo o número."
+                )
+            files = []
+            for row in c.execute(
+                "SELECT * FROM oficio_arquivos WHERE oficio_id=?", (identifier,)
+            ):
+                item = dict(row)
+                item["conteudo"] = base64.b64encode(bytes(item["conteudo"])).decode(
+                    "ascii"
+                )
+                files.append(item)
+            stamp = now()
+            audit = {
+                **record,
+                "gabinete": record["serie"],
+                "motivo": reason.strip(),
+                "instante": stamp,
+                "numero_liberado": True,
+                "movimentacoes": history,
+            }
+            c.execute(
+                "INSERT INTO oficio_quarentena VALUES(?,?,?,?,?)",
+                (
+                    uuid.uuid4().hex,
+                    stamp,
+                    reason.strip(),
+                    encode(audit),
+                    encode(files).encode("utf-8"),
+                ),
+            )
+            self.store.event(c, "oficio_excluir_definitivamente", audit)
+            c.execute(
+                "INSERT INTO oficio_numeros_liberados VALUES(?,?,?)",
+                (record["serie"], record["ano"], record["numero"]),
+            )
             c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
 
     def files(self, identifier):
@@ -526,12 +657,20 @@ class OficiosStore:
                     + cols
                     + " FROM oficios o"
                     + where
-                    + " ORDER BY o.data DESC,o.criada DESC,o.id LIMIT ? OFFSET ?",
+                    + (
+                        " ORDER BY CASE WHEN o.prazo<'"
+                        + date.today().isoformat()
+                        + "' THEN 0 WHEN o.prazo<='"
+                        + (date.today() + timedelta(days=7)).isoformat()
+                        + "' THEN 1 WHEN o.status='Aguardando providência' THEN 2 WHEN o.status='Aguardando resposta' THEN 3 WHEN o.status='Em análise' THEN 4 ELSE 5 END,o.prazo,o.data DESC,o.id LIMIT ? OFFSET ?"
+                        if attention_only
+                        else " ORDER BY o.atualizada DESC,o.criada DESC,o.id LIMIT ? OFFSET ?"
+                    ),
                     values + [limit, offset],
                 )
             ]
 
-    def overview(self, year):
+    def overview(self, year, member=None):
         today = date.today().isoformat()
         soon = (date.today() + timedelta(days=7)).isoformat()
         with self.store.connection(read_only=True) as c:
@@ -544,7 +683,12 @@ class OficiosStore:
     COALESCE(SUM(CASE WHEN status='Aguardando providência' THEN 1 ELSE 0 END),0) AS aguardando_providencia,
     COALESCE(SUM(CASE WHEN prazo<? AND status NOT IN ('Respondido','Concluído','Cancelado','Arquivado') THEN 1 ELSE 0 END),0) AS vencidos,
     COALESCE(SUM(CASE WHEN prazo>=? AND prazo<=? AND status NOT IN ('Respondido','Concluído','Cancelado','Arquivado') THEN 1 ELSE 0 END),0) AS proximos
-    FROM oficios""",
-                    (year, year, today, today, soon),
+    FROM oficios o"""
+                    + (
+                        " WHERE EXISTS (SELECT 1 FROM oficio_destinatarios d WHERE d.oficio_id=o.id AND d.membro_id=?)"
+                        if member
+                        else ""
+                    ),
+                    (year, year, today, today, soon) + ((member,) if member else ()),
                 ).fetchone()
             )
