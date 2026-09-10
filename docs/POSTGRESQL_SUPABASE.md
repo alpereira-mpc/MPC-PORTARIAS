@@ -158,5 +158,52 @@ Fontes: [conexões Supabase](https://supabase.com/docs/guides/database/connectin
 
 A auditoria de performance posterior está em [PERFORMANCE_POSTGRESQL.md](PERFORMANCE_POSTGRESQL.md).
 Schema/bootstrap bem-sucedido é lembrado por processo e configuração/schema;
-`migrate()` força nova verificação idempotente. O cache de catálogos dura apenas
-um rerun e é invalidado nas escritas. SQLite, números e documentos não usam esse cache.
+`migrate()` força nova verificação idempotente. A interface PostgreSQL usa `st.cache_data` em catálogos/configurações/listagens,
+com TTL de 30 segundos, até 256 entradas e invalidação por tabela após commit.
+As estimativas exibidas de número/baseline também podem durar até 30 segundos;
+a leitura autoritativa, a reserva e a finalização sempre consultam o Store original.
+Alterações de outros processos aparecem após o TTL; escritas deste processo
+invalidam imediatamente apenas as leituras dependentes das tabelas alteradas.
+Nenhum snapshot DOCX/PDF é cacheado. SQLite usa o Store original sem esse cache.
+O pool usa `st.cache_resource`. Nova Portaria usa `st.fragment` aninhado por substituição e `session_state` para
+manter os valores editados. Trocar procurador/assento reexecuta apenas aquele bloco,
+sem consultar cache/banco nem recompor a prévia. Mudança de período que afeta uma
+substituição dependente solicita rerun para manter as datas sincronizadas.
+Ações de salvar/preparar/finalizar recompõem o formulário; evento de finalização
+com prévia desatualizada é rejeitado também no servidor. Um form envolvendo todos
+os campos não foi usado porque impediria atualizar função/base legal ao trocar titular.
+Histórico PostgreSQL usa páginas de 50 atos, filtros no servidor e índice
+`portarias_recent_idx`, criado idempotentemente na inicialização do processo.
+Detalhes só aparecem após selecionar um ato; arquivos e registro de exclusões
+só são carregados quando solicitados na tela.
+O logo é cacheado por caminho, tamanho e data de modificação; os geradores e
+os templates institucionais não foram modificados.
+
+
+### Validação da execução parcial
+
+Streamlit permanece em **1.49.1**. Foram avaliadas as
+[notas oficiais atuais](https://docs.streamlit.io/develop/quick-reference/release-notes/2026):
+virtualização de listas extensas e APIs mais recentes não são necessárias para
+os sete procuradores nem para fragmentos aninhados, já disponíveis nesta versão.
+Não houve ganho adicional demonstrado que justificasse trocar a versão e o
+comportamento de identidade dos widgets nesta entrega.
+
+Medição por WebSocket contra Streamlit real e PostgreSQL descartável em loopback,
+com cache aquecido: editor inteiro → fragmento da substituição. Procurador
+77,61→40,34 ms (Python 32,39→5,41 ms); assento 90,77→51,17 ms
+(Python 29,61→8,35 ms). Mensagens de atualização: 37→17 por troca.
+Ambos já tinham zero queries após o cache; continuam em zero e sem conexão nova.
+Navegação: Nova 106,23→105,87 ms; Histórico 105,30→74,87 ms;
+Procuradores 89,21→88,72 ms; Configurações 107,53→89,06 ms.
+Primeira abertura, uma amostra: 2316→1509 ms, incluindo conexão inicial.
+Esses tempos não medem pintura do navegador nem latência real do Cloud.
+O modo anterior foi reproduzido desligando somente o fragmento interno na
+instrumentação descartável. Resultados: `tmp/live-fragment-results.json`.
+A comparação acumulada desde o início da otimização permanece nos arquivos
+`tmp/navigation-aggressive-before.json` e `tmp/navigation-aggressive-after.json`.
+
+Validação final desta entrega: **229 testes aprovados, zero falhas e zero pulados**,
+em 84,11 s, incluindo SQLite, PostgreSQL descartável, concorrência, documentos,
+cache, períodos dependentes e rejeição de prévia desatualizada. JUnit:
+`tmp/pytest-portarias-complete.xml`. Nenhum commit, push ou acesso ao Supabase real.

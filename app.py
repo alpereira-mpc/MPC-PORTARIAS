@@ -6,6 +6,7 @@ from pathlib import Path
 import logging
 import streamlit as st
 from database.store import Store, ROOT
+from services.ui_store import display_store, asset
 from document_generator.docx import generate
 from document_generator.pdf import convert, PdfUnavailable
 from services.exports import setup_logging, export_record
@@ -21,10 +22,8 @@ st.set_page_config(
     page_icon=str(ROOT / "assets/logo.jpeg"),
     layout="wide",
 )
-store = Store()
-store.begin_rerun()
+store = display_store(Store())
 setup_logging(store.path.parent)
-settings = store.settings()
 # Drop document byte caches from sessions opened before this update.
 for cached_key in list(st.session_state):
     if cached_key.endswith(("filedocx", "filepdf")):
@@ -152,6 +151,7 @@ def member_editor(prefix):
 
 
 def configuration():
+    settings = store.settings()
     st.subheader("Configurações")
     st.caption(f"Versão {VERSION} · Dados armazenados neste computador")
     with st.expander("Numeração anual", expanded=True):
@@ -163,9 +163,13 @@ def configuration():
                 value=date.today().year,
             )
         )
-        current = store.next_number(year) - 1
+        current = (
+            store.display_number(year)
+            if store.backend == "postgresql"
+            else store.next_number(year)
+        ) - 1
         st.caption(
-            f"Baseline administrativo preservado: {store.baseline(year)}/{year}."
+            f"Baseline administrativo preservado: {store.display_baseline(year) if store.backend == "postgresql" else store.baseline(year)}/{year}."
         )
         suggested = (
             8 if year == 2026 and settings.get("sequence_confirmed") != "1" else current
@@ -331,6 +335,10 @@ def configuration():
 
 
 def download_record(identifier, prefix="record"):
+    if store.backend == "postgresql" and not st.checkbox(
+        "Carregar arquivos para download", key=prefix + "load_files"
+    ):
+        return
     record = store.get(identifier)
     if record["status"] == "Cancelada":
         st.warning(
@@ -366,6 +374,10 @@ def download_record(identifier, prefix="record"):
 
 def exclusion_register():
     with st.expander("Registro de exclusões"):
+        if store.backend == "postgresql" and not st.checkbox(
+            "Carregar registro de exclusões", key="load_audit"
+        ):
+            return
         entries = store.deletion_history()
         if not entries:
             st.caption("Nenhuma exclusão registrada.")
@@ -386,7 +398,7 @@ def exclusion_register():
             st.caption(
                 "O registro administrativo não ocupa numeração. Não há restauração automática nesta versão."
             )
-            with store.connection() as c:
+            with store.connection(read_only=True) as c:
                 files = [
                     dict(r)
                     for r in c.execute(
@@ -498,12 +510,17 @@ def history():
     if "history_error" in st.session_state:
         notice.error(st.session_state.pop("history_error"))
     exclusion_register()
-    records = store.history()
-    if not records:
+    paged = store.backend == "postgresql"
+    records = [] if paged else store.history()
+    years = (
+        store.history_years()
+        if paged
+        else sorted({r["ano"] for r in records}, reverse=True)
+    )
+    if not years:
         st.info("Nenhuma Portaria registrada.")
         return
     search = st.text_input("Pesquisar por nome, motivo ou texto").casefold()
-    years = sorted({r["ano"] for r in records}, reverse=True)
     year = choose("Filtrar por ano", ["Todos", *years], key="history_year")
     people = store.catalog("procuradores")
     mp = {p["id"]: p["nome"] for p in people}
@@ -513,6 +530,22 @@ def history():
         key="history_person",
         format_func=lambda i: "Todos" if not i else mp[i],
     )
+    if paged:
+        filters = (year, person, search)
+        if st.session_state.get("history_filters") != filters:
+            st.session_state["history_page"] = 0
+            st.session_state["history_filters"] = filters
+        page = st.session_state.get("history_page", 0)
+        records = store.history_page(year, person, search, page * 50)
+        previous, following = st.columns(2)
+        if previous.button("Página anterior", disabled=page == 0):
+            st.session_state["history_page"] = page - 1
+            st.rerun()
+        if following.button("Próxima página", disabled=len(records) <= 50):
+            st.session_state["history_page"] = page + 1
+            st.rerun()
+        st.caption(f"Página {page + 1} · até 50 Portarias por página")
+        records = records[:50]
     filtered = []
     rows = []
     for r in records:
@@ -528,7 +561,7 @@ def history():
             continue
         if person and person not in participants:
             continue
-        if search and search not in str(p).casefold():
+        if not paged and search and search not in str(p).casefold():
             continue
         filtered.append(r)
         for s in p["substituicoes"]:
@@ -562,7 +595,10 @@ def history():
         list(rm),
         key="history_open",
         format_func=lambda i: f"{rm[i]['numero'] or 'Rascunho'}/{rm[i]['ano']} · {rm[i]['status']} · {i[:6]}",
+        optional=paged,
     )
+    if selected is None:
+        return
     r = rm[selected]
     st.markdown(f"**{r['numero'] or 'Rascunho'}/{r['ano']} — {r['status']}**")
     st.dataframe(
@@ -598,14 +634,208 @@ def history():
     delete_controls(r)
 
 
+def substitution_fields(
+    i, old, prefix, people, functions, seats, reasons, bases, issued, previous, count
+):
+    if store.backend == "postgresql" and i:
+        previous = st.session_state.get(prefix + f"substitution_{i-1}", previous)
+    key = prefix + str(i)
+    with st.expander(f"Substituição {i+1}", expanded=True):
+        holder_id = choose(
+            "Procurador titular",
+            list(people),
+            (old.get("titular") or {}).get("id"),
+            key=key + "holder",
+            format_func=lambda j: people[j]["nome"],
+            optional=True,
+        )
+        holder = people.get(holder_id)
+        same_holder = holder_id is not None and holder_id == (
+            old.get("titular") or {}
+        ).get("id")
+        holder_key = key + str(holder_id)
+        c1, c2 = st.columns(2)
+        with c1:
+            f_default = (
+                old.get("funcao")
+                if same_holder
+                else (holder or {}).get("funcao", "Procurador")
+            )
+            function = choose(
+                "Cargo/função do titular",
+                functions,
+                f_default if f_default in functions else "Outro",
+                key=holder_key + "function",
+                format_func=lambda name: role(
+                    name, (holder or {}).get("genero", "masculino")
+                ),
+            )
+            if function == "Outro":
+                function = st.text_input(
+                    "Outra função",
+                    f_default if f_default not in functions else "",
+                    key=holder_key + "otherfunction",
+                )
+        with c2:
+            seat_default = (
+                old.get("assento")
+                if same_holder
+                else (holder or {}).get("assento", "Não se aplica")
+            )
+            seat = choose(
+                "Assento",
+                seats,
+                seat_default if seat_default in seats else "Outro",
+                key=holder_key + "seat",
+            )
+            if seat == "Outro":
+                seat = st.text_input(
+                    "Outro assento",
+                    seat_default if seat_default not in seats else "",
+                    key=holder_key + "otherseat",
+                )
+        sub_id = choose(
+            "Procurador substituto",
+            [j for j in people if j != holder_id],
+            (old.get("substituto") or {}).get("id"),
+            key=holder_key + "sub",
+            format_func=lambda j: people[j]["nome"],
+            optional=True,
+        )
+        same_period = (
+            st.checkbox(
+                "Usar o mesmo período da substituição anterior",
+                value=old.get("mesmo_periodo", False),
+                key=key + "same",
+            )
+            if i
+            else False
+        )
+        if same_period:
+            start, end = previous["inicio"], previous["fim"]
+            st.caption(start + " a " + end)
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                start = st.date_input(
+                    "Data inicial do afastamento",
+                    parsed(old.get("inicio", issued)),
+                    min_value=date(1000, 1, 1),
+                    max_value=date(9999, 12, 31),
+                    key=key + "start",
+                    format="DD/MM/YYYY",
+                ).isoformat()
+            with c2:
+                end = st.date_input(
+                    "Data final do afastamento",
+                    parsed(old.get("fim", issued)),
+                    min_value=date(1000, 1, 1),
+                    max_value=date(9999, 12, 31),
+                    key=key + "end",
+                    format="DD/MM/YYYY",
+                ).isoformat()
+        dependent = (
+            st.checkbox(
+                "Decorrente da substituição anterior",
+                value=old.get("decorrente", False),
+                key=key + "dependent",
+            )
+            if i
+            else False
+        )
+        reason_id = old.get("motivo_id")
+        if dependent:
+            reason_text = "decorrente da substituição anterior"
+        else:
+            reason_id = choose(
+                "Motivo do afastamento",
+                [*reasons, 0],
+                (
+                    reason_id
+                    if reason_id in reasons
+                    else 0 if old.get("motivo_texto") else next(iter(reasons), 0)
+                ),
+                key=key + "reason",
+                format_func=lambda j: reasons[j]["nome"] if j else "Outro",
+            )
+            reason_text = (
+                reasons[reason_id]["texto"]
+                if reason_id
+                else st.text_area(
+                    "Redação livre do motivo",
+                    old.get("motivo_texto", "") if not old.get("motivo_id") else "",
+                    key=key + "reasontext",
+                    help="Digite a expressão completa, como ela deve aparecer após o período; por exemplo: por motivo de afastamento legal.",
+                )
+            )
+        legal_key = holder_key + function
+        legal = st.text_area(
+            "Base legal sugerida — editável",
+            (
+                old.get("base_legal", "")
+                if same_holder and function == old.get("funcao")
+                else bases.get(function, {}).get("texto", "")
+            ),
+            key=legal_key + "basis",
+        )
+        note = st.text_area(
+            "Nota de rodapé — editável",
+            (
+                old.get("nota", "")
+                if same_holder and function == old.get("funcao")
+                else bases.get(function, {}).get("nota", "")
+            ),
+            key=legal_key + "note",
+        )
+        result = dict(
+            titular=holder,
+            substituto=people.get(sub_id),
+            funcao=function,
+            assento=seat,
+            inicio=start,
+            fim=end,
+            motivo_id=reason_id,
+            motivo_texto=reason_text,
+            decorrente=dependent,
+            mesmo_periodo=same_period,
+            base_legal=legal,
+            nota=note,
+        )
+
+    if store.backend == "postgresql":
+        state_key = prefix + f"substitution_{i}"
+        prior = st.session_state.get(state_key)
+        st.session_state[state_key] = result
+        preview_subs = st.session_state.get("preview", {}).get("substituicoes", [])
+        if i < len(preview_subs) and result != preview_subs[i]:
+            st.caption(
+                "Substituição alterada; prepare uma nova prévia antes de finalizar."
+            )
+        if (
+            prior
+            and (prior["inicio"], prior["fim"]) != (result["inicio"], result["fim"])
+            and not st.session_state.get(prefix + "rendering_substitutions", False)
+            and i + 1 < count
+            and st.session_state.get(prefix + str(i + 1) + "same")
+        ):
+            # A dependent period must be redrawn too; ordinary field changes stay local.
+            st.rerun()
+    return result
+
+
 def new_portaria():
+    settings = store.settings()
     st.subheader("Nova Portaria")
     if st.button("Iniciar novo formulário"):
         reset_editor()
         st.rerun()
     if st.session_state.get("last_finalized"):
         identifier = st.session_state["last_finalized"]
-        r = store.get(identifier)
+        r = (
+            store.record_summary(identifier)
+            if store.backend == "postgresql"
+            else store.get(identifier)
+        )
         st.success(
             f"Portaria {r['numero']}/{r['ano']} finalizada e preservada no histórico."
         )
@@ -637,7 +867,7 @@ def new_portaria():
         st.metric(
             "Próximo número previsto",
             (
-                f"{store.next_number(issued.year)}/{issued.year}"
+                f"{store.display_number(issued.year) if store.backend == 'postgresql' else store.next_number(issued.year)}/{issued.year}"
                 if settings.get("sequence_confirmed") == "1"
                 else "A confirmar"
             ),
@@ -687,176 +917,38 @@ def new_portaria():
     if count_key not in st.session_state:
         st.session_state[count_key] = max(1, len(seed.get("substituicoes", [])))
     subs = []
-    for i in range(st.session_state[count_key]):
-        old = (
-            seed.get("substituicoes", [])[i]
-            if i < len(seed.get("substituicoes", []))
-            else {}
-        )
-        key = prefix + str(i)
-        with st.expander(f"Substituição {i+1}", expanded=True):
-            holder_id = choose(
-                "Procurador titular",
-                list(people),
-                (old.get("titular") or {}).get("id"),
-                key=key + "holder",
-                format_func=lambda j: people[j]["nome"],
-                optional=True,
+    if store.backend == "postgresql":
+        st.session_state[prefix + "rendering_substitutions"] = True
+    try:
+        for i in range(st.session_state[count_key]):
+            old = (
+                seed.get("substituicoes", [])[i]
+                if i < len(seed.get("substituicoes", []))
+                else {}
             )
-            holder = people.get(holder_id)
-            same_holder = holder_id is not None and holder_id == (
-                old.get("titular") or {}
-            ).get("id")
-            holder_key = key + str(holder_id)
-            c1, c2 = st.columns(2)
-            with c1:
-                f_default = (
-                    old.get("funcao")
-                    if same_holder
-                    else (holder or {}).get("funcao", "Procurador")
-                )
-                function = choose(
-                    "Cargo/função do titular",
-                    functions,
-                    f_default if f_default in functions else "Outro",
-                    key=holder_key + "function",
-                    format_func=lambda name: role(
-                        name, (holder or {}).get("genero", "masculino")
-                    ),
-                )
-                if function == "Outro":
-                    function = st.text_input(
-                        "Outra função",
-                        f_default if f_default not in functions else "",
-                        key=holder_key + "otherfunction",
-                    )
-            with c2:
-                seat_default = (
-                    old.get("assento")
-                    if same_holder
-                    else (holder or {}).get("assento", "Não se aplica")
-                )
-                seat = choose(
-                    "Assento",
-                    seats,
-                    seat_default if seat_default in seats else "Outro",
-                    key=holder_key + "seat",
-                )
-                if seat == "Outro":
-                    seat = st.text_input(
-                        "Outro assento",
-                        seat_default if seat_default not in seats else "",
-                        key=holder_key + "otherseat",
-                    )
-            sub_id = choose(
-                "Procurador substituto",
-                [j for j in people if j != holder_id],
-                (old.get("substituto") or {}).get("id"),
-                key=holder_key + "sub",
-                format_func=lambda j: people[j]["nome"],
-                optional=True,
-            )
-            same_period = (
-                st.checkbox(
-                    "Usar o mesmo período da substituição anterior",
-                    value=old.get("mesmo_periodo", False),
-                    key=key + "same",
-                )
-                if i
-                else False
-            )
-            if same_period:
-                start, end = subs[-1]["inicio"], subs[-1]["fim"]
-                st.caption(start + " a " + end)
-            else:
-                c1, c2 = st.columns(2)
-                with c1:
-                    start = st.date_input(
-                        "Data inicial do afastamento",
-                        parsed(old.get("inicio", issued)),
-                        min_value=date(1000, 1, 1),
-                        max_value=date(9999, 12, 31),
-                        key=key + "start",
-                        format="DD/MM/YYYY",
-                    ).isoformat()
-                with c2:
-                    end = st.date_input(
-                        "Data final do afastamento",
-                        parsed(old.get("fim", issued)),
-                        min_value=date(1000, 1, 1),
-                        max_value=date(9999, 12, 31),
-                        key=key + "end",
-                        format="DD/MM/YYYY",
-                    ).isoformat()
-            dependent = (
-                st.checkbox(
-                    "Decorrente da substituição anterior",
-                    value=old.get("decorrente", False),
-                    key=key + "dependent",
-                )
-                if i
-                else False
-            )
-            reason_id = old.get("motivo_id")
-            if dependent:
-                reason_text = "decorrente da substituição anterior"
-            else:
-                reason_id = choose(
-                    "Motivo do afastamento",
-                    [*reasons, 0],
-                    (
-                        reason_id
-                        if reason_id in reasons
-                        else 0 if old.get("motivo_texto") else next(iter(reasons), 0)
-                    ),
-                    key=key + "reason",
-                    format_func=lambda j: reasons[j]["nome"] if j else "Outro",
-                )
-                reason_text = (
-                    reasons[reason_id]["texto"]
-                    if reason_id
-                    else st.text_area(
-                        "Redação livre do motivo",
-                        old.get("motivo_texto", "") if not old.get("motivo_id") else "",
-                        key=key + "reasontext",
-                        help="Digite a expressão completa, como ela deve aparecer após o período; por exemplo: por motivo de afastamento legal.",
-                    )
-                )
-            legal_key = holder_key + function
-            legal = st.text_area(
-                "Base legal sugerida — editável",
-                (
-                    old.get("base_legal", "")
-                    if same_holder and function == old.get("funcao")
-                    else bases.get(function, {}).get("texto", "")
-                ),
-                key=legal_key + "basis",
-            )
-            note = st.text_area(
-                "Nota de rodapé — editável",
-                (
-                    old.get("nota", "")
-                    if same_holder and function == old.get("funcao")
-                    else bases.get(function, {}).get("nota", "")
-                ),
-                key=legal_key + "note",
+            render = (
+                st.fragment(substitution_fields)
+                if store.backend == "postgresql"
+                else substitution_fields
             )
             subs.append(
-                dict(
-                    titular=holder,
-                    substituto=people.get(sub_id),
-                    funcao=function,
-                    assento=seat,
-                    inicio=start,
-                    fim=end,
-                    motivo_id=reason_id,
-                    motivo_texto=reason_text,
-                    decorrente=dependent,
-                    mesmo_periodo=same_period,
-                    base_legal=legal,
-                    nota=note,
+                render(
+                    i,
+                    old,
+                    prefix,
+                    people,
+                    functions,
+                    seats,
+                    reasons,
+                    bases,
+                    issued,
+                    subs[-1] if subs else None,
+                    st.session_state[count_key],
                 )
             )
+    finally:
+        if store.backend == "postgresql":
+            st.session_state[prefix + "rendering_substitutions"] = False
     a, b = st.columns(2)
     with a:
         if st.button("+ Adicionar outra substituição"):
@@ -954,7 +1046,11 @@ def new_portaria():
         st.session_state.get("editor_seed", {}).pop("manual", None)
         st.session_state["preview_revision"] += 1
         st.rerun()
-    number = store.next_number(issued.year)
+    number = (
+        store.display_number(issued.year)
+        if store.backend == "postgresql"
+        else store.next_number(issued.year)
+    )
     administrative = None
     if settings.get("admin_number") == "1" and st.checkbox(
         "Usar número administrativo", key=preview_key + "admin"
@@ -973,7 +1069,12 @@ def new_portaria():
         "Número previsto; a reserva só ocorre na finalização. Confira os dados e a redação antes de finalizar o ato."
     )
     warnings = warnings_for(
-        p, [r["payload"] for r in store.history() if r["status"] == "Finalizada"]
+        p,
+        (
+            store.warning_payloads()
+            if store.backend == "postgresql"
+            else [r["payload"] for r in store.history() if r["status"] == "Finalizada"]
+        ),
     )
     for warning in warnings:
         st.warning(warning)
@@ -1018,6 +1119,10 @@ def new_portaria():
         "FINALIZAR PORTARIA", type="primary", disabled=stale or not acknowledged
     ):
         try:
+            if stale or not acknowledged:
+                raise ValueError(
+                    "Prepare uma nova prévia e confira os avisos antes de finalizar."
+                )
             validate(p)
             identifier = st.session_state["editor_id"]
             store.save_draft(p, identifier)
@@ -1039,7 +1144,7 @@ def new_portaria():
 
 
 with st.sidebar:
-    st.image(str(ROOT / "assets/logo.jpeg"), width=110)
+    st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
     st.markdown("**MPC-PB**  \nProcuradoria-Geral")
     menu = st.radio(
         "Navegação",
@@ -1053,7 +1158,10 @@ st.markdown("### Gerador de Portarias PROGE")
 st.caption("Ministério Público de Contas do Estado da Paraíba")
 try:
     if menu == "Nova Portaria":
-        new_portaria()
+        if store.backend == "postgresql":
+            st.fragment(new_portaria)()
+        else:
+            new_portaria()
     elif menu == "Histórico":
         history()
     elif menu == "Configurações":

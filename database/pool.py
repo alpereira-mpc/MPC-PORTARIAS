@@ -1,9 +1,12 @@
 """Process-local, bounded PostgreSQL pools. No application data is cached here."""
 
 import atexit
+import hashlib
+import uuid
 from threading import RLock
 
 import psycopg
+import streamlit as st
 from psycopg_pool import ConnectionPool
 
 
@@ -31,6 +34,9 @@ class Resource:
     def __init__(self, options):
         self.lock = RLock()
         self.initialized = set()
+        self.cache_id = uuid.uuid4().hex
+        self.revisions = {}
+        self.revision_lock = RLock()
         self.pool = ConnectionPool(
             kwargs=dict(options, prepare_threshold=None),
             connection_class=SafeConnection,
@@ -51,6 +57,11 @@ _lock = RLock()
 _resources = {}
 
 
+@st.cache_resource(show_spinner=False)
+def _cached_resource(key, _options):
+    return Resource(_options)
+
+
 def resource(options):
     key = tuple(sorted(options.items()))
     with _lock:
@@ -58,7 +69,9 @@ def resource(options):
             # Bound resources even when credentials change during a process lifetime.
             if len(_resources) >= 4:
                 _resources.pop(next(iter(_resources))).pool.close()
-            _resources[key] = Resource(options)
+                _cached_resource.clear()
+            digest = hashlib.sha256(repr(key).encode()).hexdigest()
+            _resources[key] = _cached_resource(digest, options)
         return _resources[key]
 
 
@@ -67,6 +80,7 @@ def close_pools():
         for item in _resources.values():
             item.pool.close()
         _resources.clear()
+        _cached_resource.clear()
 
 
 atexit.register(close_pools)

@@ -44,6 +44,10 @@ IDENTITY_TABLES = {
     "exportacoes",
     "audit_arquivos",
 }
+HISTORY_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS portarias_recent_idx "
+    "ON portarias(criada DESC, id DESC)"
+)
 
 
 class DatabaseUnavailable(ValueError):
@@ -95,8 +99,10 @@ def parameters(statement):
 
 
 class Connection:
-    def __init__(self, raw):
+    def __init__(self, raw, invalidate=None):
         self.raw = raw
+        self.invalidate = invalidate
+        self.changed = set()
 
     def execute(self, statement, values=None):
         if statement.strip().upper() == "BEGIN IMMEDIATE":
@@ -111,7 +117,13 @@ class Connection:
         ):
             statement += " RETURNING id"
             returning_id = True
-        return Cursor(self.raw.execute(parameters(statement), values), returning_id)
+        cursor = Cursor(self.raw.execute(parameters(statement), values), returning_id)
+        mutation = re.match(
+            r"\s*(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)", statement, re.I
+        )
+        if mutation:
+            self.changed.add(mutation[1].lower())
+        return cursor
 
     def executemany(self, statement, rows):
         for row in rows:
@@ -119,6 +131,9 @@ class Connection:
 
     def commit(self):
         self.raw.commit()
+        if self.changed and self.invalidate:
+            self.invalidate(self.changed)
+        self.changed.clear()
 
 
 class PostgresBackend:
@@ -171,10 +186,10 @@ class PostgresBackend:
                     "SELECT pg_advisory_xact_lock(64712026, hashtext(%s))",
                     (self.schema,),
                 )
-            connection = Connection(raw)
+            connection = Connection(raw, self.invalidate)
             token = self._active.set(connection)
             yield connection
-            raw.commit()
+            connection.commit()
         except psycopg.Error as exc:
             self._rollback(raw)
             raise DatabaseUnavailable(
@@ -198,6 +213,28 @@ class PostgresBackend:
             except psycopg.Error:
                 # A lost socket must not expose the original server/DSN message.
                 raw.close()
+
+    def cache_key(self, tables):
+        from database.pool import resource
+
+        shared = resource(self._options)
+        with shared.revision_lock:
+            return (
+                shared.cache_id,
+                self.schema,
+                tuple(
+                    shared.revisions.get((self.schema, table), 0) for table in tables
+                ),
+            )
+
+    def invalidate(self, tables):
+        from database.pool import resource
+
+        shared = resource(self._options)
+        with shared.revision_lock:
+            for table in tables:
+                key = (self.schema, table)
+                shared.revisions[key] = shared.revisions.get(key, 0) + 1
 
     def initialize(self, root, *, force=False):
         from database.pool import resource
@@ -229,6 +266,7 @@ class PostgresBackend:
                     raise DatabaseUnavailable(
                         "Versão PostgreSQL incompatível. Atualize o aplicativo."
                     )
+                c.raw.execute(HISTORY_INDEX_SQL)
                 return
             # Do not silently start a second numbering history over legacy public data.
             legacy = c.raw.execute(
@@ -249,6 +287,7 @@ class PostgresBackend:
                 (root / "database/postgresql_schema.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
+            c.raw.execute(HISTORY_INDEX_SQL)
             occupied = any(
                 c.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
                 for table in (*TABLES, "backup_snapshots")
