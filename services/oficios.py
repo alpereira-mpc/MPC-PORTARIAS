@@ -46,7 +46,7 @@ SERIES = {
             ("IBMF", "Isabella Barbosa Marinho Falcão"),
             ("MTFF", "Marcílio Toscano Franca Filho"),
             ("LAF", "Luciano Andrade Farias"),
-            ("MASN", "Manoel Antonio dos Santos Neto"),
+            ("MASN", "Manoel Antônio dos Santos Neto"),
         )
     },
 }

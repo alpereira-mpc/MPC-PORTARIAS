@@ -9,7 +9,9 @@ from services.oficios import (
     attention,
     suggest_vocative,
     GABINETES,
+    SERIES,
     fingerprint,
+    normalized,
 )
 from services.ui_store import display_store
 
@@ -573,17 +575,56 @@ def render():
         selected = st.session_state.get("oficio_gabinete")
         if selected not in offices:
             st.subheader("Ofícios — Geração e Controle")
-            st.write("Selecione o gabinete")
-            for code in GABINETES:
-                if code in offices:
-                    office = offices[code]
-                    st.button(
-                        f"{code} — {office['nome']}",
-                        key="gabinete_" + code,
-                        on_click=switch_gabinete,
-                        args=(code, office["membro_id"]),
-                        use_container_width=True,
-                    )
+            st.write("Selecione o gabinete:")
+            st.markdown(
+    "<style>"
+    "div[data-testid='stButton']{"
+    "max-width:42rem;"
+    "margin:0 auto .55rem auto;"
+    "}"
+    "div[data-testid='stButton'] button{"
+    "min-height:3.4rem;"
+    "padding:.8rem 1.15rem;"
+    "justify-content:center;"
+    "text-align:center;"
+    "white-space:normal;"
+    "line-height:1.35;"
+    "font-weight:600;"
+    "}"
+    "div[data-testid='stButton'] button p{"
+    "width:100%;"
+    "text-align:center;"
+    "}"
+    "</style>",
+    unsafe_allow_html=True,
+)
+            for code in sorted(
+                (c for c in GABINETES if c in offices),
+                key=lambda c: (
+                    c != "PROGE",
+                    next(
+                        (name for name, rule in SERIES.items() if rule[0] == c),
+                        offices[c]["nome"],
+                    ),
+                ),
+            ):
+                office = offices[code]
+                series_name = next(
+                    (name for name, rule in SERIES.items() if rule[0] == code),
+                    office["nome"],
+                )
+                shown = (
+                    series_name
+                    if normalized(series_name) == normalized(office["nome"])
+                    else office["nome"]
+                )
+                st.button(
+                    f"{shown} - {code}",
+                    key="gabinete_" + code,
+                    on_click=switch_gabinete,
+                    args=(code, office["membro_id"]),
+                    use_container_width=True,
+                )
             return
         office = offices[selected]
         st.session_state["oficio_gabinete_member"] = office["membro_id"]

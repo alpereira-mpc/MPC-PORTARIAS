@@ -93,7 +93,7 @@ def test_bootstrap_idempotent(pg_store, pg_url):
         "Isabella Barbosa Marinho Falcão",
         "Bradson Tibério Luna Camelo",
         "Marcílio Toscano Franca Filho",
-        "Manoel Antonio dos Santos Neto",
+        "Manoel Antônio dos Santos Neto",
         "Luciano Andrade Farias",
         "Sheyla Barreto Braga de Queiroz",
     ]
