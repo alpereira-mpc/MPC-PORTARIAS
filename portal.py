@@ -46,7 +46,7 @@ MODULES = (
     Module(
         "agenda",
         "Agenda",
-        "Agenda dos Procuradores",
+        "Agenda dos Procuradores (Versão teste)",
         "Organização de eventos, reuniões e despachos dos procuradores.",
         "calendar_month",
         True,
