@@ -53,6 +53,15 @@ class Store:
             else str(self.path)
         )
 
+    def read_cache_key(self, tables):
+        """Public display-cache contract; revisions belong to the shared resource."""
+        if self._postgres is None:
+            raise ValueError("O cache compartilhado de leitura exige PostgreSQL.")
+        from database.pool import resource
+
+        backend = self._postgres
+        return resource(backend._options).cache_key(backend.schema, tables)
+
     @contextmanager
     def connection(self, *, read_only=False):
         if self._postgres is not None:

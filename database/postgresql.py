@@ -217,24 +217,12 @@ class PostgresBackend:
     def cache_key(self, tables):
         from database.pool import resource
 
-        shared = resource(self._options)
-        with shared.revision_lock:
-            return (
-                shared.cache_id,
-                self.schema,
-                tuple(
-                    shared.revisions.get((self.schema, table), 0) for table in tables
-                ),
-            )
+        return resource(self._options).cache_key(self.schema, tables)
 
     def invalidate(self, tables):
         from database.pool import resource
 
-        shared = resource(self._options)
-        with shared.revision_lock:
-            for table in tables:
-                key = (self.schema, table)
-                shared.revisions[key] = shared.revisions.get(key, 0) + 1
+        resource(self._options).invalidate(self.schema, tables)
 
     def initialize(self, root, *, force=False):
         from database.pool import resource

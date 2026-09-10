@@ -68,9 +68,7 @@ class DisplayStore:
         return getattr(self._store, name)
 
     def _cached(self, operation, tables, *args):
-        return _read(
-            self._store._postgres.cache_key(tables), operation, args, self._store
-        )
+        return _read(self._store.read_cache_key(tables), operation, args, self._store)
 
     def catalog(self, table):
         return self._cached("catalog", (table,), table)

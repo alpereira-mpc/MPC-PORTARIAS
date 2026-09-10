@@ -52,6 +52,20 @@ class Resource:
             open=True,
         )
 
+    def cache_key(self, schema, tables):
+        with self.revision_lock:
+            return (
+                self.cache_id,
+                schema,
+                tuple(self.revisions.get((schema, table), 0) for table in tables),
+            )
+
+    def invalidate(self, schema, tables):
+        with self.revision_lock:
+            for table in tables:
+                key = (schema, table)
+                self.revisions[key] = self.revisions.get(key, 0) + 1
+
 
 _lock = RLock()
 _resources = {}
