@@ -19,12 +19,21 @@ from services.agenda import (
 from services.ui_store import display_store
 
 
+def display_datetime(value, date_only=False):
+    """Brazilian presentation only; stored values remain ISO."""
+    return datetime.fromisoformat(value).strftime(
+        "%d/%m/%Y" if date_only else "%d/%m/%Y às %H:%M"
+    )
+
+
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
-def read_agenda(key, start, end, member, kind, status, _agenda):
+def read_agenda(key, start, end, member, kind, status, _agenda, offset=None):
+    if offset is not None:
+        return _agenda.upcoming(start, member, kind, status, offset)
     return _agenda.list(start, end, member, kind, status)
 
 
-def records(agenda, start, end, member=None, kind=None, status=None):
+def records(agenda, start, end, member=None, kind=None, status=None, *, offset=None):
     store = agenda.store
     key = (
         store.read_cache_key(("agenda_compromissos", "agenda_compromisso_procuradores"))
@@ -35,7 +44,7 @@ def records(agenda, start, end, member=None, kind=None, status=None):
             st.session_state.get("agenda_revision", 0),
         )
     )
-    return read_agenda(key, start, end, member, kind, status, agenda)
+    return read_agenda(key, start, end, member, kind, status, agenda, offset)
 
 
 def done(message):
@@ -123,6 +132,7 @@ def editor(agenda, people):
         "Data de início" if kind == "EVENTO" else "Data",
         value=initial.date(),
         key=prefix + "day",
+        format="DD/MM/YYYY",
     )
     untimed = kind == "EVENTO" and st.checkbox(
         "Evento sem horário (dia inteiro)",
@@ -135,7 +145,12 @@ def editor(agenda, people):
         else st.time_input("Hora inicial", value=initial.time(), key=prefix + "hour")
     )
     end_day = (
-        st.date_input("Data de término", value=ending.date(), key=prefix + "end_day")
+        st.date_input(
+            "Data de término",
+            value=ending.date(),
+            key=prefix + "end_day",
+            format="DD/MM/YYYY",
+        )
         if kind == "EVENTO"
         else day
     )
@@ -212,7 +227,7 @@ def editor(agenda, people):
         )
         for row in overlaps:
             st.write(
-                f"{row['inicio'].replace('T', ' ')} · {TYPES[row['tipo']]} · {row.get('titulo') or row.get('processo')}"
+                f"{display_datetime(row['inicio'], row['sem_hora'])} · {TYPES[row['tipo']]} · {row.get('titulo') or row.get('processo')}"
             )
         conflict_ok = st.checkbox(
             "Estou ciente do conflito e desejo registrar o compromisso mesmo assim.",
@@ -306,15 +321,17 @@ def render():
     )
     view = st.radio(
         "Visualização",
-        ["Hoje", "Semana", "Mês", "Lista"],
+        ["Hoje", "Semana", "Mês", "Lista", "Próximos"],
         horizontal=True,
         key="agenda_view",
     )
     today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     anchor = (
         today
-        if view == "Hoje"
-        else st.date_input("Data de referência", today, key="agenda_anchor")
+        if view in ("Hoje", "Próximos")
+        else st.date_input(
+            "Data de referência", today, key="agenda_anchor", format="DD/MM/YYYY"
+        )
     )
     start = anchor
     end = start + timedelta(days=1)
@@ -325,21 +342,49 @@ def render():
         start = anchor.replace(day=1)
         end = start + timedelta(days=calendar.monthrange(anchor.year, anchor.month)[1])
     elif view == "Lista":
-        last = st.date_input("Até", anchor + timedelta(days=30), key="agenda_until")
+        last = st.date_input(
+            "Até", anchor + timedelta(days=30), key="agenda_until", format="DD/MM/YYYY"
+        )
         if last < start:
             st.error("O fim do período deve ser igual ou posterior ao início.")
             return
         end = last + timedelta(days=1)
-    rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status)
-    if view == "Semana":
-        for offset in range(7):
-            day = start + timedelta(days=offset)
-            for rule in institutional(
-                [member] if member else list(names), "REUNIAO", day, agenda.bindings
-            ):
-                st.caption(
-                    f"{day:%d/%m} · {names.get(agenda.bindings[rule['key']], rule['name'])} · {rule['activity']} — disponibilidade condicionada, sem horário fixo"
-                )
+    if view == "Próximos":
+        signature = (
+            today.isoformat(),
+            member,
+            kind,
+            status,
+            st.session_state.get("agenda_revision", 0),
+        )
+        if st.session_state.get("agenda_upcoming_filters") != signature:
+            st.session_state["agenda_upcoming_offset"] = 0
+            st.session_state["agenda_upcoming_filters"] = signature
+        offset = st.session_state.get("agenda_upcoming_offset", 0)
+        rows = records(
+            agenda, today.isoformat(), None, member, kind, status, offset=offset
+        )
+        # A deletion in another session can empty the current page.
+        if not rows and offset:
+            st.session_state["agenda_upcoming_offset"] = 0
+            st.rerun()
+        has_next = len(rows) > 30
+        rows = rows[:30]
+        if rows:
+            st.caption(f"Exibindo {offset + 1}–{offset + len(rows)}")
+        previous, following = st.columns(2)
+        if previous.button(
+            "Anterior", disabled=offset == 0, key="agenda_upcoming_previous"
+        ):
+            st.session_state["agenda_upcoming_offset"] = max(0, offset - 30)
+            st.rerun()
+        if following.button(
+            "Próxima", disabled=not has_next, key="agenda_upcoming_next"
+        ):
+            st.session_state["agenda_upcoming_offset"] = offset + 30
+            st.rerun()
+    else:
+        rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status)
     if not rows:
         st.info("Nenhum compromisso no período selecionado.")
     current_day = None
@@ -354,9 +399,9 @@ def render():
             st.write(" / ".join(names.get(p, str(p)) for p in row["procuradores"]))
             st.caption(f"{row['local']} · {row['situacao']}")
             with st.expander("Detalhes e ações"):
-                st.write("Início:", row["inicio"].replace("T", " "))
+                st.write("Início:", display_datetime(row["inicio"], row["sem_hora"]))
                 if row["fim"]:
-                    st.write("Término:", row["fim"].replace("T", " "))
+                    st.write("Término:", display_datetime(row["fim"], row["sem_hora"]))
                 for key, label in (
                     ("categoria", "Tipo do evento"),
                     ("reuniao_com", "Reunião com"),

@@ -258,3 +258,46 @@ def test_existing_bindings_gain_bradson_without_changing_members(store):
     assert agenda.bindings == {"isabella": 2, "elvira": 1, "bradson": 3}
     assert store.catalog("procuradores") == before
     assert not institutional([2], "REUNIAO", date(2026, 9, 8), agenda.bindings)
+
+
+@pytest.mark.parametrize("view", ["Hoje", "Semana", "Mês", "Lista", "Próximos"])
+@pytest.mark.parametrize("with_record", [False, True])
+def test_views_only_show_registered_appointments(store, monkeypatch, view, with_record):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    if with_record:
+        record = draft("EVENTO", members=[1, 2, 3], day=today.isoformat())
+        record["titulo"] = "Compromisso cadastrado pelo usuário"
+        AgendaStore(store).save(record)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_agenda").click().run()
+    app.radio(key="agenda_view").set_value(view).run()
+    assert not app.exception and not app.error
+    displayed = "\n".join(
+        str(element.value)
+        for category in (
+            app.caption,
+            app.markdown,
+            app.info,
+            app.warning,
+            app.subheader,
+        )
+        for element in category
+    )
+    for text in (
+        "Sessão da 2ª Câmara",
+        "Sessão do Tribunal Pleno",
+        "Sessão da 1ª Câmara",
+        "disponibilidade condicionada",
+        "sem horário fixo",
+    ):
+        assert text not in displayed
+    if with_record:
+        assert "Compromisso cadastrado pelo usuário" in displayed
+        assert len(app.expander) == 2  # Sidebar tools and the actual appointment.
+    else:
+        assert "Nenhum compromisso no período selecionado." in displayed
+        assert not any(b.label == "Editar" for b in app.button)

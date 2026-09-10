@@ -51,9 +51,13 @@ class AgendaStore:
                 )
             }
 
-    def _list(self, c, start, end, member=None, kind=None, status=None):
-        clauses = ["a.inicio < ?", "COALESCE(a.fim,a.inicio) >= ?"]
-        values = [end, start]
+    def _list(self, c, start, end, member=None, kind=None, status=None, *, offset=None):
+        if offset is None:
+            clauses = ["a.inicio < ?", "COALESCE(a.fim,a.inicio) >= ?"]
+            values = [end, start]
+        else:
+            clauses = ["a.inicio >= ?"]
+            values = [start]
         for column, value in (("tipo", kind), ("situacao", status)):
             if value:
                 clauses.append(f"a.{column}=?")
@@ -63,9 +67,22 @@ class AgendaStore:
                 "EXISTS (SELECT 1 FROM agenda_compromisso_procuradores p WHERE p.compromisso_id=a.id AND p.procurador_id=?)"
             )
             values.append(member)
+        source = "agenda_compromissos a"
+        where = " WHERE " + " AND ".join(clauses)
+        if offset is not None:
+            # Limit appointments before joining participants: 30 plus one lookahead.
+            source = (
+                "(SELECT a.* FROM agenda_compromissos a"
+                + where
+                + " ORDER BY a.inicio,a.id LIMIT 31 OFFSET ?) a"
+            )
+            values.append(offset)
+            where = ""
         rows = c.execute(
-            "SELECT a.*,p.procurador_id FROM agenda_compromissos a JOIN agenda_compromisso_procuradores p ON p.compromisso_id=a.id WHERE "
-            + " AND ".join(clauses)
+            "SELECT a.*,p.procurador_id FROM "
+            + source
+            + " JOIN agenda_compromisso_procuradores p ON p.compromisso_id=a.id"
+            + where
             + " ORDER BY a.inicio,a.id,p.procurador_id",
             values,
         )
@@ -94,6 +111,12 @@ class AgendaStore:
     def list(self, start, end, member=None, kind=None, status=None):
         with self.store.connection(read_only=True) as c:
             return self._list(c, start, end, member, kind, status)
+
+    def upcoming(self, start, member=None, kind=None, status=None, offset=0):
+        if not isinstance(offset, int) or offset < 0:
+            raise ValueError("Página inválida.")
+        with self.store.connection(read_only=True) as c:
+            return self._list(c, start, None, member, kind, status, offset=offset)
 
     def save(self, record, *, institutional_confirmed=False, conflict_confirmed=False):
         validate(record)

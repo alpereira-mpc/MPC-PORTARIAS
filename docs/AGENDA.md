@@ -27,3 +27,9 @@ Leituras da agenda têm cache de 30 segundos e invalidação nas operações loc
 - Validar acesso no Streamlit Community Cloud após publicação pelo responsável; nenhum deployment foi alterado.
 
 Os backups administrativos PostgreSQL existentes continuam com o escopo de Portarias. Para backup integral incluindo Agenda, usar backup do banco PostgreSQL/Supabase. O backup SQLite de arquivo inclui as tabelas da Agenda.
+
+## Visualização Próximos
+
+Lista compromissos com início a partir da data atual de São Paulo, incluindo todos os horários de hoje, sem limite final de data. Os filtros de procurador, tipo e situação são aplicados no SQL. Eventos iniciados antes de hoje não entram nesta visualização, mesmo que ainda estejam em andamento.
+
+A paginação mostra 30 compromissos; a consulta busca no máximo 31 para identificar a próxima página, antes de juntar os participantes. A ordenação é início e ID (desempate estável). Não há consulta de contagem nem consultas individuais por participante. A data atual, os filtros e o deslocamento da página integram o cache existente. Mudanças de filtros, data atual ou gravações locais reiniciam a paginação. Não exibe campo de referência nem sessões institucionais automáticas.
