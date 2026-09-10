@@ -23,11 +23,11 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     assert app.title[0].value == "FERRAMENTAS MPC-PB"
     assert app.sidebar.radio(key="portal_module").value == "Início"
     assert not any(x.key == "nav" for x in app.radio)
-    assert len(app.button) == 2
+    assert len(app.button) == 3
     assert app.button(key="open_portarias").label == "Acessar Portarias"
     for module in MODULES:
         assert any(module.title in x.value for x in app.markdown)
-    assert sum(x.value == "EM BREVE" for x in app.caption) == 3
+    assert sum(x.value == "EM BREVE" for x in app.caption) == 2
     app.run()
     assert not app.exception and not app.error
 
@@ -65,6 +65,7 @@ def test_portal_navigation_and_lazy_return(store, pg_store, monkeypatch, backend
 def test_future_modules_have_no_routes_or_side_effects():
     assert [module.key for module in MODULES if module.active] == [
         "portarias",
+        "oficios",
         "agenda",
     ]
     assert len({module.key for module in MODULES}) == 5

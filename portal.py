@@ -39,9 +39,10 @@ MODULES = (
     Module(
         "oficios",
         "Ofícios",
-        "Controle de Ofícios",
-        "Registro, organização e acompanhamento de ofícios recebidos e expedidos.",
+        "Ofícios — Geração e Controle",
+        "Geração, registro e acompanhamento de ofícios enviados e recebidos.",
         "mail",
+        True,
     ),
     Module(
         "agenda",
@@ -70,6 +71,10 @@ def open_agenda():
     st.session_state["portal_module"] = "Agenda"
 
 
+def open_oficios():
+    st.session_state["portal_module"] = "Ofícios"
+
+
 def card(module):
     with st.container(border=True):
         st.caption(module.label.upper())
@@ -82,7 +87,11 @@ def card(module):
                 key=f"open_{module.key}",
                 type="primary",
                 icon=":material/arrow_forward:",
-                on_click=open_portarias if module.key == "portarias" else open_agenda,
+                on_click={
+                    "portarias": open_portarias,
+                    "agenda": open_agenda,
+                    "oficios": open_oficios,
+                }[module.key],
             )
         else:
             st.caption("EM BREVE")
@@ -107,7 +116,7 @@ def render_portal():
         st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
         st.markdown("**Ferramentas MPC-PB**")
         selected = st.radio(
-            "Portal", ["Início", "Portarias", "Agenda"], key="portal_module"
+            "Portal", ["Início", "Portarias", "Agenda", "Ofícios"], key="portal_module"
         )
         with st.expander("Outras ferramentas"):
             for module in MODULES[1:]:
@@ -122,6 +131,12 @@ def render_portal():
 
     if selected == "Agenda":
         from services.agenda_ui import render
+
+        render()
+        st.stop()
+
+    if selected == "Ofícios":
+        from services.oficios_ui import render
 
         render()
         st.stop()
