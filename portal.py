@@ -33,7 +33,7 @@ MODULES = (
         "memorandos",
         "Memorandos",
         "Memorandos de Substituição",
-        "Geração e gerenciamento de memorandos relacionados às substituições de membros.",
+        "Geração e gerenciamento de memorandos relacionados às substituições de servidores.",
         "article",
     ),
     Module(
