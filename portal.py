@@ -47,8 +47,9 @@ MODULES = (
         "agenda",
         "Agenda",
         "Agenda dos Procuradores",
-        "Organização de compromissos, afastamentos, férias e substituições.",
+        "Organização de eventos, reuniões e despachos dos procuradores.",
         "calendar_month",
+        True,
     ),
     Module(
         "relatorios",
@@ -65,6 +66,10 @@ def open_portarias():
     st.session_state["nav"] = "Nova Portaria"
 
 
+def open_agenda():
+    st.session_state["portal_module"] = "Agenda"
+
+
 def card(module):
     with st.container(border=True):
         st.caption(module.label.upper())
@@ -73,11 +78,11 @@ def card(module):
         if module.active:
             st.markdown(":green[**● ATIVO**]")
             st.button(
-                "Acessar Portarias",
-                key="open_portarias",
+                f"Acessar {module.label}",
+                key=f"open_{module.key}",
                 type="primary",
                 icon=":material/arrow_forward:",
-                on_click=open_portarias,
+                on_click=open_portarias if module.key == "portarias" else open_agenda,
             )
         else:
             st.caption("EM BREVE")
@@ -101,13 +106,22 @@ def render_portal():
     with st.sidebar:
         st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
         st.markdown("**Ferramentas MPC-PB**")
-        selected = st.radio("Portal", ["Início", "Portarias"], key="portal_module")
+        selected = st.radio(
+            "Portal", ["Início", "Portarias", "Agenda"], key="portal_module"
+        )
         with st.expander("Outras ferramentas"):
             for module in MODULES[1:]:
-                st.caption(f"{module.label} · Em breve")
+                if not module.active:
+                    st.caption(f"{module.label} · Em breve")
     st.title("FERRAMENTAS MPC-PB")
     st.caption("Ministério Público de Contas do Estado da Paraíba")
     if selected == "Início":
         home()
         # Stop before importing or constructing the Portarias database/document stack.
+        st.stop()
+
+    if selected == "Agenda":
+        from services.agenda_ui import render
+
+        render()
         st.stop()
