@@ -1,6 +1,7 @@
 """Lazy native Streamlit correspondence UI."""
 
 from datetime import date
+import hashlib
 import streamlit as st
 from services.oficios import (
     open_service,
@@ -12,7 +13,9 @@ from services.oficios import (
     SERIES,
     fingerprint,
     normalized,
+    validate_upload,
 )
+from services.oficios_extraction import extract_received_metadata
 from services.ui_store import display_store
 
 
@@ -112,13 +115,18 @@ def configuration(service, people):
 
 def reset_editor():
     for key in list(st.session_state):
-        if key.startswith("oficio_input_") or key in (
-            "oficio_edit",
-            "oficio_preview",
-            "oficio_final",
-            "oficio_detail",
-            "oficio_day",
-            "oficio_member",
+        if (
+            key.startswith("oficio_input_")
+            or key.startswith("oficio_received_")
+            or key
+            in (
+                "oficio_edit",
+                "oficio_preview",
+                "oficio_final",
+                "oficio_detail",
+                "oficio_day",
+                "oficio_member",
+            )
         ):
             st.session_state.pop(key, None)
 
@@ -326,22 +334,95 @@ def editor(service, people):
         st.button("Iniciar outro rascunho", on_click=reset_editor)
 
 
+RECEIVED_FIELDS = (
+    ("numero_externo", "Número do ofício recebido"),
+    ("remetente", "Remetente"),
+    ("cargo_remetente", "Cargo do remetente"),
+    ("instituicao", "Órgão/Instituição"),
+    ("assunto", "Assunto"),
+    ("processo", "Processo/referência"),
+)
+
+
+def clear_received_import():
+    for key in list(st.session_state):
+        if key.startswith("oficio_received_"):
+            st.session_state.pop(key, None)
+
+
 def received_form(service, people):
+    if st.session_state.pop("oficio_received_reset", False):
+        clear_received_import()
     with st.expander("Registrar ofício recebido"):
+        st.markdown("**Importar PDF e preencher automaticamente**")
+        pdf = st.file_uploader(
+            "PDF para análise — um arquivo",
+            type=["pdf"],
+            accept_multiple_files=False,
+            key="oficio_received_uploader",
+        )
+        digest = hashlib.sha256(pdf.getvalue()).hexdigest() if pdf is not None else None
+        if st.session_state.get(
+            "oficio_received_hash"
+        ) and digest != st.session_state.get("oficio_received_hash"):
+            for key in (
+                "oficio_received_ok",
+                "oficio_received_text",
+                "oficio_received_pdf_bytes",
+                "oficio_received_pdf_name",
+                "oficio_received_hash",
+                "oficio_received_data",
+                *(f"oficio_received_{field}" for field, _ in RECEIVED_FIELDS),
+            ):
+                st.session_state.pop(key, None)
+        if st.button("Analisar PDF"):
+            if pdf is None:
+                st.warning("Selecione um PDF para análise.")
+            else:
+                content = pdf.getvalue()
+                try:
+                    validate_upload(pdf.name, content)
+                    meta = extract_received_metadata(content, pdf.name)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["oficio_received_hash"] = digest
+                    st.session_state["oficio_received_pdf_bytes"] = content
+                    st.session_state["oficio_received_pdf_name"] = pdf.name
+                    st.session_state["oficio_received_text"] = meta["texto_extraido"]
+                    st.session_state["oficio_received_ok"] = meta["texto_suficiente"]
+                    for field, _ in RECEIVED_FIELDS:
+                        st.session_state["oficio_received_" + field] = (
+                            meta.get(field) or ""
+                        )
+                    extracted = meta.get("data")
+                    st.session_state["oficio_received_data"] = (
+                        date.fromisoformat(extracted) if extracted else None
+                    )
+                    st.rerun()
+        if st.session_state.get("oficio_received_ok"):
+            st.success(
+                "✓ Documento analisado. Confira os dados preenchidos antes de registrar."
+            )
+        elif st.session_state.get("oficio_received_hash") and not st.session_state.get(
+            "oficio_received_ok"
+        ):
+            st.warning(
+                "Não foi possível extrair texto deste PDF. O documento pode ser "
+                "digitalizado/escaneado. Preencha os dados manualmente."
+            )
+        extracted_text = st.session_state.get("oficio_received_text")
+        if extracted_text:
+            with st.expander("Conferir texto extraído do PDF"):
+                st.text(extracted_text)
         with st.form("oficio_received", clear_on_submit=True):
             r = {"direcao": "RECEBIDO"}
-            for field, title in [
-                ("numero_externo", "Número do ofício recebido"),
-                ("remetente", "Remetente"),
-                ("cargo_remetente", "Cargo do remetente"),
-                ("instituicao", "Órgão/Instituição"),
-                ("assunto", "Assunto"),
-                ("processo", "Processo/referência"),
-            ]:
-                r[field] = st.text_input(title)
+            for field, title in RECEIVED_FIELDS:
+                r[field] = st.text_input(title, key="oficio_received_" + field)
             r["data"] = st.date_input(
-                "Data do documento", format="DD/MM/YYYY"
-            ).isoformat()
+                "Data do documento", format="DD/MM/YYYY", key="oficio_received_data"
+            )
+            r["data"] = r["data"].isoformat() if r["data"] else date.today().isoformat()
             r["data_recebimento"] = st.date_input(
                 "Data de recebimento", format="DD/MM/YYYY"
             ).isoformat()
@@ -357,7 +438,22 @@ def received_form(service, people):
             )
             submit = st.form_submit_button("Registrar recebido")
         if submit:
-            service.save(r, uploads=[(f.name, f.getvalue()) for f in uploads])
+            files = [(f.name, f.getvalue()) for f in uploads]
+            if pdf is not None:
+                content = pdf.getvalue()
+                if all(item[1] != content for item in files):
+                    files.insert(0, (pdf.name, content))
+            else:
+                imported = st.session_state.get("oficio_received_pdf_bytes")
+                imported_name = st.session_state.get("oficio_received_pdf_name")
+                if (
+                    imported
+                    and imported_name
+                    and all(item[1] != imported for item in files)
+                ):
+                    files.insert(0, (imported_name, imported))
+            service.save(r, uploads=files)
+            st.session_state["oficio_received_reset"] = True
             done("Ofício recebido registrado.")
 
 
@@ -577,28 +673,28 @@ def render():
             st.subheader("Ofícios — Geração e Controle")
             st.write("Selecione o gabinete:")
             st.markdown(
-    "<style>"
-    "div[data-testid='stButton']{"
-    "max-width:48rem;"
-    "margin:0 auto .7rem auto;"
-    "}"
-    "div[data-testid='stButton'] button{"
-    "min-height:3.9rem;"
-    "padding:.95rem 1.35rem;"
-    "justify-content:center;"
-    "text-align:center;"
-    "white-space:normal;"
-    "line-height:1.4;"
-    "font-weight:650;"
-    "font-size:1.05rem;"
-    "}"
-    "div[data-testid='stButton'] button p{"
-    "width:100%;"
-    "text-align:center;"
-    "}"
-    "</style>",
-    unsafe_allow_html=True,
-)
+                "<style>"
+                "div[data-testid='stButton']{"
+                "max-width:48rem;"
+                "margin:0 auto .7rem auto;"
+                "}"
+                "div[data-testid='stButton'] button{"
+                "min-height:3.9rem;"
+                "padding:.95rem 1.35rem;"
+                "justify-content:center;"
+                "text-align:center;"
+                "white-space:normal;"
+                "line-height:1.4;"
+                "font-weight:650;"
+                "font-size:1.05rem;"
+                "}"
+                "div[data-testid='stButton'] button p{"
+                "width:100%;"
+                "text-align:center;"
+                "}"
+                "</style>",
+                unsafe_allow_html=True,
+            )
             for code in sorted(
                 (c for c in GABINETES if c in offices),
                 key=lambda c: (
