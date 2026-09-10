@@ -1,4 +1,8 @@
-"""MPC-PB — local institutional Portaria workflow."""
+"""Ferramentas MPC-PB portal and preserved Portarias module."""
+
+from portal import render_portal
+
+render_portal()
 
 from copy import deepcopy
 from datetime import date, datetime
@@ -6,7 +10,7 @@ from pathlib import Path
 import logging
 import streamlit as st
 from database.store import Store, ROOT
-from services.ui_store import display_store, asset
+from services.ui_store import display_store
 from document_generator.docx import generate
 from document_generator.pdf import convert, PdfUnavailable
 from services.exports import setup_logging, export_record
@@ -17,11 +21,6 @@ from services.placeholders import assert_docx_clean
 from services.deletion import REASONS
 
 VERSION = "1.1.0"
-st.set_page_config(
-    page_title="MPC-PB | Portarias PROGE",
-    page_icon=str(ROOT / "assets/logo.jpeg"),
-    layout="wide",
-)
 store = display_store(Store())
 setup_logging(store.path.parent)
 # Drop document byte caches from sessions opened before this update.
@@ -1144,18 +1143,15 @@ def new_portaria():
 
 
 with st.sidebar:
-    st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
-    st.markdown("**MPC-PB**  \nProcuradoria-Geral")
+    st.markdown("**Portarias**")
     menu = st.radio(
         "Navegação",
         ["Nova Portaria", "Histórico", "Procuradores", "Configurações"],
         key="nav",
     )
     st.divider()
-    st.caption("Gerador de Portarias PROGE\n\nAplicação local · v" + VERSION)
-st.title("MPC-PB")
+    st.caption("Gerador de Portarias PROGE · v" + VERSION)
 st.markdown("### Gerador de Portarias PROGE")
-st.caption("Ministério Público de Contas do Estado da Paraíba")
 try:
     if menu == "Nova Portaria":
         if store.backend == "postgresql":

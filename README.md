@@ -1,6 +1,19 @@
-# MPC-PB — Gerador de Portarias PROGE
+# Ferramentas MPC-PB
 
-Aplicação local para redigir, conferir e emitir Portarias da Procuradoria-Geral do Ministério Público de Contas da Paraíba. Interface Streamlit, banco SQLite e documento principal DOCX. Os dados e documentos não são enviados a APIs externas. A conexão é necessária apenas para instalar dependências.
+Portal institucional do Ministério Público de Contas do Estado da Paraíba.
+O primeiro módulo ativo é o **Gerador de Portarias PROGE**, para elaboração,
+numeração, geração e gerenciamento de Portarias de substituição.
+
+A entrada é **Início**. Use o card **Acessar Portarias** ou a opção **Portarias**
+na sidebar para acessar Nova Portaria, Histórico, Procuradores e Configurações.
+Memorandos, Ofícios, Agenda e Relatórios aparecem apenas como **Em breve**.
+
+O portal funciona com Streamlit, SQLite local e PostgreSQL/Supabase na nuvem.
+A Home não inicializa o módulo Portarias nem consulta o banco. `portal.py`
+concentra o catálogo visual de módulos e a navegação; o módulo existente permanece
+em `app.py`, sem duplicação. Novos módulos poderão ter entradas próprias e usar
+as camadas de dados existentes; esta etapa não cria tabelas ou autenticação.
+A alteração de nome não modifica a URL de deployment, que é configurada no painel Cloud.
 
 ## Iniciar neste computador
 

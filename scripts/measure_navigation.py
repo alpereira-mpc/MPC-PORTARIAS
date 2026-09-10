@@ -110,6 +110,7 @@ with (
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
     start = time.perf_counter()
     app.run()
+    app.button(key="open_portarias").click().run()
     assert not app.exception
     result["first_app"] = dict(metrics, total_ms=(time.perf_counter() - start) * 1000)
     for screen in ["Nova Portaria", "Histórico", "Procuradores", "Configurações"]:

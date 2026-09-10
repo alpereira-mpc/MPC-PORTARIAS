@@ -391,9 +391,10 @@ def test_postgres_streamlit_screens_and_backup(pg_store, monkeypatch):
 
     monkeypatch.setattr("database.store.Store", lambda: pg_store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_portarias").click().run()
     assert not app.exception and not app.error
     for screen in ("Histórico", "Procuradores", "Configurações"):
-        app.sidebar.radio[0].set_value(screen).run()
+        app.sidebar.radio(key="nav").set_value(screen).run()
         assert not app.exception and not app.error
     next(x for x in app.button if x.label == "Criar backup do banco").click().run()
     assert not app.exception and not app.error
