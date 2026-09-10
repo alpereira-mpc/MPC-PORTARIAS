@@ -87,11 +87,6 @@ def configuration(service, people):
             st.caption(
                 "Modelo do gabinete — configurações de documentos já emitidos são preservadas."
             )
-            model = st.selectbox(
-                "Pacote institucional",
-                ["PROGE", "BTLC"],
-                index=1 if current["modelo"] == "BTLC" else 0,
-            )
             heading = st.text_input(
                 "Cabeçalho com {numero} e {ano}", current["cabecalho"]
             )
@@ -104,7 +99,12 @@ def configuration(service, people):
             submit_model = st.form_submit_button("Salvar modelo do gabinete")
         if submit_model:
             service.configure_series(
-                current["membro_id"], sigla, model, heading, digits, confirmed_model
+                current["membro_id"],
+                sigla,
+                current["modelo"],
+                heading,
+                digits,
+                confirmed_model,
             )
             st.session_state.pop("oficio_preview", None)
             done("Modelo do gabinete configurado.")
@@ -579,17 +579,18 @@ def render():
             st.markdown(
     "<style>"
     "div[data-testid='stButton']{"
-    "max-width:42rem;"
-    "margin:0 auto .55rem auto;"
+    "max-width:48rem;"
+    "margin:0 auto .7rem auto;"
     "}"
     "div[data-testid='stButton'] button{"
-    "min-height:3.4rem;"
-    "padding:.8rem 1.15rem;"
+    "min-height:3.9rem;"
+    "padding:.95rem 1.35rem;"
     "justify-content:center;"
     "text-align:center;"
     "white-space:normal;"
-    "line-height:1.35;"
-    "font-weight:600;"
+    "line-height:1.4;"
+    "font-weight:650;"
+    "font-size:1.05rem;"
     "}"
     "div[data-testid='stButton'] button p{"
     "width:100%;"
