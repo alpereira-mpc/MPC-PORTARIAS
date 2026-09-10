@@ -232,6 +232,72 @@ def test_documents(store, series, digits, prefix):
     assert doc.sections[0].header._element.xml
 
 
+def test_heading_date_and_subject_bold(store):
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    s = ready(store)
+    config = next(x for x in s.series() if x["sigla"] == "PROGE")
+    person = next(
+        x for x in store.catalog("procuradores") if x["id"] == config["membro_id"]
+    )
+    record = {
+        **sample(s, person["id"]),
+        "assunto": "Excessos cometidos no certame",
+        "signatario": person["nome"],
+        "cargo_base": person["cargo_base"],
+        "referencia": "Processo 123",
+    }
+    content = generate(record, config, 8)
+    doc = Document(BytesIO(content))
+    heading = next(
+        p for p in doc.paragraphs if "PROGE" in p.text and "João Pessoa" in p.text
+    )
+    assert heading.alignment == WD_ALIGN_PARAGRAPH.LEFT
+    assert "\t" in heading.text
+    assert "10 de setembro de 2026." in heading.text
+    assert heading.text.count("de 2026.") == 1
+    subject = next(p for p in doc.paragraphs if p.text.startswith("Assunto:"))
+    assert subject.runs[0].text == "Assunto: "
+    assert subject.runs[1].text == "Excessos cometidos no certame"
+    assert subject.runs[1].bold is True
+    assert "Processo 123" in "\n".join(p.text for p in doc.paragraphs)
+    from document_generator.pdf import convert, PdfUnavailable
+
+    try:
+        pdf, engine = convert(content)
+    except (PdfUnavailable, RuntimeError):
+        return
+    from pypdf import PdfReader
+
+    extracted = "\n".join(
+        page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages
+    )
+    assert "João Pessoa (PB), 10 de setembro de 2026." in extracted.replace(
+        "\u00a0", " "
+    )
+    assert "setembro\nde 2026" not in extracted
+
+
+def test_btlc_heading_uses_tab(store):
+    s = ready(store)
+    config = next(x for x in s.series() if x["sigla"] == "BTLC")
+    person = next(
+        x for x in store.catalog("procuradores") if x["id"] == config["membro_id"]
+    )
+    record = {
+        **sample(s, person["id"]),
+        "signatario": person["nome"],
+        "cargo_base": person["cargo_base"],
+    }
+    heading = next(
+        p
+        for p in Document(BytesIO(generate(record, config, 1))).paragraphs
+        if "BTLC" in p.text and "João Pessoa" in p.text
+    )
+    assert "\t" in heading.text
+    assert " " * 20 not in heading.text
+
+
 @pytest.mark.parametrize(
     "name,content",
     [

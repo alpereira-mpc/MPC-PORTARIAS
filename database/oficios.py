@@ -471,6 +471,46 @@ class OficiosStore:
             self.store.event(c, "oficio_excluir_rascunho", {"id": identifier})
             c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
 
+    def delete_received(self, identifier, acknowledged=False, typed=""):
+        if not acknowledged or typed != "EXCLUIR":
+            raise ValueError(
+                "Confirme a exclusão definitiva: marque a ciência e digite EXCLUIR."
+            )
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            record = self._get(c, identifier)
+            if record["direcao"] != "RECEBIDO":
+                raise ValueError(
+                    "Somente ofício recebido pode ser excluído por esta ação."
+                )
+            linked = [
+                dict(r)
+                for r in c.execute(
+                    "SELECT serie,numero,ano,status FROM oficios WHERE responde_a=? ORDER BY ano,numero,id",
+                    (identifier,),
+                )
+            ]
+            if linked:
+                refs = ", ".join(
+                    f"{(r['serie'] or '').strip()} {r['numero'] or 'Rascunho'}/{r['ano']}".strip()
+                    for r in linked
+                )
+                raise ValueError(
+                    "Há Ofício enviado relacionado a este recebido ("
+                    + refs
+                    + "). Trate o vínculo antes da exclusão."
+                )
+            self.store.event(
+                c,
+                "oficio_excluir_recebido",
+                {
+                    "id": identifier,
+                    "numero_externo": record.get("numero_externo"),
+                    "assunto": record.get("assunto"),
+                },
+            )
+            c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
+
     def delete_generated(
         self, identifier, reason, acknowledged=False, typed="", confirmed=False
     ):

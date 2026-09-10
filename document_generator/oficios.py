@@ -5,6 +5,9 @@ from io import BytesIO
 from pathlib import Path
 import re
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from docx.shared import Pt
 from services.oficios import GABINETES, long_date, safe_name
@@ -25,6 +28,47 @@ def template_path(series):
     return folder / f"{model}.docx"
 
 
+def _apply_run_props(run, props):
+    if props is not None:
+        run._r.insert(0, deepcopy(props))
+
+
+def _heading_line(target, doc, heading, dated, model, props):
+    """Keep number on the left and the full date on the right of one line."""
+    target.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    usable = (
+        doc.sections[0].page_width
+        - doc.sections[0].left_margin
+        - doc.sections[0].right_margin
+    )
+    stops = target.paragraph_format.tab_stops
+    for stop in list(stops):
+        stops.remove_tab_stop(stop.position)
+    stops.add_tab_stop(usable, WD_TAB_ALIGNMENT.RIGHT)
+    pPr = target._p.get_or_add_pPr()
+    for node in pPr.findall(qn("w:wordWrap")):
+        pPr.remove(node)
+    wrap = OxmlElement("w:wordWrap")
+    wrap.set(qn("w:val"), "off")
+    pPr.append(wrap)
+    target.clear()
+    if model == "BTLC" and heading.startswith("Ofício "):
+        first = target.add_run("Ofício ")
+        first.font.name = "Calibri"
+        first.font.size = Pt(12)
+        middle = target.add_run(heading.removeprefix("Ofício "))
+        middle.font.name = "Calibri"
+        middle.font.size = Pt(13)
+        last = target.add_run("\t" + dated)
+        last.font.name = "Calibri"
+        last.font.size = Pt(12)
+        return
+    left = target.add_run(heading)
+    _apply_run_props(left, props)
+    right = target.add_run("\t" + dated)
+    _apply_run_props(right, props)
+
+
 def generate(record, series, number=None):
     model = series["modelo"]
     if model not in ("PROGE", "BTLC"):
@@ -40,9 +84,7 @@ def generate(record, series, number=None):
         else record["cargo_base"] + " do Ministério Público de Contas da Paraíba"
     )
     values = {
-        "heading": heading
-        + "                             "
-        + long_date(record["data"]),
+        "heading": heading,
         "treatment": record.get("tratamento", ""),
         "name": record.get("destinatario", ""),
         "role": record.get("cargo", ""),
@@ -57,6 +99,7 @@ def generate(record, series, number=None):
         "signature": record["signatario"].upper(),
         "title": title,
     }
+    dated = long_date(record["data"])
     for p in list(doc.paragraphs):
         if not p.text:
             continue
@@ -87,20 +130,17 @@ def generate(record, series, number=None):
                 else None
             )
             target.clear()
-            run = target.add_run(text.strip())
-            if props is not None:
-                run._r.insert(0, props)
-            if key == "heading" and model == "BTLC" and heading.startswith("Ofício "):
-                target.clear()
-                first = target.add_run("Ofício ")
-                first.font.name = "Calibri"
-                first.font.size = Pt(12)
-                middle = target.add_run(heading.removeprefix("Ofício "))
-                middle.font.name = "Calibri"
-                middle.font.size = Pt(13)
-                last = target.add_run(" " * 38 + long_date(record["data"]))
-                last.font.name = "Calibri"
-                last.font.size = Pt(12)
+            if key == "heading":
+                _heading_line(target, doc, heading, dated, model, props)
+            elif key == "subject" and index == 0:
+                label = target.add_run("Assunto: ")
+                _apply_run_props(label, props)
+                value = target.add_run(record["assunto"].strip())
+                _apply_run_props(value, props)
+                value.bold = True
+            else:
+                run = target.add_run(text.strip())
+                _apply_run_props(run, props)
             if key in ("signature", "closing"):
                 target.paragraph_format.keep_with_next = True
             previous = target

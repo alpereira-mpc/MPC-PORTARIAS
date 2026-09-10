@@ -511,6 +511,16 @@ def details(service, r):
                 )
                 + label(reply)
             )
+        with st.expander("Excluir ofício recebido"):
+            ack = st.checkbox(
+                "Confirmo que desejo excluir definitivamente este ofício recebido",
+                key="recv_ack_" + r["id"],
+            )
+            typed = st.text_input("Digite EXCLUIR", key="recv_typed_" + r["id"])
+            if st.button("Excluir definitivamente", key="recv_purge_" + r["id"]):
+                service.delete_received(r["id"], ack, typed)
+                st.session_state.pop("oficio_detail", None)
+                done("Ofício recebido excluído.")
     for f in service.files(r["id"]):
         st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
         if st.button("Preparar download: " + f["nome"], key="oficio_file_" + f["id"]):

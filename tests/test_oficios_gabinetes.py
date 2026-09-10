@@ -177,6 +177,82 @@ def test_delete_preserves_received_link_target(store):
         assert not c.execute("PRAGMA foreign_key_check").fetchall()
 
 
+def test_delete_received_and_attachments(store):
+    from pypdf import PdfWriter
+
+    service = ready(store)
+    member = sample(service)["membro_id"]
+    sequence = service.sequence("PROGE", 2026)
+    sent = service.save(sample(service))
+    service.finalize(sent, files)
+    pdf = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.write(pdf)
+    received = service.save(
+        dict(
+            direcao="RECEBIDO",
+            data="2026-09-10",
+            data_recebimento="2026-09-10",
+            numero_externo="12/2026",
+            remetente="Pessoa",
+            instituicao="Órgão",
+            assunto="Original",
+            membros=[member],
+        ),
+        uploads=[("original.pdf", pdf.getvalue())],
+    )
+    with pytest.raises(ValueError, match="ciência"):
+        service.delete_received(received, False, "EXCLUIR")
+    with pytest.raises(ValueError, match="EXCLUIR"):
+        service.delete_received(received, True, "excluir")
+    service.delete_received(received, True, "EXCLUIR")
+    with pytest.raises(ValueError):
+        service.get(received)
+    with store.connection(read_only=True) as c:
+        assert not c.execute(
+            "SELECT 1 FROM oficio_arquivos WHERE oficio_id=?", (received,)
+        ).fetchone()
+        assert not c.execute(
+            "SELECT 1 FROM oficio_movimentacoes WHERE oficio_id=?", (received,)
+        ).fetchone()
+        assert not c.execute(
+            "SELECT 1 FROM oficio_destinatarios WHERE oficio_id=?", (received,)
+        ).fetchone()
+        assert not c.execute("PRAGMA foreign_key_check").fetchall()
+    assert service.get(sent)["numero"] == 8
+    assert service.sequence("PROGE", 2026) == {
+        "proximo": sequence["proximo"] + 1,
+        "confirmada": True,
+    }
+
+
+def test_delete_received_blocked_when_linked_sent(store):
+    service = ready(store)
+    member = sample(service)["membro_id"]
+    received = service.save(
+        dict(
+            direcao="RECEBIDO",
+            data="2026-09-10",
+            data_recebimento="2026-09-10",
+            numero_externo="1",
+            remetente="Teste",
+            instituicao="MPC",
+            assunto="Recebido",
+            membros=[member],
+        )
+    )
+    reply = service.save({**sample(service), "responde_a": received})
+    with pytest.raises(ValueError, match="enviado relacionado"):
+        service.delete_received(received, True, "EXCLUIR")
+    assert service.get(received)["id"] == received
+    service.finalize(reply, files)
+    with pytest.raises(ValueError, match="enviado relacionado"):
+        service.delete_received(received, True, "EXCLUIR")
+    assert service.get(reply)["numero"] == 8
+    assert service.sequence("PROGE", 2026)["proximo"] == 9
+
+
 def test_reviewed_finalization_requires_matching_preview(store, monkeypatch):
     service = ready(store)
     record = sample(service)
