@@ -289,6 +289,12 @@ def render():
     st.header("AGENDA DOS PROCURADORES")
     if "agenda_store" not in st.session_state:
         st.session_state["agenda_store"] = AgendaStore(Store())
+    elif type(st.session_state["agenda_store"]) is not AgendaStore:
+        # Streamlit may retain an instance of the previous class after a code reload.
+        # Renew the service contract once, reusing the existing Store and its pool.
+        st.session_state["agenda_store"] = AgendaStore(
+            st.session_state["agenda_store"].store
+        )
     agenda = st.session_state["agenda_store"]
     people = display_store(agenda.store).catalog("procuradores")
     names = {p["id"]: p["nome"] for p in people}
@@ -319,9 +325,11 @@ def render():
         format_func=lambda s: s or "Todas",
         key="agenda_filter_status",
     )
+    if st.session_state.get("agenda_view") == "Lista":
+        st.session_state["agenda_view"] = "Hoje"
     view = st.radio(
         "Visualização",
-        ["Hoje", "Semana", "Mês", "Lista", "Próximos"],
+        ["Hoje", "Semana", "Mês", "Próximos"],
         horizontal=True,
         key="agenda_view",
     )
@@ -341,14 +349,6 @@ def render():
     elif view == "Mês":
         start = anchor.replace(day=1)
         end = start + timedelta(days=calendar.monthrange(anchor.year, anchor.month)[1])
-    elif view == "Lista":
-        last = st.date_input(
-            "Até", anchor + timedelta(days=30), key="agenda_until", format="DD/MM/YYYY"
-        )
-        if last < start:
-            st.error("O fim do período deve ser igual ou posterior ao início.")
-            return
-        end = last + timedelta(days=1)
     if view == "Próximos":
         signature = (
             today.isoformat(),

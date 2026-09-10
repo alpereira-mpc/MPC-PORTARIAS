@@ -95,3 +95,47 @@ def test_upcoming_ui_pagination_and_reference_date(store, monkeypatch):
     assert any("Futuro 31" in m.value for m in app.markdown)
     assert not any("Sessão" in c.value for c in app.caption)
     assert not app.exception and not app.error
+
+
+class PreviousAgendaStore:
+    """Session object from the release before upcoming was introduced."""
+
+    def __init__(self, store):
+        self.store = store
+        self.bindings = AgendaStore(store).bindings
+
+
+@pytest.mark.parametrize("backend_fixture", ["store", "pg_store"])
+def test_upcoming_refreshes_previous_session_contract(
+    request, backend_fixture, monkeypatch
+):
+    import services.agenda_ui as ui
+
+    store = request.getfixturevalue(backend_fixture)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    monkeypatch.setattr(ui, "datetime", FixedDatetime)
+    agenda = AgendaStore(store)
+    agenda.save(draft("EVENTO", day="2026-09-10"))
+    ui.read_agenda.clear()
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.session_state["agenda_store"] = PreviousAgendaStore(store)
+    app.session_state["agenda_view"] = "Próximos"
+    app.button(key="open_agenda").click().run()
+    assert not app.exception
+    assert type(app.session_state["agenda_store"]) is AgendaStore
+    assert app.session_state["agenda_store"].store is store
+    assert any("Assunto" in m.value for m in app.markdown)
+    current = app.session_state["agenda_store"]
+    app.run()
+    assert app.session_state["agenda_store"] is current
+
+
+def test_removed_list_selection_is_migrated(store, monkeypatch):
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.session_state["agenda_view"] = "Lista"
+    app.button(key="open_agenda").click().run()
+    assert not app.exception
+    assert app.radio(key="agenda_view").options == ["Hoje", "Semana", "Mês", "Próximos"]
+    assert app.radio(key="agenda_view").value == "Hoje"
+    assert not any(d.label == "Até" for d in app.date_input)

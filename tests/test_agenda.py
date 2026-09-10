@@ -260,7 +260,7 @@ def test_existing_bindings_gain_bradson_without_changing_members(store):
     assert not institutional([2], "REUNIAO", date(2026, 9, 8), agenda.bindings)
 
 
-@pytest.mark.parametrize("view", ["Hoje", "Semana", "Mês", "Lista", "Próximos"])
+@pytest.mark.parametrize("view", ["Hoje", "Semana", "Mês", "Próximos"])
 @pytest.mark.parametrize("with_record", [False, True])
 def test_views_only_show_registered_appointments(store, monkeypatch, view, with_record):
     from datetime import datetime

@@ -42,7 +42,7 @@ def test_date_inputs_and_edit_preserve_iso(store, monkeypatch, kind):
     assert all(widget.proto.format == "DD/MM/YYYY" for widget in app.date_input)
 
 
-@pytest.mark.parametrize("view", ["Hoje", "Semana", "Mês", "Lista", "Próximos"])
+@pytest.mark.parametrize("view", ["Hoje", "Semana", "Mês", "Próximos"])
 def test_view_dates_and_details(store, monkeypatch, view):
     import services.agenda_ui as ui
 
