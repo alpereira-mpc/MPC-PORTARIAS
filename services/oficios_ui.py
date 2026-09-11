@@ -715,23 +715,22 @@ def render(store=None, principal=None):
             st.write("Selecione o gabinete:")
             st.markdown(
                 "<style>"
-                "div[data-testid='stButton']{"
-                "max-width:48rem;"
-                "margin:0 auto .7rem auto;"
+                "section[data-testid='stMain'] div[class*='st-key-gabinete_']{"
+                "display:flex;justify-content:center;max-width:100%;"
+                "margin:0 0 .55rem 0;"
                 "}"
-                "div[data-testid='stButton'] button{"
-                "min-height:3.9rem;"
-                "padding:.95rem 1.35rem;"
-                "justify-content:center;"
-                "text-align:center;"
-                "white-space:normal;"
-                "line-height:1.4;"
-                "font-weight:650;"
-                "font-size:1.05rem;"
+                "section[data-testid='stMain'] div[class*='st-key-gabinete_'] button{"
+                "width:min(36rem,100%);min-height:2.5rem;height:2.5rem;"
+                "padding:.25rem .75rem;justify-content:center;text-align:center;"
+                "white-space:nowrap;"
                 "}"
-                "div[data-testid='stButton'] button p{"
-                "width:100%;"
-                "text-align:center;"
+                "section[data-testid='stMain'] div[class*='st-key-gabinete_'] button p{"
+                "width:100%;text-align:center;margin:0;"
+                "}"
+                "@media (max-width:768px){"
+                "section[data-testid='stMain'] div[class*='st-key-gabinete_'] button{"
+                "width:100%;height:auto;min-height:2.5rem;white-space:normal;"
+                "}"
                 "}"
                 "</style>",
                 unsafe_allow_html=True,
@@ -759,9 +758,9 @@ def render(store=None, principal=None):
                 st.button(
                     f"{shown} - {code}",
                     key="gabinete_" + code,
+                    type="primary",
                     on_click=switch_gabinete,
                     args=(code, office["membro_id"]),
-                    use_container_width=True,
                 )
             return
         require_gabinete(principal, selected)

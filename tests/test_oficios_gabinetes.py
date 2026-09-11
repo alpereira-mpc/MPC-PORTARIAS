@@ -374,6 +374,9 @@ def test_preview_and_switch_ui(store, monkeypatch):
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_oficios").click().run()
     assert len([b for b in app.button if b.key and b.key.startswith("gabinete_")]) == 7
+    gabinetes = [b for b in app.button if b.key and str(b.key).startswith("gabinete_")]
+    assert "Elvira Samara Pereira de Oliveira - PROGE" in {b.label for b in gabinetes}
+    assert "Sheyla Barreto Braga de Queiroz - SBBQ" in {b.label for b in gabinetes}
     app.button(key="gabinete_PROGE").click().run()
     app.radio(key="oficio_page").set_value("Novo Ofício").run()
     app.text_input(key="oficio_input_assunto").set_value("Teste")
