@@ -67,6 +67,15 @@ MODULES = (
     ),
 )
 
+ADMIN_MODULE = Module(
+    "admin",
+    "Administração",
+    "Usuários e Acessos",
+    "Cadastro de contas autorizadas, módulos e gabinetes de Ofícios.",
+    "manage_accounts",
+    True,
+)
+
 
 def open_portarias():
     st.session_state["portal_module"] = "Portarias"
@@ -106,36 +115,69 @@ def card(module):
             )
         else:
             st.caption("EM BREVE")
+            st.markdown(
+                '<div class="mpc-home-soon-slot" aria-hidden="true"></div>',
+                unsafe_allow_html=True,
+            )
 
 
-def home(principal):
+def visible_modules(principal):
     from services.access import has_permission
 
-    st.write("Selecione uma ferramenta para iniciar.")
     visible = []
     for module in MODULES:
         if module.active and not has_permission(principal, module.key):
             continue
         visible.append(module)
     if has_permission(principal, "admin"):
-        visible.append(
-            Module(
-                "admin",
-                "Administração",
-                "Usuários e Acessos",
-                "Cadastro de contas autorizadas, módulos e gabinetes de Ofícios.",
-                "manage_accounts",
-                True,
-            )
-        )
+        visible.append(ADMIN_MODULE)
+    visible.sort(key=lambda module: not module.active)
+    return visible
+
+
+def _home_layout_style():
+    st.markdown(
+        "<style>"
+        "section[data-testid='stMain'] [data-testid='stHorizontalBlock']{"
+        "align-items:stretch;gap:1rem;"
+        "}"
+        "section[data-testid='stMain'] [data-testid='stHorizontalBlock']>div{"
+        "display:flex;min-width:0;"
+        "}"
+        "section[data-testid='stMain'] [data-testid='stHorizontalBlock'] "
+        "[data-testid='stVerticalBlockBorderWrapper']{"
+        "flex:1 1 auto;width:100%;min-height:19.5rem;height:100%;"
+        "}"
+        "section[data-testid='stMain'] [data-testid='stHorizontalBlock'] "
+        "[data-testid='stVerticalBlockBorderWrapper']>div{"
+        "height:100%;display:flex;flex-direction:column;"
+        "}"
+        "section[data-testid='stMain'] .mpc-home-soon-slot{"
+        "min-height:2.85rem;flex:1 1 auto;"
+        "}"
+        "@media (max-width:768px){"
+        "section[data-testid='stMain'] [data-testid='stHorizontalBlock']{"
+        "flex-direction:column;flex-wrap:nowrap;"
+        "}"
+        "section[data-testid='stMain'] [data-testid='stHorizontalBlock']>div{"
+        "width:100%;flex:1 1 auto;"
+        "}"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+
+def home(principal):
+    st.write("Selecione uma ferramenta para iniciar.")
+    visible = visible_modules(principal)
     if not visible:
         st.info("Nenhum módulo disponível para este usuário.")
         return
-    card(visible[0])
-    rest = visible[1:]
-    for start in range(0, len(rest), 2):
+    _home_layout_style()
+    for start in range(0, len(visible), 2):
         columns = st.columns(2)
-        for column, module in zip(columns, rest[start : start + 2]):
+        for column, module in zip(columns, visible[start : start + 2]):
             with column:
                 card(module)
 

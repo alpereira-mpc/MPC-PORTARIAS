@@ -137,7 +137,7 @@ def test_future_modules_have_no_routes_or_side_effects():
 def test_home_card_icons_are_complete_material_names():
     import inspect
 
-    from portal import home
+    from portal import ADMIN_MODULE, home, visible_modules
 
     known = {
         "description",
@@ -147,10 +147,100 @@ def test_home_card_icons_are_complete_material_names():
         "bar_chart",
         "manage_accounts",
     }
-    assert {module.icon for module in MODULES} <= known
-    source = inspect.getsource(home)
-    assert "manage_accounts" in source
+    assert {module.icon for module in MODULES} | {ADMIN_MODULE.icon} <= known
+    source = inspect.getsource(visible_modules) + inspect.getsource(home)
+    assert "ADMIN_MODULE" in source
     assert "admin_panel" not in source
+
+
+def _principal(**flags):
+    from services.access import Principal
+
+    return Principal(
+        id=1,
+        nome="Teste",
+        email="layout@test.local",
+        perfil="USUARIO",
+        ativo=True,
+        pode_portarias=flags.get("portarias", False),
+        pode_agenda=flags.get("agenda", False),
+        pode_oficios=flags.get("oficios", False),
+        pode_admin=flags.get("admin", False),
+        gabinetes=(),
+    )
+
+
+def test_home_visible_modules_active_first_and_authorization():
+    from portal import visible_modules
+
+    admin = visible_modules(
+        _principal(portarias=True, agenda=True, oficios=True, admin=True)
+    )
+    assert [m.key for m in admin] == [
+        "portarias",
+        "oficios",
+        "agenda",
+        "admin",
+        "memorandos",
+        "relatorios",
+    ]
+    assert [m.active for m in admin] == [True, True, True, True, False, False]
+    assert len(admin) % 2 == 0
+
+    no_admin = visible_modules(
+        _principal(portarias=True, agenda=True, oficios=True, admin=False)
+    )
+    assert [m.key for m in no_admin] == [
+        "portarias",
+        "oficios",
+        "agenda",
+        "memorandos",
+        "relatorios",
+    ]
+    assert "admin" not in {m.key for m in no_admin}
+    assert len(no_admin) % 2 == 1
+
+    partial = visible_modules(_principal(agenda=True))
+    assert [m.key for m in partial] == ["agenda", "memorandos", "relatorios"]
+    assert all(m.active for m in partial[:1])
+    assert not any(m.active for m in partial[1:])
+
+
+def test_home_grid_uses_two_columns_from_first_row():
+    import inspect
+
+    from portal import _home_layout_style, card, home
+
+    source = inspect.getsource(home)
+    assert "st.columns(2)" in source
+    assert "card(visible[0])" not in source
+    assert "mpc-home-soon-slot" in inspect.getsource(card)
+    assert "min-height:19.5rem" in inspect.getsource(_home_layout_style)
+
+
+def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert not app.exception
+    captions = [c.value for c in app.caption]
+    labels = [
+        "PORTARIAS",
+        "OFÍCIOS",
+        "AGENDA",
+        "ADMINISTRAÇÃO",
+        "MEMORANDOS",
+        "RELATÓRIOS",
+    ]
+    indexes = [captions.index(label) for label in labels]
+    assert indexes == sorted(indexes)
+    keys = [getattr(b, "key", None) for b in app.button]
+    assert keys.index("open_portarias") < keys.index("open_oficios")
+    assert keys.index("open_oficios") < keys.index("open_agenda")
+    assert keys.index("open_agenda") < keys.index("open_admin")
+
 
 
 def test_home_portarias_agenda_oficios_admin_roundtrip(store, monkeypatch):
