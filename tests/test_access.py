@@ -214,6 +214,162 @@ def test_admin_profile_ignores_partial_checkboxes():
     assert principal.pode_admin and principal.gabinetes == GABINETES
 
 
+def test_usuario_payloads_are_not_promoted_to_administrator(store):
+    access = AccessStore(store)
+    empty = access.get(
+        access.save_user(
+            {
+                "nome": "Sem Permissao",
+                "email": "sem@test.local",
+                "perfil": "USUARIO",
+                "pode_admin": False,
+            }
+        )
+    )
+    assert empty["perfil"] == "USUARIO"
+    assert not any(
+        empty[key]
+        for key in ("pode_portarias", "pode_agenda", "pode_oficios", "pode_admin")
+    )
+    assert empty["gabinetes"] == []
+
+    portarias = access.get(
+        access.save_user(
+            {
+                "nome": "So Portarias",
+                "email": "portarias@test.local",
+                "perfil": "USUARIO",
+                "pode_portarias": True,
+                "gabinetes": list(GABINETES),
+            }
+        )
+    )
+    assert portarias["perfil"] == "USUARIO"
+    assert portarias["pode_portarias"] and not portarias["pode_oficios"]
+    assert portarias["gabinetes"] == []
+
+    proge = access.get(
+        access.save_user(
+            {
+                "nome": "Elkson Miranda",
+                "email": "elkson@test.local",
+                "perfil": "USUARIO",
+                "pode_oficios": True,
+                "pode_admin": False,
+                "gabinetes": ["PROGE"],
+            }
+        )
+    )
+    assert proge["perfil"] == "USUARIO"
+    assert proge["gabinetes"] == ["PROGE"]
+    assert not proge["pode_admin"]
+
+    varios = access.get(
+        access.save_user(
+            {
+                "nome": "Varios Gabinetes",
+                "email": "varios@test.local",
+                "perfil": "USUARIO",
+                "pode_oficios": True,
+                "gabinetes": ["LAF", "PROGE", "BTLC"],
+            }
+        )
+    )
+    assert set(varios["gabinetes"]) == {"PROGE", "BTLC", "LAF"}
+
+    promoted = access.get(
+        access.save_user(
+            {
+                "nome": "Com Admin Modulo",
+                "email": "moduloadmin@test.local",
+                "perfil": "USUARIO",
+                "pode_admin": True,
+                "pode_agenda": True,
+                "gabinetes": ["SBBQ"],
+            }
+        )
+    )
+    assert promoted["perfil"] == "USUARIO"
+    assert promoted["pode_admin"] and promoted["pode_agenda"]
+    assert not promoted["pode_portarias"]
+    assert promoted["gabinetes"] == []
+    principal = resolve_principal(store, {"email": "moduloadmin@test.local"})
+    assert not principal.administrator
+    assert has_permission(principal, "admin")
+    assert has_permission(principal, "agenda")
+    assert not has_permission(principal, "portarias")
+    assert allowed_gabinetes(principal) == ()
+
+    access.save_user(
+        {
+            **proge,
+            "pode_agenda": True,
+            "pode_oficios": True,
+            "gabinetes": ["PROGE", "LAF"],
+        },
+        proge["id"],
+    )
+    edited = access.get(proge["id"])
+    assert edited["perfil"] == "USUARIO"
+    assert edited["pode_agenda"]
+    assert set(edited["gabinetes"]) == {"PROGE", "LAF"}
+
+    full = access.get(
+        access.save_user(
+            {
+                "nome": "Chefe",
+                "email": "chefe@test.local",
+                "perfil": "ADMINISTRADOR",
+                "pode_portarias": False,
+                "gabinetes": ["PROGE"],
+            }
+        )
+    )
+    assert full["perfil"] == "ADMINISTRADOR"
+    assert full["pode_portarias"] and full["pode_admin"]
+    assert set(full["gabinetes"]) == set(GABINETES)
+
+
+def test_admin_form_new_user_is_not_contaminated_by_logged_administrator(
+    store, monkeypatch
+):
+    from streamlit.testing.v1 import AppTest
+    from database.store import ROOT
+    from tests.access_testing import enable_login
+
+    admin_id = AccessStore(store).get_by_email(TEST_IDENTITY["email"])["id"]
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_admin").click().run()
+    assert next(s for s in app.selectbox if s.label == "Perfil").value == "USUARIO"
+    assert next(c for c in app.checkbox if c.label == "Administração").value is False
+    assert next(m for m in app.multiselect if "Gabinetes" in m.label).value == []
+    app.selectbox(key="acesso_pick").set_value(admin_id).run()
+    assert (
+        next(s for s in app.selectbox if s.label == "Perfil").value == "ADMINISTRADOR"
+    )
+    app.selectbox(key="acesso_pick").set_value(0).run()
+    assert next(s for s in app.selectbox if s.label == "Perfil").value == "USUARIO"
+    assert next(c for c in app.checkbox if c.label == "Administração").value is False
+    assert next(m for m in app.multiselect if "Gabinetes" in m.label).value == []
+    next(t for t in app.text_input if t.label == "Nome").set_value(
+        "Elkson Miranda"
+    ).run()
+    next(t for t in app.text_input if t.label == "E-mail").set_value(
+        "elkson.form@test.local"
+    ).run()
+    next(c for c in app.checkbox if c.label == "Ofícios").set_value(True).run()
+    next(m for m in app.multiselect if "Gabinetes" in m.label).set_value(
+        ["PROGE"]
+    ).run()
+    app.button(key="FormSubmitter:acesso_user_0-Salvar").click().run()
+    saved = AccessStore(store).get_by_email("elkson.form@test.local")
+    assert saved["perfil"] == "USUARIO"
+    assert saved["pode_oficios"] and not saved["pode_admin"]
+    assert saved["gabinetes"] == ["PROGE"]
+
+
 def test_unverified_oidc_email_is_rejected(monkeypatch):
     class User:
         is_logged_in = True

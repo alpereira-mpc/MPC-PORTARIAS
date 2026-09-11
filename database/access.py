@@ -104,9 +104,7 @@ class AccessStore:
             raise ValueError("Informe o nome.")
         if not EMAIL_RE.match(email):
             raise ValueError("Informe um e-mail válido.")
-        admin = perfil == "ADMINISTRADOR" or bool(payload.get("pode_admin"))
-        if admin:
-            perfil = "ADMINISTRADOR"
+        if perfil == "ADMINISTRADOR":
             flags = (1, 1, 1, 1)
             gabinetes = list(GABINETES)
         else:
@@ -114,7 +112,7 @@ class AccessStore:
                 flag(payload.get("pode_portarias")),
                 flag(payload.get("pode_agenda")),
                 flag(payload.get("pode_oficios")),
-                0,
+                flag(payload.get("pode_admin")),
             )
             gabinetes = []
             if flags[2]:

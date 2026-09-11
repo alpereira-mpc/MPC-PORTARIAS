@@ -1,7 +1,7 @@
 """Administrative UI for authorized users. Isolated from Portarias/Agenda/Ofícios."""
 
 import streamlit as st
-from database.access import AccessStore, PROFILES
+from database.access import AccessStore
 from services.access import require_permission
 from services.oficios import GABINETES
 
@@ -55,25 +55,39 @@ def render(store, principal):
         if selected == 0
         else access.get(selected)
     )
-    with st.form("acesso_user"):
-        nome = st.text_input("Nome", current["nome"])
-        email = st.text_input("E-mail", current["email"])
+    prefix = "acesso_form_" + str(selected) + "_"
+    profile_options = ("USUARIO", "ADMINISTRADOR")
+    with st.form("acesso_user_" + str(selected)):
+        nome = st.text_input("Nome", value=current["nome"], key=prefix + "nome")
+        email = st.text_input("E-mail", value=current["email"], key=prefix + "email")
         perfil = st.selectbox(
             "Perfil",
-            list(PROFILES),
-            index=0 if current["perfil"] == "ADMINISTRADOR" else 1,
+            profile_options,
+            index=profile_options.index(
+                current["perfil"] if current["perfil"] in profile_options else "USUARIO"
+            ),
+            key=prefix + "perfil",
         )
         st.write("Acesso")
-        portarias = st.checkbox("Portarias", current["pode_portarias"])
-        agenda = st.checkbox("Agenda", current["pode_agenda"])
-        oficios = st.checkbox("Ofícios", current["pode_oficios"])
-        admin = st.checkbox("Administração", current["pode_admin"])
+        portarias = st.checkbox(
+            "Portarias", value=current["pode_portarias"], key=prefix + "portarias"
+        )
+        agenda = st.checkbox(
+            "Agenda", value=current["pode_agenda"], key=prefix + "agenda"
+        )
+        oficios = st.checkbox(
+            "Ofícios", value=current["pode_oficios"], key=prefix + "oficios"
+        )
+        admin = st.checkbox(
+            "Administração", value=current["pode_admin"], key=prefix + "admin"
+        )
         gabinetes = st.multiselect(
             "Gabinetes de Ofícios",
             list(GABINETES),
             default=[g for g in current["gabinetes"] if g in GABINETES],
+            key=prefix + "gabinetes",
         )
-        ativo = st.checkbox("Ativo", current["ativo"])
+        ativo = st.checkbox("Ativo", value=current["ativo"], key=prefix + "ativo")
         submit = st.form_submit_button("Salvar")
     if submit:
         identifier = None if selected == 0 else selected

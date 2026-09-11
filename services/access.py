@@ -24,7 +24,7 @@ class Principal:
 
     @property
     def administrator(self):
-        return self.perfil == "ADMINISTRADOR" or self.pode_admin
+        return self.perfil == "ADMINISTRADOR"
 
 
 def oidc_identity():
@@ -70,7 +70,7 @@ def oidc_identity():
 
 
 def principal_from_record(record):
-    if record["perfil"] == "ADMINISTRADOR" or record["pode_admin"]:
+    if record["perfil"] == "ADMINISTRADOR":
         return Principal(
             id=record["id"],
             nome=record["nome"],
@@ -97,7 +97,7 @@ def principal_from_record(record):
         pode_portarias=bool(record["pode_portarias"]),
         pode_agenda=bool(record["pode_agenda"]),
         pode_oficios=bool(record["pode_oficios"]),
-        pode_admin=False,
+        pode_admin=bool(record["pode_admin"]),
         gabinetes=gabinetes,
     )
 
