@@ -157,3 +157,86 @@ def test_home_portarias_agenda_oficios_admin_roundtrip(store, monkeypatch):
     if "agenda_store" in app.session_state:
         assert app.session_state["agenda_store"].store is store
 
+
+def test_authenticated_user_can_logout_to_restricted_screen(store, monkeypatch):
+    import streamlit as st
+
+    from tests.access_testing import TEST_IDENTITY, enable_login
+
+    session = {"identity": dict(TEST_IDENTITY)}
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr(
+        "services.access.oidc_identity", lambda: session["identity"]
+    )
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    ended = []
+
+    def fake_logout():
+        session["identity"] = None
+        ended.append(True)
+
+    monkeypatch.setattr(st, "logout", fake_logout)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert not app.exception and not app.error
+    assert any(getattr(b, "key", None) == "portal_logout" for b in app.button)
+    assert "_access_cache" in app.session_state
+    app.sidebar.radio(key="portal_module").set_value("Agenda").run()
+    assert not app.exception
+    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    app.button(key="portal_logout").click().run()
+    if not any(b.label == "Entrar com Google" for b in app.button):
+        app.run()
+    assert not app.exception and not app.error
+    assert ended == [True]
+    assert any(b.label == "Entrar com Google" for b in app.button)
+    assert not any(getattr(b, "key", None) == "portal_logout" for b in app.button)
+    assert "_access_cache" not in app.session_state
+    session["identity"] = dict(TEST_IDENTITY)
+    app.run()
+    assert not app.exception
+    assert any(getattr(b, "key", None) == "portal_logout" for b in app.button)
+
+
+def test_denied_user_logout_uses_native_oidc(store, monkeypatch):
+    import streamlit as st
+
+    session = {
+        "identity": {
+            "email": "intruso@test.local",
+            "name": "Intruso",
+            "email_verified": True,
+        }
+    }
+    monkeypatch.setattr(
+        "services.access.oidc_identity", lambda: session["identity"]
+    )
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    ended = []
+
+    def fake_logout():
+        session["identity"] = None
+        ended.append(True)
+
+    monkeypatch.setattr(st, "logout", fake_logout)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert "Acesso não autorizado" in "".join(e.value for e in app.error)
+    next(b for b in app.button if b.label == "Sair").click().run()
+    if not any(b.label == "Entrar com Google" for b in app.button):
+        app.run()
+    assert not app.exception
+    assert ended == [True]
+    assert any(b.label == "Entrar com Google" for b in app.button)
+
+
+def test_logout_helper_is_defined_and_delegates_to_streamlit():
+    import inspect
+
+    import portal
+
+    source = inspect.getsource(portal._logout)
+    assert "st.logout()" in source
+    assert "st.session_state" in source
+    portal_source = inspect.getsource(portal.render_portal)
+    assert "_logout()" in portal_source
+    assert "\n            logout()" not in portal_source
+

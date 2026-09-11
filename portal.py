@@ -153,6 +153,15 @@ def render_login():
     st.caption("Utilize uma conta previamente autorizada.")
 
 
+def _logout():
+    """End the native OIDC session and drop this user's authorization cache."""
+    if "_access_cache" in st.session_state:
+        del st.session_state["_access_cache"]
+    if "portal_module" in st.session_state:
+        del st.session_state["portal_module"]
+    st.logout()
+
+
 def render_denied(identity):
     st.title("FERRAMENTAS MPC-PB")
     st.error("Acesso não autorizado.")
@@ -164,8 +173,7 @@ def render_denied(identity):
     )
     st.write("Entre em contato com o administrador do sistema.")
     if st.button("Sair"):
-        st.session_state.pop("_access_cache", None)
-        st.logout()
+        _logout()
 
 
 def _application_store():
