@@ -113,3 +113,22 @@ def test_future_modules_have_no_routes_or_side_effects():
         "agenda",
     ]
     assert len({module.key for module in MODULES}) == 5
+
+
+def test_home_card_icons_are_complete_material_names():
+    import inspect
+
+    from portal import home
+
+    known = {
+        "description",
+        "article",
+        "mail",
+        "calendar_month",
+        "bar_chart",
+        "manage_accounts",
+    }
+    assert {module.icon for module in MODULES} <= known
+    source = inspect.getsource(home)
+    assert "manage_accounts" in source
+    assert "admin_panel" not in source

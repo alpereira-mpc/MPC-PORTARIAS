@@ -118,7 +118,7 @@ def home(principal):
                 "Administração",
                 "Usuários e Acessos",
                 "Cadastro de contas autorizadas, módulos e gabinetes de Ofícios.",
-                "admin_panel",
+                "manage_accounts",
                 True,
             )
         )
