@@ -111,6 +111,86 @@ def test_save_edit_deactivate_and_unique_email(store):
     assert access.get(identifier)["ativo"]
 
 
+def _gabinetes_of(store, identifier):
+    with store.connection(read_only=True) as c:
+        return [
+            r[0]
+            for r in c.execute(
+                "SELECT gabinete FROM usuario_gabinetes WHERE usuario_id=?",
+                (identifier,),
+            )
+        ]
+
+
+def _audit_actions(store):
+    with store.connection(read_only=True) as c:
+        return [r[0] for r in c.execute("SELECT acao FROM eventos ORDER BY id")]
+
+
+def exercise_user_deletion(store):
+    access = AccessStore(store)
+    admin = access.get_by_email(TEST_IDENTITY["email"])
+    ordinary = access.save_user(
+        {
+            "nome": "Para Excluir",
+            "email": "apagar@test.local",
+            "perfil": "USUARIO",
+            "pode_oficios": True,
+            "gabinetes": ["PROGE", "LAF"],
+        }
+    )
+    assert _gabinetes_of(store, ordinary)
+    access.delete_user(ordinary)
+    with pytest.raises(ValueError, match="não encontrado"):
+        access.get(ordinary)
+    assert access.get_by_email("apagar@test.local") is None
+    assert _gabinetes_of(store, ordinary) == []
+    assert "acesso_excluir_usuario" in _audit_actions(store)
+
+    with pytest.raises(ValueError, match="próprio cadastro"):
+        access.delete_user(admin["id"], actor_id=admin["id"])
+    assert access.get(admin["id"])["email"] == TEST_IDENTITY["email"]
+
+    with pytest.raises(ValueError, match="último administrador"):
+        access.delete_user(admin["id"])
+    assert access.get(admin["id"])
+
+    other_admin = access.save_user(
+        {
+            "nome": "Segundo Admin",
+            "email": "segundo.admin@test.local",
+            "perfil": "ADMINISTRADOR",
+        }
+    )
+    access.delete_user(other_admin, actor_id=admin["id"])
+    assert access.get_by_email("segundo.admin@test.local") is None
+    assert access.get(admin["id"])["perfil"] == "ADMINISTRADOR"
+
+    inactive = access.save_user(
+        {
+            "nome": "Inativo",
+            "email": "inativo@test.local",
+            "perfil": "USUARIO",
+            "ativo": True,
+            "pode_agenda": True,
+        }
+    )
+    access.set_active(inactive, False)
+    assert not access.get(inactive)["ativo"]
+    access.set_active(inactive, True)
+    assert access.get(inactive)["ativo"]
+    access.delete_user(inactive)
+    assert access.get_by_email("inativo@test.local") is None
+
+
+def test_delete_user_sqlite_rules_and_activation(store):
+    exercise_user_deletion(store)
+
+
+def test_delete_user_postgres_rules_and_activation(pg_store):
+    exercise_user_deletion(pg_store)
+
+
 def test_postgres_access_schema_marker_and_idempotency(pg_store):
     with pg_store.connection(read_only=True) as c:
         tables = {
@@ -368,6 +448,40 @@ def test_admin_form_new_user_is_not_contaminated_by_logged_administrator(
     assert saved["perfil"] == "USUARIO"
     assert saved["pode_oficios"] and not saved["pode_admin"]
     assert saved["gabinetes"] == ["PROGE"]
+
+
+def test_admin_delete_requires_confirmation_and_can_be_cancelled(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from database.store import ROOT
+    from tests.access_testing import enable_login
+
+    access = AccessStore(store)
+    target = access.save_user(
+        {
+            "nome": "Candidato",
+            "email": "candidato@test.local",
+            "perfil": "USUARIO",
+            "pode_agenda": True,
+        }
+    )
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_admin").click().run()
+    app.selectbox(key="acesso_pick").set_value(target).run()
+    next(b for b in app.button if b.label == "Excluir usuário").click().run()
+    next(b for b in app.button if b.label == "Cancelar exclusão").click().run()
+    assert access.get_by_email("candidato@test.local")
+    app.selectbox(key="acesso_pick").set_value(target).run()
+    next(b for b in app.button if b.label == "Excluir usuário").click().run()
+    next(
+        c for c in app.checkbox if c.label == "Confirmo a exclusão definitiva"
+    ).set_value(True).run()
+    next(t for t in app.text_input if "EXCLUIR" in t.label).set_value("EXCLUIR").run()
+    next(b for b in app.button if b.label == "Confirmar exclusão").click().run()
+    assert access.get_by_email("candidato@test.local") is None
+    assert not app.exception
+    assert app.session_state["acesso_pick"] == 0
 
 
 def test_unverified_oidc_email_is_rejected(monkeypatch):

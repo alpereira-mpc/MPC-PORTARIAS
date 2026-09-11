@@ -13,6 +13,8 @@ def render(store, principal):
     users = access.list_users()
     if st.session_state.get("acesso_message"):
         st.success(st.session_state.pop("acesso_message"))
+    if st.session_state.pop("acesso_select_new", False):
+        st.session_state["acesso_pick"] = 0
     st.dataframe(
         [
             {
@@ -123,4 +125,51 @@ def render(store, principal):
             access.set_active(selected, True)
             st.session_state.pop("_access_cache", None)
             st.session_state["acesso_message"] = "Usuário ativado."
+            st.rerun()
+        self_delete = selected == principal.id
+        last_admin = (
+            current["perfil"] == "ADMINISTRADOR"
+            and current["ativo"]
+            and access.active_administrator_count(exclude_id=selected) == 0
+        )
+        st.divider()
+        if self_delete:
+            st.caption("Você não pode excluir o próprio cadastro.")
+        elif last_admin:
+            st.caption("Não é possível excluir o último administrador ativo.")
+        elif st.session_state.get("acesso_delete_id") == selected:
+            st.error("Exclusão definitiva")
+            st.write("Será excluído: **" + current["nome"] + "** · " + current["email"])
+            confirmed = st.checkbox(
+                "Confirmo a exclusão definitiva",
+                key="acesso_delete_confirm_" + str(selected),
+            )
+            typed = st.text_input(
+                "Digite EXCLUIR para confirmar",
+                key="acesso_delete_typed_" + str(selected),
+            )
+            cancel, destroy = st.columns(2)
+            with cancel:
+                if st.button("Cancelar exclusão"):
+                    st.session_state.pop("acesso_delete_id", None)
+                    st.rerun()
+            with destroy:
+                if st.button("Confirmar exclusão"):
+                    if not confirmed or typed.strip() != "EXCLUIR":
+                        st.error(
+                            "Marque a confirmação e digite EXCLUIR para excluir o usuário."
+                        )
+                    else:
+                        try:
+                            access.delete_user(selected, actor_id=principal.id)
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        else:
+                            st.session_state.pop("acesso_delete_id", None)
+                            st.session_state.pop("_access_cache", None)
+                            st.session_state["acesso_select_new"] = True
+                            st.session_state["acesso_message"] = "Usuário excluído."
+                            st.rerun()
+        elif st.button("Excluir usuário"):
+            st.session_state["acesso_delete_id"] = selected
             st.rerun()

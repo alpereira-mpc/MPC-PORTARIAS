@@ -169,6 +169,65 @@ class AccessStore:
         user["ativo"] = bool(active)
         return self.save_user(user, identifier)
 
+    def active_administrator_count(self, exclude_id=None):
+        with self.store.connection(read_only=True) as c:
+            if exclude_id is None:
+                row = c.execute(
+                    "SELECT COUNT(*) FROM usuarios_acesso "
+                    "WHERE perfil='ADMINISTRADOR' AND ativo=1"
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT COUNT(*) FROM usuarios_acesso "
+                    "WHERE perfil='ADMINISTRADOR' AND ativo=1 AND id!=?",
+                    (exclude_id,),
+                ).fetchone()
+            return row[0]
+
+    def delete_user(self, identifier, *, actor_id=None):
+        user = self.get(identifier)
+        if actor_id is not None and identifier == actor_id:
+            raise ValueError("Não é permitido excluir o próprio cadastro.")
+        if (
+            user["perfil"] == "ADMINISTRADOR"
+            and user["ativo"]
+            and self.active_administrator_count(exclude_id=identifier) == 0
+        ):
+            raise ValueError("Não é possível excluir o último administrador ativo.")
+        snapshot = {
+            "id": user["id"],
+            "email": user["email"],
+            "nome": user["nome"],
+            "perfil": user["perfil"],
+        }
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            current = c.execute(
+                f"SELECT {USER_COLUMNS} FROM usuarios_acesso WHERE id=?",
+                (identifier,),
+            ).fetchone()
+            if not current:
+                raise ValueError("Usuário não encontrado.")
+            if current["perfil"] == "ADMINISTRADOR" and current["ativo"]:
+                remaining = c.execute(
+                    "SELECT COUNT(*) FROM usuarios_acesso "
+                    "WHERE perfil='ADMINISTRADOR' AND ativo=1 AND id!=?",
+                    (identifier,),
+                ).fetchone()[0]
+                if remaining == 0:
+                    raise ValueError(
+                        "Não é possível excluir o último administrador ativo."
+                    )
+            c.execute("DELETE FROM usuarios_acesso WHERE id=?", (identifier,))
+            leftover = c.execute(
+                "SELECT COUNT(*) FROM usuario_gabinetes WHERE usuario_id=?",
+                (identifier,),
+            ).fetchone()[0]
+            if leftover:
+                raise ValueError("Não foi possível remover os gabinetes do usuário.")
+            self.store.event(c, "acesso_excluir_usuario", snapshot)
+        return snapshot
+
     def _hydrate(self, c, row):
         record = dict(row)
         record["ativo"] = bool(record["ativo"])
