@@ -75,6 +75,10 @@ def open_oficios():
     st.session_state["portal_module"] = "Ofícios"
 
 
+def open_admin():
+    st.session_state["portal_module"] = "Administração"
+
+
 def card(module):
     with st.container(border=True):
         st.caption(module.label.upper())
@@ -91,33 +95,137 @@ def card(module):
                     "portarias": open_portarias,
                     "agenda": open_agenda,
                     "oficios": open_oficios,
+                    "admin": open_admin,
                 }[module.key],
             )
         else:
             st.caption("EM BREVE")
 
 
-def home():
+def home(principal):
+    from services.access import has_permission
+
     st.write("Selecione uma ferramenta para iniciar.")
-    card(MODULES[0])
-    for start in (1, 3):
-        for column, module in zip(st.columns(2), MODULES[start : start + 2]):
+    visible = []
+    for module in MODULES:
+        if module.active and not has_permission(principal, module.key):
+            continue
+        visible.append(module)
+    if has_permission(principal, "admin"):
+        visible.append(
+            Module(
+                "admin",
+                "Administração",
+                "Usuários e Acessos",
+                "Cadastro de contas autorizadas, módulos e gabinetes de Ofícios.",
+                "admin_panel",
+                True,
+            )
+        )
+    if not visible:
+        st.info("Nenhum módulo disponível para este usuário.")
+        return
+    card(visible[0])
+    rest = visible[1:]
+    for start in range(0, len(rest), 2):
+        columns = st.columns(2)
+        for column, module in zip(columns, rest[start : start + 2]):
             with column:
                 card(module)
 
 
+def render_login():
+    st.title("FERRAMENTAS MPC-PB")
+    st.caption("Ministério Público de Contas do Estado da Paraíba")
+    st.subheader("Acesso restrito")
+    if st.button("Entrar com Google", type="primary"):
+        try:
+            st.login()
+        except Exception:
+            st.error(
+                "Não foi possível iniciar o login com Google. Confira a configuração OIDC nos Secrets."
+            )
+    st.caption("Utilize uma conta previamente autorizada.")
+
+
+def render_denied(identity):
+    st.title("FERRAMENTAS MPC-PB")
+    st.error("Acesso não autorizado.")
+    st.write(
+        "A conta "
+        + identity["email"]
+        + " foi autenticada pelo Google, mas não possui autorização "
+        "para acessar o Ferramentas MPC-PB."
+    )
+    st.write("Entre em contato com o administrador do sistema.")
+    if st.button("Sair"):
+        st.session_state.pop("_access_cache", None)
+        st.logout()
+
+
+def _logout():
+    st.session_state.pop("_access_cache", None)
+    st.logout()
+
+
 def render_portal():
+    from services.access import (
+        current_user,
+        has_permission,
+        oidc_identity,
+        require_permission,
+    )
+
     st.set_page_config(
         page_title="Ferramentas MPC-PB",
         page_icon=str(ROOT / "assets/logo.jpeg"),
         layout="wide",
     )
+    identity = oidc_identity()
+    if identity is None:
+        with st.sidebar:
+            st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
+            st.markdown("**Ferramentas MPC-PB**")
+        render_login()
+        st.stop()
+    try:
+        from database.store import Store
+        from services.ui_store import display_store
+
+        store = display_store(Store())
+        principal = current_user(store)
+    except Exception:
+        with st.sidebar:
+            st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
+            st.markdown("**Ferramentas MPC-PB**")
+        st.error("Não foi possível verificar a autorização. Tente novamente.")
+        if st.button("Sair"):
+            _logout()
+        st.stop()
+    if principal is None:
+        with st.sidebar:
+            st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
+            st.markdown("**Ferramentas MPC-PB**")
+        render_denied(identity)
+        st.stop()
+    options = ["Início"]
+    if has_permission(principal, "portarias"):
+        options.append("Portarias")
+    if has_permission(principal, "agenda"):
+        options.append("Agenda")
+    if has_permission(principal, "oficios"):
+        options.append("Ofícios")
+    if has_permission(principal, "admin"):
+        options.append("Administração")
+    if st.session_state.get("portal_module") not in options:
+        st.session_state["portal_module"] = "Início"
     with st.sidebar:
         st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
         st.markdown("**Ferramentas MPC-PB**")
-        selected = st.radio(
-            "Portal", ["Início", "Portarias", "Agenda", "Ofícios"], key="portal_module"
-        )
+        st.caption(principal.nome + " · " + principal.email)
+        if st.button("Sair", key="portal_logout"):
+            _logout()
+        selected = st.radio("Portal", options, key="portal_module")
         with st.expander("Outras ferramentas"):
             for module in MODULES[1:]:
                 if not module.active:
@@ -125,18 +233,28 @@ def render_portal():
     st.title("FERRAMENTAS MPC-PB")
     st.caption("Ministério Público de Contas do Estado da Paraíba")
     if selected == "Início":
-        home()
-        # Stop before importing or constructing the Portarias database/document stack.
+        home(principal)
         st.stop()
+    try:
+        if selected == "Agenda":
+            require_permission(principal, "agenda")
+            from services.agenda_ui import render
 
-    if selected == "Agenda":
-        from services.agenda_ui import render
+            render()
+            st.stop()
+        if selected == "Ofícios":
+            require_permission(principal, "oficios")
+            from services.oficios_ui import render
 
-        render()
-        st.stop()
+            render()
+            st.stop()
+        if selected == "Administração":
+            require_permission(principal, "admin")
+            from services.access_ui import render
 
-    if selected == "Ofícios":
-        from services.oficios_ui import render
-
-        render()
+            render(store, principal)
+            st.stop()
+        require_permission(principal, "portarias")
+    except ValueError as exc:
+        st.error(str(exc))
         st.stop()

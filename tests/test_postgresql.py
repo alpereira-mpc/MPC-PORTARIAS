@@ -49,6 +49,9 @@ def pg_store(pg_url, tmp_path):
     store = Store(database_url=pg_url, postgres_schema="mpc_test_" + uuid.uuid4().hex)
     store.path = tmp_path / "runtime"
     store.configure(export_dir=str(tmp_path / "exports"))
+    from tests.access_testing import seed_access
+
+    seed_access(store)
     return store
 
 
@@ -258,7 +261,12 @@ def test_schema_ssl_foreign_keys_and_indexes(pg_store):
                 "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=current_schema()"
             )
         }
-        assert names == set(TABLES) | {"schema_migrations", "backup_snapshots"}
+        assert names == set(TABLES) | {
+            "schema_migrations",
+            "backup_snapshots",
+            "usuarios_acesso",
+            "usuario_gabinetes",
+        }
         assert c.execute(
             "SELECT ssl FROM pg_catalog.pg_stat_ssl WHERE pid=pg_backend_pid()"
         ).fetchone()[0]
@@ -389,6 +397,9 @@ def test_postgres_streamlit_screens_and_backup(pg_store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
 
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, pg_store)
     monkeypatch.setattr("database.store.Store", lambda: pg_store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()

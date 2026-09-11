@@ -27,6 +27,7 @@ def test_select_postgres_without_connecting(tmp_path, monkeypatch, source):
     monkeypatch.setattr(
         PostgresBackend, "initialize", lambda self, root: initialized.append(True)
     )
+    monkeypatch.setattr("database.access.ensure_schema", lambda store: None)
     monkeypatch.setattr("database.store.ROOT", tmp_path)
     store = Store()
     assert store.backend == "postgresql" and initialized == [True]

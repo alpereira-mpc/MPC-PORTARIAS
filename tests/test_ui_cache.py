@@ -156,6 +156,9 @@ def test_history_index_and_summary_are_lightweight(pg_store):
 
 def test_warm_pages_and_editor_fields_execute_zero_queries(pg_store, monkeypatch):
     pg_store.save_draft(sample(pg_store))
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, pg_store)
     monkeypatch.setattr("database.store.Store", lambda: pg_store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
@@ -178,6 +181,9 @@ def test_warm_pages_and_editor_fields_execute_zero_queries(pg_store, monkeypatch
 
 
 def test_fragment_preview_finalize_and_lazy_download(pg_store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, pg_store)
     monkeypatch.setattr("database.store.Store", lambda: pg_store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
@@ -205,6 +211,9 @@ def test_fragment_preview_finalize_and_lazy_download(pg_store, monkeypatch):
 def test_dependent_period_updates_after_substitution_edit(pg_store, monkeypatch):
     from datetime import timedelta
 
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, pg_store)
     monkeypatch.setattr("database.store.Store", lambda: pg_store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
@@ -225,6 +234,9 @@ def test_dependent_period_updates_after_substitution_edit(pg_store, monkeypatch)
 
 
 def test_edited_fragment_cannot_finalize_old_preview(pg_store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, pg_store)
     monkeypatch.setattr("database.store.Store", lambda: pg_store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()

@@ -62,6 +62,9 @@ def test_upcoming_ui_pagination_and_reference_date(store, monkeypatch):
     import services.agenda_ui as ui
 
     monkeypatch.setattr(ui, "datetime", FixedDatetime)
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     agenda = AgendaStore(store)
     for index in range(32):
@@ -112,6 +115,9 @@ def test_upcoming_refreshes_previous_session_contract(
     import services.agenda_ui as ui
 
     store = request.getfixturevalue(backend_fixture)
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     monkeypatch.setattr(ui, "datetime", FixedDatetime)
     agenda = AgendaStore(store)
@@ -131,6 +137,9 @@ def test_upcoming_refreshes_previous_session_contract(
 
 
 def test_removed_list_selection_is_migrated(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.session_state["agenda_view"] = "Lista"

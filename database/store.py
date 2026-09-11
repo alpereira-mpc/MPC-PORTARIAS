@@ -88,10 +88,16 @@ class Store:
     def initialize(self):
         if self._postgres is not None:
             self._postgres.initialize(ROOT)
+            from database.access import ensure_schema
+
+            ensure_schema(self)
             return
         with self.connection() as c:
             version = c.execute("PRAGMA user_version").fetchone()[0]
             if version == 2:
+                from database.access import ensure_schema
+
+                ensure_schema(self)
                 return
             if version > 2:
                 raise ValueError(
@@ -99,6 +105,9 @@ class Store:
                 )
         if version == 1:
             self.migrate()
+            from database.access import ensure_schema
+
+            ensure_schema(self)
             return
         with self.connection() as c:
             c.execute("PRAGMA journal_mode=WAL")
@@ -107,7 +116,8 @@ class Store:
                 raise ValueError(
                     "Banco criado por versão mais recente. Atualize o aplicativo."
                 )
-            c.executescript("""
+            c.executescript(
+                """
             CREATE TABLE IF NOT EXISTS procuradores (
                 id INTEGER PRIMARY KEY, nome TEXT NOT NULL, genero TEXT NOT NULL,
                 cargo_base TEXT NOT NULL, funcao TEXT NOT NULL, assento TEXT NOT NULL,
@@ -132,7 +142,8 @@ class Store:
             CREATE TRIGGER IF NOT EXISTS manter_ato BEFORE UPDATE OF numero,ano,payload,docx,status ON portarias
                 WHEN OLD.status != 'Rascunho' AND (NEW.numero IS NOT OLD.numero OR NEW.ano IS NOT OLD.ano OR NEW.payload IS NOT OLD.payload OR NEW.docx IS NOT OLD.docx OR NEW.status='Rascunho' OR (OLD.status='Cancelada' AND NEW.status!='Cancelada'))
                 BEGIN SELECT RAISE(ABORT,'Conteúdo de ato finalizado é imutável'); END;
-            """)
+            """
+            )
             c.execute("BEGIN IMMEDIATE")
             if not c.execute(
                 "SELECT 1 FROM configuracoes WHERE chave='seeded'"
@@ -166,6 +177,9 @@ class Store:
                 )
             c.execute("PRAGMA user_version=1")
         self.migrate(backup_required=False)
+        from database.access import ensure_schema
+
+        ensure_schema(self)
 
     def migrate(self, backup_required=True):
         if self._postgres is not None:

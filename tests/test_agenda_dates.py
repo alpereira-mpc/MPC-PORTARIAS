@@ -17,6 +17,9 @@ def test_date_presentation():
 
 @pytest.mark.parametrize("kind", ["EVENTO", "REUNIAO", "DESPACHO"])
 def test_date_inputs_and_edit_preserve_iso(store, monkeypatch, kind):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     agenda = AgendaStore(store)
     record = draft(kind, members=[3], day="2026-09-30")
@@ -47,6 +50,9 @@ def test_view_dates_and_details(store, monkeypatch, view):
     import services.agenda_ui as ui
 
     monkeypatch.setattr(ui, "datetime", FixedDatetime)
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     agenda = AgendaStore(store)
     agenda.save(draft("EVENTO", members=[3], day="2026-09-10"))
@@ -63,6 +69,9 @@ def test_view_dates_and_details(store, monkeypatch, view):
 
 
 def test_conflict_date_display(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     agenda = AgendaStore(store)
     record = draft("REUNIAO", members=[3], day="2026-09-30")

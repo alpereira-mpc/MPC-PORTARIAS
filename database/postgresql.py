@@ -43,6 +43,7 @@ IDENTITY_TABLES = {
     "audit_log",
     "exportacoes",
     "audit_arquivos",
+    "usuarios_acesso",
 }
 HISTORY_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS portarias_recent_idx "

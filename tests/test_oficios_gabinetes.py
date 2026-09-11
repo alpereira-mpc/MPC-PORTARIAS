@@ -360,6 +360,9 @@ def test_preview_and_switch_ui(store, monkeypatch):
     from database.store import ROOT
 
     service = ready(store)
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     converted = []
 

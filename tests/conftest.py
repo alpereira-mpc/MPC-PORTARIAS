@@ -16,4 +16,7 @@ def store(tmp_path):
     s = Store(tmp_path / "test.db")
     s.configure(export_dir=str(tmp_path / "exports"))
     s.set_sequence(2026, 8, True)
+    from tests.access_testing import seed_access
+
+    seed_access(s)
     return s

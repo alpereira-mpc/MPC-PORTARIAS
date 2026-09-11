@@ -668,16 +668,32 @@ def listing(service, people, direction=None, tracking=False):
 
 def render():
     from database.store import Store
+    from services.access import (
+        allowed_gabinetes,
+        current_user,
+        require_gabinete,
+        require_permission,
+    )
 
     try:
-        service = open_service(display_store(Store()))
+        store = display_store(Store())
+        require_permission(current_user(store), "oficios")
+        service = open_service(store)
         people = {
             p["id"]: p for p in service.store.catalog("procuradores") if p["ativo"]
         }
         if not people:
             st.warning("Cadastre um membro ativo na base de procuradores.")
             return
-        offices = {s["sigla"]: s for s in service.series() if s["membro_id"] in people}
+        allowed = set(allowed_gabinetes(current_user(store)))
+        offices = {
+            s["sigla"]: s
+            for s in service.series()
+            if s["membro_id"] in people and s["sigla"] in allowed
+        }
+        if not offices:
+            st.warning("Nenhum gabinete de Ofícios autorizado para este usuário.")
+            return
         selected = st.session_state.get("oficio_gabinete")
         if selected not in offices:
             st.subheader("Ofícios — Geração e Controle")
@@ -733,6 +749,7 @@ def render():
                     use_container_width=True,
                 )
             return
+        require_gabinete(current_user(store), selected)
         office = offices[selected]
         st.session_state["oficio_gabinete_member"] = office["membro_id"]
         st.subheader(f"OFÍCIOS — GABINETE {selected}")

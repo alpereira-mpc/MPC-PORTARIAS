@@ -285,6 +285,7 @@ def editor(agenda, people):
 
 def render():
     from database.store import Store
+    from services.access import current_user, require_permission
 
     st.header("AGENDA DOS PROCURADORES")
     if "agenda_store" not in st.session_state:
@@ -296,6 +297,7 @@ def render():
             st.session_state["agenda_store"].store
         )
     agenda = st.session_state["agenda_store"]
+    require_permission(current_user(agenda.store), "agenda")
     people = display_store(agenda.store).catalog("procuradores")
     names = {p["id"]: p["nome"] for p in people}
     if message := st.session_state.pop("agenda_message", None):

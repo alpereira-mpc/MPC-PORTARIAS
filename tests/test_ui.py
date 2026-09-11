@@ -2,6 +2,7 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 import pytest
 from database.store import ROOT, Store
+from tests.access_testing import enable_login
 
 
 @pytest.mark.parametrize("fails", [False, True])
@@ -19,6 +20,7 @@ def test_pdf_download_does_not_retain_session_bytes(tmp_path, monkeypatch, fails
     identifier = store.save_draft(sample(store))
     store.finalize(identifier)  # Isolated test database only.
     monkeypatch.setattr(persistence, "Store", lambda: original(path))
+    enable_login(monkeypatch, store)
     output = b"%PDF-1.4\nsynthetic"
 
     def convert(*args):
@@ -60,6 +62,7 @@ def test_ui_administrative_deletion_confirmation(tmp_path, monkeypatch):
     store.finalize(identifier)
     draft_id = store.save_draft(sample(store))
     monkeypatch.setattr(persistence, "Store", lambda: original(path))
+    enable_login(monkeypatch, store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
     app.sidebar.radio(key="nav").set_value("Histórico").run()
@@ -111,6 +114,7 @@ def test_ui_draft_delete_and_natural_legacy_reason(tmp_path, monkeypatch):
             "UPDATE portarias SET payload=? WHERE id=?", (json.dumps(p), identifier)
         )
     monkeypatch.setattr(persistence, "Store", lambda: original(path))
+    enable_login(monkeypatch, store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
     app.sidebar.radio(key="nav").set_value("Histórico").run()
@@ -133,6 +137,7 @@ def test_member_editor_preserves_custom_seat(tmp_path, monkeypatch):
     person["assento"] = "Câmara Especial"
     store.save_member(person)
     monkeypatch.setattr(persistence, "Store", lambda: original(path))
+    enable_login(monkeypatch, store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
     app.sidebar.radio(key="nav").set_value("Procuradores").run()
@@ -151,6 +156,7 @@ def test_history_displays_feminine_role_and_draft(tmp_path, monkeypatch):
     store = original(path)
     store.save_draft(sample(store))
     monkeypatch.setattr(persistence, "Store", lambda: original(path))
+    enable_login(monkeypatch, store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
     app.sidebar.radio(key="nav").set_value("Histórico").run()
@@ -167,7 +173,9 @@ def test_all_screens(tmp_path, monkeypatch):
     monkeypatch.setattr(persistence, "DB_PATH", path)
     # Store default arguments are captured at definition; isolate using a factory.
     original = persistence.Store
+    store = original(path)
     monkeypatch.setattr(persistence, "Store", lambda: original(path))
+    enable_login(monkeypatch, store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
     assert not app.exception
@@ -190,6 +198,7 @@ def test_ui_finalize(tmp_path, monkeypatch):
     s.set_sequence(2026, 8, True)
     s.configure(export_dir=str(tmp_path / "exports"))
     monkeypatch.setattr(persistence, "Store", lambda: original(path))
+    enable_login(monkeypatch, s)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
 

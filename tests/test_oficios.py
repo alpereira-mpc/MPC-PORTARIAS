@@ -355,6 +355,9 @@ def test_home_and_oficios_navigation(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
 
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_oficios").click().run()
@@ -535,6 +538,9 @@ def test_editor_save_reopen_finalize_ui(store, monkeypatch):
     from database.store import ROOT
 
     s = ready(store)
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     monkeypatch.setattr("document_generator.oficios.official_documents", files)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()

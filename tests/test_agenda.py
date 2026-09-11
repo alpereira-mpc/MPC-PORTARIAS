@@ -141,6 +141,9 @@ def test_additive_initialization_and_stable_bindings(store):
 
 
 def test_agenda_ui_navigation_and_save(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_agenda").click().run()
@@ -190,6 +193,9 @@ def test_invalid_records(store, changes):
 
 
 def test_ui_resets_availability_confirmation(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_agenda").click().run()
@@ -266,6 +272,9 @@ def test_views_only_show_registered_appointments(store, monkeypatch, view, with_
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     if with_record:
