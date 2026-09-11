@@ -141,25 +141,43 @@ def home(principal):
 
 
 def render_login():
-    st.title("FERRAMENTAS MPC-PB")
-    st.caption("Ministério Público de Contas do Estado da Paraíba")
-    st.subheader("Acesso restrito")
     icon = base64.standard_b64encode(asset(ROOT / "assets/gmail.png")).decode("ascii")
     st.markdown(
         "<style>"
+        "section[data-testid='stMain'] [data-testid='stMainBlockContainer']{"
+        "max-width:48rem;width:100%;margin-left:0;margin-right:auto;padding-top:2.25rem;"
+        "}"
+        "section[data-testid='stMain'] [data-testid='stHeading'] h1{"
+        "font-size:3.375rem;line-height:1.15;margin:0 0 .45rem 0;font-weight:700;"
+        "}"
+        "section[data-testid='stMain'] [data-testid='stCaptionContainer'] p,"
+        "section[data-testid='stMain'] [data-testid='stCaption'] p{"
+        "font-size:1.2rem;line-height:1.45;margin:0 0 .85rem 0;"
+        "}"
+        "section[data-testid='stMain'] [data-testid='stHeading'] h2,"
+        "section[data-testid='stMain'] [data-testid='stHeading'] h3{"
+        "font-size:2.25rem;line-height:1.25;margin:.35rem 0 1.05rem 0;font-weight:650;"
+        "}"
+        "section[data-testid='stMain'] div.st-key-oidc_gmail_login{"
+        "width:fit-content;max-width:100%;margin:.15rem 0 .95rem 0;"
+        "}"
         "div.st-key-oidc_gmail_login button{"
         "display:inline-flex;align-items:center;justify-content:center;"
-        "gap:.65rem;min-height:2.75rem;padding:.55rem 1.25rem .55rem 1.05rem;"
-        "font-weight:650;cursor:pointer;"
+        "gap:.975rem;min-height:4.125rem;width:auto;max-width:100%;"
+        "padding:.825rem 1.875rem .825rem 1.575rem;"
+        "font-size:1.5rem;font-weight:650;cursor:pointer;"
         "}"
         "div.st-key-oidc_gmail_login button::before{"
-        "content:'';width:1.25rem;height:1.25rem;flex:0 0 1.25rem;"
+        "content:'';width:1.875rem;height:1.875rem;flex:0 0 1.875rem;"
         "background-image:url('data:image/png;base64," + icon + "');"
         "background-size:contain;background-repeat:no-repeat;background-position:center;"
         "}"
         "</style>",
         unsafe_allow_html=True,
     )
+    st.title("FERRAMENTAS MPC-PB")
+    st.caption("Ministério Público de Contas do Estado da Paraíba")
+    st.subheader("Acesso restrito")
     if st.button("Entrar com Gmail", type="primary", key="oidc_gmail_login"):
         try:
             st.login()
