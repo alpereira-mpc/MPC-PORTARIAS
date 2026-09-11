@@ -5,7 +5,7 @@ import time
 from database.access import AccessStore, normalize_email
 from services.oficios import GABINETES
 
-MODULES = ("portarias", "agenda", "oficios", "admin")
+MODULES = ("portarias", "agenda", "oficios", "memorandos", "admin")
 CACHE_SECONDS = 20
 
 
@@ -21,6 +21,7 @@ class Principal:
     pode_oficios: bool
     pode_admin: bool
     gabinetes: tuple
+    pode_memorandos: bool = False
 
     @property
     def administrator(self):
@@ -80,6 +81,7 @@ def principal_from_record(record):
             pode_portarias=True,
             pode_agenda=True,
             pode_oficios=True,
+            pode_memorandos=True,
             pode_admin=True,
             gabinetes=tuple(GABINETES),
         )
@@ -97,6 +99,7 @@ def principal_from_record(record):
         pode_portarias=bool(record["pode_portarias"]),
         pode_agenda=bool(record["pode_agenda"]),
         pode_oficios=bool(record["pode_oficios"]),
+        pode_memorandos=bool(record.get("pode_memorandos", False)),
         pode_admin=bool(record["pode_admin"]),
         gabinetes=gabinetes,
     )
@@ -155,6 +158,8 @@ def has_permission(principal, module):
         return principal.pode_agenda
     if module == "oficios":
         return principal.pode_oficios
+    if module == "memorandos":
+        return principal.pode_memorandos
     if module == "admin":
         return principal.pode_admin
     return False

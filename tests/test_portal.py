@@ -191,6 +191,7 @@ def _principal(**flags):
         pode_oficios=flags.get("oficios", False),
         pode_admin=flags.get("admin", False),
         gabinetes=(),
+        pode_memorandos=flags.get("memorandos", False),
     )
 
 
@@ -205,11 +206,11 @@ def test_home_visible_modules_active_first_and_authorization():
         "oficios",
         "agenda",
         "admin",
-        "memorandos",
         "relatorios",
     ]
-    assert [m.active for m in admin] == [True, True, True, True, False, False]
-    assert len(admin) % 2 == 0
+    assert [m.active for m in admin] == [True, True, True, True, False]
+    # Memorandos is hidden without its independent permission, so an odd final row is valid.
+    assert len(admin) == 5
 
     no_admin = visible_modules(
         _principal(portarias=True, agenda=True, oficios=True, admin=False)
@@ -218,14 +219,13 @@ def test_home_visible_modules_active_first_and_authorization():
         "portarias",
         "oficios",
         "agenda",
-        "memorandos",
         "relatorios",
     ]
     assert "admin" not in {m.key for m in no_admin}
-    assert len(no_admin) % 2 == 1
+    assert len(no_admin) == 4
 
     partial = visible_modules(_principal(agenda=True))
-    assert [m.key for m in partial] == ["agenda", "memorandos", "relatorios"]
+    assert [m.key for m in partial] == ["agenda", "relatorios"]
     assert all(m.active for m in partial[:1])
     assert not any(m.active for m in partial[1:])
 
