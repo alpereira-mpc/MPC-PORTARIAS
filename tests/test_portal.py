@@ -22,7 +22,26 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception and not app.error
     assert app.title[0].value == "FERRAMENTAS MPC-PB"
-    assert any(b.label == "Entrar com Google" for b in app.button)
+    assert any(b.label == "Entrar com Gmail" for b in app.button)
+    assert any(getattr(b, "key", None) == "oidc_gmail_login" for b in app.button)
+    assert any(
+        getattr(c, "value", "")
+        == "Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br."
+        for c in app.caption
+    )
+    assert not any(getattr(b, "key", None) == "open_portarias" for b in app.button)
+
+
+def test_restricted_gmail_button_starts_native_oidc(monkeypatch):
+    import streamlit as st
+
+    monkeypatch.setattr("services.access.oidc_identity", lambda: None)
+    started = []
+    monkeypatch.setattr(st, "login", lambda: started.append(True))
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="oidc_gmail_login").click().run()
+    assert not app.exception
+    assert started == [True]
     assert not any(getattr(b, "key", None) == "open_portarias" for b in app.button)
 
 
@@ -184,11 +203,11 @@ def test_authenticated_user_can_logout_to_restricted_screen(store, monkeypatch):
     assert not app.exception
     app.sidebar.radio(key="portal_module").set_value("Início").run()
     app.button(key="portal_logout").click().run()
-    if not any(b.label == "Entrar com Google" for b in app.button):
+    if not any(b.label == "Entrar com Gmail" for b in app.button):
         app.run()
     assert not app.exception and not app.error
     assert ended == [True]
-    assert any(b.label == "Entrar com Google" for b in app.button)
+    assert any(b.label == "Entrar com Gmail" for b in app.button)
     assert not any(getattr(b, "key", None) == "portal_logout" for b in app.button)
     assert "_access_cache" not in app.session_state
     session["identity"] = dict(TEST_IDENTITY)
@@ -221,11 +240,11 @@ def test_denied_user_logout_uses_native_oidc(store, monkeypatch):
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert "Acesso não autorizado" in "".join(e.value for e in app.error)
     next(b for b in app.button if b.label == "Sair").click().run()
-    if not any(b.label == "Entrar com Google" for b in app.button):
+    if not any(b.label == "Entrar com Gmail" for b in app.button):
         app.run()
     assert not app.exception
     assert ended == [True]
-    assert any(b.label == "Entrar com Google" for b in app.button)
+    assert any(b.label == "Entrar com Gmail" for b in app.button)
 
 
 def test_logout_helper_is_defined_and_delegates_to_streamlit():

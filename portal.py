@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import base64
 
 import streamlit as st
 
@@ -143,14 +144,30 @@ def render_login():
     st.title("FERRAMENTAS MPC-PB")
     st.caption("Ministério Público de Contas do Estado da Paraíba")
     st.subheader("Acesso restrito")
-    if st.button("Entrar com Google", type="primary"):
+    icon = base64.standard_b64encode(asset(ROOT / "assets/gmail.png")).decode("ascii")
+    st.markdown(
+        "<style>"
+        "div.st-key-oidc_gmail_login button{"
+        "display:inline-flex;align-items:center;justify-content:center;"
+        "gap:.65rem;min-height:2.75rem;padding:.55rem 1.25rem .55rem 1.05rem;"
+        "font-weight:650;cursor:pointer;"
+        "}"
+        "div.st-key-oidc_gmail_login button::before{"
+        "content:'';width:1.25rem;height:1.25rem;flex:0 0 1.25rem;"
+        "background-image:url('data:image/png;base64," + icon + "');"
+        "background-size:contain;background-repeat:no-repeat;background-position:center;"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    if st.button("Entrar com Gmail", type="primary", key="oidc_gmail_login"):
         try:
             st.login()
         except Exception:
             st.error(
                 "Não foi possível iniciar o login com Google. Confira a configuração OIDC nos Secrets."
             )
-    st.caption("Utilize uma conta previamente autorizada.")
+    st.caption("Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br.")
 
 
 def _logout():
