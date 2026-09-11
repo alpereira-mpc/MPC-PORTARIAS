@@ -21,7 +21,10 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     monkeypatch.setattr("services.access.oidc_identity", lambda: None)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception and not app.error
-    assert app.title[0].value == "FERRAMENTAS MPC-PB"
+    assert app.title[0].value == "Acesso restrito"
+    assert not any(
+        getattr(t, "value", "") == "FERRAMENTAS MPC-PB" for t in app.title
+    )
     assert any(b.label == "Entrar com Gmail" for b in app.button)
     assert any(getattr(b, "key", None) == "oidc_gmail_login" for b in app.button)
     assert any(
@@ -32,7 +35,28 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     assert not any(getattr(b, "key", None) == "open_portarias" for b in app.button)
 
 
-def test_restricted_gmail_button_starts_native_oidc(monkeypatch):
+def test_brand_assets_are_packaged_with_the_repository():
+    from services import branding
+
+    assert branding.SIDEBAR_LOGO.is_file()
+    assert branding.HEADER_IMAGE.is_file()
+    assert branding.SIDEBAR_LOGO.relative_to(branding.ROOT).parts[0] == "assets"
+    assert branding.HEADER_IMAGE.relative_to(branding.ROOT).parts[0] == "assets"
+    assert branding.SIDEBAR_LOGO.name == "mpcpb_logo_sidebar.png"
+    assert branding.HEADER_IMAGE.name == "mpcpb_header_horizontal.png"
+
+
+def test_home_uses_page_title_not_generic_banner(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    headings = [h.value for h in app.subheader] + [h.value for h in app.title]
+    assert "Início" in headings
+    assert "FERRAMENTAS MPC-PB" not in headings
+    assert "AGENDA DOS PROCURADORES" not in headings
+
     import streamlit as st
 
     monkeypatch.setattr("services.access.oidc_identity", lambda: None)

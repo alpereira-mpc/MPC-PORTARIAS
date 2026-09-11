@@ -6,6 +6,11 @@ import base64
 
 import streamlit as st
 
+from services.branding import (
+    SIDEBAR_LOGO,
+    render_institutional_header,
+    render_sidebar_brand,
+)
 from services.ui_store import asset
 
 ROOT = Path(__file__).resolve().parent
@@ -217,9 +222,7 @@ def render_login():
         "</style>",
         unsafe_allow_html=True,
     )
-    st.title("FERRAMENTAS MPC-PB")
-    st.caption("Ministério Público de Contas do Estado da Paraíba")
-    st.subheader("Acesso restrito")
+    st.title("Acesso restrito")
     if st.button("Entrar com Gmail", type="primary", key="oidc_gmail_login"):
         try:
             st.login()
@@ -240,7 +243,6 @@ def _logout():
 
 
 def render_denied(identity):
-    st.title("FERRAMENTAS MPC-PB")
     st.error("Acesso não autorizado.")
     st.write(
         "A conta "
@@ -276,14 +278,14 @@ def render_portal():
 
     st.set_page_config(
         page_title="Ferramentas MPC-PB",
-        page_icon=str(ROOT / "assets/logo.jpeg"),
+        page_icon=str(SIDEBAR_LOGO),
         layout="wide",
     )
     identity = oidc_identity()
     if identity is None:
         with st.sidebar:
-            st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
-            st.markdown("**Ferramentas MPC-PB**")
+            render_sidebar_brand()
+        render_institutional_header()
         render_login()
         st.stop()
     try:
@@ -291,16 +293,16 @@ def render_portal():
         principal = current_user(store)
     except Exception:
         with st.sidebar:
-            st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
-            st.markdown("**Ferramentas MPC-PB**")
+            render_sidebar_brand()
+        render_institutional_header()
         st.error("Não foi possível verificar a autorização. Tente novamente.")
         if st.button("Sair"):
             _logout()
         st.stop()
     if principal is None:
         with st.sidebar:
-            st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
-            st.markdown("**Ferramentas MPC-PB**")
+            render_sidebar_brand()
+        render_institutional_header()
         render_denied(identity)
         st.stop()
     options = ["Início"]
@@ -315,8 +317,7 @@ def render_portal():
     if _session_get("portal_module") not in options:
         st.session_state["portal_module"] = "Início"
     with st.sidebar:
-        st.image(asset(ROOT / "assets/logo.jpeg"), width=110)
-        st.markdown("**Ferramentas MPC-PB**")
+        render_sidebar_brand()
         st.caption(principal.nome + " · " + principal.email)
         if st.button("Sair", key="portal_logout"):
             _logout()
@@ -325,9 +326,9 @@ def render_portal():
             for module in MODULES[1:]:
                 if not module.active:
                     st.caption(f"{module.label} · Em breve")
-    st.title("FERRAMENTAS MPC-PB")
-    st.caption("Ministério Público de Contas do Estado da Paraíba")
+    render_institutional_header()
     if selected == "Início":
+        st.subheader("Início")
         home(principal)
         st.stop()
     try:
