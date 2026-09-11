@@ -64,6 +64,14 @@ class DisplayStore:
         # A fragment can outlive a global rerun. Only the TTL cache owns reads.
         store._read_cache = None
 
+    @property
+    def schema_key(self):
+        return self._store.schema_key
+
+    @property
+    def backend(self):
+        return self._store.backend
+
     def __getattr__(self, name):
         return getattr(self._store, name)
 
@@ -99,12 +107,18 @@ class DisplayStore:
 
 
 def display_store(store):
+    store = persistence_store(store)
     return DisplayStore(store) if store.backend == "postgresql" else store
 
 
 def persistence_store(store):
     """Unwrap a display decorator so modules share the same Store instance."""
-    return store._store if isinstance(store, DisplayStore) else store
+    if store is None:
+        return None
+    inner = getattr(store, "_store", None)
+    if inner is not None and type(store).__name__ == "DisplayStore":
+        return inner
+    return store
 
 
 @st.cache_data(max_entries=8, show_spinner=False)

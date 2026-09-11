@@ -3,7 +3,7 @@
 from datetime import datetime
 import json
 import uuid
-from database.store import now
+from database.store import now, schema_key_of, unwrap_store
 from services.agenda import RULES, normalized, validate, institutional, conflicts
 
 _READY = set()
@@ -11,11 +11,11 @@ _READY = set()
 
 class AgendaStore:
     def __init__(self, store):
-        self.store = store
+        self.store = unwrap_store(store)
         self.initialize()
 
     def initialize(self):
-        key = self.store.schema_key
+        key = schema_key_of(self.store)
         if key in _READY:
             with self.store.connection(read_only=True) as c:
                 self.bindings = {

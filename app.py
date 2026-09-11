@@ -9,8 +9,8 @@ from datetime import date, datetime
 from pathlib import Path
 import logging
 import streamlit as st
-from database.store import Store, ROOT
-from services.ui_store import display_store, persistence_store
+from database.store import Store, ROOT, unwrap_store
+from services.ui_store import display_store
 from document_generator.docx import generate
 from document_generator.pdf import convert, PdfUnavailable
 from services.exports import setup_logging, export_record
@@ -21,7 +21,9 @@ from services.placeholders import assert_docx_clean
 from services.deletion import REASONS
 
 VERSION = "1.1.0"
-raw_store = persistence_store(st.session_state.get("_mpc_store"))
+raw_store = unwrap_store(
+    st.session_state["_mpc_store"] if "_mpc_store" in st.session_state else None
+)
 if raw_store is None:
     raw_store = Store()
     st.session_state["_mpc_store"] = raw_store

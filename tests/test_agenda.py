@@ -310,3 +310,21 @@ def test_views_only_show_registered_appointments(store, monkeypatch, view, with_
     else:
         assert "Nenhum compromisso no período selecionado." in displayed
         assert not any(b.label == "Editar" for b in app.button)
+
+
+def test_agenda_ui_rebuilds_from_display_proxy_session(store, monkeypatch):
+    from tests.access_testing import enable_login
+    from services.ui_store import DisplayStore
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+
+    leftover = type("Leftover", (), {})()
+    leftover.store = DisplayStore(store)
+    app.session_state["agenda_store"] = leftover
+    app.sidebar.radio(key="portal_module").set_value("Agenda").run()
+    assert not app.exception and not app.error
+    assert type(app.session_state["agenda_store"]) is AgendaStore
+    assert app.session_state["agenda_store"].store is store
+

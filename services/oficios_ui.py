@@ -668,7 +668,7 @@ def listing(service, people, direction=None, tracking=False):
 
 
 def render(store=None, principal=None):
-    from database.store import Store
+    from database.store import Store, unwrap_store
     from services.access import (
         allowed_gabinetes,
         current_user,
@@ -678,7 +678,9 @@ def render(store=None, principal=None):
 
     try:
         if store is None:
-            store = display_store(Store())
+            store = Store()
+        else:
+            store = unwrap_store(store)
         if principal is None:
             principal = current_user(store)
         require_permission(principal, "oficios")

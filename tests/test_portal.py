@@ -132,3 +132,28 @@ def test_home_card_icons_are_complete_material_names():
     source = inspect.getsource(home)
     assert "manage_accounts" in source
     assert "admin_panel" not in source
+
+
+def test_home_portarias_agenda_oficios_admin_roundtrip(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert not app.exception and not app.error
+    for module in (
+        "Portarias",
+        "Início",
+        "Agenda",
+        "Início",
+        "Ofícios",
+        "Administração",
+        "Início",
+    ):
+        app.sidebar.radio(key="portal_module").set_value(module).run()
+        assert not app.exception, module
+        assert not app.error, module
+    assert app.session_state["_mpc_store"] is store
+    if "agenda_store" in app.session_state:
+        assert app.session_state["agenda_store"].store is store
+

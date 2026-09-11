@@ -1,7 +1,7 @@
 """Additive authorized-users schema on the existing Store connection."""
 
 import re
-from database.store import now
+from database.store import now, schema_key_of, unwrap_store
 from services.oficios import GABINETES
 
 PROFILES = ("ADMINISTRADOR", "USUARIO")
@@ -25,12 +25,12 @@ def flag(value):
 
 class AccessStore:
     def __init__(self, store):
-        self.store = store
-        if store.schema_key not in _READY:
+        self.store = unwrap_store(store)
+        if schema_key_of(self.store) not in _READY:
             self.ensure_schema()
 
     def ensure_schema(self):
-        key = self.store.schema_key
+        key = schema_key_of(self.store)
         if key in _READY:
             return
         with self.store.connection(read_only=True) as c:

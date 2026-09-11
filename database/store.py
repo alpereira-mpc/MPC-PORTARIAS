@@ -22,6 +22,35 @@ def encode(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+def unwrap_store(store):
+    """Return the persistence Store behind a display/cache proxy, if any."""
+    if store is None:
+        return None
+    inner = getattr(store, "_store", None)
+    if inner is None or inner is store:
+        return store
+    if callable(getattr(inner, "connection", None)) and hasattr(inner, "backend"):
+        return inner
+    return store
+
+
+def schema_key_of(store):
+    """Stable schema identity for process caches; works with proxies and older Stores."""
+    store = unwrap_store(store)
+    if store is None:
+        raise AttributeError("Store ausente.")
+    key = getattr(store, "schema_key", None)
+    if key:
+        return key
+    postgres = getattr(store, "_postgres", None)
+    if postgres is not None:
+        return "pg:" + postgres.schema
+    path = getattr(store, "path", None)
+    if path is not None:
+        return "sqlite:" + str(path)
+    raise AttributeError("Objeto não expõe identidade de schema.")
+
+
 class Store:
     def __init__(
         self, path=None, *, database_url=None, postgres_schema="mpc_portarias"

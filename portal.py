@@ -10,6 +10,11 @@ from services.ui_store import asset
 ROOT = Path(__file__).resolve().parent
 
 
+def _session_get(key, default=None):
+    state = st.session_state
+    return state[key] if key in state else default
+
+
 @dataclass(frozen=True)
 class Module:
     key: str
@@ -164,12 +169,11 @@ def render_denied(identity):
 
 
 def _application_store():
-    from database.store import Store
-    from services.ui_store import persistence_store
+    from database.store import Store, unwrap_store
 
-    store = st.session_state.get("_mpc_store")
+    store = _session_get("_mpc_store")
     if store is not None:
-        store = persistence_store(store)
+        store = unwrap_store(store)
         st.session_state["_mpc_store"] = store
         return store
     store = Store()
@@ -223,7 +227,7 @@ def render_portal():
         options.append("Ofícios")
     if has_permission(principal, "admin"):
         options.append("Administração")
-    if st.session_state.get("portal_module") not in options:
+    if _session_get("portal_module") not in options:
         st.session_state["portal_module"] = "Início"
     with st.sidebar:
         st.image(asset(ROOT / "assets/logo.jpeg"), width=110)

@@ -284,21 +284,30 @@ def editor(agenda, people):
 
 
 def render(store=None, principal=None):
-    from database.store import Store
+    from database.store import Store, unwrap_store
     from services.access import current_user, require_permission
 
     st.header("AGENDA DOS PROCURADORES")
     if store is None:
         store = Store()
-    existing = st.session_state.get("agenda_store")
-    if type(existing) is not AgendaStore:
-        # Streamlit may retain an instance of the previous class after a code reload.
-        st.session_state["agenda_store"] = AgendaStore(
-            getattr(existing, "store", store)
-        )
-    elif existing.store is not store:
-        st.session_state["agenda_store"] = AgendaStore(store)
-    agenda = st.session_state["agenda_store"]
+    else:
+        store = unwrap_store(store)
+    existing = (
+        st.session_state["agenda_store"]
+        if "agenda_store" in st.session_state
+        else None
+    )
+    held = (
+        unwrap_store(getattr(existing, "store", None))
+        if existing is not None
+        else None
+    )
+    if type(existing) is AgendaStore and held is store:
+        agenda = existing
+    else:
+        # Reload leftover session objects; prefer a real Store over a display proxy.
+        agenda = AgendaStore(held if held is not None else store)
+        st.session_state["agenda_store"] = agenda
     if principal is None:
         principal = current_user(agenda.store)
     require_permission(principal, "agenda")

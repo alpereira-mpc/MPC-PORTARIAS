@@ -119,7 +119,11 @@ def current_user(store):
     try:
         import streamlit as st
 
-        cache = st.session_state.get("_access_cache")
+        cache = (
+            st.session_state["_access_cache"]
+            if "_access_cache" in st.session_state
+            else None
+        )
         if (
             cache
             and cache.get("email") == identity["email"]

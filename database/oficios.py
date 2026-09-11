@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 import json
 import re
 import uuid
-from database.store import now, encode
+from database.store import now, encode, unwrap_store
 from services.oficios import (
     SERIES,
     BASELINES,
@@ -25,7 +25,7 @@ COLUMNS = "id,direcao,serie,ano,numero,status,data,prazo,membro_id,assunto,desti
 
 class OficiosStore:
     def __init__(self, store):
-        self.store = store
+        self.store = unwrap_store(store)
         self._series = None
         self.initialize()
 
