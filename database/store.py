@@ -11,6 +11,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = Path(os.environ.get("MPC_DB_PATH", ROOT / "data" / "mpc.db"))
+_INITIALIZED = set()
 
 
 def now():
@@ -44,6 +45,12 @@ class Store:
             self.path = Path(path if path is not None else DB_PATH)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.initialize()
+
+    @property
+    def schema_key(self):
+        if self._postgres is not None:
+            return "pg:" + self._postgres.schema
+        return "sqlite:" + str(self.path)
 
     @property
     def location(self):
@@ -86,18 +93,34 @@ class Store:
             c.close()
 
     def initialize(self):
+        known = self.schema_key in _INITIALIZED
         if self._postgres is not None:
+            if known:
+                return
             self._postgres.initialize(ROOT)
             from database.access import ensure_schema
 
             ensure_schema(self)
+            _INITIALIZED.add(self.schema_key)
             return
+        if known:
+            with self.connection() as c:
+                version = c.execute("PRAGMA user_version").fetchone()[0]
+            if version == 2:
+                return
+            if version > 2:
+                raise ValueError(
+                    "Banco criado por versão mais recente. Atualize o aplicativo."
+                )
+            # Same path was replaced with a legacy or empty file in this process.
+            _INITIALIZED.discard(self.schema_key)
         with self.connection() as c:
             version = c.execute("PRAGMA user_version").fetchone()[0]
             if version == 2:
                 from database.access import ensure_schema
 
                 ensure_schema(self)
+                _INITIALIZED.add(self.schema_key)
                 return
             if version > 2:
                 raise ValueError(
@@ -108,6 +131,7 @@ class Store:
             from database.access import ensure_schema
 
             ensure_schema(self)
+            _INITIALIZED.add(self.schema_key)
             return
         with self.connection() as c:
             c.execute("PRAGMA journal_mode=WAL")
@@ -180,8 +204,10 @@ class Store:
         from database.access import ensure_schema
 
         ensure_schema(self)
+        _INITIALIZED.add(self.schema_key)
 
     def migrate(self, backup_required=True):
+        _INITIALIZED.discard(self.schema_key)
         if self._postgres is not None:
             self._postgres.initialize(ROOT, force=True)
             return

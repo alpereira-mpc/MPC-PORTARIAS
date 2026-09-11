@@ -6,7 +6,7 @@ from database.access import AccessStore, normalize_email
 from services.oficios import GABINETES
 
 MODULES = ("portarias", "agenda", "oficios", "admin")
-CACHE_SECONDS = 10
+CACHE_SECONDS = 20
 
 
 @dataclass(frozen=True)

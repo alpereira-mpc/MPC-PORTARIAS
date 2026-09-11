@@ -15,7 +15,6 @@ from services.oficios import (
     normalized,
     validate_upload,
 )
-from services.oficios_extraction import extract_received_metadata
 from services.ui_store import display_store
 
 
@@ -382,6 +381,8 @@ def received_form(service, people):
                 content = pdf.getvalue()
                 try:
                     validate_upload(pdf.name, content)
+                    from services.oficios_extraction import extract_received_metadata
+
                     meta = extract_received_metadata(content, pdf.name)
                 except ValueError as exc:
                     st.error(str(exc))
@@ -666,7 +667,7 @@ def listing(service, people, direction=None, tracking=False):
         details(service, service.get(st.session_state["oficio_detail"]))
 
 
-def render():
+def render(store=None, principal=None):
     from database.store import Store
     from services.access import (
         allowed_gabinetes,
@@ -676,16 +677,28 @@ def render():
     )
 
     try:
-        store = display_store(Store())
-        require_permission(current_user(store), "oficios")
-        service = open_service(store)
+        if store is None:
+            store = display_store(Store())
+        if principal is None:
+            principal = current_user(store)
+        require_permission(principal, "oficios")
+        if st.session_state.get("_oficios_store") is store and st.session_state.get(
+            "_oficios_service"
+        ):
+            service = st.session_state["_oficios_service"]
+        else:
+            service = open_service(store)
+            st.session_state["_oficios_service"] = service
+            st.session_state["_oficios_store"] = store
         people = {
-            p["id"]: p for p in service.store.catalog("procuradores") if p["ativo"]
+            p["id"]: p
+            for p in display_store(service.store).catalog("procuradores")
+            if p["ativo"]
         }
         if not people:
             st.warning("Cadastre um membro ativo na base de procuradores.")
             return
-        allowed = set(allowed_gabinetes(current_user(store)))
+        allowed = set(allowed_gabinetes(principal))
         offices = {
             s["sigla"]: s
             for s in service.series()
@@ -749,7 +762,7 @@ def render():
                     use_container_width=True,
                 )
             return
-        require_gabinete(current_user(store), selected)
+        require_gabinete(principal, selected)
         office = offices[selected]
         st.session_state["oficio_gabinete_member"] = office["membro_id"]
         st.subheader(f"OFÍCIOS — GABINETE {selected}")

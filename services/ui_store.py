@@ -102,6 +102,11 @@ def display_store(store):
     return DisplayStore(store) if store.backend == "postgresql" else store
 
 
+def persistence_store(store):
+    """Unwrap a display decorator so modules share the same Store instance."""
+    return store._store if isinstance(store, DisplayStore) else store
+
+
 @st.cache_data(max_entries=8, show_spinner=False)
 def _asset(path, modified, size):
     return Path(path).read_bytes()

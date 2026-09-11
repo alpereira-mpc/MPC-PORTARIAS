@@ -6,6 +6,8 @@ import uuid
 from database.store import now
 from services.agenda import RULES, normalized, validate, institutional, conflicts
 
+_READY = set()
+
 
 class AgendaStore:
     def __init__(self, store):
@@ -13,6 +15,16 @@ class AgendaStore:
         self.initialize()
 
     def initialize(self):
+        key = self.store.schema_key
+        if key in _READY:
+            with self.store.connection(read_only=True) as c:
+                self.bindings = {
+                    r["chave"].removeprefix("agenda_member_"): int(r["valor"])
+                    for r in c.execute(
+                        "SELECT chave,valor FROM configuracoes WHERE chave LIKE 'agenda_member_%'"
+                    )
+                }
+            return
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             c.execute(
@@ -21,10 +33,12 @@ class AgendaStore:
                 inicio TEXT NOT NULL, fim TEXT, situacao TEXT NOT NULL,
                 payload TEXT NOT NULL, criada TEXT NOT NULL, atualizada TEXT NOT NULL)"""
             )
-            c.execute("""CREATE TABLE IF NOT EXISTS agenda_compromisso_procuradores (
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS agenda_compromisso_procuradores (
                 compromisso_id TEXT NOT NULL REFERENCES agenda_compromissos(id) ON DELETE CASCADE,
                 procurador_id INTEGER NOT NULL REFERENCES procuradores(id),
-                PRIMARY KEY(compromisso_id, procurador_id))""")
+                PRIMARY KEY(compromisso_id, procurador_id))"""
+            )
             c.execute(
                 "CREATE INDEX IF NOT EXISTS agenda_periodo_idx ON agenda_compromissos(inicio, fim)"
             )
@@ -50,6 +64,7 @@ class AgendaStore:
                     "SELECT chave,valor FROM configuracoes WHERE chave LIKE 'agenda_member_%'"
                 )
             }
+        _READY.add(key)
 
     def _list(self, c, start, end, member=None, kind=None, status=None, *, offset=None):
         if offset is None:

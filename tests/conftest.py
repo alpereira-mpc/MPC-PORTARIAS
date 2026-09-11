@@ -6,7 +6,13 @@ from database.store import Store
 def isolate_database_secrets(monkeypatch):
     """Tests never inherit a developer's or Cloud's production connection."""
     import streamlit as st
+    import database.store as persistence
+    import database.access as access
+    import database.agenda as agenda
 
+    persistence._INITIALIZED.clear()
+    access._READY.clear()
+    agenda._READY.clear()
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr(st, "secrets", {})
 

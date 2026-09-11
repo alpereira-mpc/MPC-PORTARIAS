@@ -94,6 +94,8 @@ def test_save_edit_deactivate_and_unique_email(store):
     user = access.get(identifier)
     assert user["email"] == "ana@test.local"
     assert user["pode_agenda"] and not user["pode_portarias"]
+    listed = next(u for u in access.list_users() if u["id"] == identifier)
+    assert listed["gabinetes"] == user["gabinetes"]
     with pytest.raises(ValueError, match="e-mail"):
         access.save_user(
             {"nome": "Outra", "email": "ana@test.local", "perfil": "USUARIO"}

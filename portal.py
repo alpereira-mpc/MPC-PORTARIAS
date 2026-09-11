@@ -163,9 +163,18 @@ def render_denied(identity):
         st.logout()
 
 
-def _logout():
-    st.session_state.pop("_access_cache", None)
-    st.logout()
+def _application_store():
+    from database.store import Store
+    from services.ui_store import persistence_store
+
+    store = st.session_state.get("_mpc_store")
+    if store is not None:
+        store = persistence_store(store)
+        st.session_state["_mpc_store"] = store
+        return store
+    store = Store()
+    st.session_state["_mpc_store"] = store
+    return store
 
 
 def render_portal():
@@ -189,10 +198,7 @@ def render_portal():
         render_login()
         st.stop()
     try:
-        from database.store import Store
-        from services.ui_store import display_store
-
-        store = display_store(Store())
+        store = _application_store()
         principal = current_user(store)
     except Exception:
         with st.sidebar:
@@ -240,13 +246,13 @@ def render_portal():
             require_permission(principal, "agenda")
             from services.agenda_ui import render
 
-            render()
+            render(store, principal)
             st.stop()
         if selected == "Ofícios":
             require_permission(principal, "oficios")
             from services.oficios_ui import render
 
-            render()
+            render(store, principal)
             st.stop()
         if selected == "Administração":
             require_permission(principal, "admin")

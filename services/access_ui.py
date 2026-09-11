@@ -42,21 +42,21 @@ def render(store, principal):
         format_func=lambda i: choices[i],
         key="acesso_pick",
     )
-    current = (
-        dict(
-            nome="",
-            email="",
-            perfil="USUARIO",
-            ativo=True,
-            pode_portarias=False,
-            pode_agenda=False,
-            pode_oficios=False,
-            pode_admin=False,
-            gabinetes=[],
-        )
-        if selected == 0
-        else access.get(selected)
+    current = dict(
+        nome="",
+        email="",
+        perfil="USUARIO",
+        ativo=True,
+        pode_portarias=False,
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_admin=False,
+        gabinetes=[],
     )
+    if selected != 0:
+        current = next((dict(u) for u in users if u["id"] == selected), None)
+        if current is None:
+            current = access.get(selected)
     prefix = "acesso_form_" + str(selected) + "_"
     profile_options = ("USUARIO", "ADMINISTRADOR")
     with st.form("acesso_user_" + str(selected)):

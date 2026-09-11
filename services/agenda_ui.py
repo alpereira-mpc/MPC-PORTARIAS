@@ -283,21 +283,25 @@ def editor(agenda, people):
         st.rerun()
 
 
-def render():
+def render(store=None, principal=None):
     from database.store import Store
     from services.access import current_user, require_permission
 
     st.header("AGENDA DOS PROCURADORES")
-    if "agenda_store" not in st.session_state:
-        st.session_state["agenda_store"] = AgendaStore(Store())
-    elif type(st.session_state["agenda_store"]) is not AgendaStore:
+    if store is None:
+        store = Store()
+    existing = st.session_state.get("agenda_store")
+    if type(existing) is not AgendaStore:
         # Streamlit may retain an instance of the previous class after a code reload.
-        # Renew the service contract once, reusing the existing Store and its pool.
         st.session_state["agenda_store"] = AgendaStore(
-            st.session_state["agenda_store"].store
+            getattr(existing, "store", store)
         )
+    elif existing.store is not store:
+        st.session_state["agenda_store"] = AgendaStore(store)
     agenda = st.session_state["agenda_store"]
-    require_permission(current_user(agenda.store), "agenda")
+    if principal is None:
+        principal = current_user(agenda.store)
+    require_permission(principal, "agenda")
     people = display_store(agenda.store).catalog("procuradores")
     names = {p["id"]: p["nome"] for p in people}
     if message := st.session_state.pop("agenda_message", None):

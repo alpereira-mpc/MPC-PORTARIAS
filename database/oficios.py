@@ -26,14 +26,19 @@ COLUMNS = "id,direcao,serie,ano,numero,status,data,prazo,membro_id,assunto,desti
 class OficiosStore:
     def __init__(self, store):
         self.store = store
+        self._series = None
         self.initialize()
 
     def initialize(self):
+        if getattr(self, "_schema_ready", False):
+            return
+        self._series = None
         # Read-only fast path on subsequent reruns; no DDL/writer lock after migration.
         with self.store.connection(read_only=True) as c:
             if c.execute(
                 "SELECT valor FROM configuracoes WHERE chave='oficios_schema_v2'"
             ).fetchone():
+                self._schema_ready = True
                 return
         binary = "BYTEA" if self.store.backend == "postgresql" else "BLOB"
         with self.store.connection() as c:
@@ -74,15 +79,19 @@ class OficiosStore:
             c.execute(
                 "INSERT INTO configuracoes VALUES('oficios_schema_v2','1') ON CONFLICT DO NOTHING"
             )
+        self._schema_ready = True
 
     def series(self):
+        if self._series is not None:
+            return self._series
         with self.store.connection(read_only=True) as c:
-            return [
+            self._series = [
                 dict(r)
                 for r in c.execute(
                     "SELECT s.*,p.nome FROM oficio_series s JOIN procuradores p ON p.id=s.membro_id ORDER BY s.sigla"
                 )
             ]
+            return self._series
 
     def configure_series(self, member, sigla, model, heading, digits, confirmed=False):
         if not confirmed:
@@ -123,6 +132,7 @@ class OficiosStore:
             self.store.event(
                 c, "oficio_configurar_serie", {"serie": sigla, "membro": member}
             )
+        self._series = None
 
     def sequence(self, series, year):
         with self.store.connection(read_only=True) as c:
