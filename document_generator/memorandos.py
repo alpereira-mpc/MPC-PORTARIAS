@@ -4,10 +4,31 @@ from pathlib import Path
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Pt, Twips
 from services.memorandos import participle, period_text, role_article
 
 ROOT = Path(__file__).resolve().parents[1]
+PORTARIAS_LOGO = ROOT / "assets" / "logo.jpeg"
+PORTARIAS_LOGO_WIDTH = Pt(163.5)
+PORTARIAS_LOGO_HEIGHT = Pt(105.75)
+
+
+def _add_portarias_logo(doc):
+    paragraph = doc.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = 1.3
+    paragraph.paragraph_format.left_indent = Twips(540)
+    paragraph.add_run().add_picture(
+        str(PORTARIAS_LOGO),
+        width=PORTARIAS_LOGO_WIDTH,
+        height=PORTARIAS_LOGO_HEIGHT,
+    )
+    spacer = doc.add_paragraph()
+    spacer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    spacer.paragraph_format.line_spacing = 1.3
+    spacer.paragraph_format.left_indent = Twips(540)
 
 
 def _font(run, *, size=13, bold=False):
@@ -75,11 +96,7 @@ def generate(record):
     section.top_margin, section.bottom_margin = Cm(1.25), Cm(2.0)
     section.left_margin, section.right_margin = Cm(3.0), Cm(2.0)
     section.header_distance = Cm(1.25)
-    logo = ROOT / "assets" / "mpcpb_header_horizontal.png"
-    if logo.is_file():
-        header = section.header.paragraphs[0]
-        header.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        header.add_run().add_picture(str(logo), width=Cm(15.0))
+    _add_portarias_logo(doc)
     _paragraph(doc, "MEMORANDO", alignment=WD_ALIGN_PARAGRAPH.CENTER, before=18, after=18, bold=True, size=14)
     _paragraph(doc, "Ao Excelentíssimo Senhor Presidente do Tribunal de Contas do Estado da Paraíba", after=12)
     subject = _paragraph(doc, "", after=14)

@@ -7,7 +7,7 @@ import tempfile
 import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Pt, Twips
 
 from database.memorandos import MemorandosStore
 from database.store import Store
@@ -298,6 +298,35 @@ def test_document_contains_institutional_fields():
     ):
         assert item in text
     assert "gabinete da Procuradora Elvira" not in text
+    header_xml = doc.sections[0].header._element.xml
+    assert "a:blip" not in header_xml and "v:imagedata" not in header_xml
+
+
+def test_memorandos_embed_the_same_logo_as_portarias():
+    from zipfile import ZipFile
+    from database.store import ROOT as PROJECT_ROOT
+    from document_generator.memorandos import PORTARIAS_LOGO, PORTARIAS_LOGO_HEIGHT, PORTARIAS_LOGO_WIDTH
+
+    portarias_jpeg = ZipFile(PROJECT_ROOT / "templates" / "simples.docx").read("word/media/image1.jpeg")
+    assert PORTARIAS_LOGO.is_file()
+    assert PORTARIAS_LOGO.read_bytes() == portarias_jpeg
+    content = generate(record())
+    with ZipFile(BytesIO(content)) as package:
+        media = [name for name in package.namelist() if name.startswith("word/media/")]
+        assert len(media) == 1
+        assert package.read(media[0]) == portarias_jpeg
+        document = package.read("word/document.xml").decode("utf-8")
+        headers = [name for name in package.namelist() if "header" in name and name.endswith(".xml")]
+        for name in headers:
+            xml = package.read(name)
+            assert b"a:blip" not in xml and b"v:imagedata" not in xml
+    assert str(PORTARIAS_LOGO_WIDTH.emu) in document
+    assert str(PORTARIAS_LOGO_HEIGHT.emu) in document
+    doc = Document(BytesIO(content))
+    logo_paragraph = doc.paragraphs[0]
+    assert logo_paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert logo_paragraph.paragraph_format.left_indent == Twips(540)
+
 
 
 def test_cascade_document_mentions_each_stage():
