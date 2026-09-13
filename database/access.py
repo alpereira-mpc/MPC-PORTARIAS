@@ -10,7 +10,7 @@ MARKER = "acesso_schema_v1"
 _READY = set()
 GABINETE_LIST = ",".join("'" + code + "'" for code in GABINETES)
 USER_COLUMNS = (
-    "id,nome,email,perfil,ativo,pode_portarias,pode_agenda,pode_oficios,pode_admin,"
+    "id,nome,email,perfil,ativo,pode_portarias,pode_agenda,pode_oficios,pode_memorandos,pode_admin,"
     "criado_em,atualizado_em"
 )
 
@@ -34,9 +34,14 @@ class AccessStore:
         if key in _READY:
             return
         with self.store.connection(read_only=True) as c:
-            if c.execute(
+            marker = c.execute(
                 "SELECT valor FROM configuracoes WHERE chave=?", (MARKER,)
-            ).fetchone():
+            ).fetchone()
+            if self.store.backend == "postgresql":
+                columns = {r[0] for r in c.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='usuarios_acesso'")}
+            else:
+                columns = {r[1] for r in c.execute("PRAGMA table_info(usuarios_acesso)")}
+            if marker and "pode_memorandos" in columns:
                 _READY.add(key)
                 return
         identity = (
@@ -56,10 +61,27 @@ class AccessStore:
                 "pode_portarias INTEGER NOT NULL DEFAULT 0 CHECK(pode_portarias IN (0,1)),"
                 "pode_agenda INTEGER NOT NULL DEFAULT 0 CHECK(pode_agenda IN (0,1)),"
                 "pode_oficios INTEGER NOT NULL DEFAULT 0 CHECK(pode_oficios IN (0,1)),"
+                "pode_memorandos INTEGER NOT NULL DEFAULT 0 CHECK(pode_memorandos IN (0,1)),"
                 "pode_admin INTEGER NOT NULL DEFAULT 0 CHECK(pode_admin IN (0,1)),"
                 "criado_em TEXT NOT NULL,"
                 "atualizado_em TEXT NOT NULL)"
             )
+            # Existing installations predate the additive permission column.
+            if self.store.backend == "postgresql":
+                columns = {
+                    r[0]
+                    for r in c.execute(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema=current_schema() AND table_name='usuarios_acesso'"
+                    )
+                }
+            else:
+                columns = {r[1] for r in c.execute("PRAGMA table_info(usuarios_acesso)")}
+            if "pode_memorandos" not in columns:
+                c.execute(
+                    "ALTER TABLE usuarios_acesso ADD COLUMN pode_memorandos INTEGER NOT NULL DEFAULT 0"
+                )
+            c.execute("UPDATE usuarios_acesso SET pode_memorandos=1 WHERE perfil='ADMINISTRADOR'")
             fk = "BIGINT" if self.store.backend == "postgresql" else "INTEGER"
             c.execute(
                 "CREATE TABLE IF NOT EXISTS usuario_gabinetes ("
@@ -112,6 +134,7 @@ class AccessStore:
                     "pode_portarias",
                     "pode_agenda",
                     "pode_oficios",
+                    "pode_memorandos",
                     "pode_admin",
                 ):
                     record[key] = bool(record[key])
@@ -130,13 +153,14 @@ class AccessStore:
         if not EMAIL_RE.match(email):
             raise ValueError("Informe um e-mail válido.")
         if perfil == "ADMINISTRADOR":
-            flags = (1, 1, 1, 1)
+            flags = (1, 1, 1, 1, 1)
             gabinetes = list(GABINETES)
         else:
             flags = (
                 flag(payload.get("pode_portarias")),
                 flag(payload.get("pode_agenda")),
                 flag(payload.get("pode_oficios")),
+                flag(payload.get("pode_memorandos")),
                 flag(payload.get("pode_admin")),
             )
             gabinetes = []
@@ -158,8 +182,8 @@ class AccessStore:
             if identifier is None:
                 inserted = c.execute(
                     "INSERT INTO usuarios_acesso(nome,email,perfil,ativo,pode_portarias,"
-                    "pode_agenda,pode_oficios,pode_admin,criado_em,atualizado_em) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "pode_agenda,pode_oficios,pode_memorandos,pode_admin,criado_em,atualizado_em) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (nome, email, perfil, ativo, *flags, stamp, stamp),
                 )
                 identifier = inserted.lastrowid
@@ -172,7 +196,7 @@ class AccessStore:
                     raise ValueError("Usuário não encontrado.")
                 c.execute(
                     "UPDATE usuarios_acesso SET nome=?,email=?,perfil=?,ativo=?,"
-                    "pode_portarias=?,pode_agenda=?,pode_oficios=?,pode_admin=?,"
+                    "pode_portarias=?,pode_agenda=?,pode_oficios=?,pode_memorandos=?,pode_admin=?,"
                     "atualizado_em=? WHERE id=?",
                     (nome, email, perfil, ativo, *flags, stamp, identifier),
                 )
@@ -256,7 +280,7 @@ class AccessStore:
     def _hydrate(self, c, row):
         record = dict(row)
         record["ativo"] = bool(record["ativo"])
-        for key in ("pode_portarias", "pode_agenda", "pode_oficios", "pode_admin"):
+        for key in ("pode_portarias", "pode_agenda", "pode_oficios", "pode_memorandos", "pode_admin"):
             record[key] = bool(record[key])
         record["gabinetes"] = [
             r[0]

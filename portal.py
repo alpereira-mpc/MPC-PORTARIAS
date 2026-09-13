@@ -46,6 +46,7 @@ MODULES = (
         "Memorandos de Substituição",
         "Geração e gerenciamento de memorandos relacionados às substituições de servidores.",
         "article",
+        True,
     ),
     Module(
         "oficios",
@@ -95,6 +96,10 @@ def open_oficios():
     st.session_state["portal_module"] = "Ofícios"
 
 
+def open_memorandos():
+    st.session_state["portal_module"] = "Memorandos"
+
+
 def open_admin():
     st.session_state["portal_module"] = "Administração"
 
@@ -115,6 +120,7 @@ def card(module):
                     "portarias": open_portarias,
                     "agenda": open_agenda,
                     "oficios": open_oficios,
+                    "memorandos": open_memorandos,
                     "admin": open_admin,
                 }[module.key],
             )
@@ -312,6 +318,8 @@ def render_portal():
         options.append("Agenda")
     if has_permission(principal, "oficios"):
         options.append("Ofícios")
+    if has_permission(principal, "memorandos"):
+        options.append("Memorandos")
     if has_permission(principal, "admin"):
         options.append("Administração")
     if _session_get("portal_module") not in options:
@@ -341,6 +349,12 @@ def render_portal():
         if selected == "Ofícios":
             require_permission(principal, "oficios")
             from services.oficios_ui import render
+
+            render(store, principal)
+            st.stop()
+        if selected == "Memorandos":
+            require_permission(principal, "memorandos")
+            from services.memorandos_ui import render
 
             render(store, principal)
             st.stop()

@@ -34,6 +34,14 @@ TABLES = (
     "audit_log",
     "exportacoes",
     "audit_arquivos",
+    "usuarios_acesso",
+    "usuario_gabinetes",
+    "servidores",
+    "servidores_importacoes",
+    "memorandos",
+    "memorandos_substituicao",
+    "memorandos_substituicao_etapas",
+    "memorandos_arquivos",
 )
 IDENTITY_TABLES = {
     "procuradores",
@@ -44,6 +52,8 @@ IDENTITY_TABLES = {
     "exportacoes",
     "audit_arquivos",
     "usuarios_acesso",
+    "servidores",
+    "servidores_importacoes",
 }
 HISTORY_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS portarias_recent_idx "
@@ -335,9 +345,16 @@ class PostgresBackend:
             file = destination.open("xb")
         except FileExistsError:
             raise ValueError("O arquivo de backup já existe.") from None
+        existing = {
+            row[0]
+            for row in c.raw.execute(
+                "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=current_schema()"
+            ).fetchall()
+        }
+        tables = tuple(table for table in TABLES if table in existing)
         with file, gzip.open(file, "wt", encoding="utf-8") as out:
             out.write('{"format":"mpc-postgresql-v1","tables":{')
-            for index, table in enumerate(TABLES):
+            for index, table in enumerate(tables):
                 if index:
                     out.write(",")
                 out.write(json.dumps(table) + ":[")

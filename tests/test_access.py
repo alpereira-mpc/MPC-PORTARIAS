@@ -37,7 +37,7 @@ def test_administrator_has_all_modules_and_offices(store):
     seed_access(store)
     principal = resolve_principal(store, TEST_IDENTITY)
     assert principal.administrator
-    for module in ("portarias", "agenda", "oficios", "admin"):
+    for module in ("portarias", "agenda", "oficios", "memorandos", "admin"):
         assert has_permission(principal, module)
     assert allowed_gabinetes(principal) == GABINETES
 
@@ -58,6 +58,7 @@ def test_common_user_permissions_and_offices(store):
     assert not has_permission(principal, "agenda")
     assert has_permission(principal, "oficios")
     assert not has_permission(principal, "admin")
+    assert not has_permission(principal, "memorandos")
     assert allowed_gabinetes(principal) == ("PROGE", "LAF")
     assert can_use_gabinete(principal, "PROGE")
     assert not can_use_gabinete(principal, "BTLC")
@@ -65,6 +66,15 @@ def test_common_user_permissions_and_offices(store):
         require_permission(principal, "agenda")
     with pytest.raises(ValueError, match="gabinete"):
         require_gabinete(principal, "BTLC")
+
+
+def test_memorandos_permission_is_independent(store):
+    identifier = AccessStore(store).save_user({"nome":"Memorandos","email":"memo@test.local","perfil":"USUARIO","pode_memorandos":True})
+    principal = resolve_principal(store, {"email":"memo@test.local"})
+    assert has_permission(principal, "memorandos")
+    assert not has_permission(principal, "portarias")
+    with pytest.raises(ValueError, match="módulo"):
+        require_permission(principal, "admin")
 
 
 def test_oficios_without_flag_has_no_offices(store):
