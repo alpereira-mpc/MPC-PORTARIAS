@@ -3,13 +3,67 @@ from datetime import date
 import hashlib
 import streamlit as st
 from services.access import require_permission
-from services.memorandos import MOTIVOS, NATUREZAS, TIPO_SUBSTITUICAO, cabinet_text, display_sector, fingerprint, open_service, read_server_xlsx, safe_filename
+from services.memorandos import (
+    MIME_DOCX,
+    MIME_PDF,
+    MOTIVOS,
+    NATUREZAS,
+    SOURCE_SYSTEM,
+    SOURCE_UPLOAD,
+    TIPO_SUBSTITUICAO,
+    cabinet_text,
+    digest,
+    display_sector,
+    fingerprint,
+    open_service,
+    preview_is_valid,
+    read_server_xlsx,
+    safe_filename,
+    signature_role,
+    upload_fingerprint,
+    validate_docx,
+)
+
+LABEL_AWAY = "Servidor afastado"
+LABEL_REPLACEMENT = "Substituto(a)"
+PLACEHOLDER_AWAY = "Selecione o servidor afastado"
+PLACEHOLDER_REPLACEMENT = "Selecione o substituto(a)"
+NAV_KEY = "memorandos_nav"
+NAV_OVERVIEW = "Visão Geral"
+NAV_NEW = "Novo Memorando"
 
 
-def _label(r): return f"{r['nome']} — {r['matricula_original'] or 'sem matrícula'} — {r['setor']}"
+def _nav_pages(principal):
+    pages = [NAV_OVERVIEW, NAV_NEW, "Em andamento", "Histórico"]
+    if principal.administrator:
+        pages.append("Base de Servidores")
+    return pages
+
+
+def _current_page(pages):
+    if st.session_state.get(NAV_KEY) not in pages:
+        st.session_state[NAV_KEY] = NAV_OVERVIEW
+    return st.radio("Memorandos", pages, horizontal=True, key=NAV_KEY)
+
+
+def _label(r):
+    if not r:
+        return ""
+    return f"{r['nome']} — {r['matricula_original'] or 'sem matrícula'} — {r['setor']}"
+
+
+def _reset_new_form():
+    for key in list(st.session_state.keys()):
+        if key in (NAV_KEY, "memorando_form_active"):
+            continue
+        if key == "memorando_stages" or str(key).startswith("memorando_"):
+            st.session_state.pop(key, None)
+    st.session_state["memorando_stages"] = 1
 
 
 def _snapshot(row, prefix):
+    if not row:
+        return None
     known = {"masculino": "Masculino", "feminino": "Feminino", "Masculino": "Masculino", "Feminino": "Feminino"}.get(row.get("genero"))
     gender = known or st.selectbox("Gênero gramatical", ("Masculino", "Feminino"), key=prefix+"_gender")
     return {"servidor_id":row["id"],"nome":row["nome"],"matricula":row["matricula_original"],"genero":gender,
@@ -17,63 +71,185 @@ def _snapshot(row, prefix):
             "lotacao":st.text_input("Lotação documental",display_sector(row["setor"]),key=prefix+"_lotacao")}
 
 
+def _pick(label, people, *, key, placeholder):
+    return st.selectbox(
+        label,
+        people,
+        index=None,
+        placeholder=placeholder,
+        format_func=_label,
+        key=key,
+    )
+
+
 def _chain(people):
     stages = st.session_state.setdefault("memorando_stages", 1)
-    away = st.selectbox("Servidor afastado", people, format_func=_label, key="memorando_away")
-    replacement = st.selectbox("Primeiro substituto", people, format_func=_label, key="memorando_replacement")
+    away = _pick(LABEL_AWAY, people, key="memorando_away", placeholder=PLACEHOLDER_AWAY)
+    replacement = _pick(LABEL_REPLACEMENT, people, key="memorando_replacement", placeholder=PLACEHOLDER_REPLACEMENT)
     with st.expander("Etapa 1", expanded=True):
-        left, right = _snapshot(away,"memorando_left_0"), _snapshot(replacement,"memorando_right_0")
-    steps=[{"substituido":left,"substituto":right}]; used={left["servidor_id"],right["servidor_id"]}; previous=right
-    for order in range(1, stages):
-        available=[p for p in people if p["id"] not in used]
-        with st.expander(f"Etapa {order+1} — cascata", expanded=True):
-            st.caption("Substituído automaticamente: "+previous["nome"])
-            if not available: st.error("Não há servidor disponível sem criar ciclo."); continue
-            candidate=st.selectbox("Novo substituto",available,format_func=_label,key=f"memorando_cascade_{order}")
-            right=_snapshot(candidate,f"memorando_right_{order}")
-        steps.append({"substituido":dict(previous),"substituto":right}); used.add(right["servidor_id"]); previous=right
-    add, remove=st.columns(2)
-    if add.button("Adicionar substituição em cascata"):
-        st.session_state["memorando_stages"]+=1; st.rerun()
-    if stages>1 and remove.button("Remover última etapa"):
-        st.session_state["memorando_stages"]-=1; st.rerun()
-    return steps
+        st.markdown(f"**{LABEL_AWAY}**")
+        left = _snapshot(away, "memorando_left_0")
+        st.markdown(f"**{LABEL_REPLACEMENT}**")
+        right = _snapshot(replacement, "memorando_right_0")
+    same_person = bool(away and replacement and away["id"] == replacement["id"])
+    if same_person:
+        st.error("O servidor afastado e o substituto não podem ser a mesma pessoa.")
+    complete = bool(left and right) and not same_person
+    steps = []
+    if complete:
+        steps = [{"substituido": left, "substituto": right}]
+        used = {left["servidor_id"], right["servidor_id"]}
+        previous = right
+        for order in range(1, stages):
+            available = [p for p in people if p["id"] not in used]
+            with st.expander(f"Etapa {order+1} — cascata", expanded=True):
+                st.markdown(f"**{LABEL_AWAY}**")
+                st.caption("Substituído automaticamente: " + previous["nome"])
+                if not available:
+                    st.error("Não há servidor disponível sem criar ciclo.")
+                    continue
+                st.markdown(f"**{LABEL_REPLACEMENT}**")
+                candidate = _pick(
+                    "Novo substituto",
+                    available,
+                    key=f"memorando_cascade_{order}",
+                    placeholder=PLACEHOLDER_REPLACEMENT,
+                )
+                extra = _snapshot(candidate, f"memorando_right_{order}") if candidate else None
+            if extra:
+                steps.append({"substituido": dict(previous), "substituto": extra})
+                used.add(extra["servidor_id"])
+                previous = extra
+    add, remove = st.columns(2)
+    if add.button("Adicionar substituição em cascata", disabled=not complete):
+        st.session_state["memorando_stages"] += 1
+        st.rerun()
+    if stages > 1 and remove.button("Remover última etapa"):
+        st.session_state["memorando_stages"] -= 1
+        st.rerun()
+    return steps, complete
+
+
+def _finalize_active(service, principal, record, identifier, preview, key):
+    valid = preview_is_valid(preview, record)
+    if st.button("Finalizar memorando", type="primary", disabled=not valid, key=key):
+        if not valid or not preview:
+            st.error("Gere novamente a prévia antes de finalizar.")
+            return
+        try:
+            identifier = service.save_draft(record, actor_email=principal.email, identifier=identifier)
+            st.session_state["memorando_id"] = identifier
+            service.finalize(
+                identifier,
+                preview_hash=preview["fingerprint"],
+                pdf_bytes=preview["pdf"],
+                filename=preview["pdf_name"],
+                docx_bytes=preview.get("docx"),
+                docx_filename=preview.get("docx_name"),
+                uploaded=preview.get("source") == SOURCE_UPLOAD,
+            )
+            st.success("Memorando finalizado.")
+        except ValueError as exc:
+            st.error(str(exc))
+
+
+def _documents(service, principal, record, identifier):
+    from document_generator.memorandos import preview_documents
+    from document_generator.pdf import convert
+
+    preview = st.session_state.get("memorando_preview")
+    if preview and not preview_is_valid(preview, record):
+        st.session_state.pop("memorando_preview", None)
+        preview = None
+        st.warning("Os dados foram alterados. Gere novamente a prévia antes de finalizar.")
+    st.markdown("**Documento**")
+    if st.button("Gerar prévia"):
+        try:
+            docx, pdf_bytes = preview_documents(record)
+            st.session_state["memorando_preview"] = {
+                "source": SOURCE_SYSTEM,
+                "fingerprint": fingerprint(record),
+                "docx": docx,
+                "pdf": pdf_bytes,
+                "docx_name": safe_filename(record, "docx"),
+                "pdf_name": safe_filename(record, "pdf"),
+            }
+            preview = st.session_state["memorando_preview"]
+            st.success("Prévia atualizada com sucesso.")
+        except RuntimeError as exc:
+            st.error(str(exc))
+    system_ready = preview_is_valid(preview, record) and preview.get("source") == SOURCE_SYSTEM
+    if system_ready:
+        a, b = st.columns(2)
+        a.download_button("Baixar DOCX", preview["docx"], preview["docx_name"], MIME_DOCX, key="memo_dl_sys_docx")
+        b.download_button("Baixar PDF", preview["pdf"], preview["pdf_name"], MIME_PDF, key="memo_dl_sys_pdf")
+        st.caption("Prévia pronta para conferência.")
+        _finalize_active(service, principal, record, identifier, preview, "memo_finalize_system")
+    st.markdown("**Usar DOCX editado ou existente (opcional)**")
+    st.caption("Opcional: envie um DOCX caso queira substituir o documento gerado pelo sistema ou utilizar um documento já existente.")
+    uploaded = st.file_uploader("Selecionar arquivo .docx", type=["docx"], key="memorando_user_docx")
+    upload_bytes = None
+    upload_name = None
+    if uploaded is not None:
+        try:
+            upload_name, _ = validate_docx(uploaded.name, uploaded.getvalue())
+            upload_bytes = uploaded.getvalue()
+        except ValueError as exc:
+            st.error(str(exc))
+    if preview and preview.get("source") == SOURCE_UPLOAD and upload_bytes and digest(upload_bytes) != digest(preview["docx"]):
+        st.session_state.pop("memorando_preview", None)
+        preview = None
+        st.warning("O arquivo DOCX foi alterado. Gere o PDF novamente.")
+    if st.button("Gerar PDF deste DOCX", disabled=not upload_bytes):
+        if not upload_bytes:
+            st.error("Selecione um arquivo DOCX apenas se quiser substituir a prévia gerada pelo sistema.")
+        else:
+            try:
+                pdf_bytes, _ = convert(upload_bytes)
+                st.session_state["memorando_preview"] = {
+                    "source": SOURCE_UPLOAD,
+                    "fingerprint": upload_fingerprint(record, upload_bytes, pdf_bytes),
+                    "docx": upload_bytes,
+                    "pdf": pdf_bytes,
+                    "docx_name": upload_name or safe_filename(record, "docx"),
+                    "pdf_name": safe_filename(record, "pdf"),
+                }
+                preview = st.session_state["memorando_preview"]
+                st.success("DOCX convertido para PDF com sucesso.")
+            except (RuntimeError, ValueError) as exc:
+                st.error(str(exc))
+    upload_ready = preview_is_valid(preview, record) and preview.get("source") == SOURCE_UPLOAD
+    if upload_ready:
+        st.download_button("Baixar PDF convertido", preview["pdf"], preview["pdf_name"], MIME_PDF, key="memo_dl_up_pdf")
+        _finalize_active(service, principal, record, identifier, preview, "memo_finalize_upload")
 
 
 def _editor(service, store, principal):
     people=service.servers(limit=600)
     if len(people)<2: st.info("Importe ao menos dois servidores ativos."); return
-    st.caption("Preencher → Pré-visualizar PDF → Conferir → Finalizar → Baixar PDF")
-    steps=_chain(people); members=[p for p in store.catalog("procuradores") if p["ativo"]]
+    st.caption("Preencher → Gerar prévia → Baixar DOCX/PDF → Conferir → Finalizar")
+    steps, complete = _chain(people)
+    members=[p for p in store.catalog("procuradores") if p["ativo"]]
     cabinet=st.selectbox("Gabinete do servidor substituído",members,format_func=lambda p:p["nome"])
     default=next((i for i,p in enumerate(members) if "elvira samara" in p["nome"].casefold()),0)
     signer=st.selectbox("Signatário",members,index=default,format_func=lambda p:p["nome"])
     a,b,c=st.columns(3); nature=a.selectbox("Natureza da função",NATUREZAS); motive=b.selectbox("Motivo",MOTIVOS); custom=c.text_input("Texto do motivo",disabled=motive!="Outro")
-    start,end=st.date_input("Período",value=(date.today(),date.today()),format="DD/MM/YYYY")
+    period=st.date_input("Período",value=(date.today(),date.today()),format="DD/MM/YYYY")
+    start,end=period if isinstance(period,tuple) else (period,period)
     if end<start: st.error("A data final deve ser igual ou posterior à inicial."); return
-    record={"tipo":TIPO_SUBSTITUICAO,"data_inicio":start.isoformat(),"data_fim":end.isoformat(),"natureza_funcao":nature,"motivo":motive,"motivo_texto":custom,"gabinete_procurador_id":cabinet["id"],"gabinete_procurador":cabinet,"gabinete_snapshot":cabinet_text(cabinet,steps[0]["substituido"]["genero"]),"signatario_id":signer["id"],"signatario_nome":signer["nome"],"signatario_cargo":signer["funcao"],"etapas":steps}
+    if not complete:
+        st.info("Selecione o servidor afastado e o substituto(a) para continuar.")
+        return
+    record={"tipo":TIPO_SUBSTITUICAO,"data_inicio":start.isoformat(),"data_fim":end.isoformat(),"natureza_funcao":nature,"motivo":motive,"motivo_texto":custom,"gabinete_procurador_id":cabinet["id"],"gabinete_snapshot":cabinet_text(cabinet,steps[0]["substituido"]["genero"]),"signatario_id":signer["id"],"signatario_nome":signer["nome"],"signatario_cargo":signature_role(signer),"etapas":steps}
     st.caption(f"Duração calculada: {(end-start).days+1} dias.")
-    current=fingerprint(record); preview=st.session_state.get("memorando_preview")
-    if preview and preview["fingerprint"]!=current:
-        st.session_state.pop("memorando_preview",None); preview=None; st.warning("Dados alterados: gere uma nova prévia.")
     identifier=st.session_state.get("memorando_id")
-    if st.button("Salvar rascunho",type="primary"):
+    if st.button("Salvar rascunho"):
         try:
             identifier=service.save_draft(record,actor_email=principal.email,identifier=identifier); st.session_state["memorando_id"]=identifier
             if service.overlaps(record,exclude_id=identifier): st.warning("Há sobreposição de período envolvendo participante. É um aviso, não bloqueio.")
             st.success("Rascunho salvo.")
         except ValueError as exc: st.error(str(exc))
-    if identifier and st.button("Pré-visualizar PDF"):
-        try:
-            from document_generator.memorandos import pdf
-            st.session_state["memorando_preview"]={"fingerprint":current,"content":pdf(record),"name":safe_filename(record)}; preview=st.session_state["memorando_preview"]; st.success("Prévia gerada.")
-        except RuntimeError as exc: st.error(str(exc))
-    if identifier and preview and preview["fingerprint"]==current:
-        st.download_button("Baixar prévia PDF",preview["content"],preview["name"],"application/pdf")
-        if st.button("Finalizar memorando",type="primary"):
-            try:
-                service.save_draft(record,actor_email=principal.email,identifier=identifier); service.finalize(identifier,preview_hash=current,pdf_bytes=preview["content"],filename=preview["name"]); st.success("Memorando finalizado.")
-            except ValueError as exc: st.error(str(exc))
+    _documents(service, principal, record, identifier)
 
 
 def _details(service,row,principal):
@@ -82,7 +258,14 @@ def _details(service,row,principal):
     for index,step in enumerate(r["etapas"],1): st.caption(f"Etapa {index}: {step['substituido']['nome']} ({step['substituido']['cargo']}, {step['substituido'].get('lotacao','')}) → {step['substituto']['nome']} ({step['substituto']['cargo']}, {step['substituto'].get('lotacao','')})")
     st.caption(f"Criado por {r['criado_por']} em {r['criado_em']}. Finalizado: {r.get('finalizado_em') or '—'}")
     file=service.file(row["id"])
-    if file: st.download_button("Baixar PDF",file[1],file[0],"application/pdf",key="memo_file_"+row["id"])
+    source=service.file(row["id"], MIME_DOCX)
+    if source: st.download_button("Baixar DOCX",source[1],source[0],MIME_DOCX,key="memo_docx_"+row["id"])
+    if file: st.download_button("Baixar PDF",file[1],file[0],MIME_PDF,key="memo_file_"+row["id"])
+    if r["status"]=="RASCUNHO" and st.button("Excluir rascunho",key="memo_del_"+row["id"]):
+        try:
+            service.delete_draft(row["id"]); st.success("Rascunho excluído."); st.rerun()
+        except ValueError as exc:
+            st.error(str(exc))
     if r["status"]=="FINALIZADO":
         number=st.text_input("Número oficial",value=r["numero_oficial"],key="memo_number_"+row["id"])
         if st.button("Salvar número oficial",key="memo_number_save_"+row["id"]): service.set_official_number(row["id"],number,principal.email); st.rerun()
@@ -122,11 +305,18 @@ def _base(service,principal):
 
 def render(store,principal):
     require_permission(principal,"memorandos"); service=open_service(store); st.subheader("MEMORANDOS DE SUBSTITUIÇÃO")
-    pages=["Visão Geral","Novo Memorando","Em andamento","Histórico"] + (["Base de Servidores"] if principal.administrator else []); page=st.radio("Memorandos",pages,horizontal=True)
-    if page=="Novo Memorando": _editor(service,store,principal)
-    elif page=="Em andamento": _listing(service,principal,True)
-    elif page=="Histórico": _listing(service,principal)
-    elif page=="Base de Servidores": _base(service,principal)
+    pages=_nav_pages(principal)
+    page=_current_page(pages)
+    if page==NAV_NEW:
+        if not st.session_state.get("memorando_form_active"):
+            _reset_new_form()
+            st.session_state["memorando_form_active"] = True
+        _editor(service,store,principal)
     else:
-        rows=service.list(limit=200)
-        for col,status in zip(st.columns(3),("EM ANDAMENTO","AGENDADA","ENCERRADA")): col.metric(status,sum(r["situacao"]==status for r in rows))
+        st.session_state["memorando_form_active"] = False
+        if page=="Em andamento": _listing(service,principal,True)
+        elif page=="Histórico": _listing(service,principal)
+        elif page=="Base de Servidores": _base(service,principal)
+        else:
+            rows=service.list(limit=200)
+            for col,status in zip(st.columns(3),("EM ANDAMENTO","AGENDADA","ENCERRADA")): col.metric(status,sum(r["situacao"]==status for r in rows))

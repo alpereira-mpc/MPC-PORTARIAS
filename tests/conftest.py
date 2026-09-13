@@ -1,5 +1,15 @@
 import pytest
+from pathlib import Path
 from database.store import Store
+
+
+def pytest_configure(config):
+    """Keep pytest temp files inside the workspace; the user Temp folder may be locked."""
+    if getattr(config.option, "basetemp", None):
+        return
+    root = Path(__file__).resolve().parents[1] / "tmp" / "pytest-basetemp"
+    root.mkdir(parents=True, exist_ok=True)
+    config.option.basetemp = root
 
 
 @pytest.fixture(autouse=True)
@@ -13,6 +23,9 @@ def isolate_database_secrets(monkeypatch):
     persistence._INITIALIZED.clear()
     access._READY.clear()
     agenda._READY.clear()
+    import database.memorandos as memorandos
+
+    memorandos._READY.clear()
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr(st, "secrets", {})
 

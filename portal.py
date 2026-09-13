@@ -98,6 +98,7 @@ def open_oficios():
 
 def open_memorandos():
     st.session_state["portal_module"] = "Memorandos"
+    st.session_state["memorandos_nav"] = "Visão Geral"
 
 
 def open_admin():
@@ -330,6 +331,8 @@ def render_portal():
         if st.button("Sair", key="portal_logout"):
             _logout()
         selected = st.radio("Portal", options, key="portal_module")
+        if selected != "Memorandos":
+            st.session_state["memorando_form_active"] = False
         with st.expander("Outras ferramentas"):
             for module in MODULES[1:]:
                 if not module.active:

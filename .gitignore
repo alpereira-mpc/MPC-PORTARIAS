@@ -9,4 +9,6 @@ exports/*
 tmp/
 *.log
 .streamlit/secrets.toml
+*.xlsx
+!tests/**/*.xlsx
 

@@ -152,9 +152,11 @@ def test_denied_google_account_does_not_open_portal(store, monkeypatch):
 def test_future_modules_have_no_routes_or_side_effects():
     assert [module.key for module in MODULES if module.active] == [
         "portarias",
+        "memorandos",
         "oficios",
         "agenda",
     ]
+    assert [module.key for module in MODULES if not module.active] == ["relatorios"]
     assert len({module.key for module in MODULES}) == 5
 
 
@@ -212,6 +214,18 @@ def test_home_visible_modules_active_first_and_authorization():
     # Memorandos is hidden without its independent permission, so an odd final row is valid.
     assert len(admin) == 5
 
+    with_memo = visible_modules(
+        _principal(portarias=True, agenda=True, oficios=True, memorandos=True, admin=True)
+    )
+    assert [m.key for m in with_memo] == [
+        "portarias",
+        "memorandos",
+        "oficios",
+        "agenda",
+        "admin",
+        "relatorios",
+    ]
+
     no_admin = visible_modules(
         _principal(portarias=True, agenda=True, oficios=True, admin=False)
     )
@@ -252,16 +266,17 @@ def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
     captions = [c.value for c in app.caption]
     labels = [
         "PORTARIAS",
+        "MEMORANDOS",
         "OFÍCIOS",
         "AGENDA",
         "ADMINISTRAÇÃO",
-        "MEMORANDOS",
         "RELATÓRIOS",
     ]
     indexes = [captions.index(label) for label in labels]
     assert indexes == sorted(indexes)
     keys = [getattr(b, "key", None) for b in app.button]
-    assert keys.index("open_portarias") < keys.index("open_oficios")
+    assert keys.index("open_portarias") < keys.index("open_memorandos")
+    assert keys.index("open_memorandos") < keys.index("open_oficios")
     assert keys.index("open_oficios") < keys.index("open_agenda")
     assert keys.index("open_agenda") < keys.index("open_admin")
 
@@ -277,6 +292,8 @@ def test_home_portarias_agenda_oficios_admin_roundtrip(store, monkeypatch):
     for module in (
         "Portarias",
         "Início",
+        "Memorandos",
+        "Ofícios",
         "Agenda",
         "Início",
         "Ofícios",
