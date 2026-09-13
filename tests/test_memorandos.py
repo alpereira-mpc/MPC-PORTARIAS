@@ -74,9 +74,35 @@ def test_server_import_upsert_and_invalid_rows(store):
 def test_server_administration_requires_administrator(store):
     service = MemorandosStore(store)
     with pytest.raises(ValueError, match="não autorizado"):
-        service.import_servers([], actor_email="user@test", filename="x.xlsx", content_hash="a")
+        service.import_servers(
+            [], actor_email="user@test", filename="x.xlsx", content_hash="a", administrator=False
+        )
     with pytest.raises(ValueError, match="não autorizado"):
-        service.update_server(1, {"nome": "X"}, actor_email="user@test")
+        service.update_server(1, {"nome": "X"}, actor_email="user@test", administrator=False)
+    imported = service.import_servers(
+        [{"nome": "Ana", "matricula": "100", "cargo": "A", "setor": "X"}],
+        actor_email="admin@test",
+        filename="x.xlsx",
+        content_hash="a",
+        administrator=True,
+    )
+    assert imported["incluidos"] == 1
+    server_id = service.servers("100")[0]["id"]
+    service.update_server(
+        server_id,
+        {"nome": "Ana", "cargo": "B", "setor": "X", "genero": "Feminino", "ativo": True},
+        actor_email="admin@test",
+        administrator=True,
+    )
+    assert service.servers("100")[0]["cargo"] == "B"
+    with pytest.raises(ValueError, match="não autorizado"):
+        service.update_server(
+            server_id,
+            {"nome": "Ana", "cargo": "Hack", "setor": "X", "genero": "Feminino", "ativo": False},
+            actor_email="user@test",
+            administrator=False,
+        )
+    assert service.servers("100")[0]["cargo"] == "B"
 
 
 def test_synthetic_xlsx_reports_duplicate_zero_and_blank():
@@ -744,4 +770,85 @@ def test_active_preview_exists_without_uploaded_docx():
     assert preview_is_valid(system, payload)
     empty_upload = {"source": SOURCE_UPLOAD, "fingerprint": "x", "pdf": b"%PDF- x", "docx": None}
     assert not preview_is_valid(empty_upload, payload)
+
+
+def test_admin_sees_server_base_tab_common_user_does_not(store, monkeypatch):
+    from services.memorandos_ui import NAV_BASE, NAV_KEY, NAV_NEW, NAV_OVERVIEW, _nav_pages
+    from services.access import Principal
+    from tests.access_testing import seed_access
+
+    admin_pages = _nav_pages(
+        Principal(
+            id=1, nome="Admin", email="a@t", perfil="ADMINISTRADOR", ativo=True,
+            pode_portarias=True, pode_agenda=True, pode_oficios=True, pode_admin=True,
+            gabinetes=(), pode_memorandos=True,
+        )
+    )
+    user_pages = _nav_pages(
+        Principal(
+            id=2, nome="User", email="u@t", perfil="USUARIO", ativo=True,
+            pode_portarias=False, pode_agenda=False, pode_oficios=False, pode_admin=False,
+            gabinetes=(), pode_memorandos=True,
+        )
+    )
+    assert admin_pages == [NAV_OVERVIEW, NAV_NEW, "Em andamento", "Histórico", NAV_BASE]
+    assert user_pages == [NAV_OVERVIEW, NAV_NEW, "Em andamento", "Histórico"]
+    assert NAV_BASE not in user_pages
+
+    app = _login_memorandos_app(store, monkeypatch)
+    app.button(key="open_memorandos").click().run()
+    assert not app.exception
+    nav = app.radio(key=NAV_KEY)
+    assert NAV_BASE in nav.options
+    nav.set_value(NAV_BASE).run()
+    assert not app.exception
+    assert app.radio(key=NAV_KEY).value == NAV_BASE
+    uploaders = app.get("file_uploader")
+    assert any(getattr(x, "label", None) == "Nova planilha XLSX" for x in uploaders)
+
+    seed_access(
+        store,
+        email="memo.user@test.local",
+        nome="Usuário Memorandos",
+        perfil="USUARIO",
+        pode_admin=False,
+        pode_portarias=False,
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_memorandos=True,
+    )
+    monkeypatch.setattr(
+        "services.access.oidc_identity",
+        lambda: {"email": "memo.user@test.local", "name": "Usuário Memorandos", "email_verified": True},
+    )
+    from streamlit.testing.v1 import AppTest
+    from database.store import ROOT
+
+    common = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    common.button(key="open_memorandos").click().run()
+    assert not common.exception
+    common_nav = common.radio(key=NAV_KEY)
+    assert common_nav.value == NAV_OVERVIEW
+    assert NAV_BASE not in common_nav.options
+    assert NAV_NEW in common_nav.options
+    assert not any(x.label == "Ler e validar planilha" for x in common.button)
+    assert not any(getattr(x, "label", None) == "Nova planilha XLSX" for x in common.get("file_uploader"))
+    common.sidebar.radio(key="portal_module").set_value("Início").run()
+    common.session_state[NAV_KEY] = NAV_BASE
+    common.sidebar.radio(key="portal_module").set_value("Memorandos").run()
+    assert not common.exception
+    assert common.radio(key=NAV_KEY).value == NAV_OVERVIEW
+    assert NAV_BASE not in common.radio(key=NAV_KEY).options
+    assert any(m.label == "EM ANDAMENTO" for m in common.metric)
+    assert not any(x.label == "Ler e validar planilha" for x in common.button)
+
+
+def test_base_ui_does_not_hardcode_administrative_backend_flag():
+    import inspect
+    from services import memorandos_ui as ui
+
+    source = inspect.getsource(ui._base) + inspect.getsource(ui.render)
+    assert "administrator=True" not in source
+    assert "administrator=principal.administrator" in inspect.getsource(ui._base)
+    assert "if not principal.administrator" in inspect.getsource(ui._base)
 

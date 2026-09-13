@@ -31,12 +31,13 @@ PLACEHOLDER_REPLACEMENT = "Selecione o substituto(a)"
 NAV_KEY = "memorandos_nav"
 NAV_OVERVIEW = "Visão Geral"
 NAV_NEW = "Novo Memorando"
+NAV_BASE = "Base de Servidores"
 
 
 def _nav_pages(principal):
     pages = [NAV_OVERVIEW, NAV_NEW, "Em andamento", "Histórico"]
     if principal.administrator:
-        pages.append("Base de Servidores")
+        pages.append(NAV_BASE)
     return pages
 
 
@@ -302,6 +303,9 @@ def _listing(service,principal,ongoing=False):
 
 
 def _base(service,principal):
+    if not principal.administrator:
+        st.error("Acesso não autorizado à base de servidores.")
+        return
     upload=st.file_uploader("Nova planilha XLSX",type=["xlsx"])
     if upload and st.button("Ler e validar planilha"):
         try:
@@ -311,7 +315,7 @@ def _base(service,principal):
     if pending:
         name,digest,rows,report=pending; st.dataframe([{"Total":report["total"],"Novos":report["novos"],"Atualizados":report["atualizados"],"Matrícula vazia":len(report["sem_matricula"]),"Matrícula zero":len(report["matriculas_zero"]),"Duplicidades":len(report["duplicidades"]),"Inconsistentes":len(report["inconsistentes"])}],hide_index=True)
         if st.checkbox("Confirmo a importação desta prévia") and st.button("Importar base transacionalmente"):
-            result=service.import_servers(rows,actor_email=principal.email,filename=name,content_hash=digest,administrator=True)
+            result=service.import_servers(rows,actor_email=principal.email,filename=name,content_hash=digest,administrator=principal.administrator)
             st.session_state.pop("memo_import", None)
             _reset_new_form()
             st.session_state["memorando_form_active"] = False
@@ -321,7 +325,7 @@ def _base(service,principal):
         current=st.selectbox("Corrigir servidor",servers,format_func=_label)
         with st.form("memo_server_edit"):
             name=st.text_input("Nome",current["nome"]); cargo=st.text_input("Cargo",current["cargo"]); sector=st.text_input("Setor",current["setor"]); gender=st.selectbox("Gênero",[None,"Masculino","Feminino"],format_func=lambda x:x or "Não informado"); active=st.checkbox("Ativo",bool(current["ativo"]))
-            if st.form_submit_button("Salvar correção"): service.update_server(current["id"],{"nome":name,"cargo":cargo,"setor":sector,"genero":gender,"ativo":active},actor_email=principal.email,administrator=True); st.success("Cadastro atualizado.")
+            if st.form_submit_button("Salvar correção"): service.update_server(current["id"],{"nome":name,"cargo":cargo,"setor":sector,"genero":gender,"ativo":active},actor_email=principal.email,administrator=principal.administrator); st.success("Cadastro atualizado.")
 
 
 def render(store,principal):
@@ -337,7 +341,8 @@ def render(store,principal):
         st.session_state["memorando_form_active"] = False
         if page=="Em andamento": _listing(service,principal,True)
         elif page=="Histórico": _listing(service,principal)
-        elif page=="Base de Servidores": _base(service,principal)
+        elif page==NAV_BASE and principal.administrator:
+            _base(service,principal)
         else:
             rows=service.list(limit=200)
             for col,status in zip(st.columns(3),("EM ANDAMENTO","AGENDADA","ENCERRADA")): col.metric(status,sum(r["situacao"]==status for r in rows))
