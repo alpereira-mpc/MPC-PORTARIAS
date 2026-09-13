@@ -54,6 +54,7 @@ IDENTITY_TABLES = {
     "usuarios_acesso",
     "servidores",
     "servidores_importacoes",
+    "memorandos_substituicao_etapas",
 }
 HISTORY_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS portarias_recent_idx "

@@ -51,6 +51,16 @@ def schema_key_of(store):
     raise AttributeError("Objeto não expõe identidade de schema.")
 
 
+def ensure_addon_schemas(store):
+    """Access and memoranda tables are additive and must exist before backup inventory."""
+    from database.access import ensure_schema
+
+    ensure_schema(store)
+    from database.memorandos import MemorandosStore
+
+    MemorandosStore(store)
+
+
 class Store:
     def __init__(
         self, path=None, *, database_url=None, postgres_schema="mpc_portarias"
@@ -127,9 +137,7 @@ class Store:
             if known:
                 return
             self._postgres.initialize(ROOT)
-            from database.access import ensure_schema
-
-            ensure_schema(self)
+            ensure_addon_schemas(self)
             _INITIALIZED.add(self.schema_key)
             return
         if known:
@@ -146,9 +154,7 @@ class Store:
         with self.connection() as c:
             version = c.execute("PRAGMA user_version").fetchone()[0]
             if version == 2:
-                from database.access import ensure_schema
-
-                ensure_schema(self)
+                ensure_addon_schemas(self)
                 _INITIALIZED.add(self.schema_key)
                 return
             if version > 2:
@@ -157,9 +163,7 @@ class Store:
                 )
         if version == 1:
             self.migrate()
-            from database.access import ensure_schema
-
-            ensure_schema(self)
+            ensure_addon_schemas(self)
             _INITIALIZED.add(self.schema_key)
             return
         with self.connection() as c:
@@ -230,9 +234,7 @@ class Store:
                 )
             c.execute("PRAGMA user_version=1")
         self.migrate(backup_required=False)
-        from database.access import ensure_schema
-
-        ensure_schema(self)
+        ensure_addon_schemas(self)
         _INITIALIZED.add(self.schema_key)
 
     def migrate(self, backup_required=True):

@@ -31,9 +31,72 @@ def normalized_registration(value):
     return "" if not text or set(text) == {"0"} else text.upper()
 
 
-def fingerprint(record):
-    return hashlib.sha256(json.dumps(record, ensure_ascii=False, sort_keys=True,
+FINGERPRINT_SKIP = (
+    "id",
+    "status",
+    "criado_por",
+    "criado_em",
+    "atualizado_em",
+    "finalizado_em",
+    "numero_oficial",
+    "payload",
+    "situacao",
+    "gabinete_procurador",
+)
+
+
+def documentary(record):
+    """Stable documentary fields; persistence metadata never participates."""
+    return {key: value for key, value in record.items() if key not in FINGERPRINT_SKIP}
+
+
+SOURCE_SYSTEM = "GERADA_PELO_SISTEMA"
+SOURCE_UPLOAD = "DOCX_ENVIADO"
+MIME_PDF = "application/pdf"
+MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def digest(content):
+    return hashlib.sha256(content).hexdigest()
+
+
+def fingerprint(record, extra=None):
+    payload = documentary(record)
+    if extra:
+        payload = {"form": payload, **extra}
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
                                      separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def upload_fingerprint(record, docx_bytes, pdf_bytes):
+    return fingerprint(
+        record,
+        {"docx_sha256": digest(docx_bytes), "pdf_sha256": digest(pdf_bytes)},
+    )
+
+
+def preview_is_valid(preview, record):
+    """An empty or unused DOCX uploader never participates in this check."""
+    if not preview or not preview.get("pdf"):
+        return False
+    source = preview.get("source") or SOURCE_SYSTEM
+    if source == SOURCE_UPLOAD:
+        docx = preview.get("docx")
+        pdf = preview.get("pdf")
+        if not docx or not pdf:
+            return False
+        return preview.get("fingerprint") == upload_fingerprint(record, docx, pdf)
+    return source == SOURCE_SYSTEM and preview.get("fingerprint") == fingerprint(record)
+
+
+def validate_docx(name, content):
+    from pathlib import PurePath
+    from services.oficios import validate_upload
+
+    ext = PurePath(name or "").suffix.lower()
+    if ext != ".docx":
+        raise ValueError("Envie somente um arquivo DOCX.")
+    return validate_upload(name, content)
 
 
 def substitution_status(record, today=None):
@@ -45,11 +108,21 @@ def substitution_status(record, today=None):
 
 
 def cabinet_text(procurador, genero):
+    placed = "lotada" if genero == "Feminino" else "lotado"
     if normalize(procurador["nome"]) == normalize("Elvira Samara Pereira de Oliveira"):
-        return "lotada na Procuradoria-Geral" if genero == "Feminino" else "lotado na Procuradoria-Geral"
+        return f"{placed} no gabinete da Procuradoria-Geral"
     article = "da" if procurador.get("genero") == "feminino" else "do"
     role = "Procuradora" if procurador.get("genero") == "feminino" else "Procurador"
-    return f"{'lotada' if genero == 'Feminino' else 'lotado'} no gabinete {article} {role} {procurador['nome']}"
+    return f"{placed} no gabinete {article} {role} {procurador['nome']}"
+
+
+def signature_role(procurador):
+    role = (procurador.get("funcao") or procurador.get("cargo_base") or "").strip()
+    if procurador.get("genero") == "feminino" and role == "Procurador-Geral":
+        return "Procuradora-Geral"
+    if procurador.get("genero") == "masculino" and role == "Procuradora-Geral":
+        return "Procurador-Geral"
+    return role
 
 
 def display_sector(value):
@@ -85,10 +158,11 @@ def validate(record):
         seen.add(left_key); seen.add(right_key); previous = right_key
 
 
-def safe_filename(record):
+def safe_filename(record, ext="pdf"):
     name = record["etapas"][0]["substituido"]["nome"]
     name = re.sub(r"[^\w.-]+", "_", unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()).strip("_")
-    return f"Memorando_Substituicao_{name}_{record['data_inicio']}.pdf"
+    suffix = "docx" if str(ext).lower().lstrip(".") == "docx" else "pdf"
+    return f"Memorando_Substituicao_{name}_{record['data_inicio']}.{suffix}"
 
 
 def short_date(value):
