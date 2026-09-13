@@ -330,14 +330,21 @@ def test_new_form_starts_without_selected_participants():
     import inspect
     from services import memorandos_ui as ui
 
-    source = inspect.getsource(ui._pick) + inspect.getsource(ui._chain) + inspect.getsource(ui._editor)
+    pick = inspect.getsource(ui._pick)
+    chain = inspect.getsource(ui._chain)
+    source = pick + chain + inspect.getsource(ui._editor)
     assert ui.LABEL_REPLACEMENT == "Substituto(a)"
     assert "Primeiro substituto" not in source
-    assert "index=None" in inspect.getsource(ui._pick)
+    assert "Novo substituto" not in chain
+    assert "index=None" in pick
+    assert "options[0]" not in pick
+    assert "people[0]" not in source
+    assert "by_id" in pick
     assert ui.PLACEHOLDER_AWAY == "Selecione o servidor afastado"
     assert ui.PLACEHOLDER_REPLACEMENT == "Selecione o substituto(a)"
-    assert "people[0]" not in source
-    assert "disabled=not complete" in inspect.getsource(ui._chain)
+    assert "disabled=not complete" in chain
+    assert chain.index('expander("Etapa 1"') < chain.index("memorando_away")
+    assert chain.index(f'**{{LABEL_AWAY}}**') < chain.index(f'**{{LABEL_REPLACEMENT}}**')
 
 
 def test_new_memorandum_ui_has_empty_participant_selects(store, monkeypatch):
@@ -365,6 +372,7 @@ def test_new_memorandum_ui_has_empty_participant_selects(store, monkeypatch):
     replacement = next(x for x in app.selectbox if x.label == "Substituto(a)")
     assert away.value is None
     assert replacement.value is None
+    assert away.options and replacement.options
     assert not any(x.label == "Primeiro substituto" for x in app.selectbox)
     assert not any(x.label == "Cargo/função documental" for x in app.text_input)
     assert not any(x.label == "Pré-visualizar PDF" for x in app.button)
@@ -634,3 +642,106 @@ def test_memorandos_navigation_stays_in_sync(store, monkeypatch):
     app.button(key="open_memorandos").click().run()
     assert app.radio(key=NAV_KEY).value == NAV_OVERVIEW
     assert not any(x.label == "Servidor afastado" for x in app.selectbox)
+
+
+def _login_memorandos_app(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from tests.access_testing import enable_login
+    from database.store import ROOT
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    return AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+
+
+def test_xlsx_import_does_not_select_first_server(store, monkeypatch):
+    from services.memorandos_ui import NAV_KEY, NAV_NEW, NAV_OVERVIEW
+
+    app = _login_memorandos_app(store, monkeypatch)
+    app.button(key="open_memorandos").click().run()
+    app.radio(key=NAV_KEY).set_value(NAV_NEW).run()
+    assert not any(x.label == "Servidor afastado" for x in app.selectbox)
+    MemorandosStore(store).import_servers(
+        [
+            {"nome": "Ana", "matricula": "1", "cargo": "A", "setor": "X"},
+            {"nome": "Beto", "matricula": "2", "cargo": "B", "setor": "Y"},
+        ],
+        actor_email="admin@test.local",
+        filename="x.xlsx",
+        content_hash="a",
+        administrator=True,
+    )
+    app.radio(key=NAV_KEY).set_value(NAV_OVERVIEW).run()
+    app.radio(key=NAV_KEY).set_value(NAV_NEW).run()
+    away = next(x for x in app.selectbox if x.label == "Servidor afastado")
+    replacement = next(x for x in app.selectbox if x.label == "Substituto(a)")
+    first_id = MemorandosStore(store).servers()[0]["id"]
+    assert away.value is None
+    assert replacement.value is None
+    assert away.value != first_id
+
+
+def test_rerun_preserves_manual_participant_choices(store, monkeypatch):
+    from services.memorandos_ui import NAV_KEY, NAV_NEW
+
+    MemorandosStore(store).import_servers(
+        [
+            {"nome": "Ana", "matricula": "1", "cargo": "A", "setor": "X"},
+            {"nome": "Beto", "matricula": "2", "cargo": "B", "setor": "Y"},
+        ],
+        actor_email="admin@test.local",
+        filename="x.xlsx",
+        content_hash="a",
+        administrator=True,
+    )
+    app = _login_memorandos_app(store, monkeypatch)
+    app.button(key="open_memorandos").click().run()
+    app.radio(key=NAV_KEY).set_value(NAV_NEW).run()
+    away = next(x for x in app.selectbox if x.label == "Servidor afastado")
+    chosen = MemorandosStore(store).servers()[0]["id"]
+    away.set_value(chosen).run()
+    assert next(x for x in app.selectbox if x.label == "Servidor afastado").value == chosen
+    assert next(x for x in app.selectbox if x.label == "Substituto(a)").value is None
+    app.run()
+    assert next(x for x in app.selectbox if x.label == "Servidor afastado").value == chosen
+    assert next(x for x in app.selectbox if x.label == "Substituto(a)").value is None
+
+
+def test_entering_new_memorandum_clears_previous_choices(store, monkeypatch):
+    from services.memorandos_ui import NAV_KEY, NAV_NEW, NAV_OVERVIEW
+
+    MemorandosStore(store).import_servers(
+        [
+            {"nome": "Ana", "matricula": "1", "cargo": "A", "setor": "X"},
+            {"nome": "Beto", "matricula": "2", "cargo": "B", "setor": "Y"},
+        ],
+        actor_email="admin@test.local",
+        filename="x.xlsx",
+        content_hash="a",
+        administrator=True,
+    )
+    app = _login_memorandos_app(store, monkeypatch)
+    app.button(key="open_memorandos").click().run()
+    app.radio(key=NAV_KEY).set_value(NAV_NEW).run()
+    away = next(x for x in app.selectbox if x.label == "Servidor afastado")
+    away.set_value(MemorandosStore(store).servers()[0]["id"]).run()
+    app.radio(key=NAV_KEY).set_value(NAV_OVERVIEW).run()
+    app.radio(key=NAV_KEY).set_value(NAV_NEW).run()
+    assert next(x for x in app.selectbox if x.label == "Servidor afastado").value is None
+    assert next(x for x in app.selectbox if x.label == "Substituto(a)").value is None
+
+
+def test_active_preview_exists_without_uploaded_docx():
+    from services.memorandos import SOURCE_SYSTEM, SOURCE_UPLOAD, preview_is_valid
+
+    payload = record()
+    system = {
+        "source": SOURCE_SYSTEM,
+        "fingerprint": fingerprint(payload),
+        "pdf": b"%PDF- ok",
+        "docx": b"PK-ok",
+    }
+    assert preview_is_valid(system, payload)
+    empty_upload = {"source": SOURCE_UPLOAD, "fingerprint": "x", "pdf": b"%PDF- x", "docx": None}
+    assert not preview_is_valid(empty_upload, payload)
+

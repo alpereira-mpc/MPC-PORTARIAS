@@ -59,6 +59,8 @@ def _reset_new_form():
         if key == "memorando_stages" or str(key).startswith("memorando_"):
             st.session_state.pop(key, None)
     st.session_state["memorando_stages"] = 1
+    st.session_state["memorando_away"] = None
+    st.session_state["memorando_replacement"] = None
 
 
 def _snapshot(row, prefix):
@@ -72,24 +74,38 @@ def _snapshot(row, prefix):
 
 
 def _pick(label, people, *, key, placeholder):
-    return st.selectbox(
+    by_id = {person["id"]: person for person in people}
+    options = list(by_id)
+    current = st.session_state.get(key)
+    if current is not None and current not in by_id:
+        st.session_state.pop(key, None)
+    chosen = st.selectbox(
         label,
-        people,
+        options,
         index=None,
         placeholder=placeholder,
-        format_func=_label,
+        format_func=lambda identifier: _label(by_id.get(identifier)) if identifier is not None else "",
         key=key,
     )
+    if chosen is None:
+        return None
+    return by_id.get(chosen)
+
+
+def _show_locked_snapshot(row):
+    st.caption("Gênero gramatical: " + (row.get("genero") or "—"))
+    st.caption("Cargo/função documental: " + (row.get("cargo") or "—"))
+    st.caption("Lotação documental: " + (row.get("lotacao") or "—"))
 
 
 def _chain(people):
     stages = st.session_state.setdefault("memorando_stages", 1)
-    away = _pick(LABEL_AWAY, people, key="memorando_away", placeholder=PLACEHOLDER_AWAY)
-    replacement = _pick(LABEL_REPLACEMENT, people, key="memorando_replacement", placeholder=PLACEHOLDER_REPLACEMENT)
     with st.expander("Etapa 1", expanded=True):
         st.markdown(f"**{LABEL_AWAY}**")
+        away = _pick(LABEL_AWAY, people, key="memorando_away", placeholder=PLACEHOLDER_AWAY)
         left = _snapshot(away, "memorando_left_0")
         st.markdown(f"**{LABEL_REPLACEMENT}**")
+        replacement = _pick(LABEL_REPLACEMENT, people, key="memorando_replacement", placeholder=PLACEHOLDER_REPLACEMENT)
         right = _snapshot(replacement, "memorando_right_0")
     same_person = bool(away and replacement and away["id"] == replacement["id"])
     if same_person:
@@ -105,12 +121,13 @@ def _chain(people):
             with st.expander(f"Etapa {order+1} — cascata", expanded=True):
                 st.markdown(f"**{LABEL_AWAY}**")
                 st.caption("Substituído automaticamente: " + previous["nome"])
+                _show_locked_snapshot(previous)
                 if not available:
                     st.error("Não há servidor disponível sem criar ciclo.")
                     continue
                 st.markdown(f"**{LABEL_REPLACEMENT}**")
                 candidate = _pick(
-                    "Novo substituto",
+                    LABEL_REPLACEMENT,
                     available,
                     key=f"memorando_cascade_{order}",
                     placeholder=PLACEHOLDER_REPLACEMENT,
@@ -294,7 +311,11 @@ def _base(service,principal):
     if pending:
         name,digest,rows,report=pending; st.dataframe([{"Total":report["total"],"Novos":report["novos"],"Atualizados":report["atualizados"],"Matrícula vazia":len(report["sem_matricula"]),"Matrícula zero":len(report["matriculas_zero"]),"Duplicidades":len(report["duplicidades"]),"Inconsistentes":len(report["inconsistentes"])}],hide_index=True)
         if st.checkbox("Confirmo a importação desta prévia") and st.button("Importar base transacionalmente"):
-            result=service.import_servers(rows,actor_email=principal.email,filename=name,content_hash=digest,administrator=True); st.session_state.pop("memo_import",None); st.success(f"{result['incluidos']} incluídos; {result['atualizados']} atualizados.")
+            result=service.import_servers(rows,actor_email=principal.email,filename=name,content_hash=digest,administrator=True)
+            st.session_state.pop("memo_import", None)
+            _reset_new_form()
+            st.session_state["memorando_form_active"] = False
+            st.success(f"{result['incluidos']} incluídos; {result['atualizados']} atualizados.")
     st.divider(); servers=service.all_servers(include_inactive=True)
     if servers:
         current=st.selectbox("Corrigir servidor",servers,format_func=_label)
