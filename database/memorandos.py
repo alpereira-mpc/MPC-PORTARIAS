@@ -4,7 +4,7 @@ import json
 import uuid
 
 from database.store import encode, now, schema_key_of, unwrap_store
-from services.memorandos import MIME_DOCX, MIME_PDF, STATUS_FINALIZADO, STATUS_RASCUNHO, TIPO_SUBSTITUICAO, digest, fingerprint, normalize, normalized_registration, substitution_status, upload_fingerprint, validate
+from services.memorandos import MIME_DOCX, MIME_PDF, STATUS_CANCELADO, STATUS_FINALIZADO, STATUS_RASCUNHO, TIPO_SUBSTITUICAO, digest, fingerprint, normalize, normalized_registration, substitution_status, upload_fingerprint, validate
 
 MARKER = "memorandos_schema_v1"
 _READY = set()
@@ -126,6 +126,57 @@ class MemorandosStore:
             c.execute("DELETE FROM memorandos WHERE id=?", (identifier,))
             self.store.event(c, "memorandos_excluir_rascunho", {"id": identifier})
 
+    def delete_finalized(self, identifier, *, administrator=False, confirmation=""):
+        """Remove a finalized or cancelled memorandum and exclusive dependents.
+
+        Does not delete shared catalogs (servidores, procuradores, auditoria).
+        """
+        if not administrator:
+            raise ValueError("Acesso não autorizado à exclusão definitiva.")
+        if confirmation != "EXCLUIR":
+            raise ValueError("Digite EXCLUIR para confirmar.")
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT m.id,m.status,m.numero_oficial,s.data_inicio,s.data_fim,"
+                "s.gabinete_snapshot FROM memorandos m "
+                "LEFT JOIN memorandos_substituicao s ON s.memorando_id=m.id "
+                "WHERE m.id=?",
+                (identifier,),
+            ).fetchone()
+            if not row:
+                raise ValueError("Memorando não encontrado.")
+            if row["status"] == STATUS_RASCUNHO:
+                raise ValueError("Use a exclusão de rascunho para documentos não finalizados.")
+            snapshot = {
+                "id": row["id"],
+                "status": row["status"],
+                "numero_oficial": row["numero_oficial"] or "",
+                "gabinete": row["gabinete_snapshot"] or "",
+                "data_inicio": row["data_inicio"],
+                "data_fim": row["data_fim"],
+            }
+            c.execute("DELETE FROM memorandos_arquivos WHERE memorando_id=?", (identifier,))
+            c.execute(
+                "DELETE FROM memorandos_substituicao_etapas WHERE memorando_id=?",
+                (identifier,),
+            )
+            c.execute("DELETE FROM memorandos_substituicao WHERE memorando_id=?", (identifier,))
+            deleted = c.execute("DELETE FROM memorandos WHERE id=?", (identifier,))
+            if getattr(deleted, "rowcount", 1) == 0:
+                raise ValueError("Não foi possível excluir o memorando.")
+            leftover = c.execute(
+                "SELECT 1 FROM memorandos WHERE id=? UNION ALL "
+                "SELECT 1 FROM memorandos_substituicao WHERE memorando_id=? UNION ALL "
+                "SELECT 1 FROM memorandos_substituicao_etapas WHERE memorando_id=? UNION ALL "
+                "SELECT 1 FROM memorandos_arquivos WHERE memorando_id=? LIMIT 1",
+                (identifier, identifier, identifier, identifier),
+            ).fetchone()
+            if leftover:
+                raise ValueError("Não foi possível excluir o memorando.")
+            self.store.event(c, "memorandos_excluir_definitivamente", snapshot)
+        return snapshot
+
     def get(self, identifier):
         with self.store.connection(read_only=True) as c:
             row=c.execute("SELECT * FROM memorandos WHERE id=?",(identifier,)).fetchone()
@@ -156,9 +207,18 @@ class MemorandosStore:
             if not r or r[0]!=STATUS_FINALIZADO: raise ValueError("Somente memorando finalizado recebe número oficial.")
             c.execute("UPDATE memorandos SET numero_oficial=?,atualizado_em=? WHERE id=?",(number.strip(),now(),identifier)); self.store.event(c,"memorandos_numero_oficial",{"id":identifier,"usuario":actor_email})
 
-    def list(self, status=None, search="", server="", cabinet="", official_number="", start=None, end=None, offset=0, limit=50):
+    def list(self, status=None, situacao=None, search="", server="", cabinet="", official_number="", start=None, end=None, offset=0, limit=50):
         clauses=["1=1"]; values=[]
         if status: clauses.append("m.status=?"); values.append(status)
+        today = date.today().isoformat()
+        if situacao == "AGENDADA":
+            clauses.append("m.status!='CANCELADO' AND s.data_inicio>?"); values.append(today)
+        elif situacao == "EM ANDAMENTO":
+            clauses.append("m.status!='CANCELADO' AND s.data_inicio<=? AND s.data_fim>=?"); values.extend([today, today])
+        elif situacao == "ENCERRADA":
+            clauses.append("m.status!='CANCELADO' AND s.data_fim<?"); values.append(today)
+        elif situacao == "CANCELADA":
+            clauses.append("m.status=?"); values.append(STATUS_CANCELADO)
         if search: clauses.append("LOWER(m.payload) LIKE LOWER(?)"); values.append("%"+search+"%")
         if server: clauses.append("LOWER(m.payload) LIKE LOWER(?)"); values.append("%"+server+"%")
         if cabinet: clauses.append("LOWER(s.gabinete_snapshot) LIKE LOWER(?)"); values.append("%"+cabinet+"%")

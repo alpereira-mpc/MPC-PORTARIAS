@@ -14,6 +14,7 @@ from database.store import Store
 from document_generator.memorandos import generate
 from services.memorandos import STATUS_FINALIZADO, cabinet_text, digest, fingerprint, validate
 from services.memorandos import read_server_xlsx, signature_role
+from tests.test_postgresql import pg_store, pg_url  # noqa: F401
 
 
 def person(name, gender, registration, cargo="Analista", lotacao="Secretaria da 1ª Câmara"):
@@ -694,7 +695,7 @@ def test_memorandos_navigation_stays_in_sync(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from tests.access_testing import enable_login
     from database.store import ROOT
-    from services.memorandos_ui import NAV_KEY, NAV_NEW, NAV_OVERVIEW
+    from services.memorandos_ui import NAV_KEY, NAV_HISTORY, NAV_NEW, NAV_OVERVIEW
 
     MemorandosStore(store).import_servers(
         [
@@ -713,6 +714,8 @@ def test_memorandos_navigation_stays_in_sync(store, monkeypatch):
     nav = app.radio(key=NAV_KEY)
     assert nav.value == NAV_OVERVIEW
     assert app.session_state[NAV_KEY] == NAV_OVERVIEW
+    assert "Em andamento" not in nav.options
+    assert NAV_HISTORY in nav.options
     assert not any(x.label == "Servidor afastado" for x in app.selectbox)
     assert any(m.label == "EM ANDAMENTO" for m in app.metric)
     app.radio(key=NAV_KEY).set_value(NAV_NEW).run()
@@ -837,7 +840,7 @@ def test_active_preview_exists_without_uploaded_docx():
 
 
 def test_admin_sees_server_base_tab_common_user_does_not(store, monkeypatch):
-    from services.memorandos_ui import NAV_BASE, NAV_KEY, NAV_NEW, NAV_OVERVIEW, _nav_pages
+    from services.memorandos_ui import NAV_BASE, NAV_KEY, NAV_HISTORY, NAV_NEW, NAV_OVERVIEW, _nav_pages
     from services.access import Principal
     from tests.access_testing import seed_access
 
@@ -855,8 +858,10 @@ def test_admin_sees_server_base_tab_common_user_does_not(store, monkeypatch):
             gabinetes=(), pode_memorandos=True,
         )
     )
-    assert admin_pages == [NAV_OVERVIEW, NAV_NEW, "Em andamento", "Histórico", NAV_BASE]
-    assert user_pages == [NAV_OVERVIEW, NAV_NEW, "Em andamento", "Histórico"]
+    assert admin_pages == [NAV_OVERVIEW, NAV_NEW, NAV_HISTORY, NAV_BASE]
+    assert user_pages == [NAV_OVERVIEW, NAV_NEW, NAV_HISTORY]
+    assert "Em andamento" not in admin_pages
+    assert "Em andamento" not in user_pages
     assert NAV_BASE not in user_pages
 
     app = _login_memorandos_app(store, monkeypatch)
@@ -958,4 +963,269 @@ def test_server_correction_opens_empty_and_closes_after_save(store, monkeypatch)
     assert not any(x.label == "Servidor" for x in app.selectbox)
     assert not any(x.label == "Nome" for x in app.text_input)
     assert any("Cadastro atualizado com sucesso" in (x.value or "") for x in app.success)
+
+
+def test_legacy_em_andamento_session_falls_back_to_history(monkeypatch):
+    from services.access import Principal
+    from services import memorandos_ui
+
+    state = {memorandos_ui.NAV_KEY: memorandos_ui.NAV_ONGOING_LEGACY}
+    monkeypatch.setattr(memorandos_ui.st, "session_state", state)
+    captured = {}
+
+    def fake_radio(label, pages, **kwargs):
+        captured["pages"] = list(pages)
+        captured["value"] = state.get(memorandos_ui.NAV_KEY)
+        return state[memorandos_ui.NAV_KEY]
+
+    monkeypatch.setattr(memorandos_ui.st, "radio", fake_radio)
+    principal = Principal(
+        id=1,
+        nome="Admin",
+        email="a@t",
+        perfil="ADMINISTRADOR",
+        ativo=True,
+        pode_portarias=True,
+        pode_agenda=True,
+        pode_oficios=True,
+        pode_admin=True,
+        gabinetes=(),
+        pode_memorandos=True,
+    )
+    pages = memorandos_ui._nav_pages(principal)
+    page = memorandos_ui._current_page(pages)
+    assert page == memorandos_ui.NAV_HISTORY
+    assert state[memorandos_ui.NAV_KEY] == memorandos_ui.NAV_HISTORY
+    assert memorandos_ui.NAV_ONGOING_LEGACY not in captured["pages"]
+    assert memorandos_ui.NAV_HISTORY in captured["pages"]
+
+
+def test_history_filters_situacao_in_sql(store):
+    service = MemorandosStore(store)
+    today = date.today()
+    ongoing = service.save_draft(
+        record(data_inicio=today.isoformat(), data_fim=(today + timedelta(days=2)).isoformat()),
+        actor_email="author@test",
+    )
+    scheduled = service.save_draft(
+        record(data_inicio=(today + timedelta(days=5)).isoformat(), data_fim=(today + timedelta(days=8)).isoformat()),
+        actor_email="author@test",
+    )
+    ended = service.save_draft(
+        record(data_inicio=(today - timedelta(days=10)).isoformat(), data_fim=(today - timedelta(days=2)).isoformat()),
+        actor_email="author@test",
+    )
+    rows = service.list(situacao="EM ANDAMENTO", limit=50)
+    assert {r["id"] for r in rows} >= {ongoing}
+    assert scheduled not in {r["id"] for r in rows}
+    rows = service.list(situacao="AGENDADA", limit=50)
+    assert scheduled in {r["id"] for r in rows}
+    rows = service.list(situacao="ENCERRADA", limit=50)
+    assert ended in {r["id"] for r in rows}
+
+
+def _finalize_memo(service, payload=None, *, official=None, extra_docx=False):
+    payload = payload or record()
+    identifier = service.save_draft(payload, actor_email="author@test")
+    kwargs = dict(
+        preview_hash=fingerprint(payload),
+        pdf_bytes=b"%PDF- synthetic",
+        filename="memo.pdf",
+    )
+    if extra_docx:
+        kwargs["docx_bytes"] = b"PK-docx"
+        kwargs["docx_filename"] = "memo.docx"
+    service.finalize(identifier, **kwargs)
+    if official:
+        service.set_official_number(identifier, official, "author@test")
+    return identifier
+
+
+def test_hard_delete_requires_admin_and_confirmation(store):
+    service = MemorandosStore(store)
+    identifier = _finalize_memo(service)
+    other = _finalize_memo(service, record(etapas=[{
+        "substituido": person("Carla", "Feminino", "8"),
+        "substituto": person("Dora", "Feminino", "9"),
+    }]))
+    with pytest.raises(ValueError, match="não autorizado"):
+        service.delete_finalized(identifier, administrator=False, confirmation="EXCLUIR")
+    assert service.get(identifier)["id"] == identifier
+    with pytest.raises(ValueError, match="EXCLUIR"):
+        service.delete_finalized(identifier, administrator=True, confirmation="excluir")
+    with pytest.raises(ValueError, match="EXCLUIR"):
+        service.delete_finalized(identifier, administrator=True, confirmation="")
+    assert service.get(identifier)["id"] == identifier
+    snapshot = service.delete_finalized(identifier, administrator=True, confirmation="EXCLUIR")
+    assert snapshot["id"] == identifier
+    with pytest.raises(ValueError, match="não encontrado"):
+        service.get(identifier)
+    assert service.get(other)["id"] == other
+    with store.connection(read_only=True) as c:
+        assert c.execute("SELECT 1 FROM memorandos WHERE id=?", (identifier,)).fetchone() is None
+        assert c.execute("SELECT 1 FROM memorandos_substituicao WHERE memorando_id=?", (identifier,)).fetchone() is None
+        assert c.execute("SELECT 1 FROM memorandos_substituicao_etapas WHERE memorando_id=?", (identifier,)).fetchone() is None
+        assert c.execute("SELECT 1 FROM memorandos_arquivos WHERE memorando_id=?", (identifier,)).fetchone() is None
+        assert c.execute("SELECT 1 FROM memorandos WHERE id=?", (other,)).fetchone()
+        assert c.execute("SELECT COUNT(*) FROM servidores").fetchone()[0] >= 0
+
+
+def test_hard_delete_with_official_number_and_files(store):
+    from services.memorandos import MIME_DOCX
+
+    service = MemorandosStore(store)
+    identifier = _finalize_memo(service, official="99/2026", extra_docx=True)
+    assert service.file(identifier)[1].startswith(b"%PDF-")
+    assert service.file(identifier, MIME_DOCX)[1].startswith(b"PK")
+    service.delete_finalized(identifier, administrator=True, confirmation="EXCLUIR")
+    with pytest.raises(ValueError, match="não encontrado"):
+        service.get(identifier)
+    assert service.file(identifier) is None
+    assert service.file(identifier, MIME_DOCX) is None
+
+
+def test_hard_delete_rolls_back_on_failure(store):
+    from contextlib import contextmanager
+
+    service = MemorandosStore(store)
+    identifier = _finalize_memo(service, extra_docx=True)
+    original = store.connection
+
+    @contextmanager
+    def wrapped(*, read_only=False, isolation=None, statement_timeout=None):
+        with original(
+            read_only=read_only, isolation=isolation, statement_timeout=statement_timeout
+        ) as inner:
+            class Proxy:
+                def execute(self, sql, parameters=()):
+                    text = " ".join(str(sql).split()).upper()
+                    if text.startswith("DELETE FROM MEMORANDOS WHERE") and "ARQUIVOS" not in text:
+                        raise RuntimeError("falha forçada")
+                    return inner.execute(sql, parameters)
+
+                def __getattr__(self, name):
+                    return getattr(inner, name)
+
+            yield Proxy()
+
+    store.connection = wrapped
+    with pytest.raises(RuntimeError, match="falha forçada"):
+        service.delete_finalized(identifier, administrator=True, confirmation="EXCLUIR")
+    store.connection = original
+    assert service.get(identifier)["status"] == STATUS_FINALIZADO
+    assert service.file(identifier)[1].startswith(b"%PDF-")
+
+
+def test_hard_delete_audit_and_alerts(store):
+    from database.audit import AuditStore
+    from services.access import resolve_principal
+    from services.alerts import collect_alerts, get_alert_summary
+    from services.audit import registrar_evento
+    from services.pending import collect_pending
+    from tests.access_testing import TEST_IDENTITY
+
+    service = MemorandosStore(store)
+    today = date.today()
+    payload = record(data_inicio=today.isoformat(), data_fim=(today + timedelta(days=3)).isoformat())
+    identifier = _finalize_memo(service, payload)
+    principal = resolve_principal(store, TEST_IDENTITY)
+    items, _, _ = collect_pending(store, principal, today=today)
+    assert any(i.source_id == identifier for i in items)
+    snapshot = service.delete_finalized(identifier, administrator=True, confirmation="EXCLUIR")
+    registrar_evento(
+        store,
+        evento="MEMORANDO_EXCLUIDO_DEFINITIVAMENTE",
+        modulo="memorandos",
+        acao="EXCLUIR",
+        principal=principal,
+        entidade_tipo="memorando",
+        entidade_id=identifier,
+        detalhes={
+            "gabinete": snapshot["gabinete"][:80],
+            "status": snapshot["status"],
+            "numero_oficial": snapshot["numero_oficial"] or None,
+        },
+    )
+    items, _, _ = collect_pending(store, principal, today=today)
+    assert all(i.source_id != identifier for i in items)
+    alerts, _, _ = collect_alerts(store, principal)
+    assert all(i.source_id != identifier for i in alerts)
+    summary = get_alert_summary(store, principal)
+    assert all(i.source_id != identifier for i in summary["top"])
+    events = AuditStore(store).list_events({"evento": "MEMORANDO_EXCLUIDO_DEFINITIVAMENTE"})
+    assert events
+    assert events[0]["usuario_email"] == TEST_IDENTITY["email"]
+    assert events[0]["entidade_id"] == identifier
+    with store.connection(read_only=True) as c:
+        assert c.execute("SELECT COUNT(*) FROM servidores").fetchone()[0] >= 0
+
+
+def test_hard_delete_postgres_contract(pg_store):
+    service = MemorandosStore(pg_store)
+    identifier = _finalize_memo(service, extra_docx=True)
+    other = _finalize_memo(
+        service,
+        record(etapas=[{
+            "substituido": person("Eva", "Feminino", "11"),
+            "substituto": person("Fábio", "Masculino", "12"),
+        }]),
+    )
+    service.delete_finalized(identifier, administrator=True, confirmation="EXCLUIR")
+    with pytest.raises(ValueError, match="não encontrado"):
+        service.get(identifier)
+    assert service.get(other)["id"] == other
+
+
+def test_hard_delete_ui_is_admin_only():
+    import inspect
+    from services import memorandos_ui
+
+    details = inspect.getsource(memorandos_ui._details)
+    controls = inspect.getsource(memorandos_ui._hard_delete_controls)
+    listing = inspect.getsource(memorandos_ui._listing)
+    assert "principal.administrator" in details
+    assert "EXCLUIR" in controls
+    assert "Confirmar exclusão definitiva" in controls
+    assert "situacao" in listing
+    assert "Em andamento" not in inspect.getsource(memorandos_ui._nav_pages)
+    assert "NAV_HISTORY" in inspect.getsource(memorandos_ui.render)
+    assert "list(limit=200)" not in inspect.getsource(memorandos_ui.render)
+    assert "situacao_counts" in inspect.getsource(memorandos_ui.render)
+
+
+def test_admin_sees_hard_delete_common_user_does_not(store, monkeypatch):
+    from tests.access_testing import enable_login, seed_access
+    from streamlit.testing.v1 import AppTest
+    from database.store import ROOT
+    from services.memorandos_ui import NAV_KEY, NAV_HISTORY
+
+    identifier = _finalize_memo(MemorandosStore(store))
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_memorandos").click().run()
+    app.radio(key=NAV_KEY).set_value(NAV_HISTORY).run()
+    assert not app.exception
+    assert any(b.label == "Excluir definitivamente" for b in app.button)
+    assert identifier
+
+    seed_access(
+        store,
+        email="comum@test.local",
+        perfil="USUARIO",
+        pode_portarias=False,
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_admin=False,
+        pode_memorandos=True,
+    )
+    monkeypatch.setattr(
+        "services.access.oidc_identity",
+        lambda: {"email": "comum@test.local", "name": "Comum", "email_verified": True},
+    )
+    common = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    common.button(key="open_memorandos").click().run()
+    common.radio(key=NAV_KEY).set_value(NAV_HISTORY).run()
+    assert not common.exception
+    assert not any(b.label == "Excluir definitivamente" for b in common.button)
 

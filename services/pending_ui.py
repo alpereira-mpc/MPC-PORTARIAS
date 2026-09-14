@@ -73,7 +73,7 @@ def open_origin(item):
     if module == "memorandos":
         request_portal_navigation(
             "Memorandos",
-            pending_open_memorando={"id": source_id, "page": "Em andamento"},
+            pending_open_memorando={"id": source_id, "page": "Histórico"},
         )
         return
     if module == "sistema":

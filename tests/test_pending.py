@@ -492,7 +492,7 @@ def test_pending_open_queues_transient_destination_state(monkeypatch):
     assert captured[2][0] == "Memorandos"
     assert captured[2][1]["pending_open_memorando"] == {
         "id": "me-1",
-        "page": "Em andamento",
+        "page": "Histórico",
     }
 
 
@@ -527,16 +527,18 @@ def test_destination_consumes_pending_open_before_widgets(monkeypatch):
     agenda_ui.consume_pending_open_agenda(Agenda())
     assert agenda_state["agenda_edit"]["id"] == "ag-1"
 
+    from services.memorandos_ui import NAV_HISTORY, NAV_NEW, NAV_OVERVIEW
+
     memo_state = {
         "pending_open_memorando": {"id": "me-1", "page": "Em andamento"}
     }
     monkeypatch.setattr(memorandos_ui.st, "session_state", memo_state)
-    pages = ["Visão Geral", "Novo Memorando", "Em andamento", "Histórico"]
+    pages = [NAV_OVERVIEW, NAV_NEW, NAV_HISTORY]
     memorandos_ui.consume_pending_open_memorando(pages)
     assert "pending_open_memorando" not in memo_state
-    assert memo_state[memorandos_ui.NAV_KEY] == "Em andamento"
+    assert memo_state[memorandos_ui.NAV_KEY] == NAV_HISTORY
     memorandos_ui.consume_pending_open_memorando(pages)
-    assert memo_state[memorandos_ui.NAV_KEY] == "Em andamento"
+    assert memo_state[memorandos_ui.NAV_KEY] == NAV_HISTORY
 
 
 def test_home_cards_and_manual_pending_menu(store, monkeypatch):
@@ -627,7 +629,7 @@ def test_pending_deep_links_open_origin_modules(store, monkeypatch):
     assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Memorandos"
     assert "pending_open_memorando" not in app.session_state
-    assert app.session_state["memorandos_nav"] == "Em andamento"
+    assert app.session_state["memorandos_nav"] == "Histórico"
     assert "pending_focus_memorando" not in app.session_state or app.session_state[
         "pending_focus_memorando"
     ] == memo_id

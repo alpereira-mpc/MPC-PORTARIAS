@@ -781,7 +781,7 @@ def test_menu_home_and_deep_links(store, monkeypatch):
     assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Memorandos"
     assert "pending_open_memorando" not in app.session_state
-    assert app.session_state["memorandos_nav"] == "Em andamento"
+    assert app.session_state["memorandos_nav"] == "Histórico"
     assert memo_id
 
 

@@ -40,11 +40,17 @@ O item de menu **Pendências** aparece se o usuário tem Ofícios, Agenda ou Mem
 
 - Ofícios: seleciona gabinete, página Recebidos/Acompanhamento e tenta abrir o detalhe.
 - Agenda: abre o editor do compromisso (`AgendaStore.get`).
-- Memorandos: entra em **Em andamento**.
+- Memorandos: entra em **Histórico** e tenta expandir o memorando correspondente (`pending_focus_memorando`). Sessões antigas com `memorandos_nav = "Em andamento"` caem em Histórico.
 
 Navegação programática (**Ver em…** na Central) não altera `portal_module` depois que o rádio já foi criado no mesmo ciclo. Usa `portal_navigation_request` e chaves transitórias (`pending_open_oficio`, `pending_open_agenda`, `pending_open_memorando`), consumidas no início do módulo de destino.
 
 A ação continua no módulo original.
+
+## Memorandos: Histórico e exclusão definitiva
+
+A aba **Em andamento** foi removida. Memorandos `AGENDADA` e `EM ANDAMENTO` são consultados no **Histórico**, com filtro de situação (`AGENDADA`, `EM ANDAMENTO`, `ENCERRADA`, `CANCELADA` ou todas). A Visão Geral mantém as métricas; não abre a aba antiga.
+
+**Exclusão definitiva** (somente administrador, no Histórico): transação que apaga `memorandos`, `memorandos_substituicao`, `memorandos_substituicao_etapas` e `memorandos_arquivos` daquele ID. Não apaga `servidores`, usuários nem `auditoria_eventos`. Confirmação: digitar `EXCLUIR`. Número oficial, se houver, é advertido e **não** é reutilizado (não há sequência do sistema). Não há snapshot em `backup_snapshots` (esse mecanismo é de Portarias); a trilha é o evento `MEMORANDO_EXCLUIDO_DEFINITIVAMENTE`.
 
 ## Home
 

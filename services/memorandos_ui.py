@@ -31,7 +31,9 @@ PLACEHOLDER_REPLACEMENT = "Selecione o substituto(a)"
 NAV_KEY = "memorandos_nav"
 NAV_OVERVIEW = "Visão Geral"
 NAV_NEW = "Novo Memorando"
+NAV_HISTORY = "Histórico"
 NAV_BASE = "Base de Servidores"
+NAV_ONGOING_LEGACY = "Em andamento"
 
 
 def _audit_memo(evento, acao, entidade_id=None, extra=None):
@@ -49,7 +51,7 @@ def _audit_memo(evento, acao, entidade_id=None, extra=None):
 
 
 def _nav_pages(principal):
-    pages = [NAV_OVERVIEW, NAV_NEW, "Em andamento", "Histórico"]
+    pages = [NAV_OVERVIEW, NAV_NEW, NAV_HISTORY]
     if principal.administrator:
         pages.append(NAV_BASE)
     return pages
@@ -62,10 +64,12 @@ def consume_pending_open_memorando(pages):
     if not isinstance(pending, dict):
         pending = {"id": pending}
     page = pending.get("page")
+    if page == NAV_ONGOING_LEGACY:
+        page = NAV_HISTORY
     if page in pages:
         st.session_state[NAV_KEY] = page
-    elif pending.get("id") and "Em andamento" in pages:
-        st.session_state[NAV_KEY] = "Em andamento"
+    elif pending.get("id"):
+        st.session_state[NAV_KEY] = NAV_HISTORY
     source_id = pending.get("id")
     if source_id:
         st.session_state["pending_focus_memorando"] = source_id
@@ -74,7 +78,10 @@ def consume_pending_open_memorando(pages):
 
 def _current_page(pages):
     consume_pending_open_memorando(pages)
-    if st.session_state.get(NAV_KEY) not in pages:
+    current = st.session_state.get(NAV_KEY)
+    if current == NAV_ONGOING_LEGACY:
+        st.session_state[NAV_KEY] = NAV_HISTORY
+    elif current not in pages:
         st.session_state[NAV_KEY] = NAV_OVERVIEW
     return st.radio("Memorandos", pages, horizontal=True, key=NAV_KEY)
 
@@ -333,20 +340,165 @@ def _details(service,row,principal):
             service.set_official_number(row["id"],number,principal.email)
             _audit_memo("NUMERO_OFICIAL","REGISTRAR",row["id"],{"numero_oficial": (number or "")[:40]})
             st.rerun()
+    if principal.administrator and r["status"] != "RASCUNHO":
+        _hard_delete_controls(service, row, principal, r)
 
 
-def _listing(service,principal,ongoing=False):
+def _clear_memo_ui_state(identifier=None):
+    st.session_state.pop("pending_focus_memorando", None)
+    st.session_state.pop("pending_open_memorando", None)
+    st.session_state.pop("memo_hard_delete_id", None)
+    if not identifier:
+        return
+    for prefix in (
+        "memo_hard_delete_typed_",
+        "memo_number_",
+        "memo_docx_",
+        "memo_file_",
+        "memo_del_",
+        "memo_number_save_",
+        "memo_hard_open_",
+        "memo_hard_cancel_",
+        "memo_hard_confirm_",
+    ):
+        st.session_state.pop(prefix + identifier, None)
+
+
+def _hard_delete_controls(service, row, principal, record):
+    identifier = row["id"]
+    st.divider()
+    st.caption("Ações administrativas")
+    if st.session_state.get("memo_hard_delete_id") != identifier:
+        if st.button("Excluir definitivamente", key="memo_hard_open_" + identifier):
+            st.session_state["memo_hard_delete_id"] = identifier
+            st.rerun()
+        return
+    etapas = record.get("etapas") or []
+    away = (etapas[0]["substituido"]["nome"] if etapas else "—")
+    replacement = (etapas[0]["substituto"]["nome"] if etapas else "—")
+    st.warning("A exclusão removerá o registro e os documentos associados do sistema.")
+    if (record.get("numero_oficial") or "").strip():
+        st.warning(
+            "Este memorando possui número oficial registrado. A exclusão removerá o registro e os documentos associados do sistema."
+        )
+    st.write(f"Servidor afastado: {away}")
+    st.write(f"Substituto: {replacement}")
+    st.write(f"Período: {record.get('data_inicio')} a {record.get('data_fim')}")
+    st.write(f"Gabinete: {record.get('gabinete_snapshot') or '—'}")
+    st.write(f"Status: {record.get('situacao') or record.get('status')}")
+    official = (record.get("numero_oficial") or "").strip()
+    st.write("Número oficial: " + (official or "—"))
+    typed = st.text_input(
+        "Digite EXCLUIR para confirmar",
+        key="memo_hard_delete_typed_" + identifier,
+    )
+    cancel, confirm = st.columns(2)
+    if cancel.button("Cancelar", key="memo_hard_cancel_" + identifier):
+        st.session_state.pop("memo_hard_delete_id", None)
+        st.rerun()
+    if confirm.button(
+        "Confirmar exclusão definitiva",
+        disabled=(typed or "") != "EXCLUIR",
+        key="memo_hard_confirm_" + identifier,
+    ):
+        try:
+            snapshot = service.delete_finalized(
+                identifier,
+                administrator=principal.administrator,
+                confirmation=typed,
+            )
+            _audit_memo(
+                "MEMORANDO_EXCLUIDO_DEFINITIVAMENTE",
+                "EXCLUIR",
+                identifier,
+                {
+                    "gabinete": (snapshot.get("gabinete") or "")[:80],
+                    "status": snapshot.get("status"),
+                    "numero_oficial": (snapshot.get("numero_oficial") or "")[:40] or None,
+                },
+            )
+            from services.alerts import invalidate_alert_summary
+
+            invalidate_alert_summary()
+            _clear_memo_ui_state(identifier)
+            st.session_state["memo_hard_delete_flash"] = True
+            st.rerun()
+        except ValueError as exc:
+            st.error(str(exc))
+
+
+def _listing(service, principal):
+    if st.session_state.pop("memo_hard_delete_flash", None):
+        st.success("Memorando excluído definitivamente.")
     focus = st.session_state.pop("pending_focus_memorando", None)
-    with st.expander("Filtros",expanded=not ongoing):
-        a,b,c=st.columns(3); search=a.text_input("Busca textual"); server=a.text_input("Servidor"); cabinet=b.text_input("Gabinete"); status=b.selectbox("Status documental",[None,"RASCUNHO","FINALIZADO","CANCELADO"],format_func=lambda x:x or "Todos"); official=c.text_input("Número oficial"); start=c.date_input("Período a partir de",value=None,format="DD/MM/YYYY"); end=c.date_input("Período até",value=None,format="DD/MM/YYYY")
-    page=st.number_input("Página",min_value=1,value=1); rows=service.list(status=status,search=search,server=server,cabinet=cabinet,official_number=official,start=start.isoformat() if start else None,end=end.isoformat() if end else None,offset=(page-1)*30,limit=30)
-    if ongoing: rows=[r for r in rows if r["situacao"] in ("AGENDADA","EM ANDAMENTO")]
-    if not rows: st.info("Nenhum memorando encontrado.")
+    focused = None
+    if focus:
+        try:
+            focused = service.get(focus)
+            etapas = focused.get("etapas") or []
+            focused["cadeia"] = (
+                " → ".join(
+                    [etapas[0]["substituido"]["nome"]]
+                    + [x["substituto"]["nome"] for x in etapas]
+                )
+                if etapas
+                else focused.get("id")
+            )
+        except ValueError:
+            focused = None
+    with st.expander("Filtros", expanded=True):
+        a, b, c = st.columns(3)
+        search = a.text_input("Busca textual")
+        server = a.text_input("Servidor")
+        cabinet = b.text_input("Gabinete")
+        status = b.selectbox(
+            "Status documental",
+            [None, "RASCUNHO", "FINALIZADO", "CANCELADO"],
+            format_func=lambda x: x or "Todos",
+        )
+        situacao = c.selectbox(
+            "Situação",
+            [None, "AGENDADA", "EM ANDAMENTO", "ENCERRADA", "CANCELADA"],
+            format_func=lambda x: x or "Todas",
+        )
+        official = c.text_input("Número oficial")
+        start = a.date_input("Período a partir de", value=None, format="DD/MM/YYYY")
+        end = b.date_input("Período até", value=None, format="DD/MM/YYYY")
+    page = st.number_input("Página", min_value=1, value=1)
+    rows = service.list(
+        status=status,
+        situacao=situacao,
+        search=search,
+        server=server,
+        cabinet=cabinet,
+        official_number=official,
+        start=start.isoformat() if start else None,
+        end=end.isoformat() if end else None,
+        offset=(page - 1) * 30,
+        limit=30,
+    )
+    shown = set()
+    if focused:
+        shown.add(focused["id"])
+        with st.expander(focused["cadeia"] + " · " + focused["situacao"], expanded=True):
+            st.write(
+                f"{focused['data_inicio']} a {focused['data_fim']} · {focused['gabinete_snapshot']} · {focused['motivo']}"
+            )
+            if focused.get("numero_oficial"):
+                st.caption("Número oficial: " + focused["numero_oficial"])
+            _details(service, focused, principal)
+    if not rows and not focused:
+        st.info("Nenhum memorando encontrado.")
     for row in rows:
-        with st.expander(row["cadeia"]+" · "+row["situacao"], expanded=row["id"]==focus):
-            st.write(f"{row['data_inicio']} a {row['data_fim']} · {row['gabinete_snapshot']} · {row['motivo']}")
-            if row["numero_oficial"]: st.caption("Número oficial: "+row["numero_oficial"])
-            _details(service,row,principal)
+        if row["id"] in shown:
+            continue
+        with st.expander(row["cadeia"] + " · " + row["situacao"], expanded=False):
+            st.write(
+                f"{row['data_inicio']} a {row['data_fim']} · {row['gabinete_snapshot']} · {row['motivo']}"
+            )
+            if row["numero_oficial"]:
+                st.caption("Número oficial: " + row["numero_oficial"])
+            _details(service, row, principal)
 
 
 def _base(service,principal):
@@ -436,8 +588,7 @@ def render(store,principal):
         _editor(service,store,principal)
     else:
         st.session_state["memorando_form_active"] = False
-        if page=="Em andamento": _listing(service,principal,True)
-        elif page=="Histórico": _listing(service,principal)
+        if page==NAV_HISTORY: _listing(service,principal)
         elif page==NAV_BASE and principal.administrator:
             _base(service,principal)
         else:
