@@ -15,6 +15,7 @@ from database.inventory import (
 )
 from database.store import unwrap_store
 from services.audit import INSTITUTIONAL_TZ, format_local
+from services.branding import APP_NAME
 import re
 
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -22,7 +23,6 @@ IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 OK = "OK"
 ATTENTION = "ATENÇÃO"
 ERROR = "ERRO"
-APP_NAME = "Ferramentas MPC-PB"
 _VERSION_CACHE = None
 
 

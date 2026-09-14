@@ -350,7 +350,7 @@ def test_overview_not_queried_from_login(monkeypatch):
     monkeypatch.setattr("database.audit.AuditStore.period_summary", forbidden)
     monkeypatch.setattr("services.audit.overview", forbidden)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
-    assert app.title[0].value == "Acesso restrito"
+    assert any("Acesso restrito" in str(getattr(m, "value", "")) for m in app.markdown)
 
 
 def test_portal_counts_one_session_across_reruns(store, monkeypatch):

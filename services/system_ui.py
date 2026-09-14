@@ -8,6 +8,7 @@ import streamlit as st
 from services.access import require_permission
 from services.audit import format_local, registrar_evento
 from services.backup import backup_filename, generate_backup, unique_backup_path
+from services.branding import APP_NAME, APP_SUBTITLE
 from services.system_health import ATTENTION, ERROR, OK, diagnose
 
 LOGGER = logging.getLogger("mpc.sistema")
@@ -43,9 +44,11 @@ def render_health(store, principal):
     require_permission(principal, "admin")
     st.subheader("Saúde do sistema")
     st.write(
-        "Visão operacional do Ferramentas MPC-PB. Os testes não alteram o schema "
-        "nem geram documentos."
+        "Visão operacional do "
+        + APP_NAME
+        + ". Os testes não alteram o schema nem geram documentos."
     )
+    st.caption(APP_SUBTITLE)
     refresh = st.button("Atualizar diagnóstico", key="sistema_health_refresh")
     if refresh or HEALTH_KEY not in st.session_state:
         st.session_state[HEALTH_KEY] = diagnose(store)
@@ -139,6 +142,7 @@ def render_health(store, principal):
         st.markdown("**Aplicação**")
         _badge(application["status"], application["summary"].split(" — ", 1)[-1])
         st.write(application["summary"])
+        st.caption(APP_SUBTITLE)
         st.caption(f"Python: {application.get('python')}")
         st.caption(f"Streamlit: {application.get('streamlit')}")
         st.caption(f"Build: {application.get('build')}")

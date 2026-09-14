@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-MPC-PB — Gerador de Portarias PROGE is a local Python 3.12/Streamlit application. `app.py` implements the four screens. `database/` holds SQLite persistence and initial seed data; `services/` contains Portuguese wording, validation, and exports; `document_generator/` handles DOCX and PDF conversion. Institutional template packages and artwork live in `templates/` and `assets/`.
+Ferramentas MPC-PB is a local Python 3.12/Streamlit application. `app.py` implements the four screens. `database/` holds SQLite persistence and initial seed data; `services/` contains Portuguese wording, validation, and exports; `document_generator/` handles DOCX and PDF conversion. Institutional template packages and artwork live in `templates/` and `assets/`.
 
 `referencias/` contains immutable original DOC/PDF pairs. `tests/` covers domain rules, persistence, and the Streamlit workflow. `docs/` records visual validation and sample documents. Runtime data belongs in `data/`, generated documents in `exports/`, and development intermediates in ignored `tmp/`.
 

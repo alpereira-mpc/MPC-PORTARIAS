@@ -7,7 +7,9 @@ import base64
 import streamlit as st
 
 from services.branding import (
+    APP_NAME,
     SIDEBAR_LOGO,
+    render_app_identity,
     render_institutional_header,
     render_sidebar_brand,
 )
@@ -296,7 +298,10 @@ def open_alertas():
 
 
 def home(principal, store=None):
-    st.write("Selecione uma ferramenta para iniciar.")
+    render_app_identity(
+        variant="home",
+        prompt="Selecione uma ferramenta para iniciar.",
+    )
     visible = visible_modules(principal)
     if not visible:
         st.info("Nenhum módulo disponível para este usuário.")
@@ -314,18 +319,7 @@ def render_login():
     st.markdown(
         "<style>"
         "section[data-testid='stMain'] [data-testid='stMainBlockContainer']{"
-        "max-width:48rem;width:100%;margin-left:0;margin-right:auto;padding-top:2.25rem;"
-        "}"
-        "section[data-testid='stMain'] [data-testid='stHeading'] h1{"
-        "font-size:3.375rem;line-height:1.15;margin:0 0 .45rem 0;font-weight:700;"
-        "}"
-        "section[data-testid='stMain'] [data-testid='stCaptionContainer'] p,"
-        "section[data-testid='stMain'] [data-testid='stCaption'] p{"
-        "font-size:1.2rem;line-height:1.45;margin:0 0 .85rem 0;"
-        "}"
-        "section[data-testid='stMain'] [data-testid='stHeading'] h2,"
-        "section[data-testid='stMain'] [data-testid='stHeading'] h3{"
-        "font-size:2.25rem;line-height:1.25;margin:.35rem 0 1.05rem 0;font-weight:650;"
+        "max-width:50rem;width:100%;margin-left:0;margin-right:auto;padding-top:2.25rem;"
         "}"
         "section[data-testid='stMain'] div.st-key-oidc_gmail_login{"
         "width:fit-content;max-width:100%;margin:.15rem 0 .95rem 0;"
@@ -344,7 +338,7 @@ def render_login():
         "</style>",
         unsafe_allow_html=True,
     )
-    st.title("Acesso restrito")
+    render_app_identity(variant="login", action="Acesso restrito")
     if st.button("Entrar com Gmail", type="primary", key="oidc_gmail_login"):
         try:
             st.login()
@@ -388,12 +382,13 @@ def _logout():
 
 
 def render_denied(identity):
+    render_app_identity()
     st.error("Acesso não autorizado.")
     st.write(
         "A conta "
         + identity["email"]
         + " foi autenticada pelo Google, mas não possui autorização "
-        "para acessar o Ferramentas MPC-PB."
+        "para acessar o " + APP_NAME + "."
     )
     st.write("Entre em contato com o administrador do sistema.")
     if st.button("Sair"):
@@ -422,7 +417,7 @@ def render_portal():
     )
 
     st.set_page_config(
-        page_title="Ferramentas MPC-PB",
+        page_title=APP_NAME,
         page_icon=str(SIDEBAR_LOGO),
         layout="wide",
     )
@@ -440,6 +435,7 @@ def render_portal():
         with st.sidebar:
             render_sidebar_brand()
         render_institutional_header()
+        render_app_identity()
         st.error("Não foi possível verificar a autorização. Tente novamente.")
         if st.button("Sair"):
             _logout()
@@ -512,7 +508,6 @@ def render_portal():
         st.stop()
     if selected == "Início":
         st.session_state["audit_modulo_atual"] = None
-        st.subheader("Início")
         home(principal, store)
         st.stop()
     registrar_modulo(store, principal, selected)

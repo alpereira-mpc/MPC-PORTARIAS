@@ -74,7 +74,7 @@ Não existe usuário padrão no código.
 
 `.\.venv\Scripts\python.exe -m streamlit run app.py`
 
-1. Sem login → tela “Acesso restrito”.
+1. Sem login → tela “Acesso restrito”, com o nome **Ferramentas MPC-PB** e o subtítulo institucional do portal.
 2. Entrar com Google com e-mail não cadastrado → acesso negado + Sair.
 3. E-mail do administrador → Home.
 4. Sair → volta ao login.

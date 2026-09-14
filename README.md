@@ -1,7 +1,8 @@
 # Ferramentas MPC-PB
 
-Portal institucional do Ministério Público de Contas do Estado da Paraíba.
-O primeiro módulo ativo é o **Gerador de Portarias PROGE**, para elaboração,
+Portal Integrado de Gestão e Apoio Operacional do Ministério Público de Contas da Paraíba.
+
+O primeiro módulo ativo inclui o **Gerador de Portarias PROGE**, para elaboração,
 numeração, geração e gerenciamento de Portarias de substituição.
 
 A entrada é **Início**. Use o card **Acessar Portarias** ou a opção **Portarias**

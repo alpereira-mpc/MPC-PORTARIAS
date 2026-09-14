@@ -24,8 +24,8 @@ from database.inventory import (
 from database.store import unwrap_store
 from services.access import has_permission
 from services.audit import INSTITUTIONAL_TZ, registrar_erro, registrar_evento
+from services.branding import APP_NAME, APP_SUBTITLE
 from services.system_health import (
-    APP_NAME,
     app_version,
     git_build,
     list_columns,
@@ -177,7 +177,8 @@ def _write_csv(archive, table, columns, rows):
 def _readme(manifest):
     tables = ", ".join(manifest["tabelas"]) or "(nenhuma)"
     return (
-        "Backup lógico gerado pelo Ferramentas MPC-PB.\n\n"
+        f"Backup lógico gerado pelo {APP_NAME}.\n"
+        f"{APP_SUBTITLE}\n\n"
         f"Data (America/Recife): {manifest['gerado_em_local']}\n"
         f"Data (UTC): {manifest['gerado_em_utc']}\n"
         f"Versão do formato: {manifest['formato']}\n"

@@ -1,5 +1,7 @@
 # Saúde e backup administrativo — Ferramentas MPC-PB
 
+Portal Integrado de Gestão e Apoio Operacional do Ministério Público de Contas da Paraíba.
+
 Área **Administração → Sistema**, com as subseções **Saúde** e **Backup**. Somente usuários com permissão administrativa (`pode_admin` / perfil administrador). A proteção vale na interface e nos serviços (`require_permission` / `has_permission`).
 
 Este recurso aumenta a capacidade de recuperação da aplicação. **Não substitui** uma política institucional de backup do banco e da infraestrutura (PostgreSQL/Supabase, PITR, snapshots do provedor).

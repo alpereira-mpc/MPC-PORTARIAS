@@ -6,8 +6,17 @@ from streamlit.testing.v1 import AppTest
 
 from database.store import ROOT
 from portal import MODULES
+from services.branding import APP_NAME, APP_SHORT_SUBTITLE, APP_SUBTITLE
 from tests.cases import sample
-from tests.test_postgresql import pg_url, pg_store
+from tests.test_postgresql import pg_store, pg_url
+
+
+def _visible_text(app):
+    parts = []
+    for attr in ("markdown", "title", "subheader", "caption", "text"):
+        for item in getattr(app, attr, []) or []:
+            parts.append(str(getattr(item, "value", item)))
+    return "\n".join(parts)
 
 
 def test_home_is_default_and_never_initializes_database(monkeypatch):
@@ -21,10 +30,11 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     monkeypatch.setattr("services.access.oidc_identity", lambda: None)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception and not app.error
-    assert app.title[0].value == "Acesso restrito"
-    assert not any(
-        getattr(t, "value", "") == "FERRAMENTAS MPC-PB" for t in app.title
-    )
+    visible = _visible_text(app)
+    assert APP_NAME in visible
+    assert APP_SUBTITLE in visible
+    assert "Acesso restrito" in visible
+    assert not any(getattr(t, "value", "") == "FERRAMENTAS MPC-PB" for t in app.title)
     assert any(b.label == "Entrar com Gmail" for b in app.button)
     assert any(getattr(b, "key", None) == "oidc_gmail_login" for b in app.button)
     assert any(
@@ -36,6 +46,8 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
 
 
 def test_brand_assets_are_packaged_with_the_repository():
+    from inspect import getsource
+
     from services import branding
 
     assert branding.SIDEBAR_LOGO.is_file()
@@ -44,6 +56,29 @@ def test_brand_assets_are_packaged_with_the_repository():
     assert branding.HEADER_IMAGE.relative_to(branding.ROOT).parts[0] == "assets"
     assert branding.SIDEBAR_LOGO.name == "mpcpb_logo_sidebar.png"
     assert branding.HEADER_IMAGE.name == "mpcpb_header_horizontal.png"
+    assert branding.APP_NAME == "Ferramentas MPC-PB"
+    assert branding.APP_SHORT_SUBTITLE == "Portal Integrado de Gestão e Apoio Operacional"
+    assert branding.APP_SUBTITLE == (
+        branding.APP_SHORT_SUBTITLE + " do Ministério Público de Contas da Paraíba"
+    )
+    assert "MPC-PB Tools" not in branding.APP_NAME
+    assert "MPC-PB Tools" not in branding.APP_SUBTITLE
+    sidebar_src = getsource(branding.render_sidebar_brand)
+    assert "APP_NAME" not in sidebar_src
+    assert "mpc-sidebar-name" not in sidebar_src
+    identity_src = getsource(branding.render_app_identity)
+    assert "mpc-identity-name" in identity_src
+    assert 'variant == "login"' in identity_src
+    assert 'variant == "home"' in identity_src
+    styles = getsource(branding._brand_styles)
+    assert ".mpc-identity--login .mpc-identity-name" in styles
+    assert "3.125rem" in styles
+    assert ".mpc-identity--home .mpc-identity-name" in styles
+    assert "2.375rem" in styles
+    from portal import render_login
+
+    assert 'variant="login"' in getsource(render_login)
+    assert "max-width:50rem" in getsource(render_login)
 
 
 def test_home_uses_page_title_not_generic_banner(store, monkeypatch):
@@ -53,7 +88,12 @@ def test_home_uses_page_title_not_generic_banner(store, monkeypatch):
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     headings = [h.value for h in app.subheader] + [h.value for h in app.title]
-    assert "Início" in headings
+    visible = _visible_text(app)
+    assert APP_NAME in visible
+    assert APP_SHORT_SUBTITLE in visible
+    assert APP_SUBTITLE not in visible
+    assert "Selecione uma ferramenta para iniciar." in visible
+    assert app.sidebar.radio(key="portal_module").value == "Início"
     assert "FERRAMENTAS MPC-PB" not in headings
     assert "AGENDA DOS PROCURADORES" not in headings
 
@@ -146,6 +186,9 @@ def test_denied_google_account_does_not_open_portal(store, monkeypatch):
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert "Acesso não autorizado" in "".join(e.value for e in app.error)
+    visible = _visible_text(app)
+    assert APP_NAME in visible
+    assert APP_SUBTITLE in visible
     assert not any(getattr(b, "key", None) == "open_portarias" for b in app.button)
 
 

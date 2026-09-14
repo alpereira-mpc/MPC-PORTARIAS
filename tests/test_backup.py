@@ -196,6 +196,7 @@ def test_backup_zip_manifest_readme_and_utf8(store, tmp_path):
         assert manifest["quantidade_documentos"] >= 4
         readme = archive.read("README.txt").decode("utf-8")
         assert "Ferramentas MPC-PB" in readme
+        assert "Portal Integrado de Gestão e Apoio Operacional" in readme
         assert "restauração" in readme.casefold() or "restauracao" in readme.casefold()
         users = archive.read("dados/usuarios_acesso.csv").decode("utf-8")
         assert "José da Conceição" in users
