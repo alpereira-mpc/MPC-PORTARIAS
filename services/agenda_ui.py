@@ -306,6 +306,15 @@ def editor(agenda, people):
         st.rerun()
 
 
+def consume_pending_open_agenda(agenda):
+    focus = st.session_state.pop("pending_open_agenda", None)
+    if focus and "agenda_edit" not in st.session_state:
+        record = agenda.get(focus)
+        if record:
+            st.session_state["agenda_edit"] = record
+    return focus
+
+
 def render(store=None, principal=None):
     from database.store import Store, unwrap_store
     from services.access import current_user, require_permission
@@ -338,6 +347,7 @@ def render(store=None, principal=None):
     names = {p["id"]: p["nome"] for p in people}
     if message := st.session_state.pop("agenda_message", None):
         st.success(message)
+    consume_pending_open_agenda(agenda)
     if "agenda_edit" in st.session_state:
         editor(agenda, people)
         return

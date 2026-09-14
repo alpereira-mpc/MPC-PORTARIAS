@@ -55,7 +55,25 @@ def _nav_pages(principal):
     return pages
 
 
+def consume_pending_open_memorando(pages):
+    pending = st.session_state.pop("pending_open_memorando", None)
+    if not pending:
+        return None
+    if not isinstance(pending, dict):
+        pending = {"id": pending}
+    page = pending.get("page")
+    if page in pages:
+        st.session_state[NAV_KEY] = page
+    elif pending.get("id") and "Em andamento" in pages:
+        st.session_state[NAV_KEY] = "Em andamento"
+    source_id = pending.get("id")
+    if source_id:
+        st.session_state["pending_focus_memorando"] = source_id
+    return pending
+
+
 def _current_page(pages):
+    consume_pending_open_memorando(pages)
     if st.session_state.get(NAV_KEY) not in pages:
         st.session_state[NAV_KEY] = NAV_OVERVIEW
     return st.radio("Memorandos", pages, horizontal=True, key=NAV_KEY)
@@ -308,13 +326,14 @@ def _details(service,row,principal):
 
 
 def _listing(service,principal,ongoing=False):
+    focus = st.session_state.pop("pending_focus_memorando", None)
     with st.expander("Filtros",expanded=not ongoing):
         a,b,c=st.columns(3); search=a.text_input("Busca textual"); server=a.text_input("Servidor"); cabinet=b.text_input("Gabinete"); status=b.selectbox("Status documental",[None,"RASCUNHO","FINALIZADO","CANCELADO"],format_func=lambda x:x or "Todos"); official=c.text_input("Número oficial"); start=c.date_input("Período a partir de",value=None,format="DD/MM/YYYY"); end=c.date_input("Período até",value=None,format="DD/MM/YYYY")
     page=st.number_input("Página",min_value=1,value=1); rows=service.list(status=status,search=search,server=server,cabinet=cabinet,official_number=official,start=start.isoformat() if start else None,end=end.isoformat() if end else None,offset=(page-1)*30,limit=30)
     if ongoing: rows=[r for r in rows if r["situacao"] in ("AGENDADA","EM ANDAMENTO")]
     if not rows: st.info("Nenhum memorando encontrado.")
     for row in rows:
-        with st.expander(row["cadeia"]+" · "+row["situacao"]):
+        with st.expander(row["cadeia"]+" · "+row["situacao"], expanded=row["id"]==focus):
             st.write(f"{row['data_inicio']} a {row['data_fim']} · {row['gabinete_snapshot']} · {row['motivo']}")
             if row["numero_oficial"]: st.caption("Número oficial: "+row["numero_oficial"])
             _details(service,row,principal)

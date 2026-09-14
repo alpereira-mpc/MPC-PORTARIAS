@@ -152,6 +152,11 @@ def current_user(store):
 def has_permission(principal, module):
     if principal is None or not principal.ativo:
         return False
+    if module == "pendencias":
+        return any(
+            has_permission(principal, name)
+            for name in ("oficios", "agenda", "memorandos")
+        )
     if module == "portarias":
         return principal.pode_portarias
     if module == "agenda":

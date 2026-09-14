@@ -165,6 +165,25 @@ def switch_gabinete(code=None, member=None):
     st.session_state["oficio_page"] = "Visão Geral"
 
 
+def consume_pending_open_oficio(offices):
+    pending = st.session_state.pop("pending_open_oficio", None)
+    if not pending:
+        return None
+    if not isinstance(pending, dict):
+        pending = {"id": pending}
+    gabinete = pending.get("gabinete")
+    if gabinete in offices:
+        st.session_state["oficio_gabinete"] = gabinete
+        st.session_state["oficio_gabinete_member"] = offices[gabinete]["membro_id"]
+    page = pending.get("page")
+    if page:
+        st.session_state["oficio_page"] = page
+    source_id = pending.get("id")
+    if source_id:
+        st.session_state["oficio_detail"] = source_id
+    return pending
+
+
 def editor(service, people):
     identifier = st.session_state.get("oficio_edit")
     member = st.session_state["oficio_gabinete_member"]
@@ -760,6 +779,7 @@ def render(store=None, principal=None):
         if not offices:
             st.warning("Nenhum gabinete de Ofícios autorizado para este usuário.")
             return
+        consume_pending_open_oficio(offices)
         selected = st.session_state.get("oficio_gabinete")
         if selected not in offices:
             st.subheader("Ofícios — Geração e Controle")

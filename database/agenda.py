@@ -127,6 +127,38 @@ class AgendaStore:
         with self.store.connection(read_only=True) as c:
             return self._list(c, start, end, member, kind, status)
 
+    def get(self, identifier):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT * FROM agenda_compromissos WHERE id=?", (identifier,)
+            ).fetchone()
+            if not row:
+                return None
+            people = [
+                r[0]
+                for r in c.execute(
+                    "SELECT procurador_id FROM agenda_compromisso_procuradores "
+                    "WHERE compromisso_id=? ORDER BY procurador_id",
+                    (identifier,),
+                )
+            ]
+            return {
+                **json.loads(row["payload"]),
+                **{
+                    k: row[k]
+                    for k in (
+                        "id",
+                        "tipo",
+                        "inicio",
+                        "fim",
+                        "situacao",
+                        "criada",
+                        "atualizada",
+                    )
+                },
+                "procuradores": people,
+            }
+
     def upcoming(self, start, member=None, kind=None, status=None, offset=0):
         if not isinstance(offset, int) or offset < 0:
             raise ValueError("Página inválida.")

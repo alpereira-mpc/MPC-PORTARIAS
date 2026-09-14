@@ -15,6 +15,17 @@ from services.ui_store import asset
 
 ROOT = Path(__file__).resolve().parent
 
+PORTAL_NAV_REQUEST = "portal_navigation_request"
+PORTAL_NAV_STATE_KEYS = frozenset(
+    {
+        "nav",
+        "memorandos_nav",
+        "pending_open_oficio",
+        "pending_open_agenda",
+        "pending_open_memorando",
+    }
+)
+
 
 def _session_get(key, default=None):
     state = st.session_state
@@ -83,26 +94,53 @@ ADMIN_MODULE = Module(
 )
 
 
+def queue_portal_navigation(module, **state):
+    payload = {"module": module, "state": dict(state)}
+    st.session_state[PORTAL_NAV_REQUEST] = payload
+    return payload
+
+
+def request_portal_navigation(module, **state):
+    queue_portal_navigation(module, **state)
+    st.rerun()
+
+
+def apply_portal_navigation(allowed):
+    request = st.session_state.pop(PORTAL_NAV_REQUEST, None)
+    if not request:
+        return None
+    if isinstance(request, str):
+        module, extra = request, {}
+    else:
+        module = request.get("module")
+        extra = request.get("state") or {}
+    if module not in allowed:
+        return None
+    st.session_state["portal_module"] = module
+    for key, value in extra.items():
+        if key in PORTAL_NAV_STATE_KEYS:
+            st.session_state[key] = value
+    return module
+
+
 def open_portarias():
-    st.session_state["portal_module"] = "Portarias"
-    st.session_state["nav"] = "Nova Portaria"
+    request_portal_navigation("Portarias", nav="Nova Portaria")
 
 
 def open_agenda():
-    st.session_state["portal_module"] = "Agenda"
+    request_portal_navigation("Agenda")
 
 
 def open_oficios():
-    st.session_state["portal_module"] = "Ofícios"
+    request_portal_navigation("Ofícios")
 
 
 def open_memorandos():
-    st.session_state["portal_module"] = "Memorandos"
-    st.session_state["memorandos_nav"] = "Visão Geral"
+    request_portal_navigation("Memorandos", memorandos_nav="Visão Geral")
 
 
 def open_admin():
-    st.session_state["portal_module"] = "Administração"
+    request_portal_navigation("Administração")
 
 
 def card(module):
@@ -180,8 +218,16 @@ def _home_layout_style():
     )
 
 
-def home(principal):
+def open_pendencias():
+    request_portal_navigation("Pendências")
+
+
+def home(principal, store=None):
     st.write("Selecione uma ferramenta para iniciar.")
+    if store is not None:
+        from services.pending_ui import render_home_summary
+
+        render_home_summary(store, principal)
     visible = visible_modules(principal)
     if not visible:
         st.info("Nenhum módulo disponível para este usuário.")
@@ -343,6 +389,8 @@ def render_portal():
 
     iniciar_sessao_autorizada(store, principal)
     options = ["Início"]
+    if has_permission(principal, "pendencias"):
+        options.append("Pendências")
     if has_permission(principal, "portarias"):
         options.append("Portarias")
     if has_permission(principal, "agenda"):
@@ -353,6 +401,7 @@ def render_portal():
         options.append("Memorandos")
     if has_permission(principal, "admin"):
         options.append("Administração")
+    apply_portal_navigation(options)
     if _session_get("portal_module") not in options:
         st.session_state["portal_module"] = "Início"
     with st.sidebar:
@@ -371,10 +420,16 @@ def render_portal():
     if selected == "Início":
         st.session_state["audit_modulo_atual"] = None
         st.subheader("Início")
-        home(principal)
+        home(principal, store)
         st.stop()
     registrar_modulo(store, principal, selected)
     try:
+        if selected == "Pendências":
+            require_permission(principal, "pendencias")
+            from services.pending_ui import render
+
+            render(store, principal)
+            st.stop()
         if selected == "Agenda":
             require_permission(principal, "agenda")
             from services.agenda_ui import render
