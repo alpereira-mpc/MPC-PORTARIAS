@@ -5,7 +5,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, Twips
-from services.memorandos import participle, period_text, role_article
+from services.memorandos import participle, role_article, short_date
 
 ROOT = Path(__file__).resolve().parents[1]
 PORTARIAS_LOGO = ROOT / "assets" / "logo.jpeg"
@@ -42,14 +42,22 @@ def _font(run, *, size=13, bold=False):
     return run
 
 
-def _paragraph(doc, text="", *, alignment=WD_ALIGN_PARAGRAPH.LEFT, before=0, after=0, first=0, bold=False, size=13):
+def _paragraph(doc, text="", *, alignment=WD_ALIGN_PARAGRAPH.LEFT, before=0, after=0, first=None, bold=False, size=13):
     paragraph = doc.add_paragraph()
     paragraph.alignment = alignment
     paragraph.paragraph_format.space_before = Pt(before)
     paragraph.paragraph_format.space_after = Pt(after)
-    paragraph.paragraph_format.first_line_indent = Cm(first)
     paragraph.paragraph_format.line_spacing = 1.3
+    paragraph.paragraph_format.left_indent = Pt(0)
+    paragraph.paragraph_format.right_indent = Pt(0)
+    paragraph.paragraph_format.first_line_indent = Cm(first) if first else Pt(0)
     if text:
+        _font(paragraph.add_run(text), size=size, bold=bold)
+    return paragraph
+
+
+def _runs(paragraph, chunks, *, size=13):
+    for text, bold in chunks:
         _font(paragraph.add_run(text), size=size, bold=bold)
     return paragraph
 
@@ -62,30 +70,51 @@ def _motive(record):
     return record["motivo_texto"].strip() if record["motivo"] == "Outro" else record["motivo"].lower()
 
 
-def _first_body(record, step):
-    left, right = step["substituido"], step["substituto"]
-    return (
-        f"Ao cumprimentá-lo, e considerando que {role_article(left['genero'])} "
-        f"{left['nome']}, matrícula nº {left.get('matricula','')}, ocupante de "
-        f"{record['natureza_funcao'].lower()} de {left.get('cargo','')}, "
-        f"{record['gabinete_snapshot']}, encontra-se afastad{'a' if left['genero']=='Feminino' else 'o'} "
-        f"de suas atividades laborais {period_text(record['data_inicio'], record['data_fim'])}, "
-        f"em decorrência de {_motive(record)}, indico {role_article(right['genero'])} "
-        f"{right['nome']}, matrícula nº {right.get('matricula','')}, {right.get('cargo','')}, "
-        f"{participle(right['genero'])} em {right.get('lotacao','')}, para substituir "
-        f"{role_article(left['genero'])} antes mencionad{'a' if left['genero']=='Feminino' else 'o'} durante o respectivo período."
-    )
+def _person_label(person):
+    return f"{person['nome']}, matrícula nº {person.get('matricula', '')}"
 
 
-def _cascade_body(step):
+def _first_body_chunks(record, step):
     left, right = step["substituido"], step["substituto"]
-    return (
-        f"Em decorrência da substituição acima, indico {role_article(right['genero'])} "
-        f"{right['nome']}, matrícula nº {right.get('matricula','')}, {right.get('cargo','')}, "
-        f"{participle(right['genero'])} em {right.get('lotacao','')}, para substituir, "
-        f"no mesmo período, {role_article(left['genero'])} {left['nome']}, matrícula nº "
-        f"{left.get('matricula','')}, {left.get('cargo','')}."
-    )
+    ending = "a" if left["genero"] == "Feminino" else "o"
+    return [
+        (f"Ao cumprimentá-lo, e considerando que {role_article(left['genero'])} ", False),
+        (_person_label(left), True),
+        (
+            f", ocupante de {record['natureza_funcao'].lower()} de {left.get('cargo', '')}, "
+            f"{record['gabinete_snapshot']}, encontra-se afastad{ending} de suas atividades laborais "
+            f"no período de ",
+            False,
+        ),
+        (short_date(record["data_inicio"]), True),
+        (" a ", False),
+        (short_date(record["data_fim"]), True),
+        (
+            f", em decorrência de {_motive(record)}, indico {role_article(right['genero'])} ",
+            False,
+        ),
+        (_person_label(right), True),
+        (
+            f", {right.get('cargo', '')}, {participle(right['genero'])} em {right.get('lotacao', '')}, "
+            f"para substituir {role_article(left['genero'])} antes mencionad{ending} durante o respectivo período.",
+            False,
+        ),
+    ]
+
+
+def _cascade_body_chunks(step):
+    left, right = step["substituido"], step["substituto"]
+    return [
+        (f"Em decorrência da substituição acima, indico {role_article(right['genero'])} ", False),
+        (_person_label(right), True),
+        (
+            f", {right.get('cargo', '')}, {participle(right['genero'])} em {right.get('lotacao', '')}, "
+            f"para substituir, no mesmo período, {role_article(left['genero'])} ",
+            False,
+        ),
+        (_person_label(left), True),
+        (f", {left.get('cargo', '')}.", False),
+    ]
 
 
 def generate(record):
@@ -100,24 +129,22 @@ def generate(record):
     _paragraph(doc, "MEMORANDO", alignment=WD_ALIGN_PARAGRAPH.CENTER, before=18, after=18, bold=True, size=14)
     _paragraph(doc, "Ao Excelentíssimo Senhor Presidente do Tribunal de Contas do Estado da Paraíba", after=12)
     subject = _paragraph(doc, "", after=14)
-    _font(subject.add_run("Assunto: "), bold=True)
-    _font(subject.add_run(_subject(record)), bold=True)
+    _runs(subject, [("Assunto:", False), (" " + _subject(record), True)])
+    _paragraph(doc, "", after=12)
     _paragraph(doc, "Senhor Presidente,", after=12)
+    _paragraph(doc, "", after=12)
     for index, step in enumerate(record["etapas"]):
-        _paragraph(
-            doc,
-            _first_body(record, step) if index == 0 else _cascade_body(step),
-            alignment=WD_ALIGN_PARAGRAPH.JUSTIFY,
-            after=12,
-            first=1.25,
-        )
+        body = _paragraph(doc, "", alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, after=12, first=1.25)
+        _runs(body, _first_body_chunks(record, step) if index == 0 else _cascade_body_chunks(step))
+    _paragraph(doc, "", after=24)
     _paragraph(doc, "Com os meus melhores cumprimentos,", after=24)
+    _paragraph(doc, "", after=24)
     _paragraph(doc, record["signatario_nome"].upper(), alignment=WD_ALIGN_PARAGRAPH.CENTER, bold=True)
     _paragraph(
         doc,
         record["signatario_cargo"] + " do Ministério Público de Contas da Paraíba",
         alignment=WD_ALIGN_PARAGRAPH.CENTER,
-        size=11,
+        size=13,
     )
     out = BytesIO()
     doc.save(out)

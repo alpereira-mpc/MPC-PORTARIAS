@@ -321,17 +321,65 @@ def _base(service,principal):
             st.session_state["memorando_form_active"] = False
             st.success(f"{result['incluidos']} incluídos; {result['atualizados']} atualizados.")
     st.divider(); servers=service.all_servers(include_inactive=True)
-    if servers:
-        current=st.selectbox("Corrigir servidor",servers,format_func=_label)
-        with st.form("memo_server_edit"):
-            name=st.text_input("Nome",current["nome"]); cargo=st.text_input("Cargo",current["cargo"]); sector=st.text_input("Setor",current["setor"]); gender=st.selectbox("Gênero",[None,"Masculino","Feminino"],format_func=lambda x:x or "Não informado"); active=st.checkbox("Ativo",bool(current["ativo"]))
-            if st.form_submit_button("Salvar correção"): service.update_server(current["id"],{"nome":name,"cargo":cargo,"setor":sector,"genero":gender,"ativo":active},actor_email=principal.email,administrator=principal.administrator); st.success("Cadastro atualizado.")
+    if st.session_state.pop("memo_server_flash", None):
+        st.success("Cadastro atualizado com sucesso.")
+    if not servers:
+        return
+    if not st.session_state.get("memo_server_edit_open"):
+        if st.button("Corrigir servidor"):
+            st.session_state["memo_server_edit_open"] = True
+            st.session_state["memo_server_pick"] = None
+            st.rerun()
+        return
+    by_id = {person["id"]: person for person in servers}
+    options = list(by_id)
+    current_id = st.session_state.get("memo_server_pick")
+    if current_id is not None and current_id not in by_id:
+        st.session_state.pop("memo_server_pick", None)
+    chosen = st.selectbox(
+        "Servidor",
+        options,
+        index=None,
+        placeholder="Selecione um servidor",
+        format_func=lambda identifier: _label(by_id.get(identifier)) if identifier is not None else "",
+        key="memo_server_pick",
+    )
+    if chosen is None:
+        return
+    current = by_id[chosen]
+    with st.form("memo_server_edit_" + str(chosen)):
+        name=st.text_input("Nome", current["nome"], key="memo_server_name_"+str(chosen))
+        cargo=st.text_input("Cargo", current["cargo"], key="memo_server_cargo_"+str(chosen))
+        sector=st.text_input("Setor", current["setor"], key="memo_server_setor_"+str(chosen))
+        gender_options = (None, "Masculino", "Feminino")
+        gender=st.selectbox(
+            "Gênero",
+            gender_options,
+            format_func=lambda x: x or "Não informado",
+            key="memo_server_gender_"+str(chosen),
+            index=gender_options.index(current["genero"]) if current["genero"] in ("Masculino", "Feminino") else 0,
+        )
+        active=st.checkbox("Ativo", bool(current["ativo"]), key="memo_server_ativo_"+str(chosen))
+        if st.form_submit_button("Salvar correção"):
+            try:
+                service.update_server(current["id"], {"nome":name,"cargo":cargo,"setor":sector,"genero":gender,"ativo":active}, actor_email=principal.email, administrator=principal.administrator)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                for key in list(st.session_state.keys()):
+                    if str(key).startswith("memo_server_"):
+                        st.session_state.pop(key, None)
+                st.session_state["memo_server_edit_open"] = False
+                st.session_state["memo_server_flash"] = True
+                st.rerun()
 
 
 def render(store,principal):
     require_permission(principal,"memorandos"); service=open_service(store); st.subheader("MEMORANDOS DE SUBSTITUIÇÃO")
     pages=_nav_pages(principal)
     page=_current_page(pages)
+    if page != NAV_BASE:
+        st.session_state["memo_server_edit_open"] = False
     if page==NAV_NEW:
         if not st.session_state.get("memorando_form_active"):
             _reset_new_form()

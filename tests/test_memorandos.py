@@ -282,9 +282,38 @@ def test_document_contains_institutional_fields():
     assert abs(section.right_margin.cm - 2.0) < 0.05
     title = next(p for p in doc.paragraphs if p.text == "MEMORANDO")
     assert title.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert title.runs[0].bold and title.runs[0].font.size == Pt(14)
+    assert title.runs[0].font.name == "Times New Roman"
+    assert title.paragraph_format.space_before == Pt(18)
+    assert title.paragraph_format.space_after == Pt(18)
     body = next(p for p in doc.paragraphs if p.text.startswith("Ao cumprimentá-lo"))
     assert body.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
+    assert abs(body.paragraph_format.first_line_indent.cm - 1.25) < 0.02
     assert body.runs[0].font.size == Pt(13)
+    assert body.runs[0].font.name == "Times New Roman"
+    subject = next(p for p in doc.paragraphs if p.text.startswith("Assunto:"))
+    assert not subject.runs[0].bold
+    assert subject.runs[0].text == "Assunto:"
+    assert subject.runs[1].bold and "Substituição" in subject.runs[1].text
+    closing = next(p for p in doc.paragraphs if p.text.startswith("Com os meus melhores"))
+    assert closing.alignment != WD_ALIGN_PARAGRAPH.JUSTIFY
+    assert (closing.paragraph_format.first_line_indent or Pt(0)).pt == 0
+    signature = next(p for p in doc.paragraphs if p.text.startswith("ELVIRA SAMARA"))
+    assert signature.alignment == WD_ALIGN_PARAGRAPH.CENTER and signature.runs[0].bold
+    role = next(p for p in doc.paragraphs if "Procuradora-Geral do Ministério" in p.text)
+    assert role.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert not role.runs[0].bold
+    assert role.runs[0].font.size == Pt(13)
+    bold = "".join(run.text for run in body.runs if run.bold)
+    plain = "".join(run.text for run in body.runs if not run.bold)
+    assert "Niltamir Galdino Guedes" in bold
+    assert "matrícula nº 10" in bold
+    assert "Ana Claudia da Costa Ferreira" in bold
+    assert "matrícula nº 20" in bold
+    from services.memorandos import short_date
+    assert short_date(payload["data_inicio"]) in bold
+    assert short_date(payload["data_fim"]) in bold
+    assert "Chefe" in plain and "gabinete da Procuradoria-Geral" in plain
     for item in (
         "MEMORANDO",
         "Presidente do Tribunal de Contas",
@@ -347,6 +376,12 @@ def test_cascade_document_mentions_each_stage():
     assert "Kátia Cilene Brandão Antunes" in text
     assert "Maria da Luz de Lima" in text
     assert "Ana Claudia da Costa Ferreira" in text
+    cascade = next(p for p in Document(BytesIO(generate(payload))).paragraphs if p.text.startswith("Em decorrência"))
+    bold = "".join(run.text for run in cascade.runs if run.bold)
+    assert "Maria da Luz de Lima" in bold
+    assert "Ana Claudia da Costa Ferreira" in bold
+    assert "matrícula nº 12" in bold
+    assert "matrícula nº 13" in bold
 
 
 def test_real_docx_pdf_roundtrip_and_stored_bytes(store):
@@ -880,4 +915,47 @@ def test_base_ui_does_not_hardcode_administrative_backend_flag():
     assert "administrator=True" not in source
     assert "administrator=principal.administrator" in inspect.getsource(ui._base)
     assert "if not principal.administrator" in inspect.getsource(ui._base)
+
+
+def test_server_correction_opens_empty_and_closes_after_save(store, monkeypatch):
+    from services.memorandos_ui import NAV_KEY, NAV_BASE
+
+    MemorandosStore(store).import_servers(
+        [
+            {"nome": "Ana", "matricula": "1", "cargo": "A", "setor": "X"},
+            {"nome": "Beto", "matricula": "2", "cargo": "B", "setor": "Y"},
+        ],
+        actor_email="admin@test.local",
+        filename="x.xlsx",
+        content_hash="a",
+        administrator=True,
+    )
+    app = _login_memorandos_app(store, monkeypatch)
+    app.button(key="open_memorandos").click().run()
+    app.radio(key=NAV_KEY).set_value(NAV_BASE).run()
+    assert any(x.label == "Corrigir servidor" for x in app.button)
+    assert not any(x.label == "Servidor" for x in app.selectbox)
+    assert not any(x.label == "Nome" for x in app.text_input)
+    assert not any(x.label == "Salvar correção" for x in app.button)
+    next(x for x in app.button if x.label == "Corrigir servidor").click().run()
+    picker = next(x for x in app.selectbox if x.label == "Servidor")
+    assert picker.value is None
+    first_id = MemorandosStore(store).all_servers(include_inactive=True)[0]["id"]
+    assert picker.value != first_id
+    assert not any(x.label == "Nome" for x in app.text_input)
+    picker.set_value(first_id).run()
+    assert any(x.label == "Nome" for x in app.text_input)
+    assert any(x.label == "Cargo" for x in app.text_input)
+    assert any(x.label == "Setor" for x in app.text_input)
+    assert any(x.label == "Gênero" for x in app.selectbox)
+    assert any(x.label == "Ativo" for x in app.checkbox)
+    next(x for x in app.text_input if x.label == "Nome").set_value("Ana Atualizada").run()
+    next(x for x in app.button if x.label == "Salvar correção").click().run()
+    assert not app.exception
+    saved = MemorandosStore(store).all_servers(include_inactive=True)
+    assert any(row["nome"] == "Ana Atualizada" for row in saved)
+    assert any(x.label == "Corrigir servidor" for x in app.button)
+    assert not any(x.label == "Servidor" for x in app.selectbox)
+    assert not any(x.label == "Nome" for x in app.text_input)
+    assert any("Cadastro atualizado com sucesso" in (x.value or "") for x in app.success)
 
