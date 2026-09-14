@@ -60,17 +60,33 @@ def render(store, principal):
         if current is None:
             current = access.get(selected)
     prefix = "acesso_form_" + str(selected) + "_"
+    protected = bool(current.get("protegido"))
+    last_admin = (
+        selected
+        and current["perfil"] == "ADMINISTRADOR"
+        and current["ativo"]
+        and access.active_administrator_count(exclude_id=selected) == 0
+    )
     profile_options = ("USUARIO", "ADMINISTRADOR")
+    if protected:
+        st.caption("Administrador protegido")
+        profile_options = ("ADMINISTRADOR",)
     with st.form("acesso_user_" + str(selected)):
         nome = st.text_input("Nome", value=current["nome"], key=prefix + "nome")
-        email = st.text_input("E-mail", value=current["email"], key=prefix + "email")
+        email = st.text_input(
+            "E-mail",
+            value=current["email"],
+            key=prefix + "email",
+            disabled=protected,
+        )
         perfil = st.selectbox(
             "Perfil",
             profile_options,
             index=profile_options.index(
-                current["perfil"] if current["perfil"] in profile_options else "USUARIO"
+                current["perfil"] if current["perfil"] in profile_options else profile_options[0]
             ),
             key=prefix + "perfil",
+            disabled=protected,
         )
         st.write("Acesso")
         portarias = st.checkbox(
@@ -86,7 +102,10 @@ def render(store, principal):
             "Memorandos", value=current["pode_memorandos"], key=prefix + "memorandos"
         )
         admin = st.checkbox(
-            "Administração", value=current["pode_admin"], key=prefix + "admin"
+            "Administração",
+            value=current["pode_admin"],
+            key=prefix + "admin",
+            disabled=protected,
         )
         gabinetes = st.multiselect(
             "Gabinetes de Ofícios",
@@ -94,7 +113,12 @@ def render(store, principal):
             default=[g for g in current["gabinetes"] if g in GABINETES],
             key=prefix + "gabinetes",
         )
-        ativo = st.checkbox("Ativo", value=current["ativo"], key=prefix + "ativo")
+        ativo = st.checkbox(
+            "Ativo",
+            value=current["ativo"],
+            key=prefix + "ativo",
+            disabled=protected or last_admin,
+        )
         submit = st.form_submit_button("Salvar")
     if submit:
         identifier = None if selected == 0 else selected
@@ -120,26 +144,29 @@ def render(store, principal):
             st.session_state.pop("_access_cache", None)
             st.session_state["acesso_message"] = "Usuário salvo."
             st.rerun()
-    if selected:
+    if selected and not protected:
         if current["ativo"]:
-            if st.button("Desativar"):
-                access.set_active(selected, False)
-                st.session_state.pop("_access_cache", None)
-                st.session_state["acesso_message"] = "Usuário desativado."
-                st.rerun()
+            if last_admin:
+                st.caption("O sistema deve manter pelo menos um administrador ativo.")
+            elif st.button("Desativar"):
+                try:
+                    access.set_active(selected, False)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state.pop("_access_cache", None)
+                    st.session_state["acesso_message"] = "Usuário desativado."
+                    st.rerun()
         elif st.button("Ativar"):
             access.set_active(selected, True)
             st.session_state.pop("_access_cache", None)
             st.session_state["acesso_message"] = "Usuário ativado."
             st.rerun()
         self_delete = selected == principal.id
-        last_admin = (
-            current["perfil"] == "ADMINISTRADOR"
-            and current["ativo"]
-            and access.active_administrator_count(exclude_id=selected) == 0
-        )
         st.divider()
-        if self_delete:
+        if protected:
+            st.caption("Este cadastro não pode ser excluído.")
+        elif self_delete:
             st.caption("Você não pode excluir o próprio cadastro.")
         elif last_admin:
             st.caption("Não é possível excluir o último administrador ativo.")
