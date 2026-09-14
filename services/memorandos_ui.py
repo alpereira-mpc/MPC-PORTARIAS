@@ -34,6 +34,20 @@ NAV_NEW = "Novo Memorando"
 NAV_BASE = "Base de Servidores"
 
 
+def _audit_memo(evento, acao, entidade_id=None, extra=None):
+    from services.audit import registrar_evento
+
+    registrar_evento(
+        st.session_state.get("_mpc_store"),
+        evento=evento,
+        modulo="memorandos",
+        acao=acao,
+        entidade_tipo="memorando",
+        entidade_id=entidade_id,
+        detalhes=extra,
+    )
+
+
 def _nav_pages(principal):
     pages = [NAV_OVERVIEW, NAV_NEW, "Em andamento", "Histórico"]
     if principal.administrator:
@@ -166,6 +180,7 @@ def _finalize_active(service, principal, record, identifier, preview, key):
                 docx_filename=preview.get("docx_name"),
                 uploaded=preview.get("source") == SOURCE_UPLOAD,
             )
+            _audit_memo("MEMORANDO_FINALIZADO", "FINALIZAR", identifier)
             st.success("Memorando finalizado.")
         except ValueError as exc:
             st.error(str(exc))
@@ -281,12 +296,15 @@ def _details(service,row,principal):
     if file: st.download_button("Baixar PDF",file[1],file[0],MIME_PDF,key="memo_file_"+row["id"])
     if r["status"]=="RASCUNHO" and st.button("Excluir rascunho",key="memo_del_"+row["id"]):
         try:
-            service.delete_draft(row["id"]); st.success("Rascunho excluído."); st.rerun()
+            service.delete_draft(row["id"]); _audit_memo("RASCUNHO_EXCLUIDO","EXCLUIR",row["id"]); st.success("Rascunho excluído."); st.rerun()
         except ValueError as exc:
             st.error(str(exc))
     if r["status"]=="FINALIZADO":
         number=st.text_input("Número oficial",value=r["numero_oficial"],key="memo_number_"+row["id"])
-        if st.button("Salvar número oficial",key="memo_number_save_"+row["id"]): service.set_official_number(row["id"],number,principal.email); st.rerun()
+        if st.button("Salvar número oficial",key="memo_number_save_"+row["id"]):
+            service.set_official_number(row["id"],number,principal.email)
+            _audit_memo("NUMERO_OFICIAL","REGISTRAR",row["id"],{"numero_oficial": (number or "")[:40]})
+            st.rerun()
 
 
 def _listing(service,principal,ongoing=False):
@@ -316,6 +334,7 @@ def _base(service,principal):
         name,digest,rows,report=pending; st.dataframe([{"Total":report["total"],"Novos":report["novos"],"Atualizados":report["atualizados"],"Matrícula vazia":len(report["sem_matricula"]),"Matrícula zero":len(report["matriculas_zero"]),"Duplicidades":len(report["duplicidades"]),"Inconsistentes":len(report["inconsistentes"])}],hide_index=True)
         if st.checkbox("Confirmo a importação desta prévia") and st.button("Importar base transacionalmente"):
             result=service.import_servers(rows,actor_email=principal.email,filename=name,content_hash=digest,administrator=principal.administrator)
+            _audit_memo("BASE_IMPORTADA","IMPORTAR",None,{"registros_novos":result.get("incluidos"),"registros_atualizados":result.get("atualizados")})
             st.session_state.pop("memo_import", None)
             _reset_new_form()
             st.session_state["memorando_form_active"] = False
@@ -363,6 +382,7 @@ def _base(service,principal):
         if st.form_submit_button("Salvar correção"):
             try:
                 service.update_server(current["id"], {"nome":name,"cargo":cargo,"setor":sector,"genero":gender,"ativo":active}, actor_email=principal.email, administrator=principal.administrator)
+                _audit_memo("SERVIDOR_CORRIGIDO","CORRIGIR",current["id"])
             except ValueError as exc:
                 st.error(str(exc))
             else:

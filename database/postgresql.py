@@ -42,6 +42,7 @@ TABLES = (
     "memorandos_substituicao",
     "memorandos_substituicao_etapas",
     "memorandos_arquivos",
+    "auditoria_eventos",
 )
 IDENTITY_TABLES = {
     "procuradores",
@@ -55,6 +56,7 @@ IDENTITY_TABLES = {
     "servidores",
     "servidores_importacoes",
     "memorandos_substituicao_etapas",
+    "auditoria_eventos",
 }
 HISTORY_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS portarias_recent_idx "

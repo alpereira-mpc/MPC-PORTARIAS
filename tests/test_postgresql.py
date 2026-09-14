@@ -277,7 +277,7 @@ def test_schema_ssl_foreign_keys_and_indexes(pg_store):
                 "SELECT indexname FROM pg_catalog.pg_indexes WHERE schemaname=current_schema()"
             )
         }
-        assert {"exportacoes_portaria_idx", "audit_arquivos_audit_idx"} <= indexes
+        assert {"exportacoes_portaria_idx", "audit_arquivos_audit_idx", "auditoria_eventos_criado_em_idx"} <= indexes
     with pytest.raises(DatabaseUnavailable, match="23503"):
         with pg_store.connection() as c:
             c.execute(

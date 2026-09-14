@@ -55,6 +55,23 @@ def done(message):
     st.rerun()
 
 
+def audit_agenda(evento, acao, identifier=None, extra=None):
+    from services.audit import registrar_evento
+
+    store = st.session_state.get("_mpc_store")
+    if store is None and "agenda_store" in st.session_state:
+        store = getattr(st.session_state["agenda_store"], "store", None)
+    registrar_evento(
+        store,
+        evento=evento,
+        modulo="agenda",
+        acao=acao,
+        entidade_tipo="compromisso",
+        entidade_id=identifier,
+        detalhes=extra,
+    )
+
+
 def preset(label, choices, value, key):
     choice = st.selectbox(
         label,
@@ -270,10 +287,16 @@ def editor(agenda, people):
         or bool(overlaps and not conflict_ok),
     ):
         try:
-            agenda.save(
+            identifier = agenda.save(
                 record,
                 institutional_confirmed=institution_ok,
                 conflict_confirmed=conflict_ok,
+            )
+            audit_agenda(
+                "COMPROMISSO_ALTERADO" if old.get("id") else "COMPROMISSO_CRIADO",
+                "ALTERAR" if old.get("id") else "CRIAR",
+                identifier,
+                extra={"tipo": record.get("tipo")},
             )
             done("Compromisso salvo com sucesso.")
         except ValueError as exc:
@@ -432,6 +455,7 @@ def render(store=None, principal=None):
                     "Cancelar compromisso", key="agenda_cancel_" + row["id"]
                 ):
                     agenda.cancel(row["id"])
+                    audit_agenda("COMPROMISSO_CANCELADO", "CANCELAR", row["id"])
                     done("Compromisso cancelado; registro preservado.")
                 confirmed = st.checkbox(
                     "Confirmo a exclusão definitiva deste compromisso.",
@@ -441,4 +465,5 @@ def render(store=None, principal=None):
                     "Excluir", key="agenda_delete_" + row["id"], disabled=not confirmed
                 ):
                     agenda.delete(row["id"], confirmed=confirmed)
+                    audit_agenda("COMPROMISSO_EXCLUIDO", "EXCLUIR", row["id"])
                     done("Compromisso excluído.")

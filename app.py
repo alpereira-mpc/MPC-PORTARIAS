@@ -71,10 +71,41 @@ def choose(label, options, current=None, key=None, format_func=str, optional=Fal
 
 def error(exc):
     logging.getLogger(__name__).exception("Operação não concluída")
+    if not isinstance(exc, (ValueError, PdfUnavailable)):
+        try:
+            from services.audit import registrar_erro
+
+            registrar_erro(raw_store, modulo="portarias", acao="OPERACAO", erro=exc)
+        except Exception:
+            pass
     st.error(
         str(exc)
         if isinstance(exc, (ValueError, PdfUnavailable))
         else "Não foi possível concluir a operação. Os dados já gravados permanecem no histórico. Consulte o log local."
+    )
+
+
+def audit_portaria(evento, acao, record=None, **extra):
+    from services.audit import registrar_evento
+
+    detalhes = dict(extra)
+    entidade_id = None
+    if record:
+        entidade_id = record.get("id")
+        if record.get("numero"):
+            detalhes["numero"] = f"{record['numero']}/{record['ano']}"
+        if record.get("status"):
+            detalhes["status"] = record["status"]
+        if record.get("ano") and "ano" not in detalhes:
+            detalhes["ano"] = record["ano"]
+    registrar_evento(
+        raw_store,
+        evento=evento,
+        modulo="portarias",
+        acao=acao,
+        entidade_tipo="portaria",
+        entidade_id=entidade_id,
+        detalhes=detalhes or None,
     )
 
 
@@ -363,6 +394,12 @@ def download_record(identifier, prefix="record"):
                     record[extension] = content
                     del content
                     st.success(f"Arquivo salvo: {path}")
+                    audit_portaria(
+                        "DOCUMENTO_BAIXADO",
+                        "EXPORTAR",
+                        record,
+                        formato=extension,
+                    )
                 except Exception as exc:
                     error(exc)
             content = record[extension]
@@ -440,6 +477,11 @@ def delete_from_history(identifier, key, draft=False):
             )
         reset_editor()
         st.session_state["history_message"] = result["message"]
+        audit_portaria(
+            "RASCUNHO_EXCLUIDO" if draft else "PORTARIA_EXCLUIDA",
+            "EXCLUIR",
+            {"id": identifier},
+        )
     except Exception as exc:
         logging.exception("Exclusão administrativa não concluída")
         st.session_state["history_error"] = (
@@ -630,6 +672,11 @@ def history():
                 if st.button("Cancelar ato"):
                     try:
                         store.cancel(selected, why, confirm)
+                        audit_portaria(
+                            "PORTARIA_CANCELADA",
+                            "CANCELAR",
+                            store.get(selected),
+                        )
                         st.session_state["history_message"] = (
                             "Portaria cancelada. O número permanece ocupado."
                         )
@@ -1000,6 +1047,7 @@ def new_portaria():
                 st.session_state["preview_revision"] = (
                     st.session_state.get("preview_revision", 0) + 1
                 )
+                audit_portaria("PREVIA_GERADA", "PREVIA", {"id": identifier})
             except Exception as exc:
                 error(exc)
     if "preview" not in st.session_state:
@@ -1143,6 +1191,7 @@ def new_portaria():
                     "A Portaria foi salva no banco. A exportação está pendente; tente novamente no Histórico."
                 )
             record = store.get(identifier)
+            audit_portaria("PORTARIA_FINALIZADA", "FINALIZAR", record)
             st.success(
                 f"Portaria {record['numero']}/{record['ano']} finalizada. Consulte o Histórico para baixar os arquivos."
             )

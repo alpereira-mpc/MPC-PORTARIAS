@@ -24,8 +24,10 @@ def isolate_database_secrets(monkeypatch):
     access._READY.clear()
     agenda._READY.clear()
     import database.memorandos as memorandos
+    import database.audit as audit
 
     memorandos._READY.clear()
+    audit._READY.clear()
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr(st, "secrets", {})
 

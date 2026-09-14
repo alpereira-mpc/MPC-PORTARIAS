@@ -242,10 +242,28 @@ def render_login():
 
 def _logout():
     """End the native OIDC session and drop this user's authorization cache."""
+    try:
+        from services.audit import registrar_logout
+
+        registrar_logout(
+            st.session_state["_mpc_store"] if "_mpc_store" in st.session_state else None,
+            st.session_state.get("_audit_actor"),
+            identity=st.session_state.get("_audit_identity"),
+        )
+    except Exception:
+        pass
     if "_access_cache" in st.session_state:
         del st.session_state["_access_cache"]
     if "portal_module" in st.session_state:
         del st.session_state["portal_module"]
+    for key in (
+        "_audit_actor",
+        "_audit_identity",
+        "audit_sessao_registrada",
+        "audit_modulo_atual",
+        "audit_negado_registrado",
+    ):
+        st.session_state.pop(key, None)
     st.logout()
 
 
@@ -306,12 +324,24 @@ def render_portal():
         if st.button("Sair"):
             _logout()
         st.stop()
+    st.session_state["_audit_identity"] = identity
     if principal is None:
+        from database.access import AccessStore
+        from services.audit import registrar_acesso_negado
+
+        record = AccessStore(store).get_by_email(identity["email"])
+        registrar_acesso_negado(
+            store, identity, inativo=bool(record and not record["ativo"])
+        )
         with st.sidebar:
             render_sidebar_brand()
         render_institutional_header()
         render_denied(identity)
         st.stop()
+    st.session_state["_audit_actor"] = principal
+    from services.audit import iniciar_sessao_autorizada, registrar_modulo
+
+    iniciar_sessao_autorizada(store, principal)
     options = ["Início"]
     if has_permission(principal, "portarias"):
         options.append("Portarias")
@@ -339,9 +369,11 @@ def render_portal():
                     st.caption(f"{module.label} · Em breve")
     render_institutional_header()
     if selected == "Início":
+        st.session_state["audit_modulo_atual"] = None
         st.subheader("Início")
         home(principal)
         st.stop()
+    registrar_modulo(store, principal, selected)
     try:
         if selected == "Agenda":
             require_permission(principal, "agenda")
@@ -369,5 +401,16 @@ def render_portal():
             st.stop()
         require_permission(principal, "portarias")
     except ValueError as exc:
+        from services.audit import MODULE_KEYS, registrar_evento
+
+        registrar_evento(
+            store,
+            evento="PERMISSAO_NEGADA",
+            modulo=MODULE_KEYS.get(selected, ""),
+            acao="ACESSAR",
+            resultado="NEGADO",
+            principal=principal,
+            detalhes={"modulo": selected, "motivo": str(exc)[:200]},
+        )
         st.error(str(exc))
         st.stop()

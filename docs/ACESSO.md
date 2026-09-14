@@ -91,3 +91,7 @@ Migration aditiva, idempotente, marcador `acesso_schema_v1` em `configuracoes`:
 - `usuario_gabinetes` (PK `usuario_id` + `gabinete`)
 
 E-mail é gravado em minúsculas e é único. Não há senha, token Google nem sessão OAuth no banco.
+
+## Acessos e Auditoria
+
+Administradores consultam **Administração → Acessos e Auditoria**. A autenticação permanece Google OIDC + `usuarios_acesso`. Eventos de uso ficam em `auditoria_eventos` (marcador `auditoria_schema_v1`), append-only. Detalhes em `docs/AUDITORIA.md`.

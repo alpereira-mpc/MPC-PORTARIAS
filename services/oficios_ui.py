@@ -50,6 +50,34 @@ def done(message):
     st.rerun()
 
 
+def audit_oficio(evento, acao, record=None, extra=None, resultado="OK"):
+    from services.audit import registrar_evento
+
+    store = st.session_state.get("_mpc_store") or st.session_state.get("_oficios_store")
+    detalhes = dict(extra or {})
+    entidade_id = None
+    if record:
+        entidade_id = record.get("id")
+        if record.get("serie"):
+            detalhes["gabinete"] = record["serie"]
+        if record.get("numero"):
+            detalhes["numero"] = f"{record['numero']}/{record['ano']}"
+        if record.get("status"):
+            detalhes["status"] = record["status"]
+        if record.get("direcao"):
+            detalhes["direcao"] = record["direcao"]
+    registrar_evento(
+        store,
+        evento=evento,
+        modulo="oficios",
+        acao=acao,
+        resultado=resultado,
+        entidade_tipo="oficio",
+        entidade_id=entidade_id,
+        detalhes=detalhes or None,
+    )
+
+
 def label(r):
     return f"{r['serie'] or ''} {r['numero'] or r['numero_externo'] or 'Rascunho'}/{r['ano']} — {r['assunto'][:75]}"
 
@@ -327,6 +355,7 @@ def editor(service, people):
         final = service.finalize_reviewed(
             identifier, document, series, preview["fingerprint"]
         )
+        audit_oficio("OFICIO_FINALIZADO", "FINALIZAR", final)
         st.session_state["oficio_final"] = final
         st.rerun()
     if identifier:
@@ -453,7 +482,13 @@ def received_form(service, people):
                     and all(item[1] != imported for item in files)
                 ):
                     files.insert(0, (imported_name, imported))
-            service.save(r, uploads=files)
+            saved = service.save(r, uploads=files)
+            audit_oficio(
+                "OFICIO_RECEBIDO",
+                "CADASTRAR",
+                service.get(saved) if not isinstance(saved, dict) else saved,
+                extra={"arquivos": len(files)},
+            )
             st.session_state["oficio_received_reset"] = True
             done("Ofício recebido registrado.")
 
@@ -520,11 +555,18 @@ def details(service, r):
             typed = st.text_input("Digite EXCLUIR", key="recv_typed_" + r["id"])
             if st.button("Excluir definitivamente", key="recv_purge_" + r["id"]):
                 service.delete_received(r["id"], ack, typed)
+                audit_oficio("OFICIO_EXCLUIDO", "EXCLUIR", r)
                 st.session_state.pop("oficio_detail", None)
                 done("Ofício recebido excluído.")
     for f in service.files(r["id"]):
         st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
         if st.button("Preparar download: " + f["nome"], key="oficio_file_" + f["id"]):
+            audit_oficio(
+                "DOCUMENTO_BAIXADO",
+                "EXPORTAR",
+                r,
+                extra={"formato": f.get("tipo"), "arquivo": f["nome"][:80]},
+            )
             st.download_button(
                 "Baixar arquivo",
                 service.download(f["id"]),
@@ -544,6 +586,7 @@ def details(service, r):
         )
         if st.button("Excluir rascunho", key="delete_" + r["id"]):
             service.delete_draft(r["id"], confirmed)
+            audit_oficio("RASCUNHO_EXCLUIDO", "EXCLUIR", r)
             done("Rascunho excluído.")
     elif r["status"] != "Cancelado":
         if r["status"] == "Gerado":
@@ -561,6 +604,12 @@ def details(service, r):
                 if st.button("Excluir definitivamente", key="purge_" + r["id"]):
                     service.delete_generated(
                         r["id"], reason, acknowledged, typed, confirmed
+                    )
+                    audit_oficio(
+                        "NUMERO_LIBERADO",
+                        "EXCLUIR",
+                        r,
+                        extra={"numero_liberado": True},
                     )
                     done(
                         "Ofício preservado em quarentena e número liberado para reutilização."
@@ -594,6 +643,8 @@ def details(service, r):
                 due.isoformat() if due else None,
                 sent.isoformat() if sent else None,
             )
+            evento = "OFICIO_CANCELADO" if status == "Cancelado" else "OFICIO_ALTERADO"
+            audit_oficio(evento, "MOVIMENTAR", {**r, "status": status})
             done("Movimentação registrada.")
     st.write("Histórico")
     st.dataframe(service.movements(r["id"]), hide_index=True, use_container_width=True)

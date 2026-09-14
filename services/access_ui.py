@@ -3,12 +3,24 @@
 import streamlit as st
 from database.access import AccessStore
 from services.access import require_permission
+from services.audit import aplicar_exclusao_usuario, aplicar_usuario
 from services.oficios import GABINETES
 
 
 def render(store, principal):
     require_permission(principal, "admin")
     st.subheader("ADMINISTRAÇÃO — Usuários e Acessos")
+    area = st.radio(
+        "Seção",
+        ["Usuários", "Acessos e Auditoria"],
+        horizontal=True,
+        key="admin_secao",
+    )
+    if area == "Acessos e Auditoria":
+        from services.audit_ui import render as render_audit
+
+        render_audit(store, principal)
+        return
     access = AccessStore(store)
     users = access.list_users()
     if st.session_state.get("acesso_message"):
@@ -123,7 +135,9 @@ def render(store, principal):
     if submit:
         identifier = None if selected == 0 else selected
         try:
-            access.save_user(
+            aplicar_usuario(
+                store,
+                principal,
                 {
                     "nome": nome,
                     "email": email,
@@ -150,7 +164,8 @@ def render(store, principal):
                 st.caption("O sistema deve manter pelo menos um administrador ativo.")
             elif st.button("Desativar"):
                 try:
-                    access.set_active(selected, False)
+                    current["ativo"] = False
+                    aplicar_usuario(store, principal, current, selected)
                 except ValueError as exc:
                     st.error(str(exc))
                 else:
@@ -158,10 +173,15 @@ def render(store, principal):
                     st.session_state["acesso_message"] = "Usuário desativado."
                     st.rerun()
         elif st.button("Ativar"):
-            access.set_active(selected, True)
-            st.session_state.pop("_access_cache", None)
-            st.session_state["acesso_message"] = "Usuário ativado."
-            st.rerun()
+            try:
+                current["ativo"] = True
+                aplicar_usuario(store, principal, current, selected)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state.pop("_access_cache", None)
+                st.session_state["acesso_message"] = "Usuário ativado."
+                st.rerun()
         self_delete = selected == principal.id
         st.divider()
         if protected:
@@ -194,7 +214,7 @@ def render(store, principal):
                         )
                     else:
                         try:
-                            access.delete_user(selected, actor_id=principal.id)
+                            aplicar_exclusao_usuario(store, principal, selected)
                         except ValueError as exc:
                             st.error(str(exc))
                         else:
