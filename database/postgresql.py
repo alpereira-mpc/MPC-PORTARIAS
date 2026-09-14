@@ -173,23 +173,32 @@ class PostgresBackend:
         self._active = ContextVar("mpc_postgres_connection", default=None)
 
     @contextmanager
-    def connection(self, *, read_only=False):
+    def connection(self, *, read_only=False, isolation=None, statement_timeout=None):
         raw = None
         token = None
         from database.pool import resource
 
+        levels = {"READ COMMITTED", "REPEATABLE READ"}
+        level = isolation or "READ COMMITTED"
+        if level not in levels:
+            raise ValueError("Isolamento de transação inválido.")
+        timeout = statement_timeout or "60s"
+        if timeout not in ("60s", "120s", "300s"):
+            raise ValueError("Tempo máximo de instrução inválido.")
         pool = resource(self._options).pool
         try:
             raw = pool.getconn()
             # One round trip for transaction setup, including transaction-pooler safety.
             raw.execute(
                 sql.SQL(
-                    "SET TRANSACTION ISOLATION LEVEL READ COMMITTED {}; "
-                    "SET LOCAL statement_timeout = '60s'; "
+                    "SET TRANSACTION ISOLATION LEVEL {} {}; "
+                    "SET LOCAL statement_timeout = {}; "
                     "SET LOCAL lock_timeout = '30s'; "
                     "SET LOCAL search_path TO {}, pg_catalog"
                 ).format(
+                    sql.SQL(level),
                     sql.SQL("READ ONLY" if read_only else "READ WRITE"),
+                    sql.Literal(timeout),
                     sql.Identifier(self.schema),
                 ),
                 prepare=False,

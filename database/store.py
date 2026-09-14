@@ -109,11 +109,15 @@ class Store:
         return resource(backend._options).cache_key(backend.schema, tables)
 
     @contextmanager
-    def connection(self, *, read_only=False):
+    def connection(self, *, read_only=False, isolation=None, statement_timeout=None):
         if self._postgres is not None:
             if not read_only and self._read_cache is not None:
                 self._read_cache.clear()
-            with self._postgres.connection(read_only=read_only) as c:
+            with self._postgres.connection(
+                read_only=read_only,
+                isolation=isolation,
+                statement_timeout=statement_timeout,
+            ) as c:
                 yield c
             return
         c = sqlite3.connect(self.path, timeout=30)

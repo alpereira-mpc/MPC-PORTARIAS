@@ -12,7 +12,7 @@ def render(store, principal):
     st.subheader("ADMINISTRAÇÃO — Usuários e Acessos")
     area = st.radio(
         "Seção",
-        ["Usuários", "Acessos e Auditoria"],
+        ["Usuários", "Acessos e Auditoria", "Sistema"],
         horizontal=True,
         key="admin_secao",
     )
@@ -20,6 +20,11 @@ def render(store, principal):
         from services.audit_ui import render as render_audit
 
         render_audit(store, principal)
+        return
+    if area == "Sistema":
+        from services.system_ui import render as render_system
+
+        render_system(store, principal)
         return
     access = AccessStore(store)
     users = access.list_users()
