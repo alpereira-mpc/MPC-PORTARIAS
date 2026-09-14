@@ -441,5 +441,6 @@ def render(store,principal):
         elif page==NAV_BASE and principal.administrator:
             _base(service,principal)
         else:
-            rows=service.list(limit=200)
-            for col,status in zip(st.columns(3),("EM ANDAMENTO","AGENDADA","ENCERRADA")): col.metric(status,sum(r["situacao"]==status for r in rows))
+            counts = service.situacao_counts()
+            for col, status in zip(st.columns(3), ("EM ANDAMENTO", "AGENDADA", "ENCERRADA")):
+                col.metric(status, counts.get(status, 0))

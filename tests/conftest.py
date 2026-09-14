@@ -28,6 +28,9 @@ def isolate_database_secrets(monkeypatch):
 
     memorandos._READY.clear()
     audit._READY.clear()
+    import services.pending as pending
+
+    pending._TABLES.clear()
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr(st, "secrets", {})
 

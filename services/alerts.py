@@ -417,9 +417,11 @@ def collect_alerts(
                 store,
                 principal,
                 today=today,
+                now=now,
                 modules=pending_modules,
                 gabinete=gabinete,
                 period="todos",
+                alert_window=True,
             )
             for item in items:
                 alert = alert_from_pending(item, now)

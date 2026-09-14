@@ -128,7 +128,8 @@ class Store:
         c.execute("PRAGMA busy_timeout=30000")
         try:
             yield c
-            c.commit()
+            if not read_only:
+                c.commit()
         except Exception:
             c.rollback()
             raise

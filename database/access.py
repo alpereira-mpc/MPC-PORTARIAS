@@ -43,10 +43,18 @@ class AccessStore:
                 "SELECT valor FROM configuracoes WHERE chave=?", (MARKER,)
             ).fetchone()
             columns = self._table_columns(c)
+            protected = False
+            if marker and "protegido" in columns:
+                row = c.execute(
+                    "SELECT protegido FROM usuarios_acesso WHERE email=?",
+                    (PROTECTED_ADMIN_EMAIL,),
+                ).fetchone()
+                protected = bool(row and int(row[0] or 0))
         if marker and "pode_memorandos" in columns and "protegido" in columns:
-            with self.store.connection() as c:
-                c.execute("BEGIN IMMEDIATE")
-                self._mark_protected_admin(c)
+            if not protected:
+                with self.store.connection() as c:
+                    c.execute("BEGIN IMMEDIATE")
+                    self._mark_protected_admin(c)
             _READY.add(key)
             return
         identity = (
