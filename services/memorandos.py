@@ -26,6 +26,78 @@ def normalize(value):
     ).strip()
 
 
+def search_key(value):
+    return " ".join(normalize(value).split())
+
+
+SERVER_SEARCH_LIMIT = 20
+
+
+def _server_name_key(server):
+    return search_key(server.get("nome") or "")
+
+
+def _server_registration_digits(server):
+    raw = str(server.get("matricula_original") or server.get("matricula") or "")
+    return re.sub(r"\D", "", raw)
+
+
+def prefix_matches(servers, term):
+    query = search_key(term)
+    if not query:
+        return []
+    numeric = query.isdigit()
+    unique = []
+    seen = set()
+    for server in servers:
+        identifier = server.get("id")
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        if numeric:
+            matched = _server_registration_digits(server).startswith(query)
+        else:
+            matched = _server_name_key(server).startswith(query)
+        if matched:
+            unique.append(server)
+    unique.sort(key=lambda server: (_server_name_key(server), server.get("id") or 0))
+    return unique
+
+
+def filter_servers(servers, term, limit=SERVER_SEARCH_LIMIT):
+    return prefix_matches(servers, term)[:limit]
+
+
+def prefix_search(servers, term, limit=SERVER_SEARCH_LIMIT):
+    matched = prefix_matches(servers, term)
+    return matched[:limit], len(matched) > limit
+
+
+def ordered_servers(servers):
+    unique = []
+    seen = set()
+    for server in servers:
+        identifier = server.get("id")
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        unique.append(server)
+
+    def sort_key(server):
+        active = 0 if server.get("ativo", 1) else 1
+        registration = normalized_registration(
+            server.get("matricula_original") or server.get("matricula")
+        )
+        return (
+            active,
+            0 if registration else 1,
+            normalize(" ".join((server.get("nome") or "").split())),
+            server.get("id") or 0,
+        )
+
+    return sorted(unique, key=sort_key)
+
+
 def normalized_registration(value):
     text = re.sub(r"[^0-9A-Za-z]", "", str(value or "").strip())
     return "" if not text or set(text) == {"0"} else text.upper()

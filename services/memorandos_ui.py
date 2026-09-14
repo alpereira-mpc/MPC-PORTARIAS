@@ -125,6 +125,7 @@ def _pick(label, people, *, key, placeholder):
         index=None,
         placeholder=placeholder,
         format_func=lambda identifier: _label(by_id.get(identifier)) if identifier is not None else "",
+        filter_mode="prefix",
         key=key,
     )
     if chosen is None:

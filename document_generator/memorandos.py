@@ -19,7 +19,11 @@ def _add_portarias_logo(doc):
     paragraph.paragraph_format.space_before = Pt(0)
     paragraph.paragraph_format.space_after = Pt(0)
     paragraph.paragraph_format.line_spacing = 1.3
-    paragraph.paragraph_format.left_indent = Twips(540)
+    # A4 21 cm with 3 cm / 2 cm margins: content center is 0.5 cm right of the
+    # physical page center. A -1 cm left indent recenters the mark without
+    # changing section margins or logo size.
+    paragraph.paragraph_format.left_indent = Cm(-1)
+    paragraph.paragraph_format.right_indent = Pt(0)
     paragraph.add_run().add_picture(
         str(PORTARIAS_LOGO),
         width=PORTARIAS_LOGO_WIDTH,
@@ -42,13 +46,16 @@ def _font(run, *, size=13, bold=False):
     return run
 
 
-def _paragraph(doc, text="", *, alignment=WD_ALIGN_PARAGRAPH.LEFT, before=0, after=0, first=None, bold=False, size=13):
+def _paragraph(doc, text="", *, alignment=WD_ALIGN_PARAGRAPH.LEFT, before=0, after=0, first=None, bold=False, size=13, physical_center=False):
     paragraph = doc.add_paragraph()
     paragraph.alignment = alignment
     paragraph.paragraph_format.space_before = Pt(before)
     paragraph.paragraph_format.space_after = Pt(after)
     paragraph.paragraph_format.line_spacing = 1.3
-    paragraph.paragraph_format.left_indent = Pt(0)
+    # A4 21 cm with 3 cm / 2 cm margins: content center is 0.5 cm right of the
+    # physical page center. A -1 cm left indent recenters CENTER text without
+    # changing section margins.
+    paragraph.paragraph_format.left_indent = Cm(-1) if physical_center else Pt(0)
     paragraph.paragraph_format.right_indent = Pt(0)
     paragraph.paragraph_format.first_line_indent = Cm(first) if first else Pt(0)
     if text:
@@ -126,7 +133,7 @@ def generate(record):
     section.left_margin, section.right_margin = Cm(3.0), Cm(2.0)
     section.header_distance = Cm(1.25)
     _add_portarias_logo(doc)
-    _paragraph(doc, "MEMORANDO", alignment=WD_ALIGN_PARAGRAPH.CENTER, before=18, after=18, bold=True, size=14)
+    _paragraph(doc, "MEMORANDO", alignment=WD_ALIGN_PARAGRAPH.CENTER, before=18, after=18, bold=True, size=14, physical_center=True)
     _paragraph(doc, "Ao Excelentíssimo Senhor Presidente do Tribunal de Contas do Estado da Paraíba", after=12)
     subject = _paragraph(doc, "", after=14)
     _runs(subject, [("Assunto:", False), (" " + _subject(record), True)])

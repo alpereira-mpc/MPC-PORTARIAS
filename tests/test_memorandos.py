@@ -13,7 +13,14 @@ from database.memorandos import MemorandosStore
 from database.store import Store
 from document_generator.memorandos import generate
 from services.memorandos import STATUS_FINALIZADO, cabinet_text, digest, fingerprint, validate
-from services.memorandos import read_server_xlsx, signature_role
+from services.memorandos import (
+    SERVER_SEARCH_LIMIT,
+    filter_servers,
+    prefix_search,
+    read_server_xlsx,
+    search_key,
+    signature_role,
+)
 from tests.test_postgresql import pg_store, pg_url  # noqa: F401
 
 
@@ -70,6 +77,54 @@ def test_server_import_upsert_and_invalid_rows(store):
     )
     found = service.servers("100")
     assert len(found) == 1 and found[0]["cargo"] == "Novo"
+
+
+def test_server_search_is_strict_name_prefix_or_numeric_registration():
+    people = [
+        {"id": 1, "nome": "José da Silva", "matricula": "4455", "setor": "Protocolo"},
+        {"id": 2, "nome": "Silvana Costa", "matricula": "100", "setor": "Gabinete da Procuradoria"},
+        {"id": 3, "nome": "Ana Clara", "matricula": "200", "setor": "Secretaria"},
+        {"id": 4, "nome": "Carlos Souza", "matricula": "300", "setor": "Arquivo"},
+    ]
+    assert [row["id"] for row in filter_servers(people, "JOSE")] == [1]
+    assert [row["id"] for row in filter_servers(people, "jose")] == [1]
+    assert [row["id"] for row in filter_servers(people, "silva")] == [2]
+    assert [row["id"] for row in filter_servers(people, "jose da")] == [1]
+    assert filter_servers(people, "lara") == []
+    assert [row["id"] for row in filter_servers(people, "4455")] == [1]
+    assert filter_servers(people, "gabinete") == []
+    assert filter_servers(people, "   ") == []
+    crowded = [{"id": i, "nome": f"Ana {i:02d}", "matricula": str(1000 + i), "setor": "X"} for i in range(25)]
+    assert len(filter_servers(crowded, "ana")) == SERVER_SEARCH_LIMIT
+    hits, truncated = prefix_search(crowded, "ana")
+    assert truncated and len(hits) == SERVER_SEARCH_LIMIT
+
+
+def test_niltamir_progressive_prefix_and_registration():
+    people = [
+        {"id": 1, "nome": "Ana Costa", "matricula": "1", "setor": "SECRETARIA"},
+        {"id": 2, "nome": "Niltamir Galdino Guedes", "matricula": "3702391", "setor": "PROGE"},
+        {"id": 3, "nome": "Nelson Silva", "matricula": "99", "setor": "PROGE"},
+        {"id": 4, "nome": "Bruno Nilo", "matricula": "2", "setor": "X"},
+        {"id": 2, "nome": "Niltamir Galdino Guedes", "matricula": "3702391", "setor": "PROGE"},
+    ]
+    by_n = filter_servers(people, "N")
+    assert [row["id"] for row in by_n] == [3, 2]
+    assert [row["id"] for row in filter_servers(people, "NI")] == [2]
+    assert [row["id"] for row in filter_servers(people, "NIL")] == [2]
+    assert [row["id"] for row in filter_servers(people, "NILT")] == [2]
+    assert [row["id"] for row in filter_servers(people, "NILTA")] == [2]
+    assert [row["id"] for row in filter_servers(people, "nilta")] == [2]
+    assert filter_servers(people, "zzz") == []
+    assert [row["id"] for row in filter_servers(people, "37023")] == [2]
+    assert [row["id"] for row in filter_servers(people, "3702391")] == [2]
+    assert filter_servers(people, "PROGE") == []
+    from services.memorandos_ui import _label
+
+    assert _label({"nome": "Niltamir Galdino Guedes", "matricula_original": "3702391", "setor": "PROGE"}) == (
+        "Niltamir Galdino Guedes — 3702391 — PROGE"
+    )
+    assert search_key("  NILT  ") == "nilt"
 
 
 def test_server_administration_requires_administrator(store):
@@ -283,8 +338,11 @@ def test_document_contains_institutional_fields():
     assert abs(section.right_margin.cm - 2.0) < 0.05
     title = next(p for p in doc.paragraphs if p.text == "MEMORANDO")
     assert title.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert title.paragraph_format.left_indent == Twips(-567)
     assert title.runs[0].bold and title.runs[0].font.size == Pt(14)
     assert title.runs[0].font.name == "Times New Roman"
+    dest = next(p for p in doc.paragraphs if "Excelentíssimo" in p.text)
+    assert int(dest.paragraph_format.left_indent or 0) == 0
     assert title.paragraph_format.space_before == Pt(18)
     assert title.paragraph_format.space_after == Pt(18)
     body = next(p for p in doc.paragraphs if p.text.startswith("Ao cumprimentá-lo"))
@@ -355,8 +413,36 @@ def test_memorandos_embed_the_same_logo_as_portarias():
     doc = Document(BytesIO(content))
     logo_paragraph = doc.paragraphs[0]
     assert logo_paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
-    assert logo_paragraph.paragraph_format.left_indent == Twips(540)
+    assert logo_paragraph.paragraph_format.left_indent == Twips(-567)
+    assert int(logo_paragraph.paragraph_format.right_indent or 0) == 0
+    assert PORTARIAS_LOGO_WIDTH == Pt(163.5)
+    assert PORTARIAS_LOGO_HEIGHT == Pt(105.75)
 
+
+def test_memorando_title_pdf_center_is_within_three_points():
+    from document_generator.memorandos import pdf
+    from document_generator.pdf import PdfUnavailable
+    from pypdf import PdfReader
+
+    try:
+        content = pdf(record())
+    except (PdfUnavailable, RuntimeError) as exc:
+        pytest.skip(str(exc))
+    page = PdfReader(BytesIO(content)).pages[0]
+    page_center = float(page.mediabox.width) / 2
+    found = []
+
+    def visitor(text, cm, tm, font_dict, font_size):
+        if (text or "").strip() == "MEMORANDO":
+            found.append((float(tm[4]), float(font_size or 14)))
+
+    page.extract_text(visitor_text=visitor)
+    assert found, "não foi possível localizar MEMORANDO no PDF"
+    start, size = found[0]
+    # Measured glyph width of MEMORANDO in Times 14 pt on the previous render.
+    width = 97.93 * (size / 14.0)
+    center = start + width / 2
+    assert abs(center - page_center) <= 3
 
 
 def test_cascade_document_mentions_each_stage():
@@ -428,9 +514,16 @@ def test_new_form_starts_without_selected_participants():
     assert "Primeiro substituto" not in source
     assert "Novo substituto" not in chain
     assert "index=None" in pick
+    assert 'filter_mode="prefix"' in pick
+    assert "st.selectbox" in pick
+    assert "st.text_input" not in pick
+    assert "st.radio" not in pick
+    assert "prefix_search" not in pick
     assert "options[0]" not in pick
     assert "people[0]" not in source
     assert "by_id" in pick
+    assert pick.count("_pick(") >= 1
+    assert chain.count("_pick(") == 3
     assert ui.PLACEHOLDER_AWAY == "Selecione o servidor afastado"
     assert ui.PLACEHOLDER_REPLACEMENT == "Selecione o substituto(a)"
     assert "disabled=not complete" in chain
@@ -471,6 +564,58 @@ def test_new_memorandum_ui_has_empty_participant_selects(store, monkeypatch):
     assert not any(x.label == "Finalizar memorando" for x in app.button)
     cascade = next(x for x in app.button if x.label == "Adicionar substituição em cascata")
     assert cascade.disabled
+
+
+def test_niltamir_picker_keeps_native_select_and_selection_by_id(store, monkeypatch):
+    import streamlit as st
+    from services.memorandos_ui import NAV_KEY, NAV_NEW, _label
+
+    assert tuple(int(part) for part in st.__version__.split(".")[:2]) >= (1, 56)
+    MemorandosStore(store).import_servers(
+        [
+            {"nome": "Ana Costa", "matricula": "1", "cargo": "A", "setor": "SECRETARIA"},
+            {"nome": "Niltamir Galdino Guedes", "matricula": "3702391", "cargo": "Chefe", "setor": "PROGE"},
+            {"nome": "Nelson Silva", "matricula": "99", "cargo": "B", "setor": "PROGE"},
+            {"nome": "Bruno Nilo", "matricula": "2", "cargo": "C", "setor": "X"},
+        ],
+        actor_email="admin@test.local",
+        filename="x.xlsx",
+        content_hash="niltamir",
+        administrator=True,
+    )
+    app = _login_memorandos_app(store, monkeypatch)
+    app.button(key="open_memorandos").click().run()
+    app.radio(key=NAV_KEY).set_value(NAV_NEW).run()
+    people = MemorandosStore(store).servers()
+    niltamir = next(row for row in people if row["nome"].startswith("Niltamir"))
+    nelson = next(row for row in people if row["nome"].startswith("Nelson"))
+    bruno = next(row for row in people if row["nome"].startswith("Bruno"))
+    ana = next(row for row in people if row["nome"].startswith("Ana"))
+    label = _label(niltamir)
+    assert label == "Niltamir Galdino Guedes — 3702391 — PROGE"
+    away = next(x for x in app.selectbox if x.label == "Servidor afastado")
+    replacement = next(x for x in app.selectbox if x.label == "Substituto(a)")
+    assert away.value is None and replacement.value is None
+    assert label in away.options
+    assert _label(nelson) in away.options
+    assert _label(bruno) in away.options
+    away.set_value(niltamir["id"]).run()
+    assert next(x for x in app.selectbox if x.label == "Servidor afastado").value == niltamir["id"]
+    assert next(x for x in app.selectbox if x.label == "Substituto(a)").value is None
+    next(x for x in app.selectbox if x.label == "Servidor afastado").set_value(None).run()
+    assert next(x for x in app.selectbox if x.label == "Servidor afastado").value is None
+    next(x for x in app.selectbox if x.label == "Servidor afastado").set_value(niltamir["id"]).run()
+    assert next(x for x in app.selectbox if x.label == "Servidor afastado").value == niltamir["id"]
+    next(x for x in app.selectbox if x.label == "Substituto(a)").set_value(ana["id"]).run()
+    assert next(x for x in app.selectbox if x.label == "Substituto(a)").value == ana["id"]
+    next(x for x in app.button if x.label == "Adicionar substituição em cascata").click().run()
+    cascade = [
+        box for box in app.selectbox
+        if box.label == "Substituto(a)" and box.key == "memorando_cascade_1"
+    ]
+    assert cascade and cascade[0].value is None
+    cascade[0].set_value(nelson["id"]).run()
+    assert next(x for x in app.selectbox if x.key == "memorando_cascade_1").value == nelson["id"]
 
 
 def test_system_preview_can_be_finalized_without_any_docx_upload(store):
