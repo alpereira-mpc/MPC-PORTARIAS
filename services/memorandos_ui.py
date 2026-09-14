@@ -200,6 +200,9 @@ def _finalize_active(service, principal, record, identifier, preview, key):
             )
             _audit_memo("MEMORANDO_FINALIZADO", "FINALIZAR", identifier)
             st.success("Memorando finalizado.")
+            from services.alerts import invalidate_alert_summary
+
+            invalidate_alert_summary()
         except ValueError as exc:
             st.error(str(exc))
 
@@ -299,6 +302,9 @@ def _editor(service, store, principal):
             identifier=service.save_draft(record,actor_email=principal.email,identifier=identifier); st.session_state["memorando_id"]=identifier
             if service.overlaps(record,exclude_id=identifier): st.warning("Há sobreposição de período envolvendo participante. É um aviso, não bloqueio.")
             st.success("Rascunho salvo.")
+            from services.alerts import invalidate_alert_summary
+
+            invalidate_alert_summary()
         except ValueError as exc: st.error(str(exc))
     _documents(service, principal, record, identifier)
 
@@ -314,7 +320,11 @@ def _details(service,row,principal):
     if file: st.download_button("Baixar PDF",file[1],file[0],MIME_PDF,key="memo_file_"+row["id"])
     if r["status"]=="RASCUNHO" and st.button("Excluir rascunho",key="memo_del_"+row["id"]):
         try:
-            service.delete_draft(row["id"]); _audit_memo("RASCUNHO_EXCLUIDO","EXCLUIR",row["id"]); st.success("Rascunho excluído."); st.rerun()
+            service.delete_draft(row["id"]); _audit_memo("RASCUNHO_EXCLUIDO","EXCLUIR",row["id"]); st.success("Rascunho excluído.");
+            from services.alerts import invalidate_alert_summary
+
+            invalidate_alert_summary()
+            st.rerun()
         except ValueError as exc:
             st.error(str(exc))
     if r["status"]=="FINALIZADO":

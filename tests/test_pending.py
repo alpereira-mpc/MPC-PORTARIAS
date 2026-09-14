@@ -336,13 +336,17 @@ def test_menu_and_central_ui(store, monkeypatch):
     )
     assert portal.options[0] == "Início"
     assert portal.options[1] == "Pendências"
+    assert "Alertas" not in portal.options
+    assert portal.options[2] == "Portarias"
     app.sidebar.radio(key="portal_module").set_value("Pendências").run()
     assert not app.exception
     headings = [str(h.value) for h in app.subheader]
     assert any("PENDÊNCIAS" in h for h in headings)
     assert any("Nenhuma pendência encontrada." in str(i.value) for i in app.info)
     app.sidebar.radio(key="portal_module").set_value("Início").run()
-    assert any(b.label == "Ver pendências" for b in app.button)
+    assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
+    assert not any(b.label == "Ver pendências" for b in app.button)
+    assert not any(b.label == "Ver alertas" for b in app.button)
 
 
 def test_portal_navigation_helper_applies_once(monkeypatch):
@@ -384,13 +388,14 @@ def test_programmatic_navigation_does_not_write_widget_keys():
     from portal import (
         apply_portal_navigation,
         open_admin,
+        open_alertas,
         open_agenda,
         open_memorandos,
         open_oficios,
         open_pendencias,
         open_portarias,
     )
-    from services.pending_ui import _open, render_home_summary
+    from services.pending_ui import _open, open_origin
 
     for fn in (
         open_portarias,
@@ -399,13 +404,15 @@ def test_programmatic_navigation_does_not_write_widget_keys():
         open_memorandos,
         open_admin,
         open_pendencias,
-        _open,
-        render_home_summary,
+        open_origin,
     ):
         source = getsource(fn)
         assert 'st.session_state["portal_module"]' not in source
         assert "st.session_state['portal_module']" not in source
         assert "request_portal_navigation" in source
+    assert "request_alerts_view" in getsource(open_alertas)
+    assert 'st.session_state["portal_module"]' not in getsource(open_alertas)
+    assert "Alertas" not in getsource(open_alertas)
     assert 'st.session_state["oficio_page"]' not in getsource(_open)
     assert 'st.session_state["memorandos_nav"]' not in getsource(_open)
     assert 'st.session_state["oficio_gabinete"]' not in getsource(_open)
@@ -527,7 +534,7 @@ def test_destination_consumes_pending_open_before_widgets(monkeypatch):
     assert memo_state[memorandos_ui.NAV_KEY] == "Em andamento"
 
 
-def test_home_ver_pendencias_and_manual_menu(store, monkeypatch):
+def test_home_cards_and_manual_pending_menu(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
     from portal import PORTAL_NAV_REQUEST
@@ -536,7 +543,9 @@ def test_home_ver_pendencias_and_manual_menu(store, monkeypatch):
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
-    app.button(key="home_open_pendencias").click().run()
+    assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
+    assert not any(b.label == "Ver pendências" for b in app.button)
+    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
     assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Pendências"
     assert PORTAL_NAV_REQUEST not in app.session_state
@@ -545,7 +554,6 @@ def test_home_ver_pendencias_and_manual_menu(store, monkeypatch):
     app.run()
     assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Pendências"
-    assert PORTAL_NAV_REQUEST not in app.session_state
     app.sidebar.radio(key="portal_module").set_value("Início").run()
     assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Início"

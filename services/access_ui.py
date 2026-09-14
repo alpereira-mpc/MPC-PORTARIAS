@@ -7,8 +7,26 @@ from services.audit import aplicar_exclusao_usuario, aplicar_usuario
 from services.oficios import GABINETES
 
 
+def consume_pending_open_admin():
+    if "pending_open_admin" not in st.session_state:
+        return None
+    pending = st.session_state.pop("pending_open_admin")
+    if not pending:
+        return None
+    if not isinstance(pending, dict):
+        pending = {"secao": pending}
+    secao = pending.get("secao")
+    if secao:
+        st.session_state["admin_secao"] = secao
+    aba = pending.get("aba")
+    if aba:
+        st.session_state["admin_sistema_aba"] = aba
+    return pending
+
+
 def render(store, principal):
     require_permission(principal, "admin")
+    consume_pending_open_admin()
     st.subheader("ADMINISTRAÇÃO — Usuários e Acessos")
     area = st.radio(
         "Seção",

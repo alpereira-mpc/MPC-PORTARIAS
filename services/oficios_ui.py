@@ -46,6 +46,9 @@ def read_overview(service, year):
 
 
 def done(message):
+    from services.alerts import invalidate_alert_summary
+
+    invalidate_alert_summary()
     st.session_state["oficio_message"] = message
     st.rerun()
 
@@ -376,6 +379,9 @@ def editor(service, people):
         )
         audit_oficio("OFICIO_FINALIZADO", "FINALIZAR", final)
         st.session_state["oficio_final"] = final
+        from services.alerts import invalidate_alert_summary
+
+        invalidate_alert_summary()
         st.rerun()
     if identifier:
         st.button("Iniciar outro rascunho", on_click=reset_editor)

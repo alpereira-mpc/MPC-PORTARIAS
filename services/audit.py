@@ -51,6 +51,7 @@ MODULE_LABELS = {
     "memorandos": "Memorandos",
     "admin": "Administração",
     "pendencias": "Pendências",
+    "alertas": "Alertas",
 }
 MODULE_KEYS = {
     "Portarias": "portarias",
@@ -59,6 +60,7 @@ MODULE_KEYS = {
     "Memorandos": "memorandos",
     "Administração": "admin",
     "Pendências": "pendencias",
+    "Alertas": "alertas",
 }
 
 
@@ -312,6 +314,8 @@ def registrar_modulo(store, principal, selected, state=None):
         evento=(
             "CENTRAL_PENDENCIAS_ACESSADA"
             if modulo == "pendencias"
+            else "ALERTAS_ACESSADOS"
+            if modulo == "alertas"
             else "MODULO_ACESSADO"
         ),
         modulo=modulo,

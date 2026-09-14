@@ -42,13 +42,13 @@ O item de menu **Pendências** aparece se o usuário tem Ofícios, Agenda ou Mem
 - Agenda: abre o editor do compromisso (`AgendaStore.get`).
 - Memorandos: entra em **Em andamento**.
 
-Navegação programática (Home **Ver pendências** e **Ver em…**) não altera `portal_module` nem outras chaves de widget depois que o rádio já foi criado no mesmo ciclo. Usa `portal_navigation_request` e chaves transitórias (`pending_open_oficio`, `pending_open_agenda`, `pending_open_memorando`), consumidas no início do módulo de destino.
+Navegação programática (**Ver em…** na Central) não altera `portal_module` depois que o rádio já foi criado no mesmo ciclo. Usa `portal_navigation_request` e chaves transitórias (`pending_open_oficio`, `pending_open_agenda`, `pending_open_memorando`), consumidas no início do módulo de destino.
 
 A ação continua no módulo original.
 
 ## Home
 
-Resumo com três contagens (vencidas, hoje, próximos 3 dias) e **Ver pendências**. Só consulta após login, com o `Store` já aberto. Se as tabelas de Ofícios/Agenda ainda não existirem, a fonte é omitida (sem criar schema). Falha no resumo não derruba a Home.
+A Home prioriza os cards das ferramentas. A Central é acessada pelo item **Pendências** do menu; não há painel de resumo permanente na Home.
 
 ## Performance
 

@@ -16,6 +16,11 @@ from services.ui_store import asset
 ROOT = Path(__file__).resolve().parent
 
 PORTAL_NAV_REQUEST = "portal_navigation_request"
+PORTAL_ALERTS_REQUEST = "portal_alerts_request"
+PORTAL_SPECIAL_VIEW = "portal_special_view"
+PORTAL_SPECIAL_RETURN = "portal_special_return"
+PORTAL_SPECIAL_ANCHOR = "portal_special_anchor"
+ALERTS_VIEW = "alerts"
 PORTAL_NAV_STATE_KEYS = frozenset(
     {
         "nav",
@@ -23,6 +28,7 @@ PORTAL_NAV_STATE_KEYS = frozenset(
         "pending_open_oficio",
         "pending_open_agenda",
         "pending_open_memorando",
+        "pending_open_admin",
     }
 )
 
@@ -121,6 +127,53 @@ def apply_portal_navigation(allowed):
         if key in PORTAL_NAV_STATE_KEYS:
             st.session_state[key] = value
     return module
+
+
+def clear_alerts_overlay():
+    st.session_state.pop(PORTAL_ALERTS_REQUEST, None)
+    st.session_state.pop(PORTAL_SPECIAL_VIEW, None)
+    st.session_state.pop(PORTAL_SPECIAL_ANCHOR, None)
+
+
+def request_alerts_view():
+    current = _session_get("portal_module")
+    if current and current != "Alertas" and PORTAL_SPECIAL_VIEW not in st.session_state:
+        st.session_state[PORTAL_SPECIAL_RETURN] = current
+    st.session_state[PORTAL_ALERTS_REQUEST] = True
+    st.rerun()
+
+
+def apply_alerts_view_request():
+    if not st.session_state.pop(PORTAL_ALERTS_REQUEST, None):
+        return None
+    current = _session_get("portal_module")
+    if current == "Alertas":
+        current = "Início"
+    st.session_state[PORTAL_SPECIAL_VIEW] = ALERTS_VIEW
+    st.session_state[PORTAL_SPECIAL_ANCHOR] = current or "Início"
+    if current and PORTAL_SPECIAL_RETURN not in st.session_state:
+        st.session_state[PORTAL_SPECIAL_RETURN] = current
+    return ALERTS_VIEW
+
+
+def close_alerts_view():
+    target = st.session_state.pop(PORTAL_SPECIAL_RETURN, None) or "Início"
+    clear_alerts_overlay()
+    current = _session_get("portal_module")
+    if target != current:
+        queue_portal_navigation(target)
+    st.rerun()
+
+
+def alerts_overlay_active(selected):
+    if _session_get(PORTAL_SPECIAL_VIEW) != ALERTS_VIEW:
+        return False
+    anchor = _session_get(PORTAL_SPECIAL_ANCHOR) or "Início"
+    if selected != anchor:
+        clear_alerts_overlay()
+        st.session_state.pop(PORTAL_SPECIAL_RETURN, None)
+        return False
+    return True
 
 
 def open_portarias():
@@ -222,12 +275,12 @@ def open_pendencias():
     request_portal_navigation("Pendências")
 
 
+def open_alertas():
+    request_alerts_view()
+
+
 def home(principal, store=None):
     st.write("Selecione uma ferramenta para iniciar.")
-    if store is not None:
-        from services.pending_ui import render_home_summary
-
-        render_home_summary(store, principal)
     visible = visible_modules(principal)
     if not visible:
         st.info("Nenhum módulo disponível para este usuário.")
@@ -308,6 +361,11 @@ def _logout():
         "audit_sessao_registrada",
         "audit_modulo_atual",
         "audit_negado_registrado",
+        PORTAL_ALERTS_REQUEST,
+        PORTAL_SPECIAL_VIEW,
+        PORTAL_SPECIAL_RETURN,
+        PORTAL_SPECIAL_ANCHOR,
+        "_alerts_bell_cache",
     ):
         st.session_state.pop(key, None)
     st.logout()
@@ -404,9 +462,15 @@ def render_portal():
     apply_portal_navigation(options)
     if _session_get("portal_module") not in options:
         st.session_state["portal_module"] = "Início"
+    apply_alerts_view_request()
     with st.sidebar:
         render_sidebar_brand()
         st.caption(principal.nome + " · " + principal.email)
+        from services.alerts import can_view_alertas
+        from services.alerts_ui import render_bell
+
+        if can_view_alertas(principal):
+            render_bell(store, principal)
         if st.button("Sair", key="portal_logout"):
             _logout()
         selected = st.radio("Portal", options, key="portal_module")
@@ -417,6 +481,19 @@ def render_portal():
                 if not module.active:
                     st.caption(f"{module.label} · Em breve")
     render_institutional_header()
+    if alerts_overlay_active(selected):
+        from services.alerts_ui import render as render_alerts
+
+        try:
+            require_permission(principal, "alertas")
+        except ValueError as exc:
+            clear_alerts_overlay()
+            st.session_state.pop(PORTAL_SPECIAL_RETURN, None)
+            st.error(str(exc))
+            st.stop()
+        registrar_modulo(store, principal, "Alertas")
+        render_alerts(store, principal)
+        st.stop()
     if selected == "Início":
         st.session_state["audit_modulo_atual"] = None
         st.subheader("Início")

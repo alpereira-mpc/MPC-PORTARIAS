@@ -1,0 +1,524 @@
+"""Internal alerts derived from live records. No dedicated alerts table."""
+
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+import logging
+
+from database.store import unwrap_store
+from services.access import has_permission
+from services.audit import INSTITUTIONAL_TZ, registrar_erro
+from services.pending import (
+    HOJE,
+    SEM_PRAZO,
+    URGENTE,
+    VENCIDA,
+    can_view_pendencias,
+    collect_pending,
+    now_recife,
+    parse_datetime,
+    summarize,
+    today_recife,
+    visible_cabinets,
+)
+
+LOGGER = logging.getLogger("mpc.alerts")
+SOURCE_CAP = 1000
+CRITICO = "CRÍTICO"
+ALTO = "ALTO"
+ATENCAO = "ATENÇÃO"
+INFORMATIVO = "INFORMATIVO"
+SEVERITY_ORDER = (CRITICO, ALTO, ATENCAO, INFORMATIVO)
+TWO_HOURS = timedelta(hours=2)
+ONE_DAY = timedelta(hours=24)
+PERIODS = (
+    ("hoje", "Hoje"),
+    ("3d", "Próximos 3 dias"),
+    ("7d", "Próximos 7 dias"),
+    ("todos", "Todos"),
+)
+
+
+@dataclass(frozen=True)
+class AlertItem:
+    source_module: str
+    source_id: str
+    gabinete: str
+    severity: str
+    category: str
+    title: str
+    description: str
+    date: date | None
+    datetime: datetime | None
+    source_status: str
+    navigation_target: str
+    metadata: dict = field(default_factory=dict)
+
+
+def can_view_alertas(principal):
+    return has_permission(principal, "alertas")
+
+
+def empty_pending_counts():
+    return {
+        "vencidas": 0,
+        "hoje": 0,
+        "proximos_3": 0,
+        "proximos_7": 0,
+        "total": 0,
+    }
+
+
+def empty_alert_counts():
+    return {
+        "criticos": 0,
+        "altos": 0,
+        "atencao": 0,
+        "informativos": 0,
+        "total": 0,
+    }
+
+
+def summarize_alerts(items):
+    counts = empty_alert_counts()
+    for item in items:
+        if item.severity == CRITICO:
+            counts["criticos"] += 1
+        elif item.severity == ALTO:
+            counts["altos"] += 1
+        elif item.severity == ATENCAO:
+            counts["atencao"] += 1
+        elif item.severity == INFORMATIVO:
+            counts["informativos"] += 1
+    counts["total"] = len(items)
+    return counts
+
+
+def _sort_key(item):
+    rank = (
+        SEVERITY_ORDER.index(item.severity)
+        if item.severity in SEVERITY_ORDER
+        else 9
+    )
+    when = item.datetime
+    if when is None and item.date is not None:
+        when = datetime.combine(item.date, datetime.min.time(), INSTITUTIONAL_TZ)
+    if when is None:
+        when = datetime.max.replace(tzinfo=INSTITUTIONAL_TZ)
+    elif when.tzinfo is None:
+        when = when.replace(tzinfo=INSTITUTIONAL_TZ)
+    return (rank, when, item.title)
+
+
+def alert_from_oficio(item):
+    if item.urgency == VENCIDA:
+        return _from_pending(
+            item,
+            CRITICO,
+            "prazo_vencido",
+            "Prazo vencido",
+        )
+    if item.urgency == HOJE:
+        return _from_pending(
+            item,
+            ALTO,
+            "prazo_hoje",
+            "Prazo vence hoje",
+        )
+    if item.urgency == URGENTE:
+        return _from_pending(
+            item,
+            ATENCAO,
+            "prazo_proximo",
+            "Prazo próximo",
+        )
+    if item.urgency == SEM_PRAZO:
+        return _from_pending(
+            item,
+            INFORMATIVO,
+            "providencia_pendente",
+            "Providência pendente",
+        )
+    return None
+
+
+def alert_from_agenda(item, now):
+    start = parse_datetime((item.metadata or {}).get("inicio"))
+    if start is None and item.start_date:
+        start = parse_datetime(item.start_date)
+    if start is None:
+        return None
+    if start < now:
+        return None
+    remaining = start - now
+    if remaining <= TWO_HOURS:
+        return _from_pending(
+            item,
+            CRITICO,
+            "compromisso_breve",
+            "Compromisso em breve",
+            moment=start,
+        )
+    if start.date() == now.date():
+        return _from_pending(
+            item,
+            ALTO,
+            "compromisso_hoje",
+            "Compromisso hoje",
+            moment=start,
+        )
+    if remaining <= ONE_DAY:
+        return _from_pending(
+            item,
+            ATENCAO,
+            "compromisso_proximo",
+            "Compromisso próximo",
+            moment=start,
+        )
+    return None
+
+
+def alert_from_memorando(item):
+    if item.status_original == "EM ANDAMENTO":
+        return _from_pending(
+            item,
+            ALTO,
+            "substituicao_andamento",
+            "Substituição em andamento",
+        )
+    if item.status_original == "AGENDADA" and item.urgency == HOJE:
+        return _from_pending(
+            item,
+            ALTO,
+            "substituicao_hoje",
+            "Substituição inicia hoje",
+        )
+    if item.status_original == "AGENDADA" and item.urgency == URGENTE:
+        return _from_pending(
+            item,
+            ATENCAO,
+            "substituicao_proxima",
+            "Substituição próxima",
+        )
+    return None
+
+
+def alert_from_pending(item, now):
+    if item.source_module == "oficios":
+        return alert_from_oficio(item)
+    if item.source_module == "agenda":
+        return alert_from_agenda(item, now)
+    if item.source_module == "memorandos":
+        return alert_from_memorando(item)
+    return None
+
+
+def _from_pending(item, severity, category, title, moment=None):
+    extra = (item.subtitle or item.context or "").strip()
+    description = item.title
+    if extra and extra != item.title:
+        description = f"{item.title} · {extra[:80]}"
+    when = moment
+    if when is None and item.due_date:
+        when = parse_datetime(item.due_date)
+    return AlertItem(
+        source_module=item.source_module,
+        source_id=item.source_id,
+        gabinete=item.gabinete,
+        severity=severity,
+        category=category,
+        title=title,
+        description=description[:160],
+        date=when.date() if when else item.due_date,
+        datetime=when,
+        source_status=item.status_original,
+        navigation_target=item.navigation,
+        metadata=dict(item.metadata or {}),
+    )
+
+
+def _in_period(item, period, today):
+    if period in (None, "todos"):
+        return True
+    due = item.date
+    if item.source_module == "memorandos" and item.source_status == "EM ANDAMENTO":
+        due = today
+    if item.severity == CRITICO and item.source_module == "oficios":
+        return True
+    if due is None:
+        return period == "todos"
+    if period == "hoje":
+        return due == today
+    last = {"3d": 3, "7d": 7}[period]
+    if due < today:
+        return True
+    return today <= due <= today + timedelta(days=last)
+
+
+def system_alerts(store, *, cached=None):
+    """Admin-only signals from an already known Saúde report. No live diagnostics."""
+    from services.system_health import ATTENTION, ERROR
+
+    report = cached if isinstance(cached, dict) else None
+    if not report:
+        return []
+    items = []
+    database = report.get("database") or {}
+    if database.get("status") == ERROR:
+        items.append(
+            AlertItem(
+                source_module="sistema",
+                source_id="database",
+                gabinete="—",
+                severity=CRITICO,
+                category="banco",
+                title="Banco indisponível",
+                description=(database.get("summary") or "Não foi possível consultar o banco")[:160],
+                date=today_recife(),
+                datetime=None,
+                source_status=ERROR,
+                navigation_target="Administração",
+                metadata={"secao": "Sistema", "aba": "Saúde"},
+            )
+        )
+    schema = report.get("schema")
+    if schema:
+        status = schema.get("status")
+        if status == ERROR:
+            items.append(
+                AlertItem(
+                    source_module="sistema",
+                    source_id="schema",
+                    gabinete="—",
+                    severity=CRITICO,
+                    category="schema",
+                    title="Falha no schema",
+                    description=(schema.get("summary") or "Schema indisponível")[:160],
+                    date=today_recife(),
+                    datetime=None,
+                    source_status=status,
+                    navigation_target="Administração",
+                    metadata={"secao": "Sistema", "aba": "Saúde"},
+                )
+            )
+        elif status == ATTENTION and (
+            schema.get("missing_tables") or schema.get("missing_columns")
+        ):
+            items.append(
+                AlertItem(
+                    source_module="sistema",
+                    source_id="schema",
+                    gabinete="—",
+                    severity=ALTO,
+                    category="schema",
+                    title="Schema incompleto",
+                    description=(schema.get("summary") or "Estrutura esperada não encontrada")[:160],
+                    date=today_recife(),
+                    datetime=None,
+                    source_status=status,
+                    navigation_target="Administração",
+                    metadata={"secao": "Sistema", "aba": "Saúde"},
+                )
+            )
+    documents = report.get("documents") or {}
+    pdf = documents.get("pdf") or {}
+    if pdf.get("status") == ATTENTION:
+        items.append(
+            AlertItem(
+                source_module="sistema",
+                source_id="pdf",
+                gabinete="—",
+                severity=ATENCAO,
+                category="conversor_pdf",
+                title="Conversor PDF indisponível",
+                description=(pdf.get("summary") or "Conversor PDF não detectado")[:160],
+                date=today_recife(),
+                datetime=None,
+                source_status=ATTENTION,
+                navigation_target="Administração",
+                metadata={"secao": "Sistema", "aba": "Saúde"},
+            )
+        )
+    audit = report.get("audit")
+    if audit:
+        if audit.get("status") == ERROR:
+            items.append(
+                AlertItem(
+                    source_module="sistema",
+                    source_id="audit",
+                    gabinete="—",
+                    severity=ATENCAO,
+                    category="auditoria",
+                    title="Falha na auditoria",
+                    description=(audit.get("summary") or "Auditoria indisponível")[:160],
+                    date=today_recife(),
+                    datetime=None,
+                    source_status=ERROR,
+                    navigation_target="Administração",
+                    metadata={"secao": "Sistema", "aba": "Saúde"},
+                )
+            )
+        elif int(audit.get("errors_24h") or 0) > 0:
+            items.append(
+                AlertItem(
+                    source_module="sistema",
+                    source_id="audit_errors",
+                    gabinete="—",
+                    severity=ATENCAO,
+                    category="erro_operacional",
+                    title="Erro operacional recente",
+                    description="Há ERRO_OPERACIONAL nas últimas 24 horas.",
+                    date=today_recife(),
+                    datetime=None,
+                    source_status=ATTENTION,
+                    navigation_target="Administração",
+                    metadata={"secao": "Sistema", "aba": "Saúde"},
+                )
+            )
+    return items[:SOURCE_CAP]
+
+
+def collect_alerts(
+    store,
+    principal,
+    *,
+    now=None,
+    modules=None,
+    gabinete=None,
+    severity=None,
+    period="todos",
+    cached_health=None,
+):
+    store = unwrap_store(store)
+    now = now_recife(now)
+    today = now.date()
+    if not can_view_alertas(principal):
+        raise ValueError("Acesso não autorizado a este módulo.")
+    if gabinete and not principal.administrator and gabinete not in visible_cabinets(
+        principal
+    ):
+        return [], {}, today
+    wanted = set(modules) if modules else None
+    errors = {}
+    collected = []
+    operational_wanted = {"oficios", "agenda", "memorandos"}
+    need_operational = wanted is None or bool(wanted & operational_wanted)
+    if need_operational and can_view_pendencias(principal):
+        pending_modules = None
+        if wanted is not None:
+            pending_modules = tuple(wanted & operational_wanted)
+        if pending_modules or wanted is None:
+            items, errors, today = collect_pending(
+                store,
+                principal,
+                today=today,
+                modules=pending_modules,
+                gabinete=gabinete,
+                period="todos",
+            )
+            for item in items:
+                alert = alert_from_pending(item, now)
+                if alert:
+                    collected.append(alert)
+    if principal.administrator and (wanted is None or "sistema" in wanted) and not gabinete:
+        try:
+            collected.extend(system_alerts(store, cached=cached_health))
+            errors["sistema"] = None
+        except Exception as exc:
+            LOGGER.exception("Falha ao carregar alertas de sistema")
+            registrar_erro(
+                store,
+                modulo="alertas",
+                acao="CONSULTAR",
+                erro=exc,
+                principal=principal,
+            )
+            errors["sistema"] = "sistema"
+    filtered = []
+    for item in collected:
+        if severity and item.severity != severity:
+            continue
+        if wanted and item.source_module not in wanted:
+            continue
+        if gabinete and item.source_module != "sistema" and item.gabinete != gabinete:
+            continue
+        if not _in_period(item, period, today):
+            continue
+        filtered.append(item)
+    filtered.sort(key=_sort_key)
+    return filtered[: SOURCE_CAP], errors, today
+
+
+BELL_LIMIT = 5
+BELL_CACHE_SECONDS = 20
+BELL_CACHE_KEY = "_alerts_bell_cache"
+ALERTS_REVISION_KEY = "alerts_revision"
+
+
+def _state_map(state=None):
+    if state is not None:
+        return state
+    try:
+        import streamlit as st
+
+        return st.session_state
+    except Exception:
+        return None
+
+
+def alerts_revision(state=None):
+    mapping = _state_map(state)
+    if mapping is None or ALERTS_REVISION_KEY not in mapping:
+        return 0
+    try:
+        return int(mapping[ALERTS_REVISION_KEY] or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def invalidate_alert_summary(state=None):
+    """Bump the session revision so the bell cache misses on the next render."""
+    mapping = _state_map(state)
+    if mapping is None:
+        return 0
+    value = alerts_revision(mapping) + 1
+    mapping[ALERTS_REVISION_KEY] = value
+    return value
+
+
+def get_alert_summary(store, principal, *, now=None, cached_health=None, revision=None):
+    """Lightweight bell payload: counts plus the top active alerts."""
+    _ = revision
+    items, errors, today = collect_alerts(
+        store, principal, now=now, cached_health=cached_health
+    )
+    counts = summarize_alerts(items)
+    return {
+        "total": counts["total"],
+        "counts": counts,
+        "top": items[:BELL_LIMIT],
+        "errors": errors,
+        "today": today,
+    }
+
+
+def dashboard_counts(store, principal, *, now=None, cached_health=None):
+    """Single operational collect for Home: Pendências + Alertas.
+
+    ``cached_health`` is accepted for API stability; system alerts stay on
+    the Alertas page so Home does not run Saúde checks.
+    """
+    _ = cached_health
+    now = now_recife(now)
+    today = now.date()
+    pending = empty_pending_counts()
+    alerts = empty_alert_counts()
+    errors = {}
+    converted = []
+    if can_view_pendencias(principal):
+        items, errors, today = collect_pending(store, principal, today=today)
+        pending = summarize(items, today)
+        converted = [
+            alert for item in items if (alert := alert_from_pending(item, now))
+        ]
+    alerts = summarize_alerts(converted)
+    return pending, alerts, errors

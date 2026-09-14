@@ -157,6 +157,11 @@ def has_permission(principal, module):
             has_permission(principal, name)
             for name in ("oficios", "agenda", "memorandos")
         )
+    if module == "alertas":
+        return principal.administrator or any(
+            has_permission(principal, name)
+            for name in ("oficios", "agenda", "memorandos")
+        )
     if module == "portarias":
         return principal.pode_portarias
     if module == "agenda":

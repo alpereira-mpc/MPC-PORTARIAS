@@ -11,7 +11,6 @@ from services.pending import (
     URGENCY_ORDER,
     can_view_pendencias,
     collect_pending,
-    pending_counts,
     summarize,
     visible_cabinets,
 )
@@ -49,51 +48,46 @@ def _date_text(value):
     return format_local(value)[:10] if value else "—"
 
 
-def _open(item):
+def open_origin(item):
     from portal import request_portal_navigation
 
-    if item.source_module == "oficios":
-        gabinete = item.gabinete if item.gabinete and item.gabinete != "—" else None
+    module = getattr(item, "source_module", "")
+    source_id = getattr(item, "source_id", None)
+    gabinete = getattr(item, "gabinete", None)
+    metadata = getattr(item, "metadata", None) or {}
+    if module == "oficios":
+        code = gabinete if gabinete and gabinete != "—" else None
         page = (
             "Acompanhamento"
-            if (item.metadata or {}).get("direcao") == "ENVIADO"
+            if metadata.get("direcao") == "ENVIADO"
             else "Recebidos"
         )
         request_portal_navigation(
             "Ofícios",
-            pending_open_oficio={
-                "id": item.source_id,
-                "gabinete": gabinete,
-                "page": page,
-            },
+            pending_open_oficio={"id": source_id, "gabinete": code, "page": page},
         )
         return
-    if item.source_module == "agenda":
-        request_portal_navigation("Agenda", pending_open_agenda=item.source_id)
+    if module == "agenda":
+        request_portal_navigation("Agenda", pending_open_agenda=source_id)
         return
-    request_portal_navigation(
-        "Memorandos",
-        pending_open_memorando={"id": item.source_id, "page": "Em andamento"},
-    )
+    if module == "memorandos":
+        request_portal_navigation(
+            "Memorandos",
+            pending_open_memorando={"id": source_id, "page": "Em andamento"},
+        )
+        return
+    if module == "sistema":
+        request_portal_navigation(
+            "Administração",
+            pending_open_admin={
+                "secao": metadata.get("secao") or "Sistema",
+                "aba": metadata.get("aba") or "Saúde",
+            },
+        )
 
 
-def render_home_summary(store, principal):
-    if not can_view_pendencias(principal):
-        return
-    try:
-        counts, _errors = pending_counts(store, principal)
-    except Exception:
-        return
-    with st.container(border=True):
-        st.markdown("**Pendências**")
-        a, b, c = st.columns(3)
-        a.metric("Vencidas", counts["vencidas"])
-        b.metric("Para hoje", counts["hoje"])
-        c.metric("Próximos 3 dias", counts["proximos_3"])
-        if st.button("Ver pendências", key="home_open_pendencias"):
-            from portal import request_portal_navigation
-
-            request_portal_navigation("Pendências")
+def _open(item):
+    open_origin(item)
 
 
 def render(store, principal):

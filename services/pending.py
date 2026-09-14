@@ -1,7 +1,7 @@
 """Aggregation of operational pending items. No dedicated pending table."""
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 import json
 import logging
 
@@ -81,6 +81,42 @@ def parse_date(value, today=None):
                 return date.fromisoformat(head)
             return moment.astimezone(INSTITUTIONAL_TZ).date()
         return date.fromisoformat(head)
+    return None
+
+
+def now_recife(now=None):
+    if isinstance(now, datetime):
+        if now.tzinfo is None:
+            return now.replace(tzinfo=INSTITUTIONAL_TZ)
+        return now.astimezone(INSTITUTIONAL_TZ)
+    if isinstance(now, date):
+        return datetime.combine(now, time.min, INSTITUTIONAL_TZ)
+    return datetime.now(INSTITUTIONAL_TZ)
+
+
+def parse_datetime(value):
+    """Aware datetime in America/Recife; DATE-only strings stay on that calendar day."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=INSTITUTIONAL_TZ)
+        return value.astimezone(INSTITUTIONAL_TZ)
+    if isinstance(value, date):
+        return datetime.combine(value, time.min, INSTITUTIONAL_TZ)
+    text = str(value).strip()
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        head = text[:10]
+        rest = text[10:]
+        if "T" in text or rest.startswith(" ") or text.endswith("Z") or "+" in text[10:]:
+            try:
+                moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return datetime.combine(date.fromisoformat(head), time.min, INSTITUTIONAL_TZ)
+            if moment.tzinfo is None:
+                return moment.replace(tzinfo=INSTITUTIONAL_TZ)
+            return moment.astimezone(INSTITUTIONAL_TZ)
+        return datetime.combine(date.fromisoformat(head), time.min, INSTITUTIONAL_TZ)
     return None
 
 

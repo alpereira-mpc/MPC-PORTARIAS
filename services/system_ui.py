@@ -49,6 +49,10 @@ def render_health(store, principal):
     refresh = st.button("Atualizar diagnóstico", key="sistema_health_refresh")
     if refresh or HEALTH_KEY not in st.session_state:
         st.session_state[HEALTH_KEY] = diagnose(store)
+        if refresh:
+            from services.alerts import invalidate_alert_summary
+
+            invalidate_alert_summary()
     report = st.session_state[HEALTH_KEY]
     _badge(report["status"], "estado geral do portal")
     st.caption(

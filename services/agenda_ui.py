@@ -48,10 +48,13 @@ def records(agenda, start, end, member=None, kind=None, status=None, *, offset=N
 
 
 def done(message):
+    from services.alerts import invalidate_alert_summary
+
     read_agenda.clear()
     st.session_state["agenda_revision"] = st.session_state.get("agenda_revision", 0) + 1
     st.session_state.pop("agenda_edit", None)
     st.session_state["agenda_message"] = message
+    invalidate_alert_summary()
     st.rerun()
 
 
