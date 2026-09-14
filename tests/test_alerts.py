@@ -525,7 +525,10 @@ def test_navigation_helpers_are_safe():
     assert "pending_open_admin" in getsource(open_origin)
     assert "admin_secao" in getsource(consume_pending_open_admin)
     assert 'st.session_state["portal_module"]' not in getsource(render)
-    assert "st.rerun" in getsource(request_alerts_view)
+    from portal import queue_alerts_view
+
+    assert "st.rerun()" not in getsource(queue_alerts_view)
+    assert "st.rerun()" in getsource(request_alerts_view)
     assert "pending_open_admin" in getsource(open_origin)
     assert "admin_secao" in getsource(consume_pending_open_admin)
     assert 'st.session_state["portal_module"]' not in getsource(render)
@@ -534,14 +537,39 @@ def test_navigation_helpers_are_safe():
 def test_consume_admin_open_before_widgets(monkeypatch):
     from services import access_ui
 
-    state = {"pending_open_admin": {"secao": "Sistema", "aba": "Saúde"}}
+    state = {
+        "pending_open_admin": {
+            "secao": "Sistema",
+            "aba": "Saúde",
+            "audit_tab": "Auditoria",
+        }
+    }
     monkeypatch.setattr(access_ui.st, "session_state", state)
     access_ui.consume_pending_open_admin()
     assert "pending_open_admin" not in state
     assert state["admin_secao"] == "Sistema"
     assert state["admin_sistema_aba"] == "Saúde"
+    assert state["audit_tab"] == "Auditoria"
     access_ui.consume_pending_open_admin()
     assert state["admin_secao"] == "Sistema"
+    assert "pending_open_admin" not in state
+
+
+def test_consume_admin_ignores_invalid_legacy_state(monkeypatch):
+    from services import access_ui
+
+    state = {"pending_open_admin": {"secao": "Inexistente", "aba": "X"}}
+    monkeypatch.setattr(access_ui.st, "session_state", state)
+    access_ui.consume_pending_open_admin()
+    assert "admin_secao" not in state
+    assert "admin_sistema_aba" not in state
+    state["pending_open_admin"] = True
+    assert access_ui.consume_pending_open_admin() is None
+    assert "admin_secao" not in state
+    state["pending_open_admin"] = "Acessos e Auditoria"
+    access_ui.consume_pending_open_admin()
+    assert state["admin_secao"] == "Acessos e Auditoria"
+    assert "pending_open_admin" not in state
 
 
 def test_menu_home_and_deep_links(store, monkeypatch):

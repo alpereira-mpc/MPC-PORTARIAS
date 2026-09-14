@@ -6,21 +6,58 @@ from services.access import require_permission
 from services.audit import aplicar_exclusao_usuario, aplicar_usuario
 from services.oficios import GABINETES
 
+ADMIN_SECTIONS = ("Usuários", "Acessos e Auditoria", "Sistema")
+ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
+AUDIT_TABS = ("Visão Geral", "Acessos", "Auditoria")
+ADMIN_NAV_REQUEST = "pending_open_admin"
+
+
+def queue_admin_navigation(secao=None, aba=None, audit_tab=None):
+    """Enqueue an admin subsection. Safe inside on_click/on_change.
+
+    Consumed by consume_pending_open_admin() before the admin radios exist.
+    Do not write admin_secao / admin_sistema_aba / audit_tab after those widgets.
+    """
+    pending = st.session_state.get(ADMIN_NAV_REQUEST)
+    if not isinstance(pending, dict):
+        pending = {}
+    else:
+        pending = dict(pending)
+    if secao:
+        pending["secao"] = secao
+    if aba:
+        pending["aba"] = aba
+    if audit_tab:
+        pending["audit_tab"] = audit_tab
+    st.session_state[ADMIN_NAV_REQUEST] = pending
+    return pending
+
+
+def request_admin_navigation(secao=None, aba=None, audit_tab=None):
+    """Enqueue an admin subsection and rerun. Use only in script body, never in callbacks."""
+    queue_admin_navigation(secao=secao, aba=aba, audit_tab=audit_tab)
+    st.rerun()
+
 
 def consume_pending_open_admin():
-    if "pending_open_admin" not in st.session_state:
+    if ADMIN_NAV_REQUEST not in st.session_state:
         return None
-    pending = st.session_state.pop("pending_open_admin")
+    pending = st.session_state.pop(ADMIN_NAV_REQUEST)
     if not pending:
         return None
-    if not isinstance(pending, dict):
+    if isinstance(pending, str):
         pending = {"secao": pending}
+    if not isinstance(pending, dict):
+        return None
     secao = pending.get("secao")
-    if secao:
+    if secao in ADMIN_SECTIONS:
         st.session_state["admin_secao"] = secao
     aba = pending.get("aba")
-    if aba:
+    if aba in ADMIN_SISTEMA_TABS:
         st.session_state["admin_sistema_aba"] = aba
+    audit_tab = pending.get("audit_tab")
+    if audit_tab in AUDIT_TABS:
+        st.session_state["audit_tab"] = audit_tab
     return pending
 
 

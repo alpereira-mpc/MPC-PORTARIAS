@@ -378,6 +378,77 @@ def test_denied_user_logout_uses_native_oidc(store, monkeypatch):
     assert any(b.label == "Entrar com Gmail" for b in app.button)
 
 
+def _no_callback_rerun_warning(app):
+    texts = []
+    for attr in ("warning", "error", "exception"):
+        for item in getattr(app, attr, []) or []:
+            texts.append(str(getattr(item, "value", item)))
+    blob = "\n".join(texts)
+    assert "within a callback is a no-op" not in blob
+
+
+def test_queue_portal_navigation_does_not_rerun(monkeypatch):
+    import portal
+
+    reruns = []
+    monkeypatch.setattr(portal.st, "session_state", {})
+    monkeypatch.setattr(portal.st, "rerun", lambda: reruns.append(True))
+    portal.queue_portal_navigation("Memorandos", memorandos_nav="Visão Geral")
+    assert not reruns
+    assert portal.PORTAL_NAV_REQUEST in portal.st.session_state
+    portal.request_portal_navigation("Agenda")
+    assert reruns == [True]
+
+
+def test_home_card_callbacks_only_queue_navigation():
+    import inspect
+
+    import portal
+
+    for fn in (
+        portal.open_portarias,
+        portal.open_agenda,
+        portal.open_oficios,
+        portal.open_memorandos,
+        portal.open_admin,
+    ):
+        source = inspect.getsource(fn)
+        assert "queue_portal_navigation" in source
+        assert "st.rerun()" not in source
+        assert "request_portal_navigation" not in source
+    card_source = inspect.getsource(portal.card)
+    assert "on_click=" in card_source
+    assert "open_memorandos" in card_source
+    assert inspect.getsource(portal.open_pendencias).count("request_portal_navigation")
+    assert "st.rerun()" in inspect.getsource(portal.request_portal_navigation)
+    assert "st.rerun()" not in inspect.getsource(portal.queue_portal_navigation)
+    assert "st.rerun()" not in inspect.getsource(portal.queue_alerts_view)
+    assert "st.rerun()" in inspect.getsource(portal.request_alerts_view)
+
+
+def test_home_cards_and_refresh_do_not_reapply_navigation(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    from portal import PORTAL_NAV_REQUEST
+
+    app.button(key="open_memorandos").click().run()
+    assert not app.exception
+    _no_callback_rerun_warning(app)
+    assert app.sidebar.radio(key="portal_module").value == "Memorandos"
+    assert PORTAL_NAV_REQUEST not in app.session_state
+    app.run()
+    assert app.sidebar.radio(key="portal_module").value == "Memorandos"
+    assert PORTAL_NAV_REQUEST not in app.session_state
+    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    app.button(key="open_portarias").click().run()
+    assert not app.exception
+    _no_callback_rerun_warning(app)
+    assert app.sidebar.radio(key="portal_module").value == "Portarias"
+
+
 def test_logout_helper_is_defined_and_delegates_to_streamlit():
     import inspect
 

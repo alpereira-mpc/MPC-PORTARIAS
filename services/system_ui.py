@@ -164,9 +164,12 @@ def render_health(store, principal):
         if errors:
             st.write(f"{errors} erros operacionais nas últimas 24 horas")
             if st.button("Ver na Auditoria", key="sistema_goto_audit"):
-                st.session_state["admin_secao"] = "Acessos e Auditoria"
-                st.session_state["audit_tab"] = "Auditoria"
-                st.rerun()
+                from services.access_ui import request_admin_navigation
+
+                request_admin_navigation(
+                    secao="Acessos e Auditoria",
+                    audit_tab="Auditoria",
+                )
         else:
             st.write("Nenhum erro operacional registrado nas últimas 24 horas.")
         week = audit.get("errors_7d") or 0

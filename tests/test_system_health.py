@@ -148,6 +148,75 @@ def test_administrator_opens_system_health(store, monkeypatch):
     assert not app.exception
 
 
+def test_admin_navigation_helpers_queue_without_writing_widgets(monkeypatch):
+    from inspect import getsource
+
+    from services import access_ui, system_ui
+
+    reruns = []
+    state = {}
+    monkeypatch.setattr(access_ui.st, "session_state", state)
+    monkeypatch.setattr(access_ui.st, "rerun", lambda: reruns.append(True))
+    access_ui.queue_admin_navigation(
+        secao="Acessos e Auditoria", audit_tab="Auditoria"
+    )
+    assert not reruns
+    assert state["pending_open_admin"]["secao"] == "Acessos e Auditoria"
+    assert "admin_secao" not in state
+    access_ui.request_admin_navigation(secao="Sistema", aba="Backup")
+    assert reruns == [True]
+    assert state["pending_open_admin"]["aba"] == "Backup"
+    access_ui.consume_pending_open_admin()
+    assert "pending_open_admin" not in state
+    assert state["admin_secao"] == "Sistema"
+    assert state["admin_sistema_aba"] == "Backup"
+    access_ui.consume_pending_open_admin()
+    assert state["admin_secao"] == "Sistema"
+    assert "st.rerun()" not in getsource(access_ui.queue_admin_navigation)
+    assert "st.rerun()" in getsource(access_ui.request_admin_navigation)
+    health_src = getsource(system_ui.render_health)
+    assert 'st.session_state["admin_secao"]' not in health_src
+    assert "request_admin_navigation" in health_src
+
+
+def test_health_goto_audit_before_admin_widgets(store, monkeypatch):
+    from services.audit import registrar_erro
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    registrar_erro(
+        store, modulo="admin", acao="DIAGNOSTICO", erro=RuntimeError("falha sintética")
+    )
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_admin").click().run()
+    app.radio(key="admin_secao").set_value("Sistema").run()
+    assert any(getattr(b, "key", None) == "sistema_goto_audit" for b in app.button)
+    app.button(key="sistema_goto_audit").click().run()
+    assert not app.exception and not app.error
+    assert app.sidebar.radio(key="portal_module").value == "Administração"
+    assert app.radio(key="admin_secao").value == "Acessos e Auditoria"
+    assert app.radio(key="audit_tab").value == "Auditoria"
+    assert "pending_open_admin" not in app.session_state
+    app.run()
+    assert app.radio(key="admin_secao").value == "Acessos e Auditoria"
+    assert "pending_open_admin" not in app.session_state
+
+
+def test_system_saude_backup_toggle(store, monkeypatch):
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_admin").click().run()
+    app.radio(key="admin_secao").set_value("Sistema").run()
+    assert any("Saúde" in str(h.value) for h in app.subheader)
+    app.radio(key="admin_sistema_aba").set_value("Backup").run()
+    assert not app.exception
+    assert any("Backup" in str(h.value) for h in app.subheader)
+    app.radio(key="admin_sistema_aba").set_value("Saúde").run()
+    assert not app.exception
+    assert any("Saúde" in str(h.value) for h in app.subheader)
+
+
 def test_postgres_engine_identified(pg_store):
     _full_schema(pg_store)
     report = diagnose(pg_store)

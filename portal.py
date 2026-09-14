@@ -101,12 +101,22 @@ ADMIN_MODULE = Module(
 
 
 def queue_portal_navigation(module, **state):
+    """Enqueue a module change. Safe inside on_click/on_change.
+
+    Only mutate transient session state here. Streamlit already reruns after a
+    callback; invoking the rerun API inside one is a no-op and surfaces a warning.
+    """
     payload = {"module": module, "state": dict(state)}
     st.session_state[PORTAL_NAV_REQUEST] = payload
     return payload
 
 
 def request_portal_navigation(module, **state):
+    """Enqueue a module change and rerun. Use only in script body.
+
+    Example: ``if st.button(...): request_portal_navigation(...)``.
+    Never pass this function to on_click/on_change.
+    """
     queue_portal_navigation(module, **state)
     st.rerun()
 
@@ -135,11 +145,17 @@ def clear_alerts_overlay():
     st.session_state.pop(PORTAL_SPECIAL_ANCHOR, None)
 
 
-def request_alerts_view():
+def queue_alerts_view():
+    """Enqueue the alerts overlay. Safe inside on_click/on_change (no rerun call)."""
     current = _session_get("portal_module")
     if current and current != "Alertas" and PORTAL_SPECIAL_VIEW not in st.session_state:
         st.session_state[PORTAL_SPECIAL_RETURN] = current
     st.session_state[PORTAL_ALERTS_REQUEST] = True
+
+
+def request_alerts_view():
+    """Enqueue the alerts overlay and rerun. Use only outside callbacks."""
+    queue_alerts_view()
     st.rerun()
 
 
@@ -177,23 +193,23 @@ def alerts_overlay_active(selected):
 
 
 def open_portarias():
-    request_portal_navigation("Portarias", nav="Nova Portaria")
+    queue_portal_navigation("Portarias", nav="Nova Portaria")
 
 
 def open_agenda():
-    request_portal_navigation("Agenda")
+    queue_portal_navigation("Agenda")
 
 
 def open_oficios():
-    request_portal_navigation("Ofícios")
+    queue_portal_navigation("Ofícios")
 
 
 def open_memorandos():
-    request_portal_navigation("Memorandos", memorandos_nav="Visão Geral")
+    queue_portal_navigation("Memorandos", memorandos_nav="Visão Geral")
 
 
 def open_admin():
-    request_portal_navigation("Administração")
+    queue_portal_navigation("Administração")
 
 
 def card(module):

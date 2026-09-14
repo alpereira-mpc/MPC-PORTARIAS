@@ -403,9 +403,14 @@ def test_programmatic_navigation_does_not_write_widget_keys():
         open_oficios,
         open_memorandos,
         open_admin,
-        open_pendencias,
-        open_origin,
     ):
+        source = getsource(fn)
+        assert 'st.session_state["portal_module"]' not in source
+        assert "st.session_state['portal_module']" not in source
+        assert "queue_portal_navigation" in source
+        assert "request_portal_navigation" not in source
+        assert "st.rerun()" not in source
+    for fn in (open_pendencias, open_origin):
         source = getsource(fn)
         assert 'st.session_state["portal_module"]' not in source
         assert "st.session_state['portal_module']" not in source
