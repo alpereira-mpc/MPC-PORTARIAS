@@ -5,7 +5,7 @@ from html import escape
 import time
 import streamlit as st
 
-from services.access import require_permission
+from services.access import has_permission, require_permission
 from services.alerts import (
     ATENCAO,
     ALTO,
@@ -194,7 +194,7 @@ def render(store, principal):
     )
     a, b, c = st.columns(3)
     module_choices = [None, "oficios", "agenda", "memorandos"]
-    if principal.administrator:
+    if has_permission(principal, "admin"):
         module_choices.append("sistema")
     module = a.selectbox(
         "Módulo",
@@ -238,6 +238,8 @@ def render(store, principal):
         "sistema": "Sistema",
     }
     for key, name in labels.items():
+        if key == "sistema" and not has_permission(principal, "admin"):
+            continue
         if errors.get(key):
             st.warning(f"Não foi possível carregar alertas da {name}.")
     if not items:

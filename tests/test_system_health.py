@@ -144,6 +144,12 @@ def test_administrator_opens_system_health(store, monkeypatch):
     headings = [str(h.value) for h in app.subheader]
     assert any("Sistema" in h or "Saúde" in h for h in headings)
     assert any(b.label == "Atualizar diagnóstico" for b in app.button)
+    from inspect import getsource
+    from services.system_ui import render_health
+
+    health_src = getsource(render_health)
+    assert "Erros operacionais registrados nas últimas 24 horas" in health_src
+    assert "erros operacionais nas últimas 24 horas" not in health_src
     app.button(key="sistema_health_refresh").click().run()
     assert not app.exception
 

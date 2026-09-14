@@ -123,7 +123,8 @@ def render_health(store, principal):
             st.caption("Evento: " + str(audit["last_event"]))
         st.caption(f"Eventos nas últimas 24 horas: {audit.get('events_24h', 0)}")
         st.caption(
-            f"Erros operacionais nas últimas 24 horas: {audit.get('errors_24h', 0)}"
+            "Erros operacionais registrados nas últimas 24 horas: "
+            + str(audit.get("errors_24h", 0))
         )
     with d, st.container(border=True):
         st.markdown("**Documentos**")
@@ -160,9 +161,11 @@ def render_health(store, principal):
 
     with st.container(border=True):
         st.markdown("**Erros recentes**")
+        st.caption("Registros históricos da Auditoria; não indicam falha atual por si só.")
         errors = audit.get("errors_24h") or 0
         if errors:
-            st.write(f"{errors} erros operacionais nas últimas 24 horas")
+            label = "erro operacional registrado" if errors == 1 else "erros operacionais registrados"
+            st.write(f"{errors} {label} nas últimas 24 horas")
             if st.button("Ver na Auditoria", key="sistema_goto_audit"):
                 from services.access_ui import request_admin_navigation
 
@@ -174,7 +177,9 @@ def render_health(store, principal):
             st.write("Nenhum erro operacional registrado nas últimas 24 horas.")
         week = audit.get("errors_7d") or 0
         if week and week != errors:
-            st.caption(f"{week} erro(s) operacional(is) nos últimos 7 dias.")
+            st.caption(
+                f"{week} erro(s) operacional(is) registrado(s) nos últimos 7 dias."
+            )
 
 
 def _clear_backup_file(info):

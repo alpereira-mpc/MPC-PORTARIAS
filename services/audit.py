@@ -535,7 +535,14 @@ def aplicar_exclusao_usuario(store, principal, identifier):
     return snapshot
 
 
-def overview(store):
+def _require_audit_reader(principal):
+    from services.access import require_permission
+
+    require_permission(principal, "admin")
+
+
+def overview(store, principal):
+    _require_audit_reader(principal)
     audit = AuditStore(store)
     today = period_bounds("hoje")
     week = period_bounds("7d")
@@ -555,7 +562,8 @@ def overview(store):
     }
 
 
-def user_overview(store, filters=None):
+def user_overview(store, principal, filters=None):
+    _require_audit_reader(principal)
     from database.access import AccessStore
 
     listed = {u["email"]: u for u in AccessStore(store).list_users()}
@@ -574,7 +582,8 @@ def user_overview(store, filters=None):
     return rows
 
 
-def export_csv(store, filters=None):
+def export_csv(store, principal, filters=None):
+    _require_audit_reader(principal)
     audit = AuditStore(store)
     total = audit.count(filters)
     truncated = total > EXPORT_LIMIT

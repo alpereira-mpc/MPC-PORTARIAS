@@ -409,6 +409,7 @@ def test_system_alerts_admin_only(store):
         },
     )
     assert items[0].severity == CRITICO
+    assert items[0].category == "banco"
     pdf = system_alerts(
         store,
         cached={
@@ -419,11 +420,12 @@ def test_system_alerts_admin_only(store):
         },
     )
     assert pdf[0].severity == ATENCAO
-    errors = system_alerts(
+    assert pdf[0].category == "conversor_pdf"
+    historical = system_alerts(
         store,
         cached={**HEALTHY, "audit": {"status": OK, "errors_24h": 2}},
     )
-    assert errors[0].category == "erro_operacional"
+    assert historical == []
     user = _user(
         store,
         "no.sys@test.local",
@@ -434,8 +436,141 @@ def test_system_alerts_admin_only(store):
         pode_admin=False,
         gabinetes=[],
     )
-    collected, _, _ = collect_alerts(store, user, now=NOW)
+    broken = {
+        **HEALTHY,
+        "database": {"status": ERROR, "summary": "ERRO — banco"},
+    }
+    assert system_alerts(store, cached=broken, principal=user) == []
+    collected, errors, _ = collect_alerts(
+        store, user, now=NOW, cached_health=broken
+    )
     assert all(i.source_module != "sistema" for i in collected)
+    assert "sistema" not in errors
+    forced, _, _ = collect_alerts(
+        store, user, now=NOW, modules=("sistema",), cached_health=broken
+    )
+    assert forced == []
+
+
+def test_historical_operational_error_is_not_a_live_alert(store):
+    from database.audit import AuditStore
+    from services.audit import registrar_erro
+    from services.system_health import inspect_audit
+
+    admin = _admin(store)
+    user = _user(
+        store,
+        "comum.hist@test.local",
+        pode_agenda=True,
+        pode_oficios=True,
+        pode_memorandos=True,
+        pode_portarias=False,
+        pode_admin=False,
+        gabinetes=["PROGE"],
+    )
+    registrar_erro(
+        store,
+        modulo="admin",
+        acao="DIAGNOSTICO",
+        erro=RuntimeError("falha já corrigida"),
+        principal=admin,
+    )
+    audit = inspect_audit(store)
+    assert audit["status"] == OK
+    assert audit["errors_24h"] == 1
+    events = AuditStore(store).list_events({"evento": "ERRO_OPERACIONAL"})
+    assert len(events) == 1
+    assert events[0]["modulo"] == "admin"
+    assert events[0]["resultado"] == "ERRO"
+    cached = {**HEALTHY, "audit": audit}
+    assert system_alerts(store, cached=cached, principal=admin) == []
+    items, _, _ = collect_alerts(store, admin, now=NOW, cached_health=cached)
+    assert all(i.category != "erro_operacional" for i in items)
+    assert all(i.source_id != "audit_errors" for i in items)
+    summary = get_alert_summary(store, admin, now=NOW, cached_health=cached)
+    assert all(i.source_module != "sistema" for i in summary["top"])
+    user_summary = get_alert_summary(store, user, now=NOW, cached_health=cached)
+    assert all(i.source_module != "sistema" for i in user_summary["top"])
+    assert user_summary["counts"]["total"] == user_summary["total"]
+    leftover = AuditStore(store).list_events({"evento": "ERRO_OPERACIONAL"})
+    assert len(leftover) == 1
+    assert leftover[0]["id"] == events[0]["id"]
+
+
+def test_current_health_failures_alert_admin_and_clear_when_ok(store):
+    admin = _admin(store)
+    user = _user(
+        store,
+        "comum.tech@test.local",
+        pode_agenda=True,
+        pode_oficios=True,
+        pode_memorandos=False,
+        pode_portarias=False,
+        pode_admin=False,
+        gabinetes=["PROGE"],
+    )
+    db_fail = {
+        **HEALTHY,
+        "database": {"status": ERROR, "summary": "ERRO — banco"},
+    }
+    admin_items, _, _ = collect_alerts(store, admin, now=NOW, cached_health=db_fail)
+    assert any(i.category == "banco" and i.severity == CRITICO for i in admin_items)
+    admin_summary = get_alert_summary(store, admin, now=NOW, cached_health=db_fail)
+    assert admin_summary["total"] >= 1
+    assert any(i.category == "banco" for i in admin_summary["top"])
+    user_items, user_errors, _ = collect_alerts(
+        store, user, now=NOW, cached_health=db_fail
+    )
+    assert all(i.source_module != "sistema" for i in user_items)
+    assert "sistema" not in user_errors
+    user_summary = get_alert_summary(store, user, now=NOW, cached_health=db_fail)
+    assert all(i.source_module != "sistema" for i in user_summary["top"])
+    recovered, _, _ = collect_alerts(store, admin, now=NOW, cached_health=HEALTHY)
+    assert all(i.source_module != "sistema" for i in recovered)
+
+    schema_fail = {
+        **HEALTHY,
+        "schema": {
+            "status": ERROR,
+            "summary": "ERRO — Schema indisponível",
+            "missing_tables": ["auditoria_eventos"],
+        },
+    }
+    schema_items = system_alerts(store, cached=schema_fail, principal=admin)
+    assert any(i.category == "schema" for i in schema_items)
+    schema_attention = {
+        **HEALTHY,
+        "schema": {
+            "status": ATTENTION,
+            "summary": "ATENÇÃO — Estrutura esperada não encontrada",
+            "missing_tables": ["auditoria_eventos"],
+            "missing_columns": [],
+        },
+    }
+    assert any(
+        i.category == "schema"
+        for i in system_alerts(store, cached=schema_attention, principal=admin)
+    )
+    pdf_fail = {
+        **HEALTHY,
+        "documents": {
+            "pdf": {"status": ATTENTION, "summary": "ATENÇÃO — conversor PDF não detectado"}
+        },
+    }
+    assert any(
+        i.category == "conversor_pdf"
+        for i in system_alerts(store, cached=pdf_fail, principal=admin)
+    )
+    audit_down = {
+        **HEALTHY,
+        "audit": {"status": ERROR, "summary": "ERRO — Auditoria indisponível", "errors_24h": 0},
+    }
+    assert any(
+        i.category == "auditoria"
+        for i in system_alerts(store, cached=audit_down, principal=admin)
+    )
+    assert system_alerts(store, cached=HEALTHY, principal=admin) == []
+    assert system_alerts(store, cached=db_fail, principal=user) == []
 
 
 def test_isolation_when_oficios_fails(store, monkeypatch):
@@ -817,6 +952,8 @@ def test_modules_invalidate_after_success_only():
     assert "invalidate_alert_summary" in getsource(memorandos_ui._details)
     health = getsource(system_ui.render_health)
     assert "invalidate_alert_summary" in health
+    assert "registrado" in health
+    assert "Erro operacional recente" not in health
     assert "if refresh:" in health
     assert "cache_data.clear" not in getsource(
         __import__("services.alerts", fromlist=["invalidate_alert_summary"]).invalidate_alert_summary

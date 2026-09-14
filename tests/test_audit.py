@@ -186,6 +186,25 @@ def test_ordinary_user_cannot_open_audit(store):
         render(store, principal)
 
 
+def test_ordinary_user_cannot_query_audit_services(store):
+    from services.audit import export_csv, overview, user_overview
+
+    seed_access(
+        store,
+        email="comum.audit.svc@test.local",
+        perfil="USUARIO",
+        pode_admin=False,
+        pode_agenda=True,
+    )
+    principal = resolve_principal(store, {"email": "comum.audit.svc@test.local"})
+    with pytest.raises(ValueError, match="módulo"):
+        overview(store, principal)
+    with pytest.raises(ValueError, match="módulo"):
+        user_overview(store, principal)
+    with pytest.raises(ValueError, match="módulo"):
+        export_csv(store, principal)
+
+
 def test_administrator_opens_audit_ui(store, monkeypatch):
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
@@ -223,7 +242,7 @@ def test_filters_pagination_dates_and_csv(store):
     assert format_local(utc.isoformat()) == "14/09/2026 09:00:00"
     start, end = period_bounds("hoje")
     assert start <= datetime.now(timezone.utc).isoformat() <= end
-    csv_text, total, truncated = export_csv(store, {"modulo": "portarias"})
+    csv_text, total, truncated = export_csv(store, principal, {"modulo": "portarias"})
     assert "data_hora_local" in csv_text.splitlines()[0]
     assert total >= 1
     assert truncated is False
@@ -343,7 +362,7 @@ def test_portal_counts_one_session_across_reruns(store, monkeypatch):
     app.sidebar.radio(key="portal_module").set_value("Agenda").run()
     assert _count(store, "SESSAO_INICIADA") == 1
     assert _count(store, "MODULO_ACESSADO") == 2
-    data = overview(store)
+    data = overview(store, _principal(store))
     assert data["usuarios_ativos"] >= 1
     assert data["hoje"]["sessoes"] >= 1
 

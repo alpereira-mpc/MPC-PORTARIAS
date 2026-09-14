@@ -254,10 +254,16 @@ def _in_period(item, period, today):
     return today <= due <= today + timedelta(days=last)
 
 
-def system_alerts(store, *, cached=None):
-    """Admin-only signals from an already known Saúde report. No live diagnostics."""
+def system_alerts(store, *, cached=None, principal=None):
+    """Admin-only current Saúde conditions. No live diagnostics.
+
+    Historical ERRO_OPERACIONAL rows are audit incidents, not live alerts.
+    Only current database/schema/PDF/DOCX/audit-subsystem failures surface here.
+    """
     from services.system_health import ATTENTION, ERROR
 
+    if principal is not None and not has_permission(principal, "admin"):
+        return []
     report = cached if isinstance(cached, dict) else None
     if not report:
         return []
@@ -321,7 +327,7 @@ def system_alerts(store, *, cached=None):
             )
     documents = report.get("documents") or {}
     pdf = documents.get("pdf") or {}
-    if pdf.get("status") == ATTENTION:
+    if pdf.get("status") in (ATTENTION, ERROR):
         items.append(
             AlertItem(
                 source_module="sistema",
@@ -333,47 +339,47 @@ def system_alerts(store, *, cached=None):
                 description=(pdf.get("summary") or "Conversor PDF não detectado")[:160],
                 date=today_recife(),
                 datetime=None,
-                source_status=ATTENTION,
+                source_status=pdf.get("status") or ATTENTION,
                 navigation_target="Administração",
                 metadata={"secao": "Sistema", "aba": "Saúde"},
             )
         )
-    audit = report.get("audit")
-    if audit:
-        if audit.get("status") == ERROR:
-            items.append(
-                AlertItem(
-                    source_module="sistema",
-                    source_id="audit",
-                    gabinete="—",
-                    severity=ATENCAO,
-                    category="auditoria",
-                    title="Falha na auditoria",
-                    description=(audit.get("summary") or "Auditoria indisponível")[:160],
-                    date=today_recife(),
-                    datetime=None,
-                    source_status=ERROR,
-                    navigation_target="Administração",
-                    metadata={"secao": "Sistema", "aba": "Saúde"},
-                )
+    docx = documents.get("docx") or {}
+    if docx.get("status") == ERROR:
+        items.append(
+            AlertItem(
+                source_module="sistema",
+                source_id="docx",
+                gabinete="—",
+                severity=ALTO,
+                category="geracao_docx",
+                title="Geração DOCX indisponível",
+                description=(docx.get("summary") or "Geração DOCX indisponível")[:160],
+                date=today_recife(),
+                datetime=None,
+                source_status=ERROR,
+                navigation_target="Administração",
+                metadata={"secao": "Sistema", "aba": "Saúde"},
             )
-        elif int(audit.get("errors_24h") or 0) > 0:
-            items.append(
-                AlertItem(
-                    source_module="sistema",
-                    source_id="audit_errors",
-                    gabinete="—",
-                    severity=ATENCAO,
-                    category="erro_operacional",
-                    title="Erro operacional recente",
-                    description="Há ERRO_OPERACIONAL nas últimas 24 horas.",
-                    date=today_recife(),
-                    datetime=None,
-                    source_status=ATTENTION,
-                    navigation_target="Administração",
-                    metadata={"secao": "Sistema", "aba": "Saúde"},
-                )
+        )
+    audit = report.get("audit") or {}
+    if audit.get("status") == ERROR:
+        items.append(
+            AlertItem(
+                source_module="sistema",
+                source_id="audit",
+                gabinete="—",
+                severity=ATENCAO,
+                category="auditoria",
+                title="Falha na auditoria",
+                description=(audit.get("summary") or "Auditoria indisponível")[:160],
+                date=today_recife(),
+                datetime=None,
+                source_status=ERROR,
+                navigation_target="Administração",
+                metadata={"secao": "Sistema", "aba": "Saúde"},
             )
+        )
     return items[:SOURCE_CAP]
 
 
@@ -419,9 +425,13 @@ def collect_alerts(
                 alert = alert_from_pending(item, now)
                 if alert:
                     collected.append(alert)
-    if principal.administrator and (wanted is None or "sistema" in wanted) and not gabinete:
+    if has_permission(principal, "admin") and (
+        wanted is None or "sistema" in wanted
+    ) and not gabinete:
         try:
-            collected.extend(system_alerts(store, cached=cached_health))
+            collected.extend(
+                system_alerts(store, cached=cached_health, principal=principal)
+            )
             errors["sistema"] = None
         except Exception as exc:
             LOGGER.exception("Falha ao carregar alertas de sistema")
@@ -433,8 +443,12 @@ def collect_alerts(
                 principal=principal,
             )
             errors["sistema"] = "sistema"
+    elif not has_permission(principal, "admin"):
+        errors.pop("sistema", None)
     filtered = []
     for item in collected:
+        if item.source_module == "sistema" and not has_permission(principal, "admin"):
+            continue
         if severity and item.severity != severity:
             continue
         if wanted and item.source_module not in wanted:

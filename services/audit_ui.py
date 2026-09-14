@@ -49,8 +49,8 @@ def _module_label(code):
     return MODULE_LABELS.get(code, code or "—")
 
 
-def _render_overview(store):
-    data = overview(store)
+def _render_overview(store, principal):
+    data = overview(store, principal)
     st.caption("Indicadores calculados no fuso institucional America/Recife. Logs em UTC.")
     today, week, month = st.columns(3)
     with today:
@@ -79,7 +79,7 @@ def _render_overview(store):
     c.write(format_local(latest["criado_em"]) if latest else "—")
     d.write("**Módulo mais utilizado (30 dias)**")
     d.write(_module_label(used["modulo"]) if used else "—")
-    rows = user_overview(store, {"inicio": period_bounds("30d")[0]})
+    rows = user_overview(store, principal, {"inicio": period_bounds("30d")[0]})
     st.subheader("Usuários")
     st.dataframe(
         [
@@ -96,7 +96,7 @@ def _render_overview(store):
     )
 
 
-def _render_accesses(store):
+def _render_accesses(store, principal):
     users = AccessStore(store).list_users()
     emails = {u["email"]: u["nome"] + " · " + u["email"] for u in users}
     filters = _period_filter("acc_") or {}
@@ -123,7 +123,7 @@ def _render_accesses(store):
         filters["usuario_email"] = picked
     if modulo:
         filters["modulo"] = modulo
-    rows = user_overview(store, filters)
+    rows = user_overview(store, principal, filters)
     if perfil:
         rows = [r for r in rows if r.get("perfil") == perfil]
     if not rows:
@@ -177,7 +177,7 @@ def _render_accesses(store):
         )
 
 
-def _render_log(store):
+def _render_log(store, principal):
     audit = AuditStore(store)
     filters = _period_filter("log_") or {}
     a, b, c = st.columns(3)
@@ -275,7 +275,7 @@ def _render_log(store):
                         "detalhes": details_dict(record),
                     }
                 )
-    csv_text, exported, truncated = export_csv(store, filters)
+    csv_text, exported, truncated = export_csv(store, principal, filters)
     if truncated:
         st.warning(
             f"A exportação está limitada a {EXPORT_LIMIT} linhas. "
@@ -301,8 +301,8 @@ def render(store, principal):
         key="audit_tab",
     )
     if tab == "Visão Geral":
-        _render_overview(store)
+        _render_overview(store, principal)
     elif tab == "Acessos":
-        _render_accesses(store)
+        _render_accesses(store, principal)
     else:
-        _render_log(store)
+        _render_log(store, principal)
