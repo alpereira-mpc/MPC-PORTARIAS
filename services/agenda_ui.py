@@ -28,13 +28,13 @@ def display_datetime(value, date_only=False):
 
 
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
-def read_agenda(key, start, end, member, kind, status, _agenda, offset=None):
+def read_agenda(key, start, end, member, kind, status, _agenda, offset=None, active=False):
     if offset is not None:
-        return _agenda.upcoming(start, member, kind, status, offset)
-    return _agenda.list(start, end, member, kind, status)
+        return (_agenda.active_upcoming if active else _agenda.upcoming)(start, member, kind, status, offset)
+    return (_agenda.active if active else _agenda.list)(start, end, member, kind, status)
 
 
-def records(agenda, start, end, member=None, kind=None, status=None, *, offset=None):
+def records(agenda, start, end, member=None, kind=None, status=None, *, offset=None, active=False):
     store = agenda.store
     key = (
         store.read_cache_key(("agenda_compromissos", "agenda_compromisso_procuradores"))
@@ -45,7 +45,7 @@ def records(agenda, start, end, member=None, kind=None, status=None, *, offset=N
             st.session_state.get("agenda_revision", 0),
         )
     )
-    return read_agenda(key, start, end, member, kind, status, agenda, offset)
+    return read_agenda(key, start, end, member, kind, status, agenda, offset, active)
 
 
 def done(message):
@@ -316,6 +316,10 @@ def consume_pending_open_agenda(agenda):
     if focus and "agenda_edit" not in st.session_state:
         record = agenda.get(focus)
         if record:
+            # Set navigation before its widget is instantiated on this rerun.
+            st.session_state["agenda_section"] = (
+                "Histórico" if record["situacao"] in ("Realizado", "Cancelado") else "Agenda"
+            )
             st.session_state["agenda_edit"] = record
     return focus
 
@@ -394,6 +398,55 @@ def render(store=None, principal=None):
     if "agenda_leave_edit" in st.session_state:
         leave_editor(agenda, people, principal)
         return
+    section = st.radio(
+        "Seção", ["Agenda", "Histórico"], horizontal=True, key="agenda_section"
+    )
+    if section == "Histórico":
+        a, b, c = st.columns(3)
+        history_member = a.selectbox("Procurador", [None, *names], format_func=lambda p: names.get(p, "Todos"), key="agenda_history_member")
+        history_scope = b.selectbox("Tipo de item", ("Todos", "Compromissos", "Afastamentos"), key="agenda_history_scope")
+        history_status = c.selectbox("Situação", [None, "Realizado", "Cancelado", "ENCERRADO", "CANCELADO"], format_func=lambda value: value or "Todas", key="agenda_history_status")
+        d, e, f = st.columns(3)
+        history_start = d.date_input("Período inicial", value=None, key="agenda_history_start", format="DD/MM/YYYY")
+        history_end = e.date_input("Período final", value=None, key="agenda_history_end", format="DD/MM/YYYY")
+        history_search = f.text_input("Busca", key="agenda_history_search")
+        signature = (history_member, history_scope, history_status, history_start, history_end, history_search, st.session_state.get("agenda_revision", 0))
+        if st.session_state.get("agenda_history_filters") != signature:
+            st.session_state["agenda_history_offset"] = 0; st.session_state["agenda_history_filters"] = signature
+        offset = st.session_state.get("agenda_history_offset", 0)
+        start_iso = history_start.isoformat() if history_start else None
+        end_iso = (history_end + timedelta(days=1)).isoformat() if history_end else None
+        appointments = agenda.history(member=history_member, status=history_status if history_status in ("Realizado", "Cancelado") else None, start=start_iso, end=end_iso, search=history_search or None, offset=offset) if history_scope != "Afastamentos" else []
+        leaves = agenda.history_leaves(member=history_member, status=history_status if history_status in ("ENCERRADO", "CANCELADO") else None, start=start_iso, end=end_iso, offset=offset) if history_scope != "Compromissos" else []
+        for row in leaves:
+            row["inicio"] = row["data_fim"] + "T00:00:00"; row["afastamento"] = True
+        rows = [*appointments, *leaves]
+        rows.sort(key=lambda row: (row["inicio"], row["id"]), reverse=True)
+        has_next = len(appointments) > 30 or len(leaves) > 30
+        rows = rows[:30]
+        if not rows:
+            st.info("Nenhum item histórico para os filtros selecionados.")
+        for row in rows:
+            with st.container(border=True):
+                if row.get("afastamento"):
+                    st.markdown(f"**AFASTAMENTO — {names.get(row['procurador_id'], row['procurador_id'])}**")
+                    st.write(f"{row['motivo']} · {row['data_inicio']} a {row['data_fim']}")
+                    if row.get("substituto_id"): st.write("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"])))
+                    if row.get("observacao"): st.write(row["observacao"])
+                    st.caption(row["status"])
+                    if st.button("Abrir detalhes do afastamento", key="agenda_history_leave_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
+                else:
+                    hour = "Dia inteiro" if row.get("sem_hora") else row["inicio"][11:16]
+                    st.markdown(f"**{display_datetime(row['inicio'], row.get('sem_hora'))} · {hour} · {TYPES[row['tipo']]} · {row.get('titulo') or row.get('processo')}**")
+                    st.write(" / ".join(names.get(p, str(p)) for p in row["procuradores"]))
+                    st.caption(f"{row.get('local', '')} · {row['situacao']}")
+                    if st.button("Abrir detalhes", key="agenda_history_edit_" + row["id"]): st.session_state["agenda_edit"] = row; st.rerun()
+        previous, following = st.columns(2)
+        if previous.button("Anterior", disabled=offset == 0, key="agenda_history_previous"):
+            st.session_state["agenda_history_offset"] = max(0, offset - 30); st.rerun()
+        if following.button("Próxima", disabled=not has_next, key="agenda_history_next"):
+            st.session_state["agenda_history_offset"] = offset + 30; st.rerun()
+        return
     new, leave, _ = st.columns([1, 1.2, 6])
     if new.button("+ Novo compromisso", type="primary"):
         st.session_state["agenda_edit"] = {}
@@ -464,9 +517,9 @@ def render(store=None, principal=None):
             st.session_state["agenda_upcoming_offset"] = 0
             st.session_state["agenda_upcoming_filters"] = signature
         offset = st.session_state.get("agenda_upcoming_offset", 0)
-        rows = records(agenda, today.isoformat(), None, member, kind, status, offset=offset) if show_appointments else []
+        rows = records(agenda, today.isoformat(), None, member, kind, status, offset=offset, active=True) if show_appointments else []
         leaves = (
-            agenda.leaves(today.isoformat(), None, member, upcoming=True)
+            agenda.active_leaves(today.isoformat(), None, member, upcoming=True)
             if show_leaves
             and (item_scope == "Somente afastamentos" or (not kind and not status))
             else []
@@ -491,9 +544,9 @@ def render(store=None, principal=None):
             st.session_state["agenda_upcoming_offset"] = offset + 30
             st.rerun()
     else:
-        rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status) if show_appointments else []
+        rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status, active=True) if show_appointments else []
         leaves = (
-            agenda.leaves(start.isoformat(), (end - timedelta(days=1)).isoformat(), member)
+            agenda.active_leaves(start.isoformat(), (end - timedelta(days=1)).isoformat(), member)
             if show_leaves
             and (item_scope == "Somente afastamentos" or (not kind and not status))
             else []
@@ -534,6 +587,8 @@ def render(store=None, principal=None):
             st.markdown(f"**{hour} · {TYPES[row['tipo']]} · {title}**")
             st.write(" / ".join(names.get(p, str(p)) for p in row["procuradores"]))
             st.caption(f"{row['local']} · {row['situacao']}")
+            if row["situacao"] not in ("Realizado", "Cancelado") and date.fromisoformat(row["inicio"][:10]) < today:
+                st.warning("⚠ Compromisso passado ainda não encerrado")
             with st.expander("Detalhes e ações"):
                 st.write("Início:", display_datetime(row["inicio"], row["sem_hora"]))
                 if row["fim"]:

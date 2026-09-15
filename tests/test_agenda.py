@@ -266,6 +266,23 @@ def test_existing_bindings_gain_bradson_without_changing_members(store):
     assert not institutional([2], "REUNIAO", date(2026, 9, 8), agenda.bindings)
 
 
+def test_active_and_history_status_views(store):
+    agenda = AgendaStore(store)
+    active = agenda.save(draft(day="2026-09-07"))
+    completed = agenda.save(draft(day="2026-09-08"), conflict_confirmed=True)
+    cancelled = agenda.save(draft(day="2026-09-09"), conflict_confirmed=True)
+    agenda.save({**agenda.get(completed), "situacao": "Realizado"})
+    agenda.cancel(cancelled)
+    leave_active = agenda.save_leave({"procurador_id": 4, "motivo": "Férias", "data_inicio": "2099-01-01", "data_fim": "2099-01-02"})
+    leave_ended = agenda.save_leave({"procurador_id": 4, "motivo": "Férias", "data_inicio": "2020-01-01", "data_fim": "2020-01-02"})
+    leave_cancelled = agenda.save_leave({"procurador_id": 4, "motivo": "Férias", "data_inicio": "2098-01-01", "data_fim": "2098-01-02"})
+    agenda.cancel_leave(leave_cancelled)
+    assert [row["id"] for row in agenda.active("2026-01-01", "2100-01-01")] == [active]
+    assert {row["id"] for row in agenda.history()} == {completed, cancelled}
+    assert [row["id"] for row in agenda.active_leaves("2026-01-01", "2100-01-01")] == [leave_active]
+    assert {row["id"] for row in agenda.history_leaves()} == {leave_ended, leave_cancelled}
+
+
 @pytest.mark.parametrize("view", ["Hoje", "Semana", "Mês", "Próximos"])
 @pytest.mark.parametrize("with_record", [False, True])
 def test_views_only_show_registered_appointments(store, monkeypatch, view, with_record):

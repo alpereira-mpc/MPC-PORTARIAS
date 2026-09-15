@@ -76,7 +76,7 @@ class AgendaStore:
             }
         _READY.add(key)
 
-    def _list(self, c, start, end, member=None, kind=None, status=None, *, offset=None):
+    def _list(self, c, start, end, member=None, kind=None, status=None, *, offset=None, active_only=None):
         if offset is None:
             clauses = ["a.inicio < ?", "COALESCE(a.fim,a.inicio) >= ?"]
             values = [end, start]
@@ -87,6 +87,10 @@ class AgendaStore:
             if value:
                 clauses.append(f"a.{column}=?")
                 values.append(value)
+        if active_only is True:
+            clauses.append("a.situacao NOT IN ('Realizado','Cancelado')")
+        elif active_only is False:
+            clauses.append("a.situacao IN ('Realizado','Cancelado')")
         if member:
             clauses.append(
                 "EXISTS (SELECT 1 FROM agenda_compromisso_procuradores p WHERE p.compromisso_id=a.id AND p.procurador_id=?)"
@@ -174,6 +178,41 @@ class AgendaStore:
             raise ValueError("Página inválida.")
         with self.store.connection(read_only=True) as c:
             return self._list(c, start, None, member, kind, status, offset=offset)
+
+    def active(self, start, end, member=None, kind=None, status=None, *, offset=None):
+        """Operational appointments only; old dates remain active until closed."""
+        with self.store.connection(read_only=True) as c:
+            return self._list(c, start, end, member, kind, status, offset=offset, active_only=True)
+
+    def active_upcoming(self, start, member=None, kind=None, status=None, offset=0):
+        return self.active(start, None, member, kind, status, offset=offset)
+
+    def history(self, *, member=None, kind=None, status=None, start=None, end=None, search=None, limit=30, offset=0):
+        """Fetch one historical page in SQL, newest first, without moving records."""
+        if not isinstance(limit, int) or not isinstance(offset, int) or limit < 1 or offset < 0:
+            raise ValueError("Página inválida.")
+        with self.store.connection(read_only=True) as c:
+            clauses = ["a.situacao IN ('Realizado','Cancelado')"]
+            values = []
+            if member:
+                clauses.append("EXISTS (SELECT 1 FROM agenda_compromisso_procuradores p WHERE p.compromisso_id=a.id AND p.procurador_id=?)")
+                values.append(member)
+            if kind:
+                clauses.append("a.tipo=?"); values.append(kind)
+            if status:
+                clauses.append("a.situacao=?"); values.append(status)
+            if start:
+                clauses.append("a.inicio>=?"); values.append(start)
+            if end:
+                clauses.append("a.inicio<?"); values.append(end)
+            if search:
+                clauses.append("a.payload LIKE ?"); values.append("%" + search + "%")
+            rows = c.execute("SELECT a.* FROM agenda_compromissos a WHERE " + " AND ".join(clauses) + " ORDER BY a.inicio DESC,a.id DESC LIMIT ? OFFSET ?", [*values, limit + 1, offset]).fetchall()
+            records = []
+            for row in rows:
+                people = [r[0] for r in c.execute("SELECT procurador_id FROM agenda_compromisso_procuradores WHERE compromisso_id=? ORDER BY procurador_id", (row["id"],))]
+                records.append({**json.loads(row["payload"]), **{k: row[k] for k in ("id", "tipo", "inicio", "fim", "situacao", "criada", "atualizada")}, "procuradores": people})
+            return records
 
     def save(self, record, *, institutional_confirmed=False, conflict_confirmed=False):
         validate(record)
@@ -280,6 +319,32 @@ class AgendaStore:
     def leaves(self, start, end, member=None, *, upcoming=False):
         with self.store.connection(read_only=True) as c:
             return self._leaves(c, start, end, member, upcoming=upcoming)
+
+    def active_leaves(self, start, end, member=None, *, upcoming=False):
+        return [row for row in self.leaves(start, end, member, upcoming=upcoming) if row["status"] in ("AGENDADO", "EM ANDAMENTO")]
+
+    def history_leaves(self, *, member=None, status=None, start=None, end=None, limit=30, offset=0):
+        """Historical leave page. Ended status is deliberately derived, never persisted."""
+        if not isinstance(limit, int) or not isinstance(offset, int) or limit < 1 or offset < 0:
+            raise ValueError("Página inválida.")
+        today = datetime.now().date().isoformat()
+        with self.store.connection(read_only=True) as c:
+            clauses, values = [], []
+            clauses.append("(cancelado=1 OR (cancelado=0 AND data_fim<?))"); values.append(today)
+            if member:
+                clauses.append("procurador_id=?"); values.append(member)
+            if start:
+                clauses.append("data_fim>=?"); values.append(start)
+            if end:
+                clauses.append("data_inicio<?"); values.append(end)
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            if status == "CANCELADO":
+                clauses.append("cancelado=1")
+            elif status == "ENCERRADO":
+                clauses.append("cancelado=0 AND data_fim<?"); values.append(today)
+            where = " WHERE " + " AND ".join(clauses)
+            rows = [dict(r) | {"status": leave_status(dict(r))} for r in c.execute("SELECT * FROM agenda_afastamentos" + where + " ORDER BY data_fim DESC,id DESC LIMIT ? OFFSET ?", [*values, limit + 1, offset])]
+        return rows
 
     def get_leave(self, identifier):
         with self.store.connection(read_only=True) as c:
