@@ -492,7 +492,7 @@ def render_portal():
             for module in MODULES[1:]:
                 if not module.active:
                     st.caption(f"{module.label} · Em breve")
-    render_institutional_header()
+    render_institutional_header(home=selected == "Início")
     if alerts_overlay_active(selected):
         from services.alerts_ui import render as render_alerts
 

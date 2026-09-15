@@ -28,6 +28,12 @@ def _brand_styles():
         ".mpc-sidebar-brand img{"
         "display:block;width:10rem;height:auto;object-fit:contain;"
         "}"
+        ".mpc-home-institutional-header{"
+        "margin:-1.75rem 0 1.1rem 0;"
+        "}"
+        ".mpc-home-institutional-header img{"
+        "display:block;width:min(45rem,100%);max-width:100%;height:auto;"
+        "}"
         "section[data-testid='stMain'] [data-testid='stMainBlockContainer'] "
         "> div > [data-testid='stImage']:first-child{"
         "margin:0 0 1.1rem 0;"
@@ -106,9 +112,18 @@ def render_sidebar_brand():
     )
 
 
-def render_institutional_header():
+def render_institutional_header(*, home=False):
     """Horizontal institutional banner at the top of the main pane."""
     _brand_styles()
+    if home:
+        logo = base64.b64encode(asset(HEADER_IMAGE)).decode("ascii")
+        st.markdown(
+            '<div class="mpc-home-institutional-header"><img src="data:image/png;base64,'
+            + logo
+            + '" alt="MPC-PB — Ministério Público de Contas do Estado da Paraíba"></div>',
+            unsafe_allow_html=True,
+        )
+        return
     st.image(asset(HEADER_IMAGE), width=HEADER_WIDTH)
 
 
