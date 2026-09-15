@@ -32,10 +32,14 @@ def test_pg_still_rejects_common_prosecutor_as_substitute():
         validate(leave(1, 3), PEOPLE)
 
 
-def test_sub_pg_still_rejects_pg_or_sub_pg_as_substitute():
-    for substitute in (1, 2):
-        with pytest.raises(ValueError, match="elegível"):
-            validate(leave(2, substitute), PEOPLE)
+def test_sub_pg_rejects_pg_as_ineligible_substitute():
+    with pytest.raises(ValueError, match="elegível"):
+        validate(leave(2, 1), PEOPLE)
+
+
+def test_prosecutor_cannot_substitute_themself():
+    with pytest.raises(ValueError, match="não pode substituir a si mesmo"):
+        validate(leave(2, 2), PEOPLE)
 
 
 def test_common_prosecutor_never_has_pending_substitution():
