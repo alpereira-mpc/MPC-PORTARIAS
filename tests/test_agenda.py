@@ -328,3 +328,42 @@ def test_agenda_ui_rebuilds_from_display_proxy_session(store, monkeypatch):
     assert type(app.session_state["agenda_store"]) is AgendaStore
     assert app.session_state["agenda_store"].store is store
 
+
+@pytest.mark.parametrize("with_appointment", [False, True])
+def test_agenda_renders_leave_records_separately_from_appointments(
+    store, monkeypatch, with_appointment
+):
+    """A leave intentionally lacks compromisso-only fields such as sem_hora."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date().isoformat()
+    agenda = AgendaStore(store)
+    agenda.save_leave(
+        {
+            "procurador_id": 4,
+            "motivo": "Férias",
+            "data_inicio": today,
+            "data_fim": today,
+            "observacao": "Afastamento de teste",
+        }
+    )
+    if with_appointment:
+        record = draft("EVENTO", members=[1], day=today)
+        record["titulo"] = "Compromisso de teste"
+        agenda.save(record)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_agenda").click().run()
+    assert not app.exception and not app.error
+    displayed = "\n".join(
+        str(item.value) for item in (*app.markdown, *app.caption, *app.text)
+    )
+    assert "AFASTAMENTO" in displayed
+    assert "Férias" in displayed
+    if with_appointment:
+        assert "Compromisso de teste" in displayed
+

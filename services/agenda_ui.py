@@ -394,11 +394,11 @@ def render(store=None, principal=None):
     if "agenda_leave_edit" in st.session_state:
         leave_editor(agenda, people, principal)
         return
-    new, leave = st.columns(2)
+    new, leave, _ = st.columns([1, 1.2, 6])
     if new.button("+ Novo compromisso", type="primary"):
         st.session_state["agenda_edit"] = {}
         st.rerun()
-    if leave.button("Cadastrar afastamento"):
+    if leave.button("Cadastrar afastamento", type="primary"):
         st.session_state["agenda_leave_edit"] = {}
         st.rerun()
     a, b, c = st.columns(3)
@@ -493,10 +493,8 @@ def render(store=None, principal=None):
         if row["inicio"][:10] != current_day:
             current_day = row["inicio"][:10]
             st.subheader(datetime.fromisoformat(current_day).strftime("%d/%m/%Y"))
-        hour = "Dia inteiro" if row["sem_hora"] else row["inicio"][11:16]
-        title = row.get("titulo") or row.get("processo")
-        with st.container(border=True):
-            if row.get("afastamento"):
+        if row.get("afastamento"):
+            with st.container(border=True):
                 st.markdown(f"**AFASTAMENTO — {names.get(row['procurador_id'], row['procurador_id'])}**")
                 detail = f"{row['motivo']}{' · ' + row['motivo_outro'] if row.get('motivo_outro') else ''} · {display_datetime(row['inicio'], True)} a {datetime.fromisoformat(row['data_fim']).strftime('%d/%m/%Y')}"
                 st.write(detail)
@@ -505,7 +503,11 @@ def render(store=None, principal=None):
                 if st.button("Editar afastamento", key="agenda_leave_edit_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
                 if row["status"] != "CANCELADO" and st.button("Cancelar afastamento", key="agenda_leave_cancel_" + row["id"]):
                     agenda.cancel_leave(row["id"]); audit_agenda("AFASTAMENTO_CANCELADO", "CANCELAR", row["id"], entity_type="afastamento"); done("Afastamento cancelado; registro preservado.")
-                continue
+            continue
+        # From here down, every record is a compromisso and has its own fields.
+        hour = "Dia inteiro" if row["sem_hora"] else row["inicio"][11:16]
+        title = row.get("titulo") or row.get("processo")
+        with st.container(border=True):
             st.markdown(f"**{hour} · {TYPES[row['tipo']]} · {title}**")
             st.write(" / ".join(names.get(p, str(p)) for p in row["procuradores"]))
             st.caption(f"{row['local']} · {row['situacao']}")
