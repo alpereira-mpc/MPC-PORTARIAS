@@ -78,8 +78,8 @@ MODULES = (
     Module(
         "agenda",
         "Agenda",
-        "Agenda dos Procuradores",
-        "Organização de eventos, reuniões e despachos dos procuradores.",
+        "Agenda e Afastamentos dos Procuradores",
+        "Organização de eventos, reuniões, despachos, afastamentos e substituições dos procuradores.",
         "calendar_month",
         True,
     ),
