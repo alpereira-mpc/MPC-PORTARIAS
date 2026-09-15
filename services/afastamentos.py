@@ -28,6 +28,16 @@ def eligible_substitutes(holder, people):
     return []
 
 
+def requires_substitute(holder):
+    return holder.get("funcao") in ("Procurador-Geral", "Subprocurador-Geral")
+
+
+def substitution_pending(record, people):
+    """Presentation-only institutional pending state; it is never persisted."""
+    holder = next((p for p in people if p["id"] == record.get("procurador_id")), None)
+    return bool(holder and requires_substitute(holder) and not record.get("substituto_id"))
+
+
 def validate(record, people, *, holder_conflict=False, substitute_absent=False):
     if record.get("motivo") not in MOTIVOS:
         raise ValueError("Motivo de afastamento inválido.")
@@ -45,10 +55,6 @@ def validate(record, people, *, holder_conflict=False, substitute_absent=False):
     if not holder or not holder.get("ativo"):
         raise ValueError("Selecione um procurador ativo da base existente.")
     substitute_id = record.get("substituto_id")
-    needed = holder.get("funcao") in ("Procurador-Geral", "Subprocurador-Geral")
-    if needed and not substitute_id:
-        label = "Procurador-Geral" if holder.get("funcao") == "Procurador-Geral" else "Subprocurador-Geral"
-        raise ValueError(f"O afastamento do {label} exige indicação de um substituto.")
     if substitute_id:
         if substitute_id == holder["id"]:
             raise ValueError("O procurador afastado não pode substituir a si mesmo.")

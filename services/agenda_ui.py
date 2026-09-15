@@ -16,7 +16,7 @@ from services.agenda import (
     institutional,
     conflicts,
 )
-from services.afastamentos import MOTIVOS, eligible_substitutes
+from services.afastamentos import MOTIVOS, eligible_substitutes, substitution_pending
 from services.ui_store import display_store
 
 
@@ -340,7 +340,7 @@ def leave_editor(agenda, people, principal):
         substitute = st.selectbox("Substituto", [None, *candidate_ids], index=([None, *candidate_ids].index(old.get("substituto_id")) if old.get("substituto_id") in candidate_ids else 0), format_func=lambda value: "Selecione" if value is None else next(p["nome"] for p in candidates if p["id"] == value), key=prefix + "substitute")
         if substitute is None:
             role = "Procurador-Geral" if holder.get("funcao") == "Procurador-Geral" else "Subprocurador-Geral"
-            st.warning(f"O afastamento do {role} exige indicação de um substituto.")
+            st.warning(f"O afastamento do {role} pode ser salvo agora; a substituição ficará pendente.")
     notes = st.text_area("Observação", value=old.get("observacao") or "", key=prefix + "notes")
     record = {"id": old.get("id"), "procurador_id": holder_id, "motivo": motive, "motivo_outro": other, "data_inicio": start.isoformat(), "data_fim": end.isoformat(), "substituto_id": substitute, "observacao": notes}
     if agenda.leave_substitute_warning(substitute, record["data_inicio"], record["data_fim"], record["id"]):
@@ -349,7 +349,7 @@ def leave_editor(agenda, people, principal):
         try:
             identifier = agenda.save_leave(record, created_by=getattr(principal, "email", None))
             audit_agenda("AFASTAMENTO_EDITADO" if old.get("id") else "AFASTAMENTO_CRIADO", "ALTERAR" if old.get("id") else "CRIAR", identifier, {"procurador": holder["nome"], "periodo": f"{record['data_inicio']} a {record['data_fim']}", "motivo": motive, "substituto": next((p["nome"] for p in people if p["id"] == substitute), None)}, "afastamento")
-            done("Afastamento salvo com sucesso.")
+            done("Afastamento salvo. Substituto ainda não definido." if substitution_pending(record, people) else "Afastamento salvo com sucesso.")
         except ValueError as exc: st.error(str(exc))
     if st.button("Voltar à agenda"):
         st.session_state.pop("agenda_leave_edit", None); st.rerun()
@@ -499,6 +499,8 @@ def render(store=None, principal=None):
                 detail = f"{row['motivo']}{' · ' + row['motivo_outro'] if row.get('motivo_outro') else ''} · {display_datetime(row['inicio'], True)} a {datetime.fromisoformat(row['data_fim']).strftime('%d/%m/%Y')}"
                 st.write(detail)
                 if row.get("substituto_id"): st.write("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"])))
+                elif substitution_pending(row, people):
+                    st.warning("⚠ Substituto ainda não definido")
                 st.caption(row["status"])
                 if st.button("Editar afastamento", key="agenda_leave_edit_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
                 if row["status"] != "CANCELADO" and st.button("Cancelar afastamento", key="agenda_leave_cancel_" + row["id"]):
