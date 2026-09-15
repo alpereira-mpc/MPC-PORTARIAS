@@ -481,10 +481,11 @@ def render_portal():
         from services.alerts import can_view_alertas
         from services.alerts_ui import render_bell
 
+        _, logout_column = st.columns([3, 2])
+        if logout_column.button("Sair", key="portal_logout"):
+            _logout()
         if can_view_alertas(principal):
             render_bell(store, principal)
-        if st.button("Sair", key="portal_logout"):
-            _logout()
         selected = st.radio("Portal", options, key="portal_module")
         if selected != "Memorandos":
             st.session_state["memorando_form_active"] = False
