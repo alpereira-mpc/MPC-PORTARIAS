@@ -16,6 +16,7 @@ from services.agenda import (
     institutional,
     conflicts,
 )
+from services.afastamentos import MOTIVOS, eligible_substitutes
 from services.ui_store import display_store
 
 
@@ -53,12 +54,13 @@ def done(message):
     read_agenda.clear()
     st.session_state["agenda_revision"] = st.session_state.get("agenda_revision", 0) + 1
     st.session_state.pop("agenda_edit", None)
+    st.session_state.pop("agenda_leave_edit", None)
     st.session_state["agenda_message"] = message
     invalidate_alert_summary()
     st.rerun()
 
 
-def audit_agenda(evento, acao, identifier=None, extra=None):
+def audit_agenda(evento, acao, identifier=None, extra=None, entity_type="compromisso"):
     from services.audit import registrar_evento
 
     store = st.session_state.get("_mpc_store")
@@ -69,7 +71,7 @@ def audit_agenda(evento, acao, identifier=None, extra=None):
         evento=evento,
         modulo="agenda",
         acao=acao,
-        entidade_tipo="compromisso",
+        entidade_tipo=entity_type,
         entidade_id=identifier,
         detalhes=extra,
     )
@@ -318,6 +320,41 @@ def consume_pending_open_agenda(agenda):
     return focus
 
 
+def leave_editor(agenda, people, principal):
+    old = st.session_state["agenda_leave_edit"]
+    prefix = "agenda_leave_" + old.get("id", "new") + "_" + str(st.session_state.get("agenda_revision", 0))
+    st.subheader("Editar afastamento" if old else "Cadastrar afastamento")
+    available = [p for p in people if p["ativo"] or p["id"] == old.get("procurador_id")]
+    ids = [p["id"] for p in available]
+    holder_id = st.selectbox("Procurador", ids, index=ids.index(old["procurador_id"]) if old.get("procurador_id") in ids else 0, format_func=lambda value: next(p["nome"] for p in available if p["id"] == value), key=prefix + "holder")
+    holder = next(p for p in available if p["id"] == holder_id)
+    motive = st.selectbox("Motivo", MOTIVOS, index=MOTIVOS.index(old.get("motivo", "Férias")), key=prefix + "motive")
+    other = st.text_input("Especifique o motivo", value=old.get("motivo_outro") or "", key=prefix + "other") if motive == "Outro" else ""
+    left, right = st.columns(2)
+    start = left.date_input("Data inicial", value=date.fromisoformat(old["data_inicio"]) if old.get("data_inicio") else date.today(), format="DD/MM/YYYY", key=prefix + "start")
+    end = right.date_input("Data final", value=date.fromisoformat(old["data_fim"]) if old.get("data_fim") else start, format="DD/MM/YYYY", key=prefix + "end")
+    candidates = eligible_substitutes(holder, people)
+    substitute = None
+    if candidates:
+        candidate_ids = [p["id"] for p in candidates]
+        substitute = st.selectbox("Substituto", [None, *candidate_ids], index=([None, *candidate_ids].index(old.get("substituto_id")) if old.get("substituto_id") in candidate_ids else 0), format_func=lambda value: "Selecione" if value is None else next(p["nome"] for p in candidates if p["id"] == value), key=prefix + "substitute")
+        if substitute is None:
+            role = "Procurador-Geral" if holder.get("funcao") == "Procurador-Geral" else "Subprocurador-Geral"
+            st.warning(f"O afastamento do {role} exige indicação de um substituto.")
+    notes = st.text_area("Observação", value=old.get("observacao") or "", key=prefix + "notes")
+    record = {"id": old.get("id"), "procurador_id": holder_id, "motivo": motive, "motivo_outro": other, "data_inicio": start.isoformat(), "data_fim": end.isoformat(), "substituto_id": substitute, "observacao": notes}
+    if agenda.leave_substitute_warning(substitute, record["data_inicio"], record["data_fim"], record["id"]):
+        st.warning("Atenção: este procurador já está indicado como substituto em outro afastamento durante parte deste período.")
+    if st.button("Salvar afastamento", type="primary"):
+        try:
+            identifier = agenda.save_leave(record, created_by=getattr(principal, "email", None))
+            audit_agenda("AFASTAMENTO_EDITADO" if old.get("id") else "AFASTAMENTO_CRIADO", "ALTERAR" if old.get("id") else "CRIAR", identifier, {"procurador": holder["nome"], "periodo": f"{record['data_inicio']} a {record['data_fim']}", "motivo": motive, "substituto": next((p["nome"] for p in people if p["id"] == substitute), None)}, "afastamento")
+            done("Afastamento salvo com sucesso.")
+        except ValueError as exc: st.error(str(exc))
+    if st.button("Voltar à agenda"):
+        st.session_state.pop("agenda_leave_edit", None); st.rerun()
+
+
 def render(store=None, principal=None):
     from database.store import Store, unwrap_store
     from services.access import current_user, require_permission
@@ -354,8 +391,15 @@ def render(store=None, principal=None):
     if "agenda_edit" in st.session_state:
         editor(agenda, people)
         return
-    if st.button("+ Novo compromisso", type="primary"):
+    if "agenda_leave_edit" in st.session_state:
+        leave_editor(agenda, people, principal)
+        return
+    new, leave = st.columns(2)
+    if new.button("+ Novo compromisso", type="primary"):
         st.session_state["agenda_edit"] = {}
+        st.rerun()
+    if leave.button("Cadastrar afastamento"):
+        st.session_state["agenda_leave_edit"] = {}
         st.rerun()
     a, b, c = st.columns(3)
     member = a.selectbox(
@@ -415,6 +459,7 @@ def render(store=None, principal=None):
         rows = records(
             agenda, today.isoformat(), None, member, kind, status, offset=offset
         )
+        leaves = agenda.leaves(today.isoformat(), None, member, upcoming=True) if not kind and not status else []
         # A deletion in another session can empty the current page.
         if not rows and offset:
             st.session_state["agenda_upcoming_offset"] = 0
@@ -436,6 +481,11 @@ def render(store=None, principal=None):
             st.rerun()
     else:
         rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status)
+        leaves = agenda.leaves(start.isoformat(), (end - timedelta(days=1)).isoformat(), member) if not kind and not status else []
+    for leave_record in leaves:
+        leave_record["inicio"] = leave_record["data_inicio"] + "T00:00:00"; leave_record["afastamento"] = True
+    rows.extend(leaves)
+    rows.sort(key=lambda row: (row["inicio"], row["id"]))
     if not rows:
         st.info("Nenhum compromisso no período selecionado.")
     current_day = None
@@ -446,6 +496,16 @@ def render(store=None, principal=None):
         hour = "Dia inteiro" if row["sem_hora"] else row["inicio"][11:16]
         title = row.get("titulo") or row.get("processo")
         with st.container(border=True):
+            if row.get("afastamento"):
+                st.markdown(f"**AFASTAMENTO — {names.get(row['procurador_id'], row['procurador_id'])}**")
+                detail = f"{row['motivo']}{' · ' + row['motivo_outro'] if row.get('motivo_outro') else ''} · {display_datetime(row['inicio'], True)} a {datetime.fromisoformat(row['data_fim']).strftime('%d/%m/%Y')}"
+                st.write(detail)
+                if row.get("substituto_id"): st.write("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"])))
+                st.caption(row["status"])
+                if st.button("Editar afastamento", key="agenda_leave_edit_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
+                if row["status"] != "CANCELADO" and st.button("Cancelar afastamento", key="agenda_leave_cancel_" + row["id"]):
+                    agenda.cancel_leave(row["id"]); audit_agenda("AFASTAMENTO_CANCELADO", "CANCELAR", row["id"], entity_type="afastamento"); done("Afastamento cancelado; registro preservado.")
+                continue
             st.markdown(f"**{hour} · {TYPES[row['tipo']]} · {title}**")
             st.write(" / ".join(names.get(p, str(p)) for p in row["procuradores"]))
             st.caption(f"{row['local']} · {row['situacao']}")

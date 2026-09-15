@@ -5,6 +5,7 @@ import json
 import uuid
 from database.store import now, schema_key_of, unwrap_store
 from services.agenda import RULES, normalized, validate, institutional, conflicts
+from services.afastamentos import validate as validate_leave, status as leave_status
 
 _READY = set()
 
@@ -45,6 +46,15 @@ class AgendaStore:
             c.execute(
                 "CREATE INDEX IF NOT EXISTS agenda_membro_idx ON agenda_compromisso_procuradores(procurador_id, compromisso_id)"
             )
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS agenda_afastamentos (
+                id TEXT PRIMARY KEY, procurador_id INTEGER NOT NULL REFERENCES procuradores(id),
+                motivo TEXT NOT NULL, motivo_outro TEXT, data_inicio TEXT NOT NULL, data_fim TEXT NOT NULL,
+                substituto_id INTEGER REFERENCES procuradores(id), observacao TEXT, cancelado INTEGER NOT NULL DEFAULT 0,
+                criado_por TEXT, criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL)"""
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS agenda_afastamentos_procurador_idx ON agenda_afastamentos(procurador_id,data_inicio,data_fim)")
+            c.execute("CREATE INDEX IF NOT EXISTS agenda_afastamentos_periodo_idx ON agenda_afastamentos(data_inicio,data_fim)")
             people = [dict(r) for r in c.execute("SELECT id,nome FROM procuradores")]
             # Resolve once against the existing catalog, then persist stable IDs, never seed positions.
             for rule in RULES:
@@ -257,3 +267,49 @@ class AgendaStore:
             raise ValueError("Confirme explicitamente a exclusão.")
         with self.store.connection() as c:
             c.execute("DELETE FROM agenda_compromissos WHERE id=?", (identifier,))
+
+    def _leaves(self, c, start, end, member=None, *, upcoming=False):
+        clauses = ["cancelado=0", "data_inicio>=?" if upcoming else "data_inicio<=? AND data_fim>=?"]
+        values = [start] if upcoming else [end, start]
+        if member:
+            clauses.append("procurador_id=?")
+            values.append(member)
+        return [dict(r) | {"status": leave_status(dict(r))} for r in c.execute(
+            "SELECT id,procurador_id,motivo,motivo_outro,data_inicio,data_fim,substituto_id,observacao,cancelado,criado_por,criado_em,atualizado_em FROM agenda_afastamentos WHERE " + " AND ".join(clauses) + " ORDER BY data_inicio,id", values)]
+
+    def leaves(self, start, end, member=None, *, upcoming=False):
+        with self.store.connection(read_only=True) as c:
+            return self._leaves(c, start, end, member, upcoming=upcoming)
+
+    def get_leave(self, identifier):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute("SELECT * FROM agenda_afastamentos WHERE id=?", (identifier,)).fetchone()
+            return dict(row) | {"status": leave_status(dict(row))} if row else None
+
+    def leave_substitute_warning(self, substitute_id, start, end, identifier=None):
+        """A concurrent substitution is advisory in the first release."""
+        if not substitute_id:
+            return False
+        with self.store.connection(read_only=True) as c:
+            return bool(c.execute(
+                "SELECT 1 FROM agenda_afastamentos WHERE substituto_id=? AND cancelado=0 AND id<>? AND data_inicio<=? AND data_fim>=?",
+                (substitute_id, identifier or "", end, start),
+            ).fetchone())
+
+    def save_leave(self, record, *, created_by=None):
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            people = [dict(r) for r in c.execute("SELECT id,nome,funcao,ativo FROM procuradores")]
+            identifier = record.get("id") or uuid.uuid4().hex
+            conflict = c.execute("SELECT 1 FROM agenda_afastamentos WHERE procurador_id=? AND cancelado=0 AND id<>? AND data_inicio<=? AND data_fim>=?", (record.get("procurador_id"), identifier, record.get("data_fim"), record.get("data_inicio"))).fetchone()
+            absent = record.get("substituto_id") and c.execute("SELECT 1 FROM agenda_afastamentos WHERE procurador_id=? AND cancelado=0 AND id<>? AND data_inicio<=? AND data_fim>=?", (record["substituto_id"], identifier, record.get("data_fim"), record.get("data_inicio"))).fetchone()
+            validate_leave(record, people, holder_conflict=bool(conflict), substitute_absent=bool(absent))
+            stamp = now(); old = c.execute("SELECT criado_em FROM agenda_afastamentos WHERE id=?", (identifier,)).fetchone()
+            if record.get("id") and not old: raise ValueError("Afastamento não encontrado.")
+            c.execute("""INSERT INTO agenda_afastamentos(id,procurador_id,motivo,motivo_outro,data_inicio,data_fim,substituto_id,observacao,cancelado,criado_por,criado_em,atualizado_em)
+            VALUES(?,?,?,?,?,?,?,?,0,?,?,?) ON CONFLICT(id) DO UPDATE SET procurador_id=excluded.procurador_id,motivo=excluded.motivo,motivo_outro=excluded.motivo_outro,data_inicio=excluded.data_inicio,data_fim=excluded.data_fim,substituto_id=excluded.substituto_id,observacao=excluded.observacao,atualizado_em=excluded.atualizado_em""", (identifier,record["procurador_id"],record["motivo"],record.get("motivo_outro") or None,record["data_inicio"],record["data_fim"],record.get("substituto_id"),record.get("observacao") or None,created_by,old[0] if old else stamp,stamp))
+            return identifier
+
+    def cancel_leave(self, identifier):
+        with self.store.connection() as c:
+            c.execute("UPDATE agenda_afastamentos SET cancelado=1,atualizado_em=? WHERE id=?", (now(), identifier))

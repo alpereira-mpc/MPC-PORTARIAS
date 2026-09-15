@@ -184,6 +184,26 @@ CREATE INDEX IF NOT EXISTS auditoria_eventos_acao_idx ON auditoria_eventos(acao)
 CREATE INDEX IF NOT EXISTS auditoria_eventos_resultado_idx ON auditoria_eventos(resultado);
 CREATE INDEX IF NOT EXISTS auditoria_eventos_sessao_idx ON auditoria_eventos(sessao_id);
 
+-- Agenda leave is intentionally independent from agenda_compromissos.
+CREATE TABLE IF NOT EXISTS agenda_afastamentos (
+    id TEXT PRIMARY KEY,
+    procurador_id BIGINT NOT NULL REFERENCES procuradores(id),
+    motivo TEXT NOT NULL,
+    motivo_outro TEXT,
+    data_inicio TEXT NOT NULL,
+    data_fim TEXT NOT NULL,
+    substituto_id BIGINT REFERENCES procuradores(id),
+    observacao TEXT,
+    cancelado INTEGER NOT NULL DEFAULT 0 CHECK(cancelado IN (0,1)),
+    criado_por TEXT,
+    criado_em TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agenda_afastamentos_procurador_idx
+    ON agenda_afastamentos(procurador_id, data_inicio, data_fim);
+CREATE INDEX IF NOT EXISTS agenda_afastamentos_periodo_idx
+    ON agenda_afastamentos(data_inicio, data_fim);
+
 -- The versioned initializer runs this script once, under a transaction lock.
 DO $$
 BEGIN
