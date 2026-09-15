@@ -401,7 +401,7 @@ def render(store=None, principal=None):
     if leave.button("Cadastrar afastamento", type="primary"):
         st.session_state["agenda_leave_edit"] = {}
         st.rerun()
-    a, b, c = st.columns(3)
+    a, b, c, d = st.columns(4)
     member = a.selectbox(
         "Procurador",
         [None, *names],
@@ -420,6 +420,13 @@ def render(store=None, principal=None):
         format_func=lambda s: s or "Todas",
         key="agenda_filter_status",
     )
+    item_scope = d.selectbox(
+        "Tipo de item",
+        ("Todos", "Somente compromissos", "Somente afastamentos"),
+        key="agenda_filter_item_scope",
+    )
+    show_appointments = item_scope != "Somente afastamentos"
+    show_leaves = item_scope != "Somente compromissos"
     if st.session_state.get("agenda_view") == "Lista":
         st.session_state["agenda_view"] = "Hoje"
     view = st.radio(
@@ -450,16 +457,20 @@ def render(store=None, principal=None):
             member,
             kind,
             status,
+            item_scope,
             st.session_state.get("agenda_revision", 0),
         )
         if st.session_state.get("agenda_upcoming_filters") != signature:
             st.session_state["agenda_upcoming_offset"] = 0
             st.session_state["agenda_upcoming_filters"] = signature
         offset = st.session_state.get("agenda_upcoming_offset", 0)
-        rows = records(
-            agenda, today.isoformat(), None, member, kind, status, offset=offset
+        rows = records(agenda, today.isoformat(), None, member, kind, status, offset=offset) if show_appointments else []
+        leaves = (
+            agenda.leaves(today.isoformat(), None, member, upcoming=True)
+            if show_leaves
+            and (item_scope == "Somente afastamentos" or (not kind and not status))
+            else []
         )
-        leaves = agenda.leaves(today.isoformat(), None, member, upcoming=True) if not kind and not status else []
         # A deletion in another session can empty the current page.
         if not rows and offset:
             st.session_state["agenda_upcoming_offset"] = 0
@@ -480,19 +491,29 @@ def render(store=None, principal=None):
             st.session_state["agenda_upcoming_offset"] = offset + 30
             st.rerun()
     else:
-        rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status)
-        leaves = agenda.leaves(start.isoformat(), (end - timedelta(days=1)).isoformat(), member) if not kind and not status else []
+        rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status) if show_appointments else []
+        leaves = (
+            agenda.leaves(start.isoformat(), (end - timedelta(days=1)).isoformat(), member)
+            if show_leaves
+            and (item_scope == "Somente afastamentos" or (not kind and not status))
+            else []
+        )
     for leave_record in leaves:
         leave_record["inicio"] = leave_record["data_inicio"] + "T00:00:00"; leave_record["afastamento"] = True
     rows.extend(leaves)
-    rows.sort(key=lambda row: (row["inicio"], row["id"]))
+    rows.sort(key=lambda row: (row["inicio"][:10], bool(row.get("afastamento")), row["inicio"], row["id"]))
     if not rows:
         st.info("Nenhum compromisso no período selecionado.")
-    current_day = None
+    current_day = current_group = None
     for row in rows:
         if row["inicio"][:10] != current_day:
             current_day = row["inicio"][:10]
+            current_group = None
             st.subheader(datetime.fromisoformat(current_day).strftime("%d/%m/%Y"))
+        group = "Afastamentos" if row.get("afastamento") else "Compromissos"
+        if group != current_group:
+            current_group = group
+            st.markdown(f"#### {group}")
         if row.get("afastamento"):
             with st.container(border=True):
                 st.markdown(f"**AFASTAMENTO — {names.get(row['procurador_id'], row['procurador_id'])}**")

@@ -364,6 +364,28 @@ def test_agenda_renders_leave_records_separately_from_appointments(
     )
     assert "AFASTAMENTO" in displayed
     assert "Férias" in displayed
+    assert any(button.label == "Editar afastamento" for button in app.button)
     if with_appointment:
         assert "Compromisso de teste" in displayed
+        assert "Compromissos" in displayed
+        assert any(button.label == "Editar" for button in app.button)
+    assert "Afastamentos" in displayed
+    app.selectbox(key="agenda_filter_item_scope").set_value("Somente afastamentos").run()
+    filtered = "\n".join(str(item.value) for item in (*app.markdown, *app.caption))
+    assert "AFASTAMENTO" in filtered
+    assert "Compromisso de teste" not in filtered
+    assert any(button.label == "Editar afastamento" for button in app.button)
+    assert not any(button.label == "Editar" for button in app.button)
+    # Tipo e Situação são filtros de compromisso e não ocultam afastamentos exclusivos.
+    app.selectbox(key="agenda_filter_type").set_value("EVENTO").run()
+    app.selectbox(key="agenda_filter_status").set_value("Agendado").run()
+    filtered = "\n".join(str(item.value) for item in (*app.markdown, *app.caption))
+    assert "AFASTAMENTO" in filtered
+    if with_appointment:
+        app.selectbox(key="agenda_filter_item_scope").set_value("Somente compromissos").run()
+        filtered = "\n".join(str(item.value) for item in (*app.markdown, *app.caption))
+        assert "Compromisso de teste" in filtered
+        assert "AFASTAMENTO" not in filtered
+        assert any(button.label == "Editar" for button in app.button)
+        assert not any(button.label == "Editar afastamento" for button in app.button)
 
