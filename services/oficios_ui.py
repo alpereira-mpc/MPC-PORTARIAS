@@ -16,6 +16,7 @@ from services.oficios import (
     validate_upload,
 )
 from services.ui_store import display_store
+from services.branding import module_title
 
 
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
@@ -810,7 +811,7 @@ def render(store=None, principal=None):
         consume_pending_open_oficio(offices)
         selected = st.session_state.get("oficio_gabinete")
         if selected not in offices:
-            st.subheader("Ofícios — Geração e Controle")
+            st.subheader(module_title("oficios", "Ofícios — Geração e Controle"))
             st.write("Selecione o gabinete:")
             st.markdown(
                 "<style>"
@@ -865,7 +866,7 @@ def render(store=None, principal=None):
         require_gabinete(principal, selected)
         office = offices[selected]
         st.session_state["oficio_gabinete_member"] = office["membro_id"]
-        st.subheader(f"OFÍCIOS — GABINETE {selected}")
+        st.subheader(module_title("oficios", f"OFÍCIOS — GABINETE {selected}"))
         st.caption(office["nome"])
         st.button("← Trocar gabinete", on_click=switch_gabinete)
         page = st.radio(

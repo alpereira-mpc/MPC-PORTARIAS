@@ -17,6 +17,19 @@ APP_SHORT_SUBTITLE = "Portal Integrado de Gestão e Apoio Operacional"
 APP_SUBTITLE = (
     APP_SHORT_SUBTITLE + " do Ministério Público de Contas da Paraíba"
 )
+MODULE_ICONS = {
+    "portarias": "description",
+    "memorandos": "article",
+    "oficios": "mail",
+    "agenda": "calendar_month",
+    "relatorios": "bar_chart",
+    "admin": "manage_accounts",
+}
+
+
+def module_title(module, title):
+    """Format a heading with the same Material icon used by the Home card."""
+    return f":material/{MODULE_ICONS[module]}: {title}"
 
 
 def _brand_styles():

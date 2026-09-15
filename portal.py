@@ -8,6 +8,7 @@ import streamlit as st
 
 from services.branding import (
     APP_NAME,
+    MODULE_ICONS,
     SIDEBAR_LOGO,
     render_app_identity,
     render_institutional_header,
@@ -56,7 +57,7 @@ MODULES = (
         "Portarias",
         "Gerador de Portarias PROGE",
         "Elaboração, numeração, geração e gerenciamento de Portarias de substituição.",
-        "description",
+        MODULE_ICONS["portarias"],
         True,
     ),
     Module(
@@ -64,7 +65,7 @@ MODULES = (
         "Memorandos",
         "Memorandos de Substituição",
         "Geração e gerenciamento de memorandos relacionados às substituições de servidores.",
-        "article",
+        MODULE_ICONS["memorandos"],
         True,
     ),
     Module(
@@ -72,7 +73,7 @@ MODULES = (
         "Ofícios",
         "Ofícios — Geração e Controle",
         "Geração, registro e acompanhamento de ofícios enviados e recebidos.",
-        "mail",
+        MODULE_ICONS["oficios"],
         True,
     ),
     Module(
@@ -80,7 +81,7 @@ MODULES = (
         "Agenda",
         "Agenda e Afastamentos dos Procuradores",
         "Organização de eventos, reuniões, despachos, afastamentos e substituições dos procuradores.",
-        "calendar_month",
+        MODULE_ICONS["agenda"],
         True,
     ),
     Module(
@@ -88,7 +89,7 @@ MODULES = (
         "Relatórios",
         "Relatórios e Indicadores",
         "Consultas, estatísticas e relatórios administrativos do MPC-PB.",
-        "bar_chart",
+        MODULE_ICONS["relatorios"],
     ),
 )
 
@@ -97,7 +98,7 @@ ADMIN_MODULE = Module(
     "Administração",
     "Usuários e Acessos",
     "Cadastro de contas autorizadas, módulos e gabinetes de Ofícios.",
-    "manage_accounts",
+    MODULE_ICONS["admin"],
     True,
 )
 

@@ -3,6 +3,7 @@ from datetime import date
 import hashlib
 import streamlit as st
 from services.access import require_permission
+from services.branding import module_title
 from services.memorandos import (
     MIME_DOCX,
     MIME_PDF,
@@ -577,7 +578,7 @@ def _base(service,principal):
 
 
 def render(store,principal):
-    require_permission(principal,"memorandos"); service=open_service(store); st.subheader("MEMORANDOS DE SUBSTITUIÇÃO")
+    require_permission(principal,"memorandos"); service=open_service(store); st.subheader(module_title("memorandos", "MEMORANDOS DE SUBSTITUIÇÃO"))
     pages=_nav_pages(principal)
     page=_current_page(pages)
     if page != NAV_BASE:

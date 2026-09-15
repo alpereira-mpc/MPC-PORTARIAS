@@ -18,6 +18,7 @@ from services.agenda import (
 )
 from services.afastamentos import MOTIVOS, eligible_substitutes, substitution_pending
 from services.ui_store import display_store
+from services.branding import module_title
 
 
 def display_datetime(value, date_only=False):
@@ -363,7 +364,7 @@ def render(store=None, principal=None):
     from database.store import Store, unwrap_store
     from services.access import current_user, require_permission
 
-    st.header("AGENDA DOS PROCURADORES")
+    st.header(module_title("agenda", "AGENDA DOS PROCURADORES"))
     if store is None:
         store = Store()
     else:

@@ -5,6 +5,7 @@ from database.access import AccessStore
 from services.access import require_permission
 from services.audit import aplicar_exclusao_usuario, aplicar_usuario
 from services.oficios import GABINETES
+from services.branding import module_title
 
 ADMIN_SECTIONS = ("Usuários", "Acessos e Auditoria", "Sistema")
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
@@ -64,7 +65,7 @@ def consume_pending_open_admin():
 def render(store, principal):
     require_permission(principal, "admin")
     consume_pending_open_admin()
-    st.subheader("ADMINISTRAÇÃO — Usuários e Acessos")
+    st.subheader(module_title("admin", "ADMINISTRAÇÃO — Usuários e Acessos"))
     area = st.radio(
         "Seção",
         ["Usuários", "Acessos e Auditoria", "Sistema"],

@@ -19,6 +19,7 @@ from services.wording import compose, preview_text, parsed, role, validate
 from services.wording import reason_text, normalized_payload
 from services.placeholders import assert_docx_clean
 from services.deletion import REASONS
+from services.branding import module_title
 
 VERSION = "1.1.0"
 raw_store = unwrap_store(
@@ -1208,7 +1209,7 @@ with st.sidebar:
     )
     st.divider()
     st.caption("Gerador de Portarias PROGE · v" + VERSION)
-st.markdown("### Gerador de Portarias PROGE")
+st.markdown("### " + module_title("portarias", "Gerador de Portarias PROGE"))
 try:
     if menu == "Nova Portaria":
         if store.backend == "postgresql":
