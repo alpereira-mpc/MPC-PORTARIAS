@@ -675,7 +675,8 @@ def details(service, r):
     st.dataframe(service.movements(r["id"]), hide_index=True, use_container_width=True)
 
 
-def listing(service, people, direction=None, tracking=False):
+def render_filters(*, direction=None, tracking=False, submit_label=None):
+    """Render the shared listing filters once, always initially collapsed."""
     with st.expander("Filtros", expanded=False):
         a, b, c = st.columns(3)
         with a:
@@ -706,22 +707,43 @@ def listing(service, people, direction=None, tracking=False):
                 [None, "ENVIADO", "RECEBIDO"],
                 format_func=lambda x: x or "Todas",
             )
+        submitted = st.button(submit_label, key="oficio_overview_search") if submit_label else False
+    return {
+        "direction": direction,
+        "series": series,
+        "member": member,
+        "number": number or None,
+        "year": year or None,
+        "recipient": recipient,
+        "subject": subject,
+        "status": status,
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat() if end else None,
+        "search": search,
+        "deadline": deadline,
+        "tracking": tracking,
+        "submitted": submitted,
+    }
+
+
+def listing(service, people, direction=None, tracking=False, filters=None):
+    filters = filters or render_filters(direction=direction, tracking=tracking)
     page = st.number_input("Página", 1, value=1)
     rows = read_list(
         service,
-        direction=direction,
-        series=series,
-        member=member,
-        number=number or None,
-        year=year or None,
-        recipient=recipient,
-        subject=subject,
-        status=status,
-        start=start.isoformat() if start else None,
-        end=end.isoformat() if end else None,
-        search=search,
-        deadline=deadline,
-        attention_only=tracking,
+        direction=filters["direction"],
+        series=filters["series"],
+        member=filters["member"],
+        number=filters["number"],
+        year=filters["year"],
+        recipient=filters["recipient"],
+        subject=filters["subject"],
+        status=filters["status"],
+        start=filters["start"],
+        end=filters["end"],
+        search=filters["search"],
+        deadline=filters["deadline"],
+        attention_only=filters["tracking"],
         offset=(page - 1) * 50,
     )
     if not rows:
@@ -877,6 +899,9 @@ def render(store=None, principal=None):
             for row in read_list(service, limit=5):
                 st.write(label(row))
                 st.caption(row["status"] + " · " + row["atualizada"][:10])
+            overview_filters = render_filters(submit_label="Consultar ofícios")
+            if overview_filters["submitted"]:
+                listing(service, people, filters=overview_filters)
         elif page == "Novo Ofício":
             editor(service, people)
         elif page == "Recebidos":
