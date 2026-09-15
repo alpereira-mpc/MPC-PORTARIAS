@@ -895,13 +895,13 @@ def render(store=None, principal=None):
                 with col:
                     st.metric(title, value)
             configuration(service, people)
+            overview_filters = render_filters(submit_label="Consultar ofícios")
+            if overview_filters["submitted"]:
+                listing(service, people, filters=overview_filters)
             st.write("Últimas movimentações")
             for row in read_list(service, limit=5):
                 st.write(label(row))
                 st.caption(row["status"] + " · " + row["atualizada"][:10])
-            overview_filters = render_filters(submit_label="Consultar ofícios")
-            if overview_filters["submitted"]:
-                listing(service, people, filters=overview_filters)
         elif page == "Novo Ofício":
             editor(service, people)
         elif page == "Recebidos":
