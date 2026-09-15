@@ -1,5 +1,6 @@
 """Single source of truth for MPC-PB institutional chrome."""
 
+import base64
 from pathlib import Path
 
 import streamlit as st
@@ -21,11 +22,11 @@ APP_SUBTITLE = (
 def _brand_styles():
     st.markdown(
         "<style>"
-        "section[data-testid='stSidebar'] [data-testid='stImage']{"
-        "display:flex;justify-content:center;"
+        ".mpc-sidebar-brand{"
+        "display:flex;justify-content:center;margin:.4rem 0 .9rem 0;"
         "}"
-        "section[data-testid='stSidebar'] [data-testid='stImage'] img{"
-        "margin:.4rem auto .9rem auto;height:auto;object-fit:contain;"
+        ".mpc-sidebar-brand img{"
+        "display:block;width:10rem;height:auto;object-fit:contain;"
         "}"
         "section[data-testid='stMain'] [data-testid='stMainBlockContainer'] "
         "> div > [data-testid='stImage']:first-child{"
@@ -59,7 +60,7 @@ def _brand_styles():
         "font-weight:700;line-height:1.25;"
         "}"
         ".mpc-identity--home{"
-        "margin:.85rem 0 .95rem 0;"
+        "margin:2.725rem 0 .95rem 0;"
         "}"
         ".mpc-identity-name{"
         "margin:0 0 .65rem 0;"
@@ -96,7 +97,13 @@ def _brand_styles():
 def render_sidebar_brand():
     """Sidebar mark matched to the navigation background. Call inside st.sidebar."""
     _brand_styles()
-    st.image(asset(SIDEBAR_LOGO), width=SIDEBAR_LOGO_WIDTH)
+    logo = base64.b64encode(asset(SIDEBAR_LOGO)).decode("ascii")
+    st.markdown(
+        '<div class="mpc-sidebar-brand"><img src="data:image/png;base64,'
+        + logo
+        + '" alt="MPC-PB"></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_institutional_header():
