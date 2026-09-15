@@ -11,6 +11,7 @@ PORTARIAS_TABLES = (
     "assentos",
     "motivos_afastamento",
     "bases_legais",
+    "funcoes_institucionais",
     "configuracoes",
     "sequencias",
     "sequencia_baselines",

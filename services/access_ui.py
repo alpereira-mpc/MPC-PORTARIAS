@@ -1,5 +1,6 @@
 """Administrative UI for authorized users. Isolated from Portarias/Agenda/Ofícios."""
 
+from datetime import date
 import streamlit as st
 from database.access import AccessStore
 from services.access import require_permission
@@ -11,6 +12,30 @@ ADMIN_SECTIONS = ("Usuários", "Acessos e Auditoria", "Sistema")
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
 AUDIT_TABS = ("Visão Geral", "Acessos", "Auditoria")
 ADMIN_NAV_REQUEST = "pending_open_admin"
+
+
+def institutional_functions(store, principal):
+    from database.institutional import FUNCTIONS, InstitutionalFunctions
+    from services.audit import registrar_evento
+
+    functions = InstitutionalFunctions(store)
+    people = [p for p in store.catalog("procuradores") if p["ativo"]]
+    names = {p["id"]: p["nome"] for p in people}
+    st.caption("A alteração passa a afetar regras institucionais do sistema a partir da nova vigência.")
+    current = functions.current_all()
+    st.dataframe([{"Função": FUNCTIONS[code], "Titular atual": row["nome"] if row else "—", "Desde": row["data_inicio"] if row else "—"} for code, row in current.items()], hide_index=True, use_container_width=True)
+    code = st.selectbox("Função institucional", list(FUNCTIONS), format_func=FUNCTIONS.get)
+    with st.expander("Alterar titular"):
+        holder = st.selectbox("Novo titular", list(names), format_func=names.get, key="funcao_institucional_holder")
+        start = st.date_input("Início da vigência", value=date.today(), format="DD/MM/YYYY")
+        confirmed = st.checkbox("Confirmo a alteração da função institucional.")
+        if st.button("Salvar alteração", disabled=not confirmed):
+            old, identifier = functions.change(code, holder, start, getattr(principal, "email", ""))
+            registrar_evento(store, evento="FUNCAO_INSTITUCIONAL_ALTERADA", modulo="admin", acao="ALTERAR", principal=principal, entidade_tipo="funcao_institucional", entidade_id=identifier, detalhes={"funcao": code, "titular_anterior": old["procurador_id"] if old else None, "novo_titular": holder, "inicio": start.isoformat()})
+            st.success("Titular alterado; a vigência anterior foi preservada no histórico.")
+            st.rerun()
+    with st.expander("Histórico das funções"):
+        st.dataframe([{"Função": FUNCTIONS[row["funcao"]], "Procurador": row["nome"], "Início": row["data_inicio"], "Fim": row["data_fim"] or "—"} for row in functions.history()], hide_index=True, use_container_width=True)
 
 
 def queue_admin_navigation(secao=None, aba=None, audit_tab=None):
@@ -68,10 +93,13 @@ def render(store, principal):
     st.subheader(module_title("admin", "ADMINISTRAÇÃO — Usuários e Acessos"))
     area = st.radio(
         "Seção",
-        ["Usuários", "Acessos e Auditoria", "Sistema"],
+        ["Usuários", "Funções Institucionais", "Acessos e Auditoria", "Sistema"],
         horizontal=True,
         key="admin_secao",
     )
+    if area == "Funções Institucionais":
+        institutional_functions(store, principal)
+        return
     if area == "Acessos e Auditoria":
         from services.audit_ui import render as render_audit
 
