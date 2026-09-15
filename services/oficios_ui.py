@@ -676,7 +676,7 @@ def details(service, r):
 
 
 def listing(service, people, direction=None, tracking=False):
-    with st.expander("Filtros", expanded=True):
+    with st.expander("Filtros", expanded=False):
         a, b, c = st.columns(3)
         with a:
             search = st.text_input("Pesquisa textual")
