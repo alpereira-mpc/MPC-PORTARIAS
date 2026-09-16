@@ -94,7 +94,11 @@ class Row:
 class Cursor:
     def __init__(self, cursor, returning_id=False):
         self.cursor = cursor
-        self.lastrowid = cursor.fetchone()[0] if returning_id else None
+        if returning_id:
+            row = cursor.fetchone()
+            self.lastrowid = row[0] if row is not None else None
+        else:
+            self.lastrowid = None
 
     def fetchone(self):
         values = self.cursor.fetchone()

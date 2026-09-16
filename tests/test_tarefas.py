@@ -178,3 +178,24 @@ def test_same_task_has_only_one_alert_and_priority_then_deadline_breaks_ties(sto
     assert ids.count(str(duplicate["id"])) == 1
     assert ids.index(str(urgent["id"])) < ids.index(str(first["id"]))
     assert ids.index(str(first["id"])) < ids.index(str(second["id"]))
+
+
+def test_legacy_reminder_migration_is_empty_safe_and_idempotent(store):
+    import database.tarefas as tarefas_module
+
+    repo = TarefasStore(store)
+    # A clean bootstrap has no legacy reminder and must remain valid.
+    tarefas_module._READY.clear()
+    TarefasStore(store)
+    stamp = datetime.now(INSTITUTIONAL_TZ).isoformat()
+    with store.connection() as connection:
+        identifier = connection.execute(
+            "INSERT INTO tarefas(owner_user_id,titulo,descricao,categoria,prioridade,status,prazo_data,prazo_hora,lembrete_em,observacoes,criado_em,atualizado_em) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (1, "Legada", "", "", "NORMAL", "A_FAZER", None, None, stamp, "", stamp, stamp),
+        ).lastrowid
+    tarefas_module._READY.clear()
+    migrated = TarefasStore(store)
+    assert [row["lembrar_em"] for row in migrated.reminders(identifier, 1)] == [stamp]
+    tarefas_module._READY.clear()
+    repeated = TarefasStore(store)
+    assert len(repeated.reminders(identifier, 1)) == 1
