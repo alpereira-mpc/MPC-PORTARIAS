@@ -106,6 +106,15 @@ def _sort_key(item):
         when = datetime.max.replace(tzinfo=INSTITUTIONAL_TZ)
     elif when.tzinfo is None:
         when = when.replace(tzinfo=INSTITUTIONAL_TZ)
+    if item.source_module == "tarefas":
+        metadata = item.metadata or {}
+        return (
+            rank,
+            int(metadata.get("task_alert_rank", 99)),
+            int(metadata.get("task_priority_rank", 99)),
+            when,
+            item.title,
+        )
     return (rank, when, item.title)
 
 
@@ -210,6 +219,41 @@ def alert_from_pending(item, now):
     if item.source_module == "memorandos":
         return alert_from_memorando(item)
     return None
+
+
+def task_alerts(store, principal, now):
+    """Small owner-scoped alert window; at most one alert per personal task."""
+    from database.tarefas import TarefasStore, effective_deadline
+
+    alerts = []
+    priority_rank = {"URGENTE": 0, "ALTA": 1, "NORMAL": 2, "BAIXA": 3}
+    for row in TarefasStore(store).alert_window(principal.id, now):
+        due = date.fromisoformat(row["prazo_data"]) if row.get("prazo_data") else None
+        deadline = effective_deadline(row, INSTITUTIONAL_TZ)
+        reminder = datetime.fromisoformat(row["lembrete_atingido_em"]) if row.get("lembrete_atingido_em") else None
+        overdue = deadline is not None and deadline < now
+        today_due = deadline is not None and deadline.date() == now.date() and not overdue
+        tomorrow_due = deadline is not None and deadline.date() == now.date().fromordinal(now.date().toordinal() + 1)
+        upcoming_due = deadline is not None and now.date().fromordinal(now.date().toordinal() + 2) <= deadline.date() <= now.date().fromordinal(now.date().toordinal() + 7)
+        reminder_due = reminder is not None and reminder <= now
+        if not (overdue or today_due or tomorrow_due or upcoming_due or reminder_due):
+            continue
+        if overdue:
+            severity = CRITICO if row["prioridade"] == "URGENTE" else ALTO
+            category, title, alert_rank = "tarefa_atrasada", "ATRASADA", 0 if row["prioridade"] == "URGENTE" else 1
+        elif reminder_due:
+            severity, category, title, alert_rank = ATENCAO, "lembrete_tarefa", "LEMBRETE", 2
+        elif today_due:
+            severity, category, title, alert_rank = ATENCAO, "tarefa_hoje", "VENCE HOJE", 3
+        elif tomorrow_due:
+            severity, category, title, alert_rank = INFORMATIVO, "tarefa_amanha", "VENCE AMANHÃ", 4
+        else:
+            severity, category, title, alert_rank = INFORMATIVO, "tarefa_proxima", "PRÓXIMO PRAZO", 5
+        # A date-only deadline intentionally has no datetime in the UI: it is
+        # due at the end of its local day, but should not display a fake 00:00.
+        moment = reminder if reminder_due and not overdue else deadline if row.get("prazo_hora") else None
+        alerts.append(AlertItem("tarefas", str(row["id"]), "—", severity, category, title, row["titulo"][:160], due, moment, row["status"], "Tarefas", {"task_id": row["id"], "task_alert_rank": alert_rank, "task_priority_rank": priority_rank.get(row["prioridade"], 9)}))
+    return alerts
 
 
 def _from_pending(item, severity, category, title, moment=None):
@@ -427,6 +471,13 @@ def collect_alerts(
                 alert = alert_from_pending(item, now)
                 if alert:
                     collected.append(alert)
+    if wanted is None or "tarefas" in wanted:
+        try:
+            collected.extend(task_alerts(store, principal, now))
+            errors["tarefas"] = None
+        except Exception as exc:
+            LOGGER.exception("Falha ao carregar alertas de tarefas")
+            errors["tarefas"] = "tarefas"
     if has_permission(principal, "admin") and (
         wanted is None or "sistema" in wanted
     ) and not gabinete:

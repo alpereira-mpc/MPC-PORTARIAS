@@ -28,6 +28,7 @@ MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
     ("agenda", "Agenda"),
     ("memorandos", "Memorandos"),
+    ("tarefas", "Tarefas"),
     ("sistema", "Sistema"),
 )
 
@@ -67,6 +68,7 @@ def _open_label(item):
         "oficios": "Ver em Ofícios",
         "agenda": "Ver na Agenda",
         "memorandos": "Ver em Memorandos",
+        "tarefas": "Ver em Tarefas",
         "sistema": "Ver Saúde do Sistema",
     }.get(item.source_module, "Ver origem")
 
@@ -193,7 +195,7 @@ def render(store, principal):
         key="alerts_period",
     )
     a, b, c = st.columns(3)
-    module_choices = [None, "oficios", "agenda", "memorandos"]
+    module_choices = [None, "oficios", "agenda", "memorandos", "tarefas"]
     if has_permission(principal, "admin"):
         module_choices.append("sistema")
     module = a.selectbox(

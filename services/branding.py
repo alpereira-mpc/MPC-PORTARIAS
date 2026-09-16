@@ -22,6 +22,7 @@ MODULE_ICONS = {
     "memorandos": "article",
     "oficios": "mail",
     "agenda": "calendar_month",
+    "tarefas": "check_circle",
     "relatorios": "bar_chart",
     "admin": "manage_accounts",
 }

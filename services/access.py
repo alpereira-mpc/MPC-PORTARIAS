@@ -5,7 +5,7 @@ import time
 from database.access import AccessStore, normalize_email
 from services.oficios import GABINETES
 
-MODULES = ("portarias", "agenda", "oficios", "memorandos", "admin")
+MODULES = ("portarias", "agenda", "oficios", "memorandos", "tarefas", "admin")
 CACHE_SECONDS = 20
 
 
@@ -158,7 +158,7 @@ def has_permission(principal, module):
             for name in ("oficios", "agenda", "memorandos")
         )
     if module == "alertas":
-        return principal.administrator or any(
+        return has_permission(principal, "tarefas") or principal.administrator or any(
             has_permission(principal, name)
             for name in ("oficios", "agenda", "memorandos")
         )
@@ -170,6 +170,9 @@ def has_permission(principal, module):
         return principal.pode_oficios
     if module == "memorandos":
         return principal.pode_memorandos
+    if module == "tarefas":
+        # Personal tasks are available to every authenticated active account.
+        return True
     if module == "admin":
         return principal.pode_admin
     return False

@@ -76,6 +76,9 @@ def open_origin(item):
             pending_open_memorando={"id": source_id, "page": "Histórico"},
         )
         return
+    if module == "tarefas":
+        request_portal_navigation("Tarefas", tarefas_open_id=source_id)
+        return
     if module == "sistema":
         request_portal_navigation(
             "Administração",

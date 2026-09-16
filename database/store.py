@@ -59,6 +59,9 @@ def ensure_addon_schemas(store):
     from database.memorandos import MemorandosStore
 
     MemorandosStore(store)
+    from database.tarefas import TarefasStore
+
+    TarefasStore(store)
 
 
 class Store:

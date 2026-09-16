@@ -32,6 +32,7 @@ PORTAL_NAV_STATE_KEYS = frozenset(
         "pending_open_agenda",
         "pending_open_memorando",
         "pending_open_admin",
+        "tarefas_open_id",
     }
 )
 
@@ -82,6 +83,14 @@ MODULES = (
         "Agenda e Afastamentos dos Procuradores",
         "Organização de eventos, reuniões, despachos, afastamentos e substituições dos procuradores.",
         MODULE_ICONS["agenda"],
+        True,
+    ),
+    Module(
+        "tarefas",
+        "Tarefas",
+        "Tarefas",
+        "Organização pessoal de demandas, prazos e prioridades.",
+        MODULE_ICONS["tarefas"],
         True,
     ),
     Module(
@@ -215,6 +224,10 @@ def open_admin():
     queue_portal_navigation("Administração")
 
 
+def open_tarefas():
+    queue_portal_navigation("Tarefas")
+
+
 def card(module):
     with st.container(border=True):
         st.caption(module.label.upper())
@@ -233,6 +246,7 @@ def card(module):
                     "oficios": open_oficios,
                     "memorandos": open_memorandos,
                     "admin": open_admin,
+                    "tarefas": open_tarefas,
                 }[module.key],
             )
         else:
@@ -470,6 +484,8 @@ def render_portal():
         options.append("Ofícios")
     if has_permission(principal, "memorandos"):
         options.append("Memorandos")
+    if has_permission(principal, "tarefas"):
+        options.append("Tarefas")
     if has_permission(principal, "admin"):
         options.append("Administração")
     apply_portal_navigation(options)
@@ -535,6 +551,12 @@ def render_portal():
         if selected == "Memorandos":
             require_permission(principal, "memorandos")
             from services.memorandos_ui import render
+
+            render(store, principal)
+            st.stop()
+        if selected == "Tarefas":
+            require_permission(principal, "tarefas")
+            from services.tarefas_ui import render
 
             render(store, principal)
             st.stop()
