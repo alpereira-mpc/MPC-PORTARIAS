@@ -11,6 +11,12 @@ from services.audit import registrar_evento
 from services.tramita_reports import aging_band, file_hash, is_result, parse_movements, parse_stock, turnaround_days
 
 
+MONTHS = (
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+)
+
+
 def _format_date(value):
     if not value:
         return "—"
@@ -112,7 +118,13 @@ def current_view(store):
 def imports(store, principal):
     reports = TramitaReportsStore(store)
     st.subheader("Importar Produção Mensal")
-    competence_date = st.date_input("Competência", value=date.today().replace(day=1), format="MM/YYYY")
+    st.caption("Competência")
+    month_column, year_column = st.columns(2)
+    today = date.today()
+    month_name = month_column.selectbox("Mês", MONTHS, index=today.month - 1)
+    year = year_column.selectbox("Ano", list(range(2020, today.year + 2)), index=today.year - 2020)
+    competence = f"{year}-{MONTHS.index(month_name) + 1:02d}"
+    competence_display = f"{month_name}/{year}"
     first, second = st.columns(2)
     incoming = first.file_uploader("Relatório de Entradas", type=["xls"], key="tramita_entries")
     outgoing = second.file_uploader("Relatório de Saídas", type=["xls"], key="tramita_exits")
@@ -123,15 +135,15 @@ def imports(store, principal):
             previews.append((kind, uploaded, rows, unknown))
     if previews:
         st.write(" · ".join(f"{kind.title()}: {len(rows)}" for kind, _, rows, _ in previews))
-        st.caption(f"Procuradores identificados: {len({row['procurador'] for _, _, rows, _ in previews for row in rows})} · Competência: {competence_date:%m/%Y}")
+        st.caption(f"Procuradores identificados: {len({row['procurador'] for _, _, rows, _ in previews for row in rows})} · Competência: {competence_display}")
         unknown = sorted({name for _, _, _, names in previews for name in names})
         if unknown: st.error("Procurador não reconhecido: " + ", ".join(unknown))
         repeated = [uploaded.name for _, uploaded, _, _ in previews if reports.imported_hash(file_hash(uploaded.getvalue()))]
         if repeated: st.error("Este arquivo já foi importado anteriormente: " + ", ".join(repeated))
         if st.button("Confirmar importação de produção", disabled=bool(unknown) or bool(repeated) or len(previews) != 2):
             for kind, uploaded, rows, _ in previews:
-                reports.import_rows(kind=kind, file_name=uploaded.name, file_hash=file_hash(uploaded.getvalue()), actor=principal.email, competence=competence_date.strftime("%Y-%m"), rows=rows)
-                registrar_evento(store, evento="TRAMITA_" + kind + "_IMPORTADAS", modulo="relatorios", acao="IMPORTAR", principal=principal, detalhes={"competencia": competence_date.strftime("%Y-%m"), "arquivo": uploaded.name, "quantidade": len(rows), "hash": file_hash(uploaded.getvalue())})
+                reports.import_rows(kind=kind, file_name=uploaded.name, file_hash=file_hash(uploaded.getvalue()), actor=principal.email, competence=competence, rows=rows)
+                registrar_evento(store, evento="TRAMITA_" + kind + "_IMPORTADAS", modulo="relatorios", acao="IMPORTAR", principal=principal, detalhes={"competencia": competence, "arquivo": uploaded.name, "quantidade": len(rows), "hash": file_hash(uploaded.getvalue())})
             st.success("Produção mensal importada.")
             st.rerun()
     st.divider(); st.subheader("Importar Estoque Atual")
