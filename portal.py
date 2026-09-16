@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import base64
+import logging
 
 import streamlit as st
 
@@ -15,6 +16,8 @@ from services.branding import (
     render_sidebar_brand,
 )
 from services.ui_store import asset
+
+LOGGER = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent
 
@@ -445,8 +448,22 @@ def render_portal():
         st.stop()
     try:
         store = _application_store()
+    except Exception:
+        # logger.exception records the traceback only on the server. Do not
+        # interpolate configuration or identity values into this message.
+        LOGGER.exception("Falha ao inicializar Store")
+        with st.sidebar:
+            render_sidebar_brand()
+        render_institutional_header()
+        render_app_identity()
+        st.error("Não foi possível verificar a autorização. Tente novamente.")
+        if st.button("Sair"):
+            _logout()
+        st.stop()
+    try:
         principal = current_user(store)
     except Exception:
+        LOGGER.exception("Falha ao verificar autorização")
         with st.sidebar:
             render_sidebar_brand()
         render_institutional_header()
