@@ -320,7 +320,8 @@ def home(principal, store=None):
         variant="home",
         prompt="Selecione uma ferramenta para iniciar.",
     )
-    visible = visible_modules(principal)
+    # Future modules remain registered, but only active tools occupy the Home grid.
+    visible = [module for module in visible_modules(principal) if module.active]
     if not visible:
         st.info("Nenhum módulo disponível para este usuário.")
         return
