@@ -48,6 +48,38 @@ def test_binary_xls_stock_headers_and_accented_procurador(monkeypatch):
     assert rows[0]["dias_com_procurador"] == 168
 
 
+def test_binary_xls_stock_locates_real_tramita_header_after_title(monkeypatch):
+    actual_header = ["TIPO", "PROTOCOLO", "DIGITAL", "SUBCATEGORIA", "JURISDICIONADO", "FASE", "PROCURADOR(A)", "DIAS COM PROCURADOR(A)", "ASSISTENTE", "DIAS COM ASSISTENTE", "DIAS NA PROGE", "PRESCRIÇÃO"]
+    process = ["Processo", "09137/18", "Sim", "Representação", "Prefeitura Municipal de Cabedelo", "Recurso", "Isabella Barbosa Marinho Falcão", 168, "Agda", 112, 168, "30 meses"]
+    class Sheet:
+        ncols, nrows = 12, 6
+        def cell_value(self, row, col):
+            rows = [[""] * len(actual_header), ["Processos da Proge"] + [""] * 11, [""] * len(actual_header), [""] * len(actual_header), actual_header, process]
+            return rows[row][col]
+    monkeypatch.setitem(sys.modules, "xlrd", types.SimpleNamespace(open_workbook=lambda **kwargs: types.SimpleNamespace(sheet_by_index=lambda _: Sheet())))
+    rows, unknown = parse_stock(b"\xd0\xcf\x11\xe0real")
+    assert unknown == []
+    assert rows == [{"tipo": "Processo", "protocolo": "09137/18", "digital": "Sim", "subcategoria": "Representação", "jurisdicionado": "Prefeitura Municipal de Cabedelo", "fase": "Recurso", "procurador": "Isabella Barbosa Marinho Falcão", "dias_com_procurador": 168.0, "assistente": "Agda", "dias_com_assistente": 112.0, "dias_no_mpc": 168.0, "prescricao": "30 meses"}]
+
+
+def test_stock_header_aliases_and_clear_missing_columns_error(monkeypatch):
+    headers = [" protocolo ", "Subcategoria", "JURISDICIONADO", "Procurador (A)", "Dias Com Procurador (A)"]
+    class Sheet:
+        ncols, nrows = 5, 2
+        def cell_value(self, row, col):
+            return (headers if row == 0 else ["01000/26", "Denúncia", "Origem", "Sheyla Barreto Braga de Queiroz", 8])[col]
+    monkeypatch.setitem(sys.modules, "xlrd", types.SimpleNamespace(open_workbook=lambda **kwargs: types.SimpleNamespace(sheet_by_index=lambda _: Sheet())))
+    rows, _ = parse_stock(b"\xd0\xcf\x11\xe0aliases")
+    assert rows[0]["dias_no_mpc"] is None
+    assert rows[0]["procurador"] == "Sheyla Barreto Braga de Queiroz"
+    class InvalidSheet:
+        ncols, nrows = 2, 1
+        def cell_value(self, row, col): return ["PROTOCOLO", "SUBCATEGORIA"][col]
+    monkeypatch.setitem(sys.modules, "xlrd", types.SimpleNamespace(open_workbook=lambda **kwargs: types.SimpleNamespace(sheet_by_index=lambda _: InvalidSheet())))
+    with pytest.raises(ValueError, match="Colunas obrigatórias ausentes"):
+        parse_stock(b"\xd0\xcf\x11\xe0invalid")
+
+
 def test_same_protocol_can_be_entry_and_exit_and_hash_blocks_repeat(tmp_path):
     store = Store(tmp_path / "tramita.db")
     reports = TramitaReportsStore(store)

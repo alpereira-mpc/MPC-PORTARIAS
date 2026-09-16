@@ -20,6 +20,33 @@ def normalized(value):
 _NAMES = {normalized(name): name for name in PROCURADORES}
 
 
+def normalized_header(value):
+    """Normalize only presentation differences used by Tramita column labels."""
+    value = normalized(value).upper().replace("/", " ")
+    return re.sub(r"[^A-Z0-9 ]", "", value).strip()
+
+
+STOCK_HEADER_ALIASES = {
+    "tipo": {"TIPO"},
+    "protocolo": {"PROTOCOLO"},
+    "digital": {"DIGITAL"},
+    "subcategoria": {"SUBCATEGORIA"},
+    "jurisdicionado": {"JURISDICIONADO"},
+    "fase": {"FASE"},
+    "procurador": {"PROCURADORA", "PROCURADOR A", "PROCURADOR"},
+    "dias_com_procurador": {
+        "DIAS COM PROCURADORA", "DIAS COM PROCURADOR A", "DIAS COM PROCURADOR",
+    },
+    "assistente": {"ASSISTENTE"},
+    "dias_com_assistente": {
+        "DIAS COM ASSISTENTE A", "DIAS COM ASSISTENTE",
+    },
+    "dias_no_mpc": {"DIAS NA PROGE"},
+    "prescricao": {"PRESCRICAO"},
+}
+REQUIRED_STOCK_FIELDS = {"protocolo", "subcategoria", "jurisdicionado", "procurador", "dias_com_procurador"}
+
+
 def official_procurador(value):
     return _NAMES.get(normalized(value))
 
@@ -83,20 +110,43 @@ def parse_stock(content):
         raise ValueError("A leitura do XLS de estoque requer a dependência xlrd.") from exc
     book = xlrd.open_workbook(file_contents=content)
     sheet = book.sheet_by_index(0)
-    headers = tuple(_text(sheet.cell_value(0, col)) for col in range(sheet.ncols))
-    if headers != STOCK_HEADERS:
-        raise ValueError("Cabeçalhos do relatório de estoque do Tramita não reconhecidos.")
+    header_row, field_columns, found_headers = _find_stock_header(sheet)
+    if header_row is None:
+        missing = ", ".join(sorted(REQUIRED_STOCK_FIELDS - set(field_columns)))
+        columns = ", ".join(found_headers[:12]) or "nenhuma"
+        raise ValueError("O arquivo não corresponde ao formato esperado do relatório de estoque do Tramita. Colunas identificadas: " + columns + ". Colunas obrigatórias ausentes: " + missing + ".")
     rows, unknown = [], set()
-    for index in range(1, sheet.nrows):
-        values = [_text(sheet.cell_value(index, col)) for col in range(sheet.ncols)]
-        protocol = values[1]
+    for index in range(header_row + 1, sheet.nrows):
+        values = {field: _text(sheet.cell_value(index, column)) for field, column in field_columns.items()}
+        protocol = values["protocolo"]
         if not PROTOCOL_PATTERN.fullmatch(protocol):
             continue
-        procurador = official_procurador(values[6])
+        procurador = official_procurador(values["procurador"])
         if not procurador:
-            unknown.add(values[6])
-        rows.append({"tipo": values[0], "protocolo": protocol, "digital": values[2], "subcategoria": values[3], "jurisdicionado": values[4], "fase": values[5], "procurador": procurador or values[6], "dias_com_procurador": _number(values[7]), "assistente": values[8], "dias_com_assistente": _number(values[9]), "dias_no_mpc": _number(values[10]), "prescricao": values[11]})
+            unknown.add(values["procurador"])
+        rows.append({"tipo": values.get("tipo", ""), "protocolo": protocol, "digital": values.get("digital", ""), "subcategoria": values["subcategoria"], "jurisdicionado": values["jurisdicionado"], "fase": values.get("fase", ""), "procurador": procurador or values["procurador"], "dias_com_procurador": _number(values["dias_com_procurador"]), "assistente": values.get("assistente", ""), "dias_com_assistente": _number(values.get("dias_com_assistente")), "dias_no_mpc": _number(values.get("dias_no_mpc")), "prescricao": values.get("prescricao", "")})
     return rows, sorted(value for value in unknown if value)
+
+
+def _find_stock_header(sheet, limit=20):
+    """Locate one safe header row near the top of Tramita's binary XLS export."""
+    best_headers, best_columns, best_score = [], {}, 0
+    for row_index in range(min(limit, sheet.nrows)):
+        raw_headers = [_text(sheet.cell_value(row_index, col)) for col in range(sheet.ncols)]
+        columns = {}
+        for column, header in enumerate(raw_headers):
+            normalized_value = normalized_header(header)
+            for field, aliases in STOCK_HEADER_ALIASES.items():
+                if normalized_value in aliases and field not in columns:
+                    columns[field] = column
+                    break
+        if len(columns) > best_score:
+            best_score = len(columns)
+            best_columns = columns
+            best_headers = [header for header in raw_headers if header]
+        if REQUIRED_STOCK_FIELDS.issubset(columns):
+            return row_index, columns, [header for header in raw_headers if header]
+    return None, best_columns, best_headers
 
 
 def is_result(value, expected):

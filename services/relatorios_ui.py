@@ -150,7 +150,11 @@ def imports(store, principal):
     snapshot = st.date_input("Data da fotografia", value=date.today(), format="DD/MM/YYYY")
     uploaded = st.file_uploader("Arquivo de processos atuais", type=["xls"], key="tramita_stock")
     if uploaded:
-        rows, unknown = parse_stock(uploaded.getvalue())
+        try:
+            rows, unknown = parse_stock(uploaded.getvalue())
+        except ValueError as exc:
+            st.error(str(exc))
+            return
         st.write(f"Processos identificados: {len(rows)} · Procuradores identificados: {len({row['procurador'] for row in rows})}")
         if unknown: st.error("Procurador não reconhecido: " + ", ".join(unknown))
         repeated = reports.imported_hash(file_hash(uploaded.getvalue()))
