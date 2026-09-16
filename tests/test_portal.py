@@ -522,6 +522,7 @@ def test_home_card_callbacks_only_queue_navigation():
 
     for fn in (
         portal.open_portarias,
+        portal.open_home,
         portal.open_agenda,
         portal.open_oficios,
         portal.open_memorandos,
@@ -539,6 +540,19 @@ def test_home_card_callbacks_only_queue_navigation():
     assert "st.rerun()" not in inspect.getsource(portal.queue_portal_navigation)
     assert "st.rerun()" not in inspect.getsource(portal.queue_alerts_view)
     assert "st.rerun()" in inspect.getsource(portal.request_alerts_view)
+
+
+def test_sidebar_logo_queues_the_same_home_navigation(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    for module in ("Agenda", "Ofícios", "Memorandos", "Relatórios e Indicadores"):
+        app.sidebar.radio(key="portal_module").set_value(module).run()
+        app.button(key="sidebar_home").click().run()
+        assert not app.exception
+        assert app.sidebar.radio(key="portal_module").value == "Início"
 
 
 def test_home_cards_and_refresh_do_not_reapply_navigation(store, monkeypatch):

@@ -114,10 +114,29 @@ def _brand_styles():
     )
 
 
-def render_sidebar_brand():
-    """Sidebar mark matched to the navigation background. Call inside st.sidebar."""
+def render_sidebar_brand(on_click=None):
+    """Render the sidebar mark, optionally as an internal-navigation control."""
     _brand_styles()
     logo = base64.b64encode(asset(SIDEBAR_LOGO)).decode("ascii")
+    if on_click is not None:
+        st.markdown(
+            "<style>"
+            "div.st-key-sidebar_home{display:block;width:100%;margin:.4rem 0 .9rem 0;}"
+            "div.st-key-sidebar_home button{display:block;width:10rem;height:12rem;margin:0 auto;padding:0;border:0;"
+            "background:transparent url('data:image/png;base64,"
+            + logo
+            + "') center/contain no-repeat;color:transparent;font-size:0;cursor:pointer;}"
+            "div.st-key-sidebar_home button:hover{opacity:.96;}"
+            "div.st-key-sidebar_home button:focus-visible{outline:2px solid currentColor;outline-offset:3px;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
+        st.button(
+            "Início",
+            key="sidebar_home",
+            on_click=on_click,
+        )
+        return
     st.markdown(
         '<div class="mpc-sidebar-brand"><img src="data:image/png;base64,'
         + logo

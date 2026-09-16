@@ -212,6 +212,11 @@ def open_portarias():
     queue_portal_navigation("Portarias", nav="Nova Portaria")
 
 
+def open_home():
+    """Return to Home through the same queued Portal navigation flow."""
+    queue_portal_navigation("Início")
+
+
 def open_agenda():
     queue_portal_navigation("Agenda")
 
@@ -519,7 +524,7 @@ def render_portal():
         st.session_state["portal_module"] = "Início"
     apply_alerts_view_request()
     with st.sidebar:
-        render_sidebar_brand()
+        render_sidebar_brand(on_click=open_home)
         st.caption(principal.nome + " · " + principal.email)
         from services.alerts import can_view_alertas
         from services.alerts_ui import render_bell
