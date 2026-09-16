@@ -517,6 +517,10 @@ def render_portal():
         from services.alerts_ui import render_bell
 
         _, logout_column = st.columns([3, 2])
+        st.markdown(
+            "<style>div.st-key-portal_logout{display:flex;justify-content:flex-end;}</style>",
+            unsafe_allow_html=True,
+        )
         if logout_column.button("Sair", key="portal_logout"):
             _logout()
         if can_view_alertas(principal):
