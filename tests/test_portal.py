@@ -230,9 +230,12 @@ def test_relatorios_is_hidden_and_manipulated_navigation_is_reset_without_permis
     assert not any(getattr(button, "key", None) == "open_relatorios" for button in app.button)
     portal = next(radio for radio in app.sidebar.radio if radio.key == "portal_module")
     assert "Relatórios e Indicadores" not in portal.options
-    from portal import queue_portal_navigation
+    from portal import PORTAL_NAV_REQUEST
 
-    queue_portal_navigation("Relatórios e Indicadores")
+    app.session_state[PORTAL_NAV_REQUEST] = {
+        "module": "Relatórios e Indicadores",
+        "state": {},
+    }
     app.run()
     assert next(radio for radio in app.sidebar.radio if radio.key == "portal_module").value == "Início"
 
