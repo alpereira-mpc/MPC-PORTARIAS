@@ -46,6 +46,9 @@ TABLES = (
     "tarefas",
     "tarefas_checklist",
     "tarefas_lembretes",
+    "tramita_importacoes",
+    "tramita_movimentacoes",
+    "tramita_estoque",
 )
 IDENTITY_TABLES = {
     "procuradores",
@@ -63,6 +66,9 @@ IDENTITY_TABLES = {
     "tarefas",
     "tarefas_checklist",
     "tarefas_lembretes",
+    "tramita_importacoes",
+    "tramita_movimentacoes",
+    "tramita_estoque",
 }
 HISTORY_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS portarias_recent_idx "

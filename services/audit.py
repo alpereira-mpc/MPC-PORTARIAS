@@ -53,6 +53,7 @@ MODULE_LABELS = {
     "pendencias": "Pendências",
     "alertas": "Alertas",
     "tarefas": "Tarefas",
+    "relatorios": "Relatórios e Indicadores",
 }
 MODULE_KEYS = {
     "Portarias": "portarias",
@@ -63,6 +64,7 @@ MODULE_KEYS = {
     "Pendências": "pendencias",
     "Alertas": "alertas",
     "Tarefas": "tarefas",
+    "Relatórios e Indicadores": "relatorios",
 }
 
 

@@ -100,8 +100,9 @@ MODULES = (
         "relatorios",
         "Relatórios",
         "Relatórios e Indicadores",
-        "Consultas, estatísticas e relatórios administrativos do MPC-PB.",
+        "Acompanhamento da movimentação e do estoque processual do MPC-PB.",
         MODULE_ICONS["relatorios"],
+        True,
     ),
 )
 
@@ -231,6 +232,10 @@ def open_tarefas():
     queue_portal_navigation("Tarefas")
 
 
+def open_relatorios():
+    queue_portal_navigation("Relatórios e Indicadores")
+
+
 def card(module):
     with st.container(border=True):
         st.caption(module.label.upper())
@@ -250,6 +255,7 @@ def card(module):
                     "memorandos": open_memorandos,
                     "admin": open_admin,
                     "tarefas": open_tarefas,
+                    "relatorios": open_relatorios,
                 }[module.key],
             )
         else:
@@ -504,6 +510,8 @@ def render_portal():
         options.append("Memorandos")
     if has_permission(principal, "tarefas"):
         options.append("Tarefas")
+    if has_permission(principal, "relatorios"):
+        options.append("Relatórios e Indicadores")
     if has_permission(principal, "admin"):
         options.append("Administração")
     apply_portal_navigation(options)
@@ -579,6 +587,12 @@ def render_portal():
         if selected == "Tarefas":
             require_permission(principal, "tarefas")
             from services.tarefas_ui import render
+
+            render(store, principal)
+            st.stop()
+        if selected == "Relatórios e Indicadores":
+            require_permission(principal, "relatorios")
+            from services.relatorios_ui import render
 
             render(store, principal)
             st.stop()
