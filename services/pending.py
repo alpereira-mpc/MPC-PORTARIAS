@@ -427,6 +427,7 @@ def fetch_agenda(
                 "DESPACHO": "Despacho",
             }.get(row["tipo"], "Compromisso")
             extra = payload.get("reuniao_com") or payload.get("categoria") or ""
+            local = (payload.get("local") or "").strip()
             items.append(
                 PendingItem(
                     source_module="agenda",
@@ -441,7 +442,7 @@ def fetch_agenda(
                     urgency=urgency,
                     context=row["tipo"],
                     navigation="Agenda",
-                    metadata={"tipo": row["tipo"], "inicio": row["inicio"]},
+                    metadata={"tipo": row["tipo"], "inicio": row["inicio"], "local": local},
                 )
             )
         return items

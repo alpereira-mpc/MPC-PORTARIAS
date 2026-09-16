@@ -82,7 +82,12 @@ def _bell_item_markdown(item):
     }
     color = colors.get(item.severity, "#31333F")
     context = escape((item.description or "").strip() or "—")
-    meta = escape(f"{item.gabinete} · {_date_text(item)}")
+    meta_parts = [item.gabinete, _date_text(item)]
+    if item.source_module == "agenda":
+        local = (item.metadata or {}).get("local")
+        if local and local.strip():
+            meta_parts.append(local.strip())
+    meta = escape(" · ".join(part for part in meta_parts if part))
     title = escape(item.title or "")
     severity = escape(item.severity)
     return (
