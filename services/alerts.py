@@ -124,15 +124,14 @@ def trip_alerts(store, tomorrow):
     from database.agenda import AgendaStore
     items = []
     for row in AgendaStore(store).trip_alert_window(tomorrow.isoformat()):
-        airport = row.get("aeroporto_outro") if row.get("aeroporto") == "Outro" else row.get("aeroporto")
         informed = bool(row.get("motorista_informado"))
-        for leg, field, hour, airline, flight, title in (
-            ("ida", "ida_data", "ida_hora", "ida_companhia", "ida_voo", "✈️ Voo de ida amanhã"),
-            ("volta", "volta_data", "volta_chegada_hora", "volta_companhia", "volta_voo", "✈️ Retorno amanhã"),
+        for leg, field, hour, title in (
+            ("ida", "ida_data", "ida_hora", "✈️ Voo de ida amanhã"),
+            ("volta", "volta_data", "volta_chegada_hora", "✈️ Retorno amanhã"),
         ):
             if row.get(field) != tomorrow.isoformat(): continue
+            airport = row.get("aeroporto_" + leg + "_outro") if row.get("aeroporto_" + leg) == "Outro" else row.get("aeroporto_" + leg)
             detail = f"{row['nome']}\n{tomorrow.strftime('%d/%m')} às {row.get(hour) or '--:--'} — {airport}"
-            if airline or flight: detail += "\n" + " ".join(x for x in (airline, flight) if x)
             detail += "\n" + ("✅ Motorista informado" if informed else "⚠ Motorista ainda não informado")
             rank = (0 if leg == "ida" else 1) if not informed else (2 if leg == "ida" else 3)
             items.append(AlertItem("agenda", f"viagem:{row['afastamento_id']}:{leg}:{tomorrow}", "—", ALTO if not informed else ATENCAO, f"viagem_{leg}", title, detail, tomorrow, None, "AGENDADA", "Agenda", {"afastamento_id": row["afastamento_id"], "trip_rank": rank}))

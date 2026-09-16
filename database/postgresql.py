@@ -290,10 +290,21 @@ class PostgresBackend:
                 c.raw.execute(HISTORY_INDEX_SQL)
                 # Additive migrations remain safe for Cloud databases already at v1.
                 # The complete initializer only runs for a new schema.
+                # Agenda was historically lazy-created, so establish the parent first.
+                c.raw.execute(
+                    """CREATE TABLE IF NOT EXISTS agenda_afastamentos (
+                    id TEXT PRIMARY KEY, procurador_id INTEGER NOT NULL REFERENCES procuradores(id),
+                    motivo TEXT NOT NULL, motivo_outro TEXT, data_inicio TEXT NOT NULL, data_fim TEXT NOT NULL,
+                    substituto_id INTEGER REFERENCES procuradores(id), observacao TEXT,
+                    cancelado INTEGER NOT NULL DEFAULT 0, criado_por TEXT,
+                    criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL);""",
+                    prepare=False,
+                )
                 c.raw.execute(
                     """CREATE TABLE IF NOT EXISTS agenda_afastamentos_viagens (
                     afastamento_id TEXT PRIMARY KEY REFERENCES agenda_afastamentos(id) ON DELETE CASCADE,
                     aeroporto TEXT NOT NULL, aeroporto_outro TEXT, ida_data TEXT, ida_hora TEXT,
+                    aeroporto_ida TEXT, aeroporto_ida_outro TEXT, aeroporto_volta TEXT, aeroporto_volta_outro TEXT,
                     ida_companhia TEXT, ida_voo TEXT, ida_motorista_hora TEXT,
                     volta_data TEXT, volta_chegada_hora TEXT, volta_companhia TEXT, volta_voo TEXT,
                     volta_motorista_hora TEXT, motorista_informado INTEGER NOT NULL DEFAULT 0,
@@ -301,6 +312,19 @@ class PostgresBackend:
                     criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL);
                     CREATE INDEX IF NOT EXISTS agenda_viagens_ida_idx ON agenda_afastamentos_viagens(ida_data);
                     CREATE INDEX IF NOT EXISTS agenda_viagens_volta_idx ON agenda_afastamentos_viagens(volta_data);""",
+                    prepare=False,
+                )
+                c.raw.execute(
+                    """ALTER TABLE agenda_afastamentos_viagens ADD COLUMN IF NOT EXISTS aeroporto_ida TEXT;
+                    ALTER TABLE agenda_afastamentos_viagens ADD COLUMN IF NOT EXISTS aeroporto_ida_outro TEXT;
+                    ALTER TABLE agenda_afastamentos_viagens ADD COLUMN IF NOT EXISTS aeroporto_volta TEXT;
+                    ALTER TABLE agenda_afastamentos_viagens ADD COLUMN IF NOT EXISTS aeroporto_volta_outro TEXT;
+                    UPDATE agenda_afastamentos_viagens SET
+                    aeroporto_ida=COALESCE(aeroporto_ida,aeroporto),
+                    aeroporto_ida_outro=COALESCE(aeroporto_ida_outro,aeroporto_outro),
+                    aeroporto_volta=COALESCE(aeroporto_volta,aeroporto),
+                    aeroporto_volta_outro=COALESCE(aeroporto_volta_outro,aeroporto_outro)
+                    WHERE aeroporto_ida IS NULL OR aeroporto_volta IS NULL;""",
                     prepare=False,
                 )
                 return

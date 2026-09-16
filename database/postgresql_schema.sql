@@ -233,6 +233,7 @@ CREATE INDEX IF NOT EXISTS agenda_afastamentos_periodo_idx
 CREATE TABLE IF NOT EXISTS agenda_afastamentos_viagens (
     afastamento_id TEXT PRIMARY KEY REFERENCES agenda_afastamentos(id) ON DELETE CASCADE,
     aeroporto TEXT NOT NULL, aeroporto_outro TEXT, ida_data TEXT, ida_hora TEXT,
+    aeroporto_ida TEXT, aeroporto_ida_outro TEXT, aeroporto_volta TEXT, aeroporto_volta_outro TEXT,
     ida_companhia TEXT, ida_voo TEXT, ida_motorista_hora TEXT,
     volta_data TEXT, volta_chegada_hora TEXT, volta_companhia TEXT, volta_voo TEXT,
     volta_motorista_hora TEXT, motorista_informado INTEGER NOT NULL DEFAULT 0,

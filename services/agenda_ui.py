@@ -333,45 +333,45 @@ def consume_pending_open_agenda(agenda):
 
 
 def driver_message(name, trip):
-    airport = trip.get("aeroporto_outro") if trip.get("aeroporto") == "Outro" else trip.get("aeroporto")
+    def airport(leg):
+        value = trip.get("aeroporto_" + leg) or trip.get("aeroporto")
+        return trip.get("aeroporto_" + leg + "_outro") or trip.get("aeroporto_outro") if value == "Outro" else value
     lines = ["Bom dia.", ""]
     if trip.get("ida_data"):
-        lines.append(f"No dia {datetime.fromisoformat(trip['ida_data']).strftime('%d/%m')}, o(a) Procurador(a) {name} viajará pelo Aeroporto de {airport}.")
+        lines.append(f"No dia {datetime.fromisoformat(trip['ida_data']).strftime('%d/%m')}, o(a) Procurador(a) {name} viajará pelo Aeroporto de {airport('ida')}.")
         if trip.get("ida_hora"): lines.append(f"O voo está previsto para sair às {trip['ida_hora'].replace(':', 'h')}.")
-        flight = " ".join(x for x in (trip.get("ida_companhia"), trip.get("ida_voo")) if x)
-        if flight: lines.append(f"Voo {flight}.")
         if trip.get("ida_motorista_hora"): lines.append(f"Horário combinado para saída: {trip['ida_motorista_hora'].replace(':', 'h')}.")
     if trip.get("volta_data"):
-        text = f"O retorno será em {datetime.fromisoformat(trip['volta_data']).strftime('%d/%m')}"
+        text = f"O retorno será em {datetime.fromisoformat(trip['volta_data']).strftime('%d/%m')} pelo Aeroporto de {airport('volta')}"
         if trip.get("volta_chegada_hora"):
             text += f", com chegada prevista às {trip['volta_chegada_hora'].replace(':', 'h')}"
         lines.extend(["", text + "."])
-        flight = " ".join(x for x in (trip.get("volta_companhia"), trip.get("volta_voo")) if x)
-        if flight: lines.append(f"Voo {flight}.")
         if trip.get("volta_motorista_hora"): lines.append(f"Horário combinado para busca no aeroporto: {trip['volta_motorista_hora'].replace(':', 'h')}.")
     return "\n".join(lines)
 
 
 def render_trip_details(trip, name, *, key):
     """Shared active/history display; no logistics field is required."""
-    airport = trip.get("aeroporto_outro") if trip.get("aeroporto") == "Outro" else trip.get("aeroporto")
+    def airport(leg):
+        value = trip.get("aeroporto_" + leg) or trip.get("aeroporto")
+        return trip.get("aeroporto_" + leg + "_outro") or trip.get("aeroporto_outro") if value == "Outro" else value
     st.caption("✈️ Viagem aérea")
-    if airport:
-        st.write("Aeroporto:", airport)
     if trip.get("ida_data"):
         text = "Ida: " + datetime.fromisoformat(trip["ida_data"]).strftime("%d/%m/%Y")
         if trip.get("ida_hora"):
             text += " às " + trip["ida_hora"]
-        flight = " ".join(x for x in (trip.get("ida_companhia"), trip.get("ida_voo")) if x)
-        st.write(text + (" · " + flight if flight else ""))
+        st.write("Ida")
+        st.write(text)
+        st.write("Aeroporto de", airport("ida"))
         if trip.get("ida_motorista_hora"):
             st.write("Horário combinado para saída:", trip["ida_motorista_hora"])
     if trip.get("volta_data"):
         text = "Volta: " + datetime.fromisoformat(trip["volta_data"]).strftime("%d/%m/%Y")
         if trip.get("volta_chegada_hora"):
             text += " às " + trip["volta_chegada_hora"]
-        flight = " ".join(x for x in (trip.get("volta_companhia"), trip.get("volta_voo")) if x)
-        st.write(text + (" · " + flight if flight else ""))
+        st.write("Volta")
+        st.write(text)
+        st.write("Aeroporto de", airport("volta"))
         if trip.get("volta_motorista_hora"):
             st.write("Horário combinado para busca no aeroporto:", trip["volta_motorista_hora"])
     st.write("✅ Motorista informado" if trip.get("motorista_informado") else "⚠ Motorista ainda não informado")
@@ -405,24 +405,35 @@ def leave_editor(agenda, people, principal):
     trip = None
     if has_trip:
         with st.expander("Logística de viagem aérea", expanded=True):
-            airport = st.selectbox("Aeroporto", ("João Pessoa", "Recife", "Outro"), index=("João Pessoa", "Recife", "Outro").index(trip_old.get("aeroporto", "João Pessoa")) if trip_old and trip_old.get("aeroporto") in ("João Pessoa", "Recife", "Outro") else 0, key=prefix + "airport")
-            airport_other = st.text_input("Outro aeroporto", value=(trip_old or {}).get("aeroporto_outro") or "", key=prefix + "airport_other") if airport == "Outro" else ""
             has_ida = st.checkbox("Informar ida", value=bool((trip_old or {}).get("ida_data")), key=prefix + "has_ida")
-            st.markdown("**Ida**")
-            a, b, c = st.columns(3)
-            ida_date = a.date_input("Data do voo", value=date.fromisoformat(trip_old["ida_data"]) if trip_old and trip_old.get("ida_data") else start, format="DD/MM/YYYY", key=prefix + "ida_date", disabled=not has_ida)
-            ida_time = b.time_input("Hora de saída", value=datetime.strptime(trip_old["ida_hora"], "%H:%M").time() if trip_old and trip_old.get("ida_hora") else time(8), key=prefix + "ida_time", disabled=not has_ida)
-            ida_driver = c.time_input("Horário combinado", value=datetime.strptime(trip_old["ida_motorista_hora"], "%H:%M").time() if trip_old and trip_old.get("ida_motorista_hora") else time(6), key=prefix + "ida_driver", disabled=not has_ida)
-            a, b = st.columns(2); ida_airline = a.text_input("Companhia aérea", value=(trip_old or {}).get("ida_companhia") or "", key=prefix + "ida_airline"); ida_flight = b.text_input("Número do voo", value=(trip_old or {}).get("ida_voo") or "", key=prefix + "ida_flight")
             has_return = st.checkbox("Informar volta", value=bool((trip_old or {}).get("volta_data")), key=prefix + "has_return")
-            st.markdown("**Volta**")
-            a, b, c = st.columns(3)
-            return_date = a.date_input("Data do retorno", value=date.fromisoformat(trip_old["volta_data"]) if trip_old and trip_old.get("volta_data") else end, format="DD/MM/YYYY", key=prefix + "return_date", disabled=not has_return)
-            return_time = b.time_input("Chegada prevista", value=datetime.strptime(trip_old["volta_chegada_hora"], "%H:%M").time() if trip_old and trip_old.get("volta_chegada_hora") else time(18), key=prefix + "return_time", disabled=not has_return)
-            return_driver = c.time_input("Horário combinado", value=datetime.strptime(trip_old["volta_motorista_hora"], "%H:%M").time() if trip_old and trip_old.get("volta_motorista_hora") else time(18), key=prefix + "return_driver", disabled=not has_return)
-            a, b = st.columns(2); return_airline = a.text_input("Companhia aérea (volta)", value=(trip_old or {}).get("volta_companhia") or "", key=prefix + "return_airline"); return_flight = b.text_input("Número do voo (volta)", value=(trip_old or {}).get("volta_voo") or "", key=prefix + "return_flight")
+            airport_ida = airport_ida_other = ida_date = ida_time = ida_driver = None
+            airport_volta = airport_volta_other = return_date = return_time = return_driver = None
+            if has_ida:
+                st.markdown("**Aeroporto de ida**")
+                ida_saved_airport = (trip_old or {}).get("aeroporto_ida") or (trip_old or {}).get("aeroporto") or "João Pessoa"
+                airport_ida = st.selectbox("Aeroporto de ida", ("João Pessoa", "Recife", "Outro"), index=("João Pessoa", "Recife", "Outro").index(ida_saved_airport) if ida_saved_airport in ("João Pessoa", "Recife", "Outro") else 0, key=prefix + "airport_ida")
+                airport_ida_other = st.text_input("Outro aeroporto de ida", value=(trip_old or {}).get("aeroporto_ida_outro") or (trip_old or {}).get("aeroporto_outro") or "", key=prefix + "airport_ida_other") if airport_ida == "Outro" else None
+                a, b, c = st.columns((1.2, 1, 1))
+                ida_date = a.date_input("Data do voo", value=date.fromisoformat(trip_old["ida_data"]) if trip_old and trip_old.get("ida_data") else start, format="DD/MM/YYYY", key=prefix + "ida_date")
+                ida_time = b.text_input("Hora de saída", value=(trip_old or {}).get("ida_hora") or "", key=prefix + "ida_time", placeholder="HH:MM")
+                ida_driver = c.text_input("Horário combinado", value=(trip_old or {}).get("ida_motorista_hora") or "", key=prefix + "ida_driver", placeholder="HH:MM")
+            if has_return:
+                st.markdown("**Aeroporto de volta**")
+                return_saved_airport = (trip_old or {}).get("aeroporto_volta") or (trip_old or {}).get("aeroporto") or airport_ida or "João Pessoa"
+                airport_volta = st.selectbox("Aeroporto de volta", ("João Pessoa", "Recife", "Outro"), index=("João Pessoa", "Recife", "Outro").index(return_saved_airport) if return_saved_airport in ("João Pessoa", "Recife", "Outro") else 0, key=prefix + "airport_volta")
+                airport_volta_other = st.text_input("Outro aeroporto de volta", value=(trip_old or {}).get("aeroporto_volta_outro") or (trip_old or {}).get("aeroporto_outro") or "", key=prefix + "airport_volta_other") if airport_volta == "Outro" else None
+                a, b, c = st.columns((1.2, 1, 1))
+                return_date = a.date_input("Data do retorno", value=date.fromisoformat(trip_old["volta_data"]) if trip_old and trip_old.get("volta_data") else end, format="DD/MM/YYYY", key=prefix + "return_date")
+                return_time_key = prefix + "return_time"
+                return_driver_key = prefix + "return_driver"
+                def default_return_driver():
+                    if not st.session_state.get(return_driver_key):
+                        st.session_state[return_driver_key] = st.session_state.get(return_time_key, "")
+                return_time = b.text_input("Chegada prevista", value=(trip_old or {}).get("volta_chegada_hora") or "", key=return_time_key, placeholder="HH:MM", on_change=default_return_driver)
+                return_driver = c.text_input("Horário combinado", value=(trip_old or {}).get("volta_motorista_hora") or (trip_old or {}).get("volta_chegada_hora") or "", key=return_driver_key, placeholder="HH:MM")
             informed = st.checkbox("Motorista informado", value=bool((trip_old or {}).get("motorista_informado")), key=prefix + "driver_informed")
-            trip = {"aeroporto": airport, "aeroporto_outro": airport_other, "ida_data": ida_date.isoformat() if has_ida else None, "ida_hora": ida_time.strftime("%H:%M") if has_ida else None, "ida_companhia": ida_airline if has_ida else None, "ida_voo": ida_flight if has_ida else None, "ida_motorista_hora": ida_driver.strftime("%H:%M") if has_ida else None, "volta_data": return_date.isoformat() if has_return else None, "volta_chegada_hora": return_time.strftime("%H:%M") if has_return else None, "volta_companhia": return_airline if has_return else None, "volta_voo": return_flight if has_return else None, "volta_motorista_hora": return_driver.strftime("%H:%M") if has_return else None, "motorista_informado": informed, "observacao": st.text_area("Observação logística", value=(trip_old or {}).get("observacao") or "", key=prefix + "trip_notes")}
+            trip = {"aeroporto_ida": airport_ida, "aeroporto_ida_outro": airport_ida_other, "aeroporto_volta": airport_volta, "aeroporto_volta_outro": airport_volta_other, "ida_data": ida_date.isoformat() if ida_date else None, "ida_hora": ida_time or None, "ida_motorista_hora": ida_driver or None, "volta_data": return_date.isoformat() if return_date else None, "volta_chegada_hora": return_time or None, "volta_motorista_hora": return_driver or None, "motorista_informado": informed, "observacao": st.text_area("Observação logística", value=(trip_old or {}).get("observacao") or "", key=prefix + "trip_notes")}
     record = {"id": old.get("id"), "procurador_id": holder_id, "motivo": motive, "motivo_outro": other, "data_inicio": start.isoformat(), "data_fim": end.isoformat(), "substituto_id": substitute, "observacao": notes}
     if agenda.leave_substitute_warning(substitute, record["data_inicio"], record["data_fim"], record["id"]):
         st.warning("Atenção: este procurador já está indicado como substituto em outro afastamento durante parte deste período.")
@@ -434,7 +445,7 @@ def leave_editor(agenda, people, principal):
             if trip:
                 agenda.upsert_trip(identifier, trip, informed_by=getattr(principal, "email", None))
                 event = "VIAGEM_AEREA_EDITADA" if trip_old else "VIAGEM_AEREA_CADASTRADA"
-                audit_agenda(event, "ALTERAR" if trip_old else "CRIAR", identifier, {"procurador_id": holder_id, "aeroporto": trip.get("aeroporto"), "ida": trip.get("ida_data"), "volta": trip.get("volta_data")}, "viagem_aerea")
+                audit_agenda(event, "ALTERAR" if trip_old else "CRIAR", identifier, {"procurador_id": holder_id, "aeroporto_ida": trip.get("aeroporto_ida"), "aeroporto_volta": trip.get("aeroporto_volta"), "ida": trip.get("ida_data"), "volta": trip.get("volta_data")}, "viagem_aerea")
                 if trip.get("motorista_informado") and not (trip_old or {}).get("motorista_informado"):
                     audit_agenda("MOTORISTA_MARCADO_COMO_INFORMADO", "ALTERAR", identifier, {"procurador_id": holder_id}, "viagem_aerea")
             elif trip_old:

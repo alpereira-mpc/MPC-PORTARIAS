@@ -23,6 +23,10 @@ def trip(**changes):
     value = {
         "aeroporto": "João Pessoa",
         "aeroporto_outro": None,
+        "aeroporto_ida": "João Pessoa",
+        "aeroporto_ida_outro": None,
+        "aeroporto_volta": None,
+        "aeroporto_volta_outro": None,
         "ida_data": None,
         "ida_hora": None,
         "ida_companhia": None,
@@ -48,12 +52,12 @@ def test_trip_crud_and_driver_metadata(store):
     saved = agenda.get_trip(identifier)
     assert saved["ida_data"] == "2030-02-01"
     assert saved["informado_em"] is None
-    agenda.upsert_trip(identifier, trip(aeroporto="Recife", motorista_informado=True), informed_by="user@example.org")
+    agenda.upsert_trip(identifier, trip(aeroporto_ida="Recife", motorista_informado=True), informed_by="user@example.org")
     saved = agenda.get_trip(identifier)
     assert saved["aeroporto"] == "Recife"
     assert saved["informado_em"] and saved["informado_por"] == "user@example.org"
     first_stamp = saved["informado_em"]
-    agenda.upsert_trip(identifier, trip(aeroporto="Outro", aeroporto_outro="Natal", motorista_informado=True), informed_by="other@example.org")
+    agenda.upsert_trip(identifier, trip(aeroporto_ida="Outro", aeroporto_ida_outro="Natal", motorista_informado=True), informed_by="other@example.org")
     assert agenda.get_trip(identifier)["informado_em"] == first_stamp
     assert agenda.get_trip(identifier)["informado_por"] == "user@example.org"
     agenda.delete_trip(identifier)
@@ -68,7 +72,43 @@ def test_trip_allows_one_way_and_rejects_invalid_return(store):
     with pytest.raises(ValueError, match="volta"):
         agenda.upsert_trip(identifier, trip(ida_data="2030-02-02", volta_data="2030-02-01"))
     with pytest.raises(ValueError, match="outro aeroporto"):
-        agenda.upsert_trip(identifier, trip(aeroporto="Outro"))
+        agenda.upsert_trip(identifier, trip(aeroporto_ida="Outro", ida_data="2030-02-01"))
+
+
+@pytest.mark.parametrize("hour", ["05:47", "11:15", "13:31", "23:58", "00:00"])
+def test_trip_accepts_any_valid_hhmm_hour(store, hour):
+    agenda = AgendaStore(store)
+    identifier = leave(agenda, date.today() + timedelta(days=10))
+    agenda.upsert_trip(identifier, trip(ida_data="2030-02-01", ida_hora=hour, ida_motorista_hora="09:00"))
+    assert agenda.get_trip(identifier)["ida_hora"] == hour
+
+
+@pytest.mark.parametrize("hour", ["25:00", "13:72", "9:5", "abc"])
+def test_trip_rejects_invalid_hour(store, hour):
+    agenda = AgendaStore(store)
+    identifier = leave(agenda, date.today() + timedelta(days=10))
+    with pytest.raises(ValueError, match="HH:MM"):
+        agenda.upsert_trip(identifier, trip(ida_data="2030-02-01", ida_hora=hour))
+
+
+def test_trip_uses_independent_airports_and_legacy_fallback(store):
+    agenda = AgendaStore(store)
+    identifier = leave(agenda, date.today() + timedelta(days=10))
+    agenda.upsert_trip(identifier, trip(ida_data="2030-02-01", volta_data="2030-02-02", aeroporto_ida="João Pessoa", aeroporto_volta="Recife"))
+    saved = agenda.get_trip(identifier)
+    assert saved["aeroporto_ida"] == "João Pessoa"
+    assert saved["aeroporto_volta"] == "Recife"
+    with store.connection() as c:
+        c.execute("UPDATE agenda_afastamentos_viagens SET aeroporto_ida=NULL,aeroporto_volta=NULL,aeroporto='Recife' WHERE afastamento_id=?", (identifier,))
+    legacy = agenda.get_trip(identifier)
+    assert legacy["aeroporto_ida"] == legacy["aeroporto_volta"] == "Recife"
+
+
+def test_return_driver_time_is_independent_and_preserved(store):
+    agenda = AgendaStore(store)
+    identifier = leave(agenda, date.today() + timedelta(days=10))
+    agenda.upsert_trip(identifier, trip(volta_data="2030-02-02", volta_chegada_hora="13:30", volta_motorista_hora="14:00", aeroporto_volta="Recife"))
+    assert agenda.get_trip(identifier)["volta_motorista_hora"] == "14:00"
 
 
 def test_trip_alerts_are_selective_prioritized_and_skip_closed_leaves(store):
@@ -91,10 +131,11 @@ def test_trip_alerts_are_selective_prioritized_and_skip_closed_leaves(store):
 
 
 def test_trip_message_omits_unfilled_values():
-    text = driver_message("Fulano", trip(aeroporto="Recife", ida_data="2030-02-01"))
+    text = driver_message("Fulano", trip(aeroporto_ida="Recife", ida_data="2030-02-01", ida_companhia="Companhia antiga", ida_voo="1234"))
     assert "01/02" in text
     assert "None" not in text and "--:--" not in text
     assert "retorno" not in text
+    assert "Companhia" not in text and "1234" not in text
 
 
 def test_trip_schema_is_idempotent_and_batch_lookup(store):
