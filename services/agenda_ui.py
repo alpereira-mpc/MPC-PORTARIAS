@@ -322,7 +322,60 @@ def consume_pending_open_agenda(agenda):
                 "Histórico" if record["situacao"] in ("Realizado", "Cancelado") else "Agenda"
             )
             st.session_state["agenda_edit"] = record
+        else:
+            leave = agenda.get_leave(focus)
+            if leave:
+                st.session_state["agenda_section"] = (
+                    "Histórico" if leave["status"] in ("ENCERRADO", "CANCELADO") else "Agenda"
+                )
+                st.session_state["agenda_leave_edit"] = leave
     return focus
+
+
+def driver_message(name, trip):
+    airport = trip.get("aeroporto_outro") if trip.get("aeroporto") == "Outro" else trip.get("aeroporto")
+    lines = ["Bom dia.", ""]
+    if trip.get("ida_data"):
+        lines.append(f"No dia {datetime.fromisoformat(trip['ida_data']).strftime('%d/%m')}, o(a) Procurador(a) {name} viajará pelo Aeroporto de {airport}.")
+        if trip.get("ida_hora"): lines.append(f"O voo está previsto para sair às {trip['ida_hora'].replace(':', 'h')}.")
+        flight = " ".join(x for x in (trip.get("ida_companhia"), trip.get("ida_voo")) if x)
+        if flight: lines.append(f"Voo {flight}.")
+        if trip.get("ida_motorista_hora"): lines.append(f"Horário combinado para saída: {trip['ida_motorista_hora'].replace(':', 'h')}.")
+    if trip.get("volta_data"):
+        text = f"O retorno será em {datetime.fromisoformat(trip['volta_data']).strftime('%d/%m')}"
+        if trip.get("volta_chegada_hora"):
+            text += f", com chegada prevista às {trip['volta_chegada_hora'].replace(':', 'h')}"
+        lines.extend(["", text + "."])
+        flight = " ".join(x for x in (trip.get("volta_companhia"), trip.get("volta_voo")) if x)
+        if flight: lines.append(f"Voo {flight}.")
+        if trip.get("volta_motorista_hora"): lines.append(f"Horário combinado para busca no aeroporto: {trip['volta_motorista_hora'].replace(':', 'h')}.")
+    return "\n".join(lines)
+
+
+def render_trip_details(trip, name, *, key):
+    """Shared active/history display; no logistics field is required."""
+    airport = trip.get("aeroporto_outro") if trip.get("aeroporto") == "Outro" else trip.get("aeroporto")
+    st.caption("✈️ Viagem aérea")
+    if airport:
+        st.write("Aeroporto:", airport)
+    if trip.get("ida_data"):
+        text = "Ida: " + datetime.fromisoformat(trip["ida_data"]).strftime("%d/%m/%Y")
+        if trip.get("ida_hora"):
+            text += " às " + trip["ida_hora"]
+        flight = " ".join(x for x in (trip.get("ida_companhia"), trip.get("ida_voo")) if x)
+        st.write(text + (" · " + flight if flight else ""))
+        if trip.get("ida_motorista_hora"):
+            st.write("Horário combinado para saída:", trip["ida_motorista_hora"])
+    if trip.get("volta_data"):
+        text = "Volta: " + datetime.fromisoformat(trip["volta_data"]).strftime("%d/%m/%Y")
+        if trip.get("volta_chegada_hora"):
+            text += " às " + trip["volta_chegada_hora"]
+        flight = " ".join(x for x in (trip.get("volta_companhia"), trip.get("volta_voo")) if x)
+        st.write(text + (" · " + flight if flight else ""))
+        if trip.get("volta_motorista_hora"):
+            st.write("Horário combinado para busca no aeroporto:", trip["volta_motorista_hora"])
+    st.write("✅ Motorista informado" if trip.get("motorista_informado") else "⚠ Motorista ainda não informado")
+    st.text_area("Mensagem para o motorista", value=driver_message(name, trip), height=180, key=key)
 
 
 def leave_editor(agenda, people, principal):
@@ -347,12 +400,46 @@ def leave_editor(agenda, people, principal):
             role = "Procurador-Geral" if holder.get("funcao") == "Procurador-Geral" else "Subprocurador-Geral"
             st.warning(f"O afastamento do {role} pode ser salvo agora; a substituição ficará pendente.")
     notes = st.text_area("Observação", value=old.get("observacao") or "", key=prefix + "notes")
+    trip_old = agenda.get_trip(old["id"]) if old.get("id") else None
+    has_trip = st.checkbox("Possui viagem aérea", value=bool(trip_old), key=prefix + "has_trip")
+    trip = None
+    if has_trip:
+        with st.expander("Logística de viagem aérea", expanded=True):
+            airport = st.selectbox("Aeroporto", ("João Pessoa", "Recife", "Outro"), index=("João Pessoa", "Recife", "Outro").index(trip_old.get("aeroporto", "João Pessoa")) if trip_old and trip_old.get("aeroporto") in ("João Pessoa", "Recife", "Outro") else 0, key=prefix + "airport")
+            airport_other = st.text_input("Outro aeroporto", value=(trip_old or {}).get("aeroporto_outro") or "", key=prefix + "airport_other") if airport == "Outro" else ""
+            has_ida = st.checkbox("Informar ida", value=bool((trip_old or {}).get("ida_data")), key=prefix + "has_ida")
+            st.markdown("**Ida**")
+            a, b, c = st.columns(3)
+            ida_date = a.date_input("Data do voo", value=date.fromisoformat(trip_old["ida_data"]) if trip_old and trip_old.get("ida_data") else start, format="DD/MM/YYYY", key=prefix + "ida_date", disabled=not has_ida)
+            ida_time = b.time_input("Hora de saída", value=datetime.strptime(trip_old["ida_hora"], "%H:%M").time() if trip_old and trip_old.get("ida_hora") else time(8), key=prefix + "ida_time", disabled=not has_ida)
+            ida_driver = c.time_input("Horário combinado", value=datetime.strptime(trip_old["ida_motorista_hora"], "%H:%M").time() if trip_old and trip_old.get("ida_motorista_hora") else time(6), key=prefix + "ida_driver", disabled=not has_ida)
+            a, b = st.columns(2); ida_airline = a.text_input("Companhia aérea", value=(trip_old or {}).get("ida_companhia") or "", key=prefix + "ida_airline"); ida_flight = b.text_input("Número do voo", value=(trip_old or {}).get("ida_voo") or "", key=prefix + "ida_flight")
+            has_return = st.checkbox("Informar volta", value=bool((trip_old or {}).get("volta_data")), key=prefix + "has_return")
+            st.markdown("**Volta**")
+            a, b, c = st.columns(3)
+            return_date = a.date_input("Data do retorno", value=date.fromisoformat(trip_old["volta_data"]) if trip_old and trip_old.get("volta_data") else end, format="DD/MM/YYYY", key=prefix + "return_date", disabled=not has_return)
+            return_time = b.time_input("Chegada prevista", value=datetime.strptime(trip_old["volta_chegada_hora"], "%H:%M").time() if trip_old and trip_old.get("volta_chegada_hora") else time(18), key=prefix + "return_time", disabled=not has_return)
+            return_driver = c.time_input("Horário combinado", value=datetime.strptime(trip_old["volta_motorista_hora"], "%H:%M").time() if trip_old and trip_old.get("volta_motorista_hora") else time(18), key=prefix + "return_driver", disabled=not has_return)
+            a, b = st.columns(2); return_airline = a.text_input("Companhia aérea (volta)", value=(trip_old or {}).get("volta_companhia") or "", key=prefix + "return_airline"); return_flight = b.text_input("Número do voo (volta)", value=(trip_old or {}).get("volta_voo") or "", key=prefix + "return_flight")
+            informed = st.checkbox("Motorista informado", value=bool((trip_old or {}).get("motorista_informado")), key=prefix + "driver_informed")
+            trip = {"aeroporto": airport, "aeroporto_outro": airport_other, "ida_data": ida_date.isoformat() if has_ida else None, "ida_hora": ida_time.strftime("%H:%M") if has_ida else None, "ida_companhia": ida_airline if has_ida else None, "ida_voo": ida_flight if has_ida else None, "ida_motorista_hora": ida_driver.strftime("%H:%M") if has_ida else None, "volta_data": return_date.isoformat() if has_return else None, "volta_chegada_hora": return_time.strftime("%H:%M") if has_return else None, "volta_companhia": return_airline if has_return else None, "volta_voo": return_flight if has_return else None, "volta_motorista_hora": return_driver.strftime("%H:%M") if has_return else None, "motorista_informado": informed, "observacao": st.text_area("Observação logística", value=(trip_old or {}).get("observacao") or "", key=prefix + "trip_notes")}
     record = {"id": old.get("id"), "procurador_id": holder_id, "motivo": motive, "motivo_outro": other, "data_inicio": start.isoformat(), "data_fim": end.isoformat(), "substituto_id": substitute, "observacao": notes}
     if agenda.leave_substitute_warning(substitute, record["data_inicio"], record["data_fim"], record["id"]):
         st.warning("Atenção: este procurador já está indicado como substituto em outro afastamento durante parte deste período.")
     if st.button("Salvar afastamento", type="primary"):
         try:
+            if trip:
+                agenda.validate_trip(trip)
             identifier = agenda.save_leave(record, created_by=getattr(principal, "email", None))
+            if trip:
+                agenda.upsert_trip(identifier, trip, informed_by=getattr(principal, "email", None))
+                event = "VIAGEM_AEREA_EDITADA" if trip_old else "VIAGEM_AEREA_CADASTRADA"
+                audit_agenda(event, "ALTERAR" if trip_old else "CRIAR", identifier, {"procurador_id": holder_id, "aeroporto": trip.get("aeroporto"), "ida": trip.get("ida_data"), "volta": trip.get("volta_data")}, "viagem_aerea")
+                if trip.get("motorista_informado") and not (trip_old or {}).get("motorista_informado"):
+                    audit_agenda("MOTORISTA_MARCADO_COMO_INFORMADO", "ALTERAR", identifier, {"procurador_id": holder_id}, "viagem_aerea")
+            elif trip_old:
+                agenda.delete_trip(identifier)
+                audit_agenda("VIAGEM_AEREA_REMOVIDA", "REMOVER", identifier, {"procurador_id": holder_id}, "viagem_aerea")
             audit_agenda("AFASTAMENTO_EDITADO" if old.get("id") else "AFASTAMENTO_CRIADO", "ALTERAR" if old.get("id") else "CRIAR", identifier, {"procurador": holder["nome"], "periodo": f"{record['data_inicio']} a {record['data_fim']}", "motivo": motive, "substituto": next((p["nome"] for p in people if p["id"] == substitute), None)}, "afastamento")
             done("Afastamento salvo. Substituto ainda não definido." if substitution_pending(record, people) else "Afastamento salvo com sucesso.")
         except ValueError as exc: st.error(str(exc))
@@ -425,6 +512,7 @@ def render(store=None, principal=None):
         rows.sort(key=lambda row: (row["inicio"], row["id"]), reverse=True)
         has_next = len(appointments) > 30 or len(leaves) > 30
         rows = rows[:30]
+        trips = agenda.trips_for_leaves(row["id"] for row in rows if row.get("afastamento"))
         if not rows:
             st.info("Nenhum item histórico para os filtros selecionados.")
         for row in rows:
@@ -435,6 +523,8 @@ def render(store=None, principal=None):
                     if row.get("substituto_id"): st.write("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"])))
                     if row.get("observacao"): st.write(row["observacao"])
                     st.caption(row["status"])
+                    if trip := trips.get(row["id"]):
+                        render_trip_details(trip, names.get(row["procurador_id"], ""), key="agenda_history_trip_message_" + row["id"])
                     if st.button("Abrir detalhes do afastamento", key="agenda_history_leave_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
                 else:
                     hour = "Dia inteiro" if row.get("sem_hora") else row["inicio"][11:16]
@@ -556,6 +646,7 @@ def render(store=None, principal=None):
         leave_record["inicio"] = leave_record["data_inicio"] + "T00:00:00"; leave_record["afastamento"] = True
     rows.extend(leaves)
     rows.sort(key=lambda row: (row["inicio"][:10], bool(row.get("afastamento")), row["inicio"], row["id"]))
+    trips = agenda.trips_for_leaves(row["id"] for row in rows if row.get("afastamento"))
     if not rows:
         st.info("Nenhum compromisso no período selecionado.")
     current_day = current_group = None
@@ -571,12 +662,15 @@ def render(store=None, principal=None):
         if row.get("afastamento"):
             with st.container(border=True):
                 st.markdown(f"**AFASTAMENTO — {names.get(row['procurador_id'], row['procurador_id'])}**")
+                trip = trips.get(row["id"])
                 detail = f"{row['motivo']}{' · ' + row['motivo_outro'] if row.get('motivo_outro') else ''} · {display_datetime(row['inicio'], True)} a {datetime.fromisoformat(row['data_fim']).strftime('%d/%m/%Y')}"
                 st.write(detail)
                 if row.get("substituto_id"): st.write("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"])))
                 elif substitution_pending(row, people):
                     st.warning("⚠ Substituto ainda não definido")
                 st.caption(row["status"])
+                if trip:
+                    render_trip_details(trip, names.get(row["procurador_id"], ""), key="agenda_trip_message_" + row["id"])
                 if st.button("Editar afastamento", key="agenda_leave_edit_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
                 if row["status"] != "CANCELADO" and st.button("Cancelar afastamento", key="agenda_leave_cancel_" + row["id"]):
                     agenda.cancel_leave(row["id"]); audit_agenda("AFASTAMENTO_CANCELADO", "CANCELAR", row["id"], entity_type="afastamento"); done("Afastamento cancelado; registro preservado.")

@@ -230,6 +230,17 @@ CREATE INDEX IF NOT EXISTS agenda_afastamentos_procurador_idx
     ON agenda_afastamentos(procurador_id, data_inicio, data_fim);
 CREATE INDEX IF NOT EXISTS agenda_afastamentos_periodo_idx
     ON agenda_afastamentos(data_inicio, data_fim);
+CREATE TABLE IF NOT EXISTS agenda_afastamentos_viagens (
+    afastamento_id TEXT PRIMARY KEY REFERENCES agenda_afastamentos(id) ON DELETE CASCADE,
+    aeroporto TEXT NOT NULL, aeroporto_outro TEXT, ida_data TEXT, ida_hora TEXT,
+    ida_companhia TEXT, ida_voo TEXT, ida_motorista_hora TEXT,
+    volta_data TEXT, volta_chegada_hora TEXT, volta_companhia TEXT, volta_voo TEXT,
+    volta_motorista_hora TEXT, motorista_informado INTEGER NOT NULL DEFAULT 0,
+    informado_em TEXT, informado_por TEXT, observacao TEXT,
+    criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agenda_viagens_ida_idx ON agenda_afastamentos_viagens(ida_data);
+CREATE INDEX IF NOT EXISTS agenda_viagens_volta_idx ON agenda_afastamentos_viagens(volta_data);
 
 -- The versioned initializer runs this script once, under a transaction lock.
 DO $$

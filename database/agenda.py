@@ -55,6 +55,16 @@ class AgendaStore:
             )
             c.execute("CREATE INDEX IF NOT EXISTS agenda_afastamentos_procurador_idx ON agenda_afastamentos(procurador_id,data_inicio,data_fim)")
             c.execute("CREATE INDEX IF NOT EXISTS agenda_afastamentos_periodo_idx ON agenda_afastamentos(data_inicio,data_fim)")
+            c.execute("""CREATE TABLE IF NOT EXISTS agenda_afastamentos_viagens (
+                afastamento_id TEXT PRIMARY KEY REFERENCES agenda_afastamentos(id) ON DELETE CASCADE,
+                aeroporto TEXT NOT NULL, aeroporto_outro TEXT, ida_data TEXT, ida_hora TEXT,
+                ida_companhia TEXT, ida_voo TEXT, ida_motorista_hora TEXT,
+                volta_data TEXT, volta_chegada_hora TEXT, volta_companhia TEXT, volta_voo TEXT,
+                volta_motorista_hora TEXT, motorista_informado INTEGER NOT NULL DEFAULT 0,
+                informado_em TEXT, informado_por TEXT, observacao TEXT,
+                criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL)""")
+            c.execute("CREATE INDEX IF NOT EXISTS agenda_viagens_ida_idx ON agenda_afastamentos_viagens(ida_data)")
+            c.execute("CREATE INDEX IF NOT EXISTS agenda_viagens_volta_idx ON agenda_afastamentos_viagens(volta_data)")
             people = [dict(r) for r in c.execute("SELECT id,nome FROM procuradores")]
             # Resolve once against the existing catalog, then persist stable IDs, never seed positions.
             for rule in RULES:
@@ -378,3 +388,69 @@ class AgendaStore:
     def cancel_leave(self, identifier):
         with self.store.connection() as c:
             c.execute("UPDATE agenda_afastamentos SET cancelado=1,atualizado_em=? WHERE id=?", (now(), identifier))
+
+    def get_trip(self, leave_id):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute("SELECT * FROM agenda_afastamentos_viagens WHERE afastamento_id=?", (leave_id,)).fetchone()
+            return dict(row) if row else None
+
+    def trips_for_leaves(self, leave_ids):
+        """Fetch optional trips in one query for an Agenda page."""
+        identifiers = tuple(dict.fromkeys(leave_ids))
+        if not identifiers:
+            return {}
+        placeholders = ",".join("?" for _ in identifiers)
+        with self.store.connection(read_only=True) as c:
+            return {
+                row["afastamento_id"]: dict(row)
+                for row in c.execute(
+                    "SELECT * FROM agenda_afastamentos_viagens WHERE afastamento_id IN ("
+                    + placeholders + ")",
+                    identifiers,
+                )
+            }
+
+    @staticmethod
+    def validate_trip(trip):
+        airport = trip.get("aeroporto")
+        if airport not in ("João Pessoa", "Recife", "Outro"):
+            raise ValueError("Selecione um aeroporto válido.")
+        if airport == "Outro" and not (trip.get("aeroporto_outro") or "").strip():
+            raise ValueError("Informe o outro aeroporto.")
+        for field in ("ida_data", "volta_data"):
+            if trip.get(field):
+                try:
+                    datetime.fromisoformat(trip[field]).date()
+                except (TypeError, ValueError):
+                    raise ValueError("Informe uma data de viagem válida.") from None
+        if trip.get("volta_data") and trip.get("ida_data") and trip["volta_data"] < trip["ida_data"]:
+            raise ValueError("A data de volta não pode ser anterior à data de ida.")
+
+    def upsert_trip(self, leave_id, trip, *, informed_by=None):
+        """Create or update the optional 1:1 air-travel logistics record."""
+        self.validate_trip(trip)
+        with self.store.connection() as c:
+            if not c.execute("SELECT 1 FROM agenda_afastamentos WHERE id=?", (leave_id,)).fetchone():
+                raise ValueError("Afastamento não encontrado.")
+            stamp = now(); old = c.execute("SELECT motorista_informado,informado_em,informado_por FROM agenda_afastamentos_viagens WHERE afastamento_id=?", (leave_id,)).fetchone()
+            informed = bool(trip.get("motorista_informado"))
+            metadata = (stamp, informed_by) if informed and (not old or not old[0]) else ((old[1], old[2]) if informed else (None, None))
+            columns = ("aeroporto","aeroporto_outro","ida_data","ida_hora","ida_companhia","ida_voo","ida_motorista_hora","volta_data","volta_chegada_hora","volta_companhia","volta_voo","volta_motorista_hora","observacao")
+            values = [trip.get(key) or None for key in columns]
+            c.execute("""INSERT INTO agenda_afastamentos_viagens(afastamento_id,aeroporto,aeroporto_outro,ida_data,ida_hora,ida_companhia,ida_voo,ida_motorista_hora,volta_data,volta_chegada_hora,volta_companhia,volta_voo,volta_motorista_hora,motorista_informado,informado_em,informado_por,observacao,criado_em,atualizado_em)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(afastamento_id) DO UPDATE SET aeroporto=excluded.aeroporto,aeroporto_outro=excluded.aeroporto_outro,ida_data=excluded.ida_data,ida_hora=excluded.ida_hora,ida_companhia=excluded.ida_companhia,ida_voo=excluded.ida_voo,ida_motorista_hora=excluded.ida_motorista_hora,volta_data=excluded.volta_data,volta_chegada_hora=excluded.volta_chegada_hora,volta_companhia=excluded.volta_companhia,volta_voo=excluded.volta_voo,volta_motorista_hora=excluded.volta_motorista_hora,motorista_informado=excluded.motorista_informado,informado_em=excluded.informado_em,informado_por=excluded.informado_por,observacao=excluded.observacao,atualizado_em=excluded.atualizado_em""", [leave_id, *values[:12], int(informed), *metadata, values[12], stamp, stamp])
+
+    def delete_trip(self, leave_id):
+        with self.store.connection() as c:
+            c.execute("DELETE FROM agenda_afastamentos_viagens WHERE afastamento_id=?", (leave_id,))
+
+    def trip_alert_window(self, tomorrow):
+        """Only tomorrow's non-cancelled, non-ended air-travel legs for the bell."""
+        with self.store.connection(read_only=True) as c:
+            return [dict(row) for row in c.execute(
+                """SELECT v.*,a.id AS afastamento_id,a.procurador_id,a.data_inicio,a.data_fim,p.nome
+                FROM agenda_afastamentos_viagens v JOIN agenda_afastamentos a ON a.id=v.afastamento_id
+                JOIN procuradores p ON p.id=a.procurador_id
+                WHERE a.cancelado=0 AND a.data_fim>=? AND (v.ida_data=? OR v.volta_data=?)""",
+                (tomorrow, tomorrow, tomorrow),
+            )]

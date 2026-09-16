@@ -115,7 +115,28 @@ def _sort_key(item):
             when,
             item.title,
         )
+    if item.category in ("viagem_ida", "viagem_volta"):
+        return (rank, int((item.metadata or {}).get("trip_rank", 99)), when, item.title)
     return (rank, when, item.title)
+
+
+def trip_alerts(store, tomorrow):
+    from database.agenda import AgendaStore
+    items = []
+    for row in AgendaStore(store).trip_alert_window(tomorrow.isoformat()):
+        airport = row.get("aeroporto_outro") if row.get("aeroporto") == "Outro" else row.get("aeroporto")
+        informed = bool(row.get("motorista_informado"))
+        for leg, field, hour, airline, flight, title in (
+            ("ida", "ida_data", "ida_hora", "ida_companhia", "ida_voo", "✈️ Voo de ida amanhã"),
+            ("volta", "volta_data", "volta_chegada_hora", "volta_companhia", "volta_voo", "✈️ Retorno amanhã"),
+        ):
+            if row.get(field) != tomorrow.isoformat(): continue
+            detail = f"{row['nome']}\n{tomorrow.strftime('%d/%m')} às {row.get(hour) or '--:--'} — {airport}"
+            if airline or flight: detail += "\n" + " ".join(x for x in (airline, flight) if x)
+            detail += "\n" + ("✅ Motorista informado" if informed else "⚠ Motorista ainda não informado")
+            rank = (0 if leg == "ida" else 1) if not informed else (2 if leg == "ida" else 3)
+            items.append(AlertItem("agenda", f"viagem:{row['afastamento_id']}:{leg}:{tomorrow}", "—", ALTO if not informed else ATENCAO, f"viagem_{leg}", title, detail, tomorrow, None, "AGENDADA", "Agenda", {"afastamento_id": row["afastamento_id"], "trip_rank": rank}))
+    return items
 
 
 def alert_from_oficio(item):
@@ -478,6 +499,11 @@ def collect_alerts(
         except Exception as exc:
             LOGGER.exception("Falha ao carregar alertas de tarefas")
             errors["tarefas"] = "tarefas"
+    if wanted is None or "agenda" in wanted:
+        try:
+            collected.extend(trip_alerts(store, today + timedelta(days=1)))
+        except Exception:
+            LOGGER.exception("Falha ao carregar alertas de viagens")
     if has_permission(principal, "admin") and (
         wanted is None or "sistema" in wanted
     ) and not gabinete:
