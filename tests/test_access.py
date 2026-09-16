@@ -37,7 +37,7 @@ def test_administrator_has_all_modules_and_offices(store):
     seed_access(store)
     principal = resolve_principal(store, TEST_IDENTITY)
     assert principal.administrator
-    for module in ("portarias", "agenda", "oficios", "memorandos", "admin"):
+    for module in ("portarias", "agenda", "oficios", "memorandos", "relatorios", "admin"):
         assert has_permission(principal, module)
     assert allowed_gabinetes(principal) == GABINETES
 
@@ -75,6 +75,26 @@ def test_memorandos_permission_is_independent(store):
     assert not has_permission(principal, "portarias")
     with pytest.raises(ValueError, match="módulo"):
         require_permission(principal, "admin")
+
+
+def test_relatorios_permission_is_independent_and_revocable(store):
+    access = AccessStore(store)
+    identifier = access.save_user(
+        {
+            "nome": "Relatórios",
+            "email": "relatorios@test.local",
+            "perfil": "USUARIO",
+            "pode_relatorios": True,
+        }
+    )
+    principal = resolve_principal(store, {"email": "relatorios@test.local"})
+    assert has_permission(principal, "relatorios")
+    assert not has_permission(principal, "admin")
+    access.save_user({**access.get(identifier), "pode_relatorios": False}, identifier)
+    revoked = resolve_principal(store, {"email": "relatorios@test.local"})
+    assert not has_permission(revoked, "relatorios")
+    with pytest.raises(ValueError, match="módulo"):
+        require_permission(revoked, "relatorios")
 
 
 def test_oficios_without_flag_has_no_offices(store):
@@ -452,6 +472,7 @@ def test_admin_form_new_user_is_not_contaminated_by_logged_administrator(
         "elkson.form@test.local"
     ).run()
     next(c for c in app.checkbox if c.label == "Ofícios").set_value(True).run()
+    next(c for c in app.checkbox if c.label == "Relatórios e Indicadores").set_value(True).run()
     next(m for m in app.multiselect if "Gabinetes" in m.label).set_value(
         ["PROGE"]
     ).run()
@@ -459,6 +480,7 @@ def test_admin_form_new_user_is_not_contaminated_by_logged_administrator(
     saved = AccessStore(store).get_by_email("elkson.form@test.local")
     assert saved["perfil"] == "USUARIO"
     assert saved["pode_oficios"] and not saved["pode_admin"]
+    assert saved["pode_relatorios"]
     assert saved["gabinetes"] == ["PROGE"]
 
 
@@ -536,7 +558,7 @@ def test_protected_admin_is_marked_and_keeps_full_access(store):
     assert user["ativo"] and user["pode_admin"]
     principal = resolve_principal(store, {"email": PROTECTED_ADMIN_EMAIL})
     assert principal.administrator
-    for module in ("portarias", "agenda", "oficios", "memorandos", "admin"):
+    for module in ("portarias", "agenda", "oficios", "memorandos", "relatorios", "admin"):
         assert has_permission(principal, module)
     assert allowed_gabinetes(principal) == GABINETES
 

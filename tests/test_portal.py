@@ -174,6 +174,69 @@ def test_home_shows_only_authorized_modules(store, monkeypatch):
     assert "Portarias" not in portal.options
 
 
+def test_relatorios_card_menu_and_route_follow_module_permission(store, monkeypatch):
+    from tests.access_testing import seed_access
+
+    seed_access(
+        store,
+        email="relatorios.portal@test.local",
+        nome="Leitor de Relatórios",
+        perfil="USUARIO",
+        pode_portarias=False,
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_memorandos=False,
+        pode_admin=False,
+        pode_relatorios=True,
+    )
+    monkeypatch.setattr(
+        "services.access.oidc_identity",
+        lambda: {"email": "relatorios.portal@test.local", "name": "Leitor", "email_verified": True},
+    )
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert any(getattr(button, "key", None) == "open_relatorios" for button in app.button)
+    portal = next(radio for radio in app.sidebar.radio if radio.key == "portal_module")
+    assert "Relatórios e Indicadores" in portal.options
+    portal.set_value("Relatórios e Indicadores").run()
+    assert not app.exception
+    assert next(radio for radio in app.radio if radio.label == "Seção").options == [
+        "Produção Mensal",
+        "Visão Atual",
+    ]
+
+
+def test_relatorios_is_hidden_and_manipulated_navigation_is_reset_without_permission(store, monkeypatch):
+    from tests.access_testing import seed_access
+
+    seed_access(
+        store,
+        email="sem.relatorios@test.local",
+        nome="Sem Relatórios",
+        perfil="USUARIO",
+        pode_portarias=False,
+        pode_agenda=True,
+        pode_oficios=False,
+        pode_memorandos=False,
+        pode_admin=False,
+        pode_relatorios=False,
+    )
+    monkeypatch.setattr(
+        "services.access.oidc_identity",
+        lambda: {"email": "sem.relatorios@test.local", "name": "Sem", "email_verified": True},
+    )
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert not any(getattr(button, "key", None) == "open_relatorios" for button in app.button)
+    portal = next(radio for radio in app.sidebar.radio if radio.key == "portal_module")
+    assert "Relatórios e Indicadores" not in portal.options
+    from portal import queue_portal_navigation
+
+    queue_portal_navigation("Relatórios e Indicadores")
+    app.run()
+    assert next(radio for radio in app.sidebar.radio if radio.key == "portal_module").value == "Início"
+
+
 def test_denied_google_account_does_not_open_portal(store, monkeypatch):
     monkeypatch.setattr(
         "services.access.oidc_identity",
@@ -198,9 +261,11 @@ def test_future_modules_have_no_routes_or_side_effects():
         "memorandos",
         "oficios",
         "agenda",
+        "tarefas",
+        "relatorios",
     ]
-    assert [module.key for module in MODULES if not module.active] == ["relatorios"]
-    assert len({module.key for module in MODULES}) == 5
+    assert [module.key for module in MODULES if not module.active] == []
+    assert len({module.key for module in MODULES}) == 6
 
 
 def test_home_card_icons_are_complete_material_names():
@@ -214,6 +279,7 @@ def test_home_card_icons_are_complete_material_names():
         "mail",
         "calendar_month",
         "bar_chart",
+        "check_circle",
         "manage_accounts",
     }
     assert {module.icon for module in MODULES} | {ADMIN_MODULE.icon} <= known
@@ -237,6 +303,7 @@ def _principal(**flags):
         pode_admin=flags.get("admin", False),
         gabinetes=(),
         pode_memorandos=flags.get("memorandos", False),
+        pode_relatorios=flags.get("relatorios", False),
     )
 
 
@@ -244,29 +311,31 @@ def test_home_visible_modules_active_first_and_authorization():
     from portal import visible_modules
 
     admin = visible_modules(
-        _principal(portarias=True, agenda=True, oficios=True, admin=True)
+        _principal(portarias=True, agenda=True, oficios=True, admin=True, relatorios=True)
     )
     assert [m.key for m in admin] == [
         "portarias",
         "oficios",
         "agenda",
-        "admin",
+        "tarefas",
         "relatorios",
+        "admin",
     ]
-    assert [m.active for m in admin] == [True, True, True, True, False]
+    assert [m.active for m in admin] == [True, True, True, True, True, True]
     # Memorandos is hidden without its independent permission, so an odd final row is valid.
-    assert len(admin) == 5
+    assert len(admin) == 6
 
     with_memo = visible_modules(
-        _principal(portarias=True, agenda=True, oficios=True, memorandos=True, admin=True)
+        _principal(portarias=True, agenda=True, oficios=True, memorandos=True, admin=True, relatorios=True)
     )
     assert [m.key for m in with_memo] == [
         "portarias",
         "memorandos",
         "oficios",
         "agenda",
-        "admin",
+        "tarefas",
         "relatorios",
+        "admin",
     ]
 
     no_admin = visible_modules(
@@ -276,15 +345,14 @@ def test_home_visible_modules_active_first_and_authorization():
         "portarias",
         "oficios",
         "agenda",
-        "relatorios",
+        "tarefas",
     ]
     assert "admin" not in {m.key for m in no_admin}
     assert len(no_admin) == 4
 
-    partial = visible_modules(_principal(agenda=True))
-    assert [m.key for m in partial] == ["agenda", "relatorios"]
-    assert all(m.active for m in partial[:1])
-    assert not any(m.active for m in partial[1:])
+    partial = visible_modules(_principal(agenda=True, relatorios=True))
+    assert [m.key for m in partial] == ["agenda", "tarefas", "relatorios"]
+    assert all(m.active for m in partial)
 
 
 def test_home_grid_uses_two_columns_from_first_row():
@@ -312,8 +380,9 @@ def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
         "MEMORANDOS",
         "OFÍCIOS",
         "AGENDA",
-        "ADMINISTRAÇÃO",
+        "TAREFAS",
         "RELATÓRIOS",
+        "ADMINISTRAÇÃO",
     ]
     indexes = [captions.index(label) for label in labels]
     assert indexes == sorted(indexes)

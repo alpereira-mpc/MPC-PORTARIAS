@@ -22,6 +22,7 @@ class Principal:
     pode_admin: bool
     gabinetes: tuple
     pode_memorandos: bool = False
+    pode_relatorios: bool = False
 
     @property
     def administrator(self):
@@ -82,6 +83,7 @@ def principal_from_record(record):
             pode_agenda=True,
             pode_oficios=True,
             pode_memorandos=True,
+            pode_relatorios=True,
             pode_admin=True,
             gabinetes=tuple(GABINETES),
         )
@@ -100,6 +102,7 @@ def principal_from_record(record):
         pode_agenda=bool(record["pode_agenda"]),
         pode_oficios=bool(record["pode_oficios"]),
         pode_memorandos=bool(record.get("pode_memorandos", False)),
+        pode_relatorios=bool(record.get("pode_relatorios", False)),
         pode_admin=bool(record["pode_admin"]),
         gabinetes=gabinetes,
     )
@@ -174,7 +177,7 @@ def has_permission(principal, module):
         # Personal tasks are available to every authenticated active account.
         return True
     if module == "relatorios":
-        return principal.administrator
+        return principal.administrator or principal.pode_relatorios
     if module == "admin":
         return principal.pode_admin
     return False

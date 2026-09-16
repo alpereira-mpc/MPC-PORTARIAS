@@ -15,7 +15,7 @@ LAST_ADMIN_MESSAGE = "O sistema deve manter pelo menos um administrador ativo."
 _READY = set()
 GABINETE_LIST = ",".join("'" + code + "'" for code in GABINETES)
 USER_COLUMNS = (
-    "id,nome,email,perfil,ativo,pode_portarias,pode_agenda,pode_oficios,pode_memorandos,pode_admin,"
+    "id,nome,email,perfil,ativo,pode_portarias,pode_agenda,pode_oficios,pode_memorandos,pode_relatorios,pode_admin,"
     "protegido,criado_em,atualizado_em"
 )
 
@@ -50,7 +50,7 @@ class AccessStore:
                     (PROTECTED_ADMIN_EMAIL,),
                 ).fetchone()
                 protected = bool(row and int(row[0] or 0))
-        if marker and "pode_memorandos" in columns and "protegido" in columns:
+        if marker and {"pode_memorandos", "pode_relatorios", "protegido"} <= columns:
             if not protected:
                 with self.store.connection() as c:
                     c.execute("BEGIN IMMEDIATE")
@@ -75,6 +75,7 @@ class AccessStore:
                 "pode_agenda INTEGER NOT NULL DEFAULT 0 CHECK(pode_agenda IN (0,1)),"
                 "pode_oficios INTEGER NOT NULL DEFAULT 0 CHECK(pode_oficios IN (0,1)),"
                 "pode_memorandos INTEGER NOT NULL DEFAULT 0 CHECK(pode_memorandos IN (0,1)),"
+                "pode_relatorios INTEGER NOT NULL DEFAULT 0 CHECK(pode_relatorios IN (0,1)),"
                 "pode_admin INTEGER NOT NULL DEFAULT 0 CHECK(pode_admin IN (0,1)),"
                 "protegido INTEGER NOT NULL DEFAULT 0 CHECK(protegido IN (0,1)),"
                 "criado_em TEXT NOT NULL,"
@@ -95,11 +96,18 @@ class AccessStore:
                 c.execute(
                     "ALTER TABLE usuarios_acesso ADD COLUMN pode_memorandos INTEGER NOT NULL DEFAULT 0"
                 )
+            if "pode_relatorios" not in columns:
+                c.execute(
+                    "ALTER TABLE usuarios_acesso ADD COLUMN pode_relatorios INTEGER NOT NULL DEFAULT 0"
+                )
             if "protegido" not in columns:
                 c.execute(
                     "ALTER TABLE usuarios_acesso ADD COLUMN protegido INTEGER NOT NULL DEFAULT 0"
                 )
-            c.execute("UPDATE usuarios_acesso SET pode_memorandos=1 WHERE perfil='ADMINISTRADOR'")
+            c.execute(
+                "UPDATE usuarios_acesso SET pode_memorandos=1, pode_relatorios=1 "
+                "WHERE perfil='ADMINISTRADOR'"
+            )
             fk = "BIGINT" if self.store.backend == "postgresql" else "INTEGER"
             c.execute(
                 "CREATE TABLE IF NOT EXISTS usuario_gabinetes ("
@@ -128,7 +136,7 @@ class AccessStore:
     def _mark_protected_admin(self, c):
         c.execute(
             "UPDATE usuarios_acesso SET protegido=1, perfil='ADMINISTRADOR', ativo=1, "
-            "pode_admin=1, pode_portarias=1, pode_agenda=1, pode_oficios=1, pode_memorandos=1 "
+            "pode_admin=1, pode_portarias=1, pode_agenda=1, pode_oficios=1, pode_memorandos=1, pode_relatorios=1 "
             "WHERE email=?",
             (PROTECTED_ADMIN_EMAIL,),
         )
@@ -185,6 +193,7 @@ class AccessStore:
                     "pode_agenda",
                     "pode_oficios",
                     "pode_memorandos",
+                    "pode_relatorios",
                     "pode_admin",
                     "protegido",
                 ):
@@ -204,7 +213,7 @@ class AccessStore:
         if not EMAIL_RE.match(email):
             raise ValueError("Informe um e-mail válido.")
         if perfil == "ADMINISTRADOR":
-            flags = (1, 1, 1, 1, 1)
+            flags = (1, 1, 1, 1, 1, 1)
             gabinetes = list(GABINETES)
         else:
             flags = (
@@ -212,6 +221,7 @@ class AccessStore:
                 flag(payload.get("pode_agenda")),
                 flag(payload.get("pode_oficios")),
                 flag(payload.get("pode_memorandos")),
+                flag(payload.get("pode_relatorios")),
                 flag(payload.get("pode_admin")),
             )
             gabinetes = []
@@ -243,13 +253,13 @@ class AccessStore:
                 existing["ativo"] = bool(existing["ativo"])
                 existing["protegido"] = bool(existing.get("protegido"))
                 existing["pode_admin"] = bool(existing["pode_admin"])
-            self._reject_protected_changes(existing, email, perfil, ativo, flags[4])
+            self._reject_protected_changes(existing, email, perfil, ativo, flags[5])
             self._reject_last_administrator_loss(c, existing, perfil, ativo)
             if identifier is None:
                 inserted = c.execute(
                     "INSERT INTO usuarios_acesso(nome,email,perfil,ativo,pode_portarias,"
-                    "pode_agenda,pode_oficios,pode_memorandos,pode_admin,protegido,criado_em,atualizado_em) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "pode_agenda,pode_oficios,pode_memorandos,pode_relatorios,pode_admin,protegido,criado_em,atualizado_em) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (nome, email, perfil, ativo, *flags, protegido, stamp, stamp),
                 )
                 identifier = inserted.lastrowid
@@ -257,7 +267,7 @@ class AccessStore:
             else:
                 c.execute(
                     "UPDATE usuarios_acesso SET nome=?,email=?,perfil=?,ativo=?,"
-                    "pode_portarias=?,pode_agenda=?,pode_oficios=?,pode_memorandos=?,pode_admin=?,"
+                    "pode_portarias=?,pode_agenda=?,pode_oficios=?,pode_memorandos=?,pode_relatorios=?,pode_admin=?,"
                     "atualizado_em=? WHERE id=?",
                     (nome, email, perfil, ativo, *flags, stamp, identifier),
                 )
@@ -376,7 +386,7 @@ class AccessStore:
     def _hydrate(self, c, row):
         record = dict(row)
         record["ativo"] = bool(record["ativo"])
-        for key in ("pode_portarias", "pode_agenda", "pode_oficios", "pode_memorandos", "pode_admin", "protegido"):
+        for key in ("pode_portarias", "pode_agenda", "pode_oficios", "pode_memorandos", "pode_relatorios", "pode_admin", "protegido"):
             record[key] = bool(record.get(key))
         record["gabinetes"] = [
             r[0]

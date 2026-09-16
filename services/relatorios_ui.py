@@ -116,6 +116,8 @@ def current_view(store):
 
 
 def imports(store, principal):
+    if not principal.administrator:
+        raise ValueError("Apenas administradores podem importar dados do Tramita.")
     reports = TramitaReportsStore(store)
     st.subheader("Importar Produção Mensal")
     st.caption("Competência")
@@ -169,7 +171,10 @@ def render(store, principal):
     require_permission(principal, "relatorios")
     st.subheader("RELATÓRIOS E INDICADORES")
     st.caption("Acompanhamento da movimentação e do estoque processual do MPC-PB")
-    section = st.radio("Seção", ("Produção Mensal", "Visão Atual", "Importações"), horizontal=True)
+    sections = ("Produção Mensal", "Visão Atual")
+    if principal.administrator:
+        sections += ("Importações",)
+    section = st.radio("Seção", sections, horizontal=True)
     if section == "Produção Mensal": production(store)
     elif section == "Visão Atual": current_view(store)
     else: imports(store, principal)

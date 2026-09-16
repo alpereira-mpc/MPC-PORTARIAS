@@ -99,7 +99,15 @@ def test_indicators_and_aging_rules():
     assert [aging_band(value) for value in (7, 8, 16, 31, 61, 91)] == ["0–7 dias", "8–15 dias", "16–30 dias", "31–60 dias", "61–90 dias", "Mais de 90 dias"]
 
 
-def test_reports_are_administrator_only():
+def test_reports_use_module_permission_and_imports_remain_administrator_only():
+    from services.relatorios_ui import imports
+
     base = dict(id=1, nome="Pessoa", email="pessoa@tce.pb.gov.br", ativo=True, pode_portarias=True, pode_agenda=True, pode_oficios=True, pode_admin=False, gabinetes=())
-    assert not has_permission(Principal(perfil="USUARIO", **base), "relatorios")
-    assert has_permission(Principal(perfil="ADMINISTRADOR", **{**base, "pode_admin": True}), "relatorios")
+    unauthorized = Principal(perfil="USUARIO", **base)
+    authorized = Principal(perfil="USUARIO", **base, pode_relatorios=True)
+    administrator = Principal(perfil="ADMINISTRADOR", **{**base, "pode_admin": True})
+    assert not has_permission(unauthorized, "relatorios")
+    assert has_permission(authorized, "relatorios")
+    assert has_permission(administrator, "relatorios")
+    with pytest.raises(ValueError, match="administradores"):
+        imports(None, authorized)
