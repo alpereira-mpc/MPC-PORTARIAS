@@ -4,6 +4,7 @@ Tokens, one stylesheet, and small HTML helpers. No business rules, queries,
 or Streamlit widget keys live here. CSS is injected once per script run.
 """
 
+from contextlib import contextmanager
 from html import escape
 
 import streamlit as st
@@ -214,6 +215,29 @@ background:var(--mpc-control-bg) !important;
 background-color:var(--mpc-control-bg) !important;
 border:1px solid var(--mpc-control-border);
 border-radius:var(--mpc-radius);
+}}
+section[data-testid="stSidebar"] [data-testid="stPopover"]{{
+position:relative;
+overflow:visible !important;
+}}
+section[data-testid="stSidebar"] [data-testid="stPopover"] [data-testid="stPopoverBody"],
+section[data-testid="stSidebar"] [data-testid="stPopover"] [data-baseweb="popover"],
+[data-testid="stPopoverBody"]{{
+max-height:min(28rem, calc(100vh - 6.5rem)) !important;
+overflow-x:hidden !important;
+overflow-y:auto !important;
+overscroll-behavior:contain;
+}}
+section[data-testid="stSidebar"] [data-testid="stPopover"] [data-testid="stPopoverBody"],
+section[data-testid="stSidebar"] [data-testid="stPopover"] [data-baseweb="popover"]{{
+position:absolute !important;
+top:calc(100% + .4rem) !important;
+bottom:auto !important;
+left:0 !important;
+right:0 !important;
+transform:none !important;
+width:100% !important;
+z-index:10002 !important;
 }}
 [data-testid="stHeading"] h1,
 [data-testid="stHeading"] h2,
@@ -1154,14 +1178,18 @@ def stripe_index(index):
     return "b" if index % 2 else "a"
 
 
+@contextmanager
 def card_container(index, identity, *, critical=False, border=True):
-    """Return the Streamlit container for an operational listing card.
+    """Paint an operational listing card with positional A/B stripe.
 
-    Streamlit exposes ``key`` as a ``st-key-`` CSS class on the real wrapper,
-    so A/B backgrounds hit title, badges, actions and checkbox together.
+    ``critical`` is kept for call-site compatibility; fill follows list order,
+    not status. Streamlit exposes ``key`` as ``st-key-`` on the wrapper.
     """
-    variant = "danger" if critical else stripe_index(index)
-    return st.container(border=border, key=f"mpc_card_{variant}_{identity}")
+    _ = critical
+    variant = stripe_index(index)
+    with st.container(border=border, key=f"mpc_card_{variant}_{identity}"):
+        stripe_mark(index)
+        yield
 
 
 def stripe_mark(index):

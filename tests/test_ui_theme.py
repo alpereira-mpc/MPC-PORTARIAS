@@ -95,6 +95,7 @@ def test_stripe_and_header_helpers_are_available():
     assert "st.container" in helper
     assert "mpc_card_" in helper
     assert "stripe_index" in helper
+    assert "stripe_mark" in getsource(card_container)
     assert "key=" in helper
     task_card = getsource(tarefas_ui._card)
     assert "card_container(" in task_card
@@ -176,7 +177,9 @@ def test_stripe_and_header_helpers_are_available():
     assert 'stExpander"] details{\nbackground:var(--mpc-surface-primary-bg)' not in css
     assert CARD_OPERATIONAL_BG in css
     assert CARD_INSTITUTIONAL_BG in css
-    assert CARD_SURFACE_B in css
+    assert "stPopoverBody" in css
+    assert "st-key-mpc_card_b" in css
+    assert CARD_SURFACE_B == "#FCEFF1"
     assert "--mpc-card-operational-bg:" + CARD_OPERATIONAL_BG in compact
     assert "--mpc-card-institutional-bg:" + CARD_INSTITUTIONAL_BG in compact
     assert "background:var(--mpc-card-institutional-bg)!important" in compact
