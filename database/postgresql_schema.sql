@@ -271,6 +271,32 @@ CREATE TABLE IF NOT EXISTS agenda_afastamentos_viagens (
 CREATE INDEX IF NOT EXISTS agenda_viagens_ida_idx ON agenda_afastamentos_viagens(ida_data);
 CREATE INDEX IF NOT EXISTS agenda_viagens_volta_idx ON agenda_afastamentos_viagens(volta_data);
 
+-- Additive institutional air-travel logistics.  Legacy leave trips above are
+-- intentionally retained for existing databases, but are no longer used by UI.
+CREATE TABLE IF NOT EXISTS agenda_compromissos (
+    id TEXT PRIMARY KEY, tipo TEXT NOT NULL, inicio TEXT NOT NULL, fim TEXT,
+    situacao TEXT NOT NULL, payload TEXT NOT NULL, criada TEXT NOT NULL, atualizada TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agenda_compromisso_procuradores (
+    compromisso_id TEXT NOT NULL REFERENCES agenda_compromissos(id) ON DELETE CASCADE,
+    procurador_id BIGINT NOT NULL REFERENCES procuradores(id),
+    PRIMARY KEY(compromisso_id, procurador_id)
+);
+CREATE TABLE IF NOT EXISTS agenda_compromissos_viagens (
+    id TEXT PRIMARY KEY,
+    compromisso_id TEXT NOT NULL REFERENCES agenda_compromissos(id) ON DELETE CASCADE,
+    procurador_id BIGINT NOT NULL REFERENCES procuradores(id),
+    aeroporto_ida TEXT, aeroporto_ida_outro TEXT, ida_data TEXT, ida_hora TEXT,
+    ida_motorista_hora TEXT, aeroporto_volta TEXT, aeroporto_volta_outro TEXT,
+    volta_data TEXT, volta_chegada_hora TEXT, volta_motorista_hora TEXT,
+    motorista_informado INTEGER NOT NULL DEFAULT 0 CHECK(motorista_informado IN (0,1)),
+    informado_em TEXT, informado_por TEXT, observacao TEXT,
+    criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL,
+    UNIQUE(compromisso_id, procurador_id)
+);
+CREATE INDEX IF NOT EXISTS agenda_compromissos_viagens_ida_idx ON agenda_compromissos_viagens(ida_data);
+CREATE INDEX IF NOT EXISTS agenda_compromissos_viagens_volta_idx ON agenda_compromissos_viagens(volta_data);
+
 -- The versioned initializer runs this script once, under a transaction lock.
 DO $$
 BEGIN

@@ -47,6 +47,21 @@ class AgendaStore:
             c.execute(
                 "CREATE INDEX IF NOT EXISTS agenda_membro_idx ON agenda_compromisso_procuradores(procurador_id, compromisso_id)"
             )
+            # Additive migration: travel logistics belongs to the institutional
+            # commitment and its participating procurador, never to a leave.
+            c.execute("""CREATE TABLE IF NOT EXISTS agenda_compromissos_viagens (
+                id TEXT PRIMARY KEY,
+                compromisso_id TEXT NOT NULL REFERENCES agenda_compromissos(id) ON DELETE CASCADE,
+                procurador_id INTEGER NOT NULL REFERENCES procuradores(id),
+                aeroporto_ida TEXT, aeroporto_ida_outro TEXT, ida_data TEXT, ida_hora TEXT,
+                ida_motorista_hora TEXT, aeroporto_volta TEXT, aeroporto_volta_outro TEXT,
+                volta_data TEXT, volta_chegada_hora TEXT, volta_motorista_hora TEXT,
+                motorista_informado INTEGER NOT NULL DEFAULT 0,
+                informado_em TEXT, informado_por TEXT, observacao TEXT,
+                criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL,
+                UNIQUE(compromisso_id, procurador_id))""")
+            c.execute("CREATE INDEX IF NOT EXISTS agenda_compromissos_viagens_ida_idx ON agenda_compromissos_viagens(ida_data)")
+            c.execute("CREATE INDEX IF NOT EXISTS agenda_compromissos_viagens_volta_idx ON agenda_compromissos_viagens(volta_data)")
             c.execute(
                 """CREATE TABLE IF NOT EXISTS agenda_afastamentos (
                 id TEXT PRIMARY KEY, procurador_id INTEGER NOT NULL REFERENCES procuradores(id),
@@ -249,7 +264,7 @@ class AgendaStore:
                 records.append({**json.loads(row["payload"]), **{k: row[k] for k in ("id", "tipo", "inicio", "fim", "situacao", "criada", "atualizada")}, "procuradores": people})
             return records
 
-    def save(self, record, *, institutional_confirmed=False, conflict_confirmed=False):
+    def save(self, record, *, institutional_confirmed=False, conflict_confirmed=False, remove_trip_members=()):
         validate(record)
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
@@ -287,6 +302,19 @@ class AgendaStore:
             ).fetchone()
             if record.get("id") and not old:
                 raise ValueError("Compromisso não encontrado; pode ter sido excluído.")
+            removed_with_trip = c.execute(
+                "SELECT procurador_id FROM agenda_compromissos_viagens WHERE compromisso_id=? "
+                "AND procurador_id NOT IN (" + ",".join("?" for _ in record["procuradores"]) + ")",
+                (identifier, *record["procuradores"]),
+            ).fetchall() if record["procuradores"] else []
+            removed_ids = {row[0] for row in removed_with_trip}
+            if removed_ids and not removed_ids <= set(remove_trip_members):
+                raise ValueError("Há logística de viagem de membro removido; remova-a explicitamente antes de salvar.")
+            if removed_ids:
+                c.execute(
+                    "DELETE FROM agenda_compromissos_viagens WHERE compromisso_id=? AND procurador_id IN (" + ",".join("?" for _ in removed_ids) + ")",
+                    (identifier, *removed_ids),
+                )
             stamp = now()
             payload = {
                 k: record.get(k, "")
@@ -414,6 +442,56 @@ class AgendaStore:
         with self.store.connection() as c:
             c.execute("UPDATE agenda_afastamentos SET cancelado=1,atualizado_em=? WHERE id=?", (now(), identifier))
 
+    def get_commitment_trip(self, compromisso_id, procurador_id):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT * FROM agenda_compromissos_viagens WHERE compromisso_id=? AND procurador_id=?",
+                (compromisso_id, procurador_id),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def trips_for_commitments(self, compromisso_ids):
+        identifiers = tuple(dict.fromkeys(compromisso_ids))
+        if not identifiers:
+            return {}
+        placeholders = ",".join("?" for _ in identifiers)
+        with self.store.connection(read_only=True) as c:
+            rows = c.execute(
+                "SELECT * FROM agenda_compromissos_viagens WHERE compromisso_id IN (" + placeholders + ")",
+                identifiers,
+            )
+            result = {}
+            for row in rows:
+                trip = dict(row)
+                result.setdefault(trip["compromisso_id"], {})[trip["procurador_id"]] = trip
+            return result
+
+    def upsert_commitment_trip(self, compromisso_id, procurador_id, trip, *, informed_by=None):
+        trip = dict(trip)
+        self.validate_trip(trip)
+        with self.store.connection() as c:
+            member = c.execute(
+                "SELECT 1 FROM agenda_compromisso_procuradores WHERE compromisso_id=? AND procurador_id=?",
+                (compromisso_id, procurador_id),
+            ).fetchone()
+            if not member:
+                raise ValueError("O procurador deve ser membro do compromisso para ter logística de viagem.")
+            stamp = now()
+            old = c.execute(
+                "SELECT motorista_informado,informado_em,informado_por FROM agenda_compromissos_viagens WHERE compromisso_id=? AND procurador_id=?",
+                (compromisso_id, procurador_id),
+            ).fetchone()
+            informed = bool(trip.get("motorista_informado"))
+            metadata = (stamp, informed_by) if informed and (not old or not old[0]) else ((old[1], old[2]) if informed else (None, None))
+            columns = ("aeroporto_ida", "aeroporto_ida_outro", "ida_data", "ida_hora", "ida_motorista_hora", "aeroporto_volta", "aeroporto_volta_outro", "volta_data", "volta_chegada_hora", "volta_motorista_hora", "observacao")
+            values = [trip.get(key) or None for key in columns]
+            c.execute("""INSERT INTO agenda_compromissos_viagens(id,compromisso_id,procurador_id,aeroporto_ida,aeroporto_ida_outro,ida_data,ida_hora,ida_motorista_hora,aeroporto_volta,aeroporto_volta_outro,volta_data,volta_chegada_hora,volta_motorista_hora,motorista_informado,informado_em,informado_por,observacao,criado_em,atualizado_em)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(compromisso_id,procurador_id) DO UPDATE SET aeroporto_ida=excluded.aeroporto_ida,aeroporto_ida_outro=excluded.aeroporto_ida_outro,ida_data=excluded.ida_data,ida_hora=excluded.ida_hora,ida_motorista_hora=excluded.ida_motorista_hora,aeroporto_volta=excluded.aeroporto_volta,aeroporto_volta_outro=excluded.aeroporto_volta_outro,volta_data=excluded.volta_data,volta_chegada_hora=excluded.volta_chegada_hora,volta_motorista_hora=excluded.volta_motorista_hora,motorista_informado=excluded.motorista_informado,informado_em=excluded.informado_em,informado_por=excluded.informado_por,observacao=excluded.observacao,atualizado_em=excluded.atualizado_em""", [uuid.uuid4().hex, compromisso_id, procurador_id, *values[:5], *values[5:10], int(informed), *metadata, values[10], stamp, stamp])
+
+    def delete_commitment_trip(self, compromisso_id, procurador_id):
+        with self.store.connection() as c:
+            c.execute("DELETE FROM agenda_compromissos_viagens WHERE compromisso_id=? AND procurador_id=?", (compromisso_id, procurador_id))
+
     def get_trip(self, leave_id):
         with self.store.connection(read_only=True) as c:
             row = c.execute("SELECT * FROM agenda_afastamentos_viagens WHERE afastamento_id=?", (leave_id,)).fetchone()
@@ -496,10 +574,10 @@ class AgendaStore:
     def trip_alert_window(self, tomorrow):
         """Only tomorrow's non-cancelled, non-ended air-travel legs for the bell."""
         with self.store.connection(read_only=True) as c:
-            return [self._compatible_trip(dict(row)) for row in c.execute(
-                """SELECT v.*,a.id AS afastamento_id,a.procurador_id,a.data_inicio,a.data_fim,p.nome
-                FROM agenda_afastamentos_viagens v JOIN agenda_afastamentos a ON a.id=v.afastamento_id
-                JOIN procuradores p ON p.id=a.procurador_id
-                WHERE a.cancelado=0 AND a.data_fim>=? AND (v.ida_data=? OR v.volta_data=?)""",
-                (tomorrow, tomorrow, tomorrow),
+            return [dict(row) for row in c.execute(
+                """SELECT v.*,a.id AS compromisso_id,a.payload,p.nome
+                FROM agenda_compromissos_viagens v JOIN agenda_compromissos a ON a.id=v.compromisso_id
+                JOIN procuradores p ON p.id=v.procurador_id
+                WHERE a.situacao NOT IN ('Realizado','Cancelado') AND (v.ida_data=? OR v.volta_data=?)""",
+                (tomorrow, tomorrow),
             )]

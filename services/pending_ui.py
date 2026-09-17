@@ -70,7 +70,7 @@ def open_origin(item):
     if module == "agenda":
         request_portal_navigation(
             "Agenda",
-            pending_open_agenda=metadata.get("afastamento_id") or source_id,
+            pending_open_agenda=metadata.get("compromisso_id") or metadata.get("afastamento_id") or source_id,
         )
         return
     if module == "memorandos":
