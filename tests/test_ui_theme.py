@@ -185,16 +185,24 @@ def test_stripe_and_header_helpers_are_available():
     assert "background:var(--mpc-card-institutional-bg)!important" in compact
     assert "mpc-badge--info{background:#EEE8E6" in compact
     assert "stSidebar\"] .mpc-record-boxed" in css
-    assert 'st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed' in css
-    assert "#FFF4CC" in css
-    assert "#E8D28A" in css
-    assert "#C99A1A" in css
-    assert "#FFEDB3" in css
+    assert ".mpc-sidebar-alert-card.mpc-record-boxed" in css
+    assert 'stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card' in css
+    assert "#FFF2BF" in css
+    assert "#E7C968" in css
+    assert "#C99800" in css
+    assert "#FFEBA6" in css
+    assert "#F2D675" in css
+    assert "#FFF4CC" not in css
     from services import alerts_ui
     bell_item = getsource(alerts_ui._bell_item_markdown)
     assert "mpc-bell-alert" in bell_item
+    assert "mpc-sidebar-alert-card" in bell_item
     assert "mpc-bell-alert" not in getsource(alerts_ui.render)
-    assert 'st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-badge--info' in css
+    page = getsource(tarefas_ui.render)
+    editor_at = page.index("_editor(repo, store, principal)")
+    listing_at = page.index("list_active")
+    assert editor_at < listing_at
+    assert "return" not in page[editor_at:listing_at]
     assert 'st-key-mpc_card_a"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_b"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_operational"][data-testid="stExpander"]' not in compact

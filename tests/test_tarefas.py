@@ -199,3 +199,32 @@ def test_legacy_reminder_migration_is_empty_safe_and_idempotent(store):
     tarefas_module._READY.clear()
     repeated = TarefasStore(store)
     assert len(repeated.reminders(identifier, 1)) == 1
+
+
+def test_new_task_form_keeps_existing_listing(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    from database.access import AccessStore
+    from database.store import ROOT
+    from tests.access_testing import TEST_IDENTITY, enable_login
+
+    enable_login(monkeypatch, store)
+    owner = AccessStore(store).get_by_email(TEST_IDENTITY["email"])
+    TarefasStore(store).create(owner["id"], {"titulo": "Tarefa visível no módulo"})
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert not app.exception
+    app.sidebar.radio(key="portal_module").set_value("Tarefas").run()
+    assert not app.exception
+    titles = " ".join(str(item.value) for item in app.markdown)
+    assert "Tarefa visível no módulo" in titles
+    app.button(key="tarefas_new").click().run()
+    assert not app.exception
+    assert any("Nova tarefa" in str(item.value) for item in app.subheader)
+    titles = " ".join(str(item.value) for item in app.markdown)
+    assert "Tarefa visível no módulo" in titles
+    app.button(key="tarefas_form_newcancel").click().run()
+    assert not app.exception
+    assert not any("Nova tarefa" in str(item.value) for item in app.subheader)
+    titles = " ".join(str(item.value) for item in app.markdown)
+    assert "Tarefa visível no módulo" in titles

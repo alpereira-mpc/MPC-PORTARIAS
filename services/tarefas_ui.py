@@ -170,7 +170,6 @@ def render(store, principal):
         st.session_state.pop("tarefas_edit", None)
     if "tarefas_edit" in st.session_state:
         _editor(repo, store, principal)
-        return
     counts=repo.situation_counts(principal.id); cols=st.columns(5)
     for col,key,label,tone in zip(cols,counts,("Atrasadas","Hoje","Próximas","Em andamento","Aguardando"),("danger","warning","info","brand","warning")):
         with col:

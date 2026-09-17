@@ -860,34 +860,51 @@ section[data-testid="stSidebar"] .mpc-record-secondary,
 section[data-testid="stSidebar"] .mpc-record-meta{{
 color:var(--mpc-text-2);
 }}
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed,
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed.mpc-surface-brand,
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed.mpc-surface-success,
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed.mpc-surface-warning,
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed.mpc-surface-danger,
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed.mpc-surface-muted,
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed.mpc-surface-info,
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed.mpc-stripe-a,
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed.mpc-stripe-b{{
-background:#FFF4CC !important;
-border:1px solid #E8D28A !important;
-border-left:3px solid #C99A1A !important;
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed,
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-brand,
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-success,
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-warning,
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-danger,
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-muted,
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-info,
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-stripe-a,
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-stripe-b,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-brand,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-success,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-warning,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-danger,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-muted,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-info,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-stripe-a,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-stripe-b{{
+background:#FFF2BF !important;
+background-color:#FFF2BF !important;
+border:1px solid #E7C968 !important;
+border-left:3px solid #C99800 !important;
 box-shadow:none;
-}}
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed:hover{{
-background:#FFEDB3 !important;
-}}
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-title{{
 color:#2B2B2B !important;
 }}
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-secondary,
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-meta{{
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed:hover,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed:hover{{
+background:#FFEBA6 !important;
+background-color:#FFEBA6 !important;
+}}
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-title,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-title{{
+color:#2B2B2B !important;
+}}
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-secondary,
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-meta,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-secondary,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-meta{{
 color:#6E6040 !important;
 }}
-section[data-testid="stSidebar"] [class*="st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-badge--info{{
-background:#F4D97A !important;
+html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card .mpc-badge--info,
+html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card .mpc-badge--info{{
+background:#F2D675 !important;
 color:#594500 !important;
-border-color:#E8D28A !important;
+border-color:#E7C968 !important;
 }}
 .mpc-section-label{{
 margin:1.05rem 0 .4rem;
