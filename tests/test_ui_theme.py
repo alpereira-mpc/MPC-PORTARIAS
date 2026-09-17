@@ -39,9 +39,19 @@ def test_status_tone_covers_semantic_labels():
 def test_stripe_and_header_helpers_are_available():
     from inspect import getsource
 
-    from services import branding, oficios_ui
-    from services.ui_theme import record_html, stripe_index
+    from services import branding, oficios_ui, tarefas_ui
+    from services.ui_theme import (
+        CARD_SURFACE_A,
+        CARD_SURFACE_B,
+        SIDEBAR_BG,
+        card_container,
+        record_html,
+        stripe_index,
+    )
 
+    assert CARD_SURFACE_A == "#FFFFFF"
+    assert CARD_SURFACE_B == "#FCEFF1"
+    assert SIDEBAR_BG == "#F3F4F8"
     assert stripe_index(0) == "a"
     assert stripe_index(1) == "b"
     block = record_html("Item", stripe="b", accent="brand")
@@ -49,11 +59,20 @@ def test_stripe_and_header_helpers_are_available():
     assert "mpc-card-odd" in block
     even = record_html("Item", stripe="a")
     assert "mpc-card-even" in even
+    helper = getsource(card_container)
+    assert "st.container" in helper
+    assert "mpc_card_" in helper
+    assert "key=" in helper
+    task_card = getsource(tarefas_ui._card)
+    assert "card_container(" in task_card
+    assert "task_" in task_card
     styles = getsource(branding._brand_styles)
     assert "object-fit:contain" in styles.replace(" ", "")
     assert "margin:-1.35rem" not in styles
+    assert "mix-blend-mode:multiply" not in getsource(branding.render_sidebar_brand)
     listing = getsource(oficios_ui.listing)
     assert listing.index("for index, r in enumerate(rows):") < listing.index("_details_if_open")
+    assert "card_container(" in listing
     render = getsource(oficios_ui.render)
     assert "open_oficio_mov_" in render
     assert "Abrir ofício" in render

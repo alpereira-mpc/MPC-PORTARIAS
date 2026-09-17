@@ -4,7 +4,7 @@ import hashlib
 import streamlit as st
 from services.access import require_permission
 from services.branding import module_title
-from services.ui_theme import badges, filter_mark, render_record, status_tone, stripe_mark
+from services.ui_theme import badges, card_container, filter_mark, render_record, status_tone
 from services.memorandos import (
     MIME_DOCX,
     MIME_PDF,
@@ -501,20 +501,20 @@ def _listing(service, principal):
     for index, row in enumerate(rows):
         if row["id"] in shown:
             continue
-        with st.expander(row["cadeia"] + " · " + row["situacao"], expanded=False):
-            stripe_mark(index)
-            accent = "muted" if (row.get("status") == "CANCELADO" or row["situacao"] in ("ENCERRADA", "CANCELADA")) else status_tone(row["situacao"])
-            render_record(
-                row["cadeia"],
-                badges_html=badges(
-                    (row.get("status"), status_tone(row.get("status"))) if row.get("status") else None,
-                    (row["situacao"], status_tone(row["situacao"])),
-                ),
-                secondary=f"{row['data_inicio']} a {row['data_fim']} · {row['gabinete_snapshot']} · {row['motivo']}",
-                meta=("Número oficial: " + row["numero_oficial"]) if row.get("numero_oficial") else "",
-                accent=accent,
-            )
-            _details(service, row, principal)
+        with card_container(index, f"memo_{row['id']}", border=False):
+            with st.expander(row["cadeia"] + " · " + row["situacao"], expanded=False):
+                accent = "muted" if (row.get("status") == "CANCELADO" or row["situacao"] in ("ENCERRADA", "CANCELADA")) else status_tone(row["situacao"])
+                render_record(
+                    row["cadeia"],
+                    badges_html=badges(
+                        (row.get("status"), status_tone(row.get("status"))) if row.get("status") else None,
+                        (row["situacao"], status_tone(row["situacao"])),
+                    ),
+                    secondary=f"{row['data_inicio']} a {row['data_fim']} · {row['gabinete_snapshot']} · {row['motivo']}",
+                    meta=("Número oficial: " + row["numero_oficial"]) if row.get("numero_oficial") else "",
+                    accent=accent,
+                )
+                _details(service, row, principal)
 
 
 def _base(service,principal):

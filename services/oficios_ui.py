@@ -19,6 +19,7 @@ from services.ui_store import display_store
 from services.branding import module_title
 from services.ui_theme import (
     badges,
+    card_container,
     definition_block,
     detail_mark,
     filter_mark,
@@ -27,7 +28,6 @@ from services.ui_theme import (
     render_record,
     section_label,
     status_tone,
-    stripe_mark,
 )
 
 
@@ -810,25 +810,24 @@ def listing(service, people, direction=None, tracking=False, filters=None, detai
         return
     drawn = detail_drawn if detail_drawn is not None else set()
     for index, r in enumerate(rows):
-        with st.container(border=True):
-            stripe_mark(index)
-            attention_text = attention(r)
-            direction_label = "Enviado" if r.get("direcao") == "ENVIADO" else "Recebido"
-            marks = badges(
-                (direction_label, "brand" if r.get("direcao") == "ENVIADO" else "info"),
-                (r["status"], status_tone(r["status"])),
-            )
-            if "vencido" in attention_text.casefold():
-                marks += badges(("Prazo vencido", "danger"))
-                accent = "danger"
-            elif "próximo" in attention_text.casefold():
-                marks += badges(("Prazo próximo", "warning"))
-                accent = "warning"
-            elif r["status"] in ("Cancelado", "Arquivado", "Concluído", "Respondido"):
-                accent = status_tone(r["status"])
-            else:
-                accent = "brand"
-            opened = st.session_state.get("oficio_detail") == r["id"]
+        attention_text = attention(r)
+        direction_label = "Enviado" if r.get("direcao") == "ENVIADO" else "Recebido"
+        marks = badges(
+            (direction_label, "brand" if r.get("direcao") == "ENVIADO" else "info"),
+            (r["status"], status_tone(r["status"])),
+        )
+        if "vencido" in attention_text.casefold():
+            marks += badges(("Prazo vencido", "danger"))
+            accent = "danger"
+        elif "próximo" in attention_text.casefold():
+            marks += badges(("Prazo próximo", "warning"))
+            accent = "warning"
+        elif r["status"] in ("Cancelado", "Arquivado", "Concluído", "Respondido"):
+            accent = status_tone(r["status"])
+        else:
+            accent = "brand"
+        opened = st.session_state.get("oficio_detail") == r["id"]
+        with card_container(index, f"of_{r['id']}", critical="vencido" in attention_text.casefold()):
             render_record(
                 label(r),
                 badges_html=marks,
@@ -989,8 +988,7 @@ def render(store=None, principal=None):
             section_label("Últimas movimentações")
             for index, row in enumerate(read_list(service, limit=5)):
                 opened = st.session_state.get("oficio_detail") == row["id"]
-                with st.container(border=True):
-                    stripe_mark(index)
+                with card_container(index, f"ofm_{row['id']}"):
                     render_record(
                         label(row),
                         badges_html=badges((row["status"], status_tone(row["status"]))),

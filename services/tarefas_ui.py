@@ -11,13 +11,13 @@ from services.ui_theme import (
     actions_mark,
     badge,
     badges,
+    card_container,
     filter_mark,
     kpi_mark,
     priority_tone,
     render_record,
     section_label,
     status_tone,
-    stripe_mark,
 )
 
 PRIORITIES = ("BAIXA", "NORMAL", "ALTA", "URGENTE")
@@ -132,8 +132,7 @@ def _card(repo, store, principal, row, index=0):
     )
     if overdue:
         marks += badge("Atrasada", "danger")
-    with st.container(border=True):
-        stripe_mark(index)
+    with card_container(index, f"task_{row['id']}", critical=overdue):
         render_record(row["titulo"], badges_html=marks, meta=due_label, accent=accent)
         actions_mark()
         controls=st.columns(5)
@@ -185,8 +184,7 @@ def render(store, principal):
             history_status=st.selectbox("Situação",[None,*HISTORY],format_func=lambda x: STATUS_LABELS.get(x,"Todas"),key="tarefas_history_status")
         rows=repo.list_history(principal.id,{"pesquisa":history_q,"prioridade":history_priority,"status":history_status},limit=30)
         for index, row in enumerate(rows):
-            with st.container(border=True):
-                stripe_mark(index)
+            with card_container(index, f"thist_{row['id']}"):
                 render_record(
                     row["titulo"],
                     badges_html=badges(

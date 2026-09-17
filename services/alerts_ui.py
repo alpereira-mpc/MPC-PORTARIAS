@@ -22,7 +22,7 @@ from services.alerts import (
 from services.audit import format_local
 from services.pending import PAGE_SIZE, visible_cabinets
 from services.pending_ui import open_origin
-from services.ui_theme import badge, badges, record_html, render_html, render_record, status_tone, stripe_mark
+from services.ui_theme import badge, badges, card_container, record_html, render_html, render_record, status_tone
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
@@ -253,8 +253,7 @@ def render(store, principal):
     view = items[start : start + PAGE_SIZE]
     st.caption(f"{len(items)} alerta(s) · página {int(page)} de {pages}")
     for offset, item in enumerate(view):
-        with st.container(border=True):
-            stripe_mark(offset)
+        with card_container(offset, f"al_{start}_{offset}"):
             render_record(
                 item.title,
                 badges_html=badges(

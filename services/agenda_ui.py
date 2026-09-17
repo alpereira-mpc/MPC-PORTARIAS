@@ -21,11 +21,11 @@ from services.ui_store import display_store
 from services.branding import module_title
 from services.ui_theme import (
     badges,
+    card_container,
     filter_mark,
     render_html,
     render_record,
     status_tone,
-    stripe_mark,
     trip_html,
 )
 
@@ -567,8 +567,7 @@ def render(store=None, principal=None):
         if not rows:
             st.info("Nenhum item histórico para os filtros selecionados.")
         for index, row in enumerate(rows):
-            with st.container(border=True):
-                stripe_mark(index)
+            with card_container(index, f"agh_{row['id']}"):
                 if row.get("afastamento"):
                     render_record(
                         "AFASTAMENTO — " + str(names.get(row["procurador_id"], row["procurador_id"])),
@@ -735,8 +734,7 @@ def render(store=None, principal=None):
             current_group = group
             st.markdown(f"#### {group}")
         if row.get("afastamento"):
-            with st.container(border=True):
-                stripe_mark(index)
+            with card_container(index, f"agl_{row['id']}"):
                 render_record(
                     "AFASTAMENTO — " + str(names.get(row["procurador_id"], row["procurador_id"])),
                     badges_html=badges(
@@ -759,8 +757,7 @@ def render(store=None, principal=None):
         past = row["situacao"] not in ("Realizado", "Cancelado") and date.fromisoformat(row["inicio"][:10]) < today
         situation = row["situacao"]
         accent = "muted" if situation == "Cancelado" else "warning" if past else "brand"
-        with st.container(border=True):
-            stripe_mark(index)
+        with card_container(index, f"ag_{row['id']}"):
             render_record(
                 title or "Compromisso",
                 badges_html=badges(

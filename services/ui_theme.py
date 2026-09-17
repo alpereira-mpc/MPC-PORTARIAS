@@ -13,8 +13,11 @@ from services.branding import BRAND_RED
 # --- Tokens (aligned with .streamlit/config.toml) ---
 BRAND_RED_DARK = "#7E121C"
 BRAND_RED_SOFT = "#F3E6E8"
-STRIPE_SOFT = "#F6E4E7"
-SIDEBAR_SURFACE = "#F3F4F8"
+CARD_SURFACE_A = "#FFFFFF"
+CARD_SURFACE_B = "#FCEFF1"
+CARD_BORDER_A = "#D8DADD"
+CARD_BORDER_B = "#E9C7CC"
+SIDEBAR_BG = "#F3F4F8"
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
 SURFACE_SOFT = "#FFFFFF"
@@ -98,8 +101,11 @@ def _css():
 --mpc-brand:{BRAND_RED};
 --mpc-brand-dark:{BRAND_RED_DARK};
 --mpc-brand-soft:{BRAND_RED_SOFT};
---mpc-stripe:{STRIPE_SOFT};
---mpc-sidebar:{SIDEBAR_SURFACE};
+--mpc-card-a:{CARD_SURFACE_A};
+--mpc-card-b:{CARD_SURFACE_B};
+--mpc-card-border-a:{CARD_BORDER_A};
+--mpc-card-border-b:{CARD_BORDER_B};
+--mpc-sidebar:{SIDEBAR_BG};
 --mpc-page:{SURFACE_PAGE};
 --mpc-white:{SURFACE_WHITE};
 --mpc-soft:{SURFACE_SOFT};
@@ -120,23 +126,41 @@ def _css():
 --mpc-radius:10px;
 --mpc-shadow:0 1px 3px rgba(32,40,50,.07);
 }}
-.stApp,[data-testid="stAppViewContainer"],[data-testid="stHeader"]{{
+.stApp,[data-testid="stAppViewContainer"]{{
 background:var(--mpc-page);
 }}
 [data-testid="stHeader"]{{background:rgba(246,245,244,.92);}}
 section[data-testid="stMain"] [data-testid="stMainBlockContainer"]{{
 padding-top:1.35rem;
+background:var(--mpc-page);
 }}
-section[data-testid="stSidebar"],
-section[data-testid="stSidebar"] > div,
-section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
-section[data-testid="stSidebar"] [data-testid="stSidebarHeader"],
-section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
-[data-testid="stSidebarCollapsedControl"]{{
-background:var(--mpc-sidebar) !important;
+html body .stApp [data-testid="stSidebar"],
+html body .stApp [data-testid="stSidebar"] > div,
+html body .stApp [data-testid="stSidebar"] [data-testid="stSidebarContent"],
+html body .stApp [data-testid="stSidebar"] [data-testid="stSidebarHeader"],
+html body .stApp [data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
+html body .stApp [data-testid="stSidebar"] [data-testid="stVerticalBlock"],
+html body .stApp [data-testid="stSidebar"] [data-testid="stElementContainer"],
+html body .stApp [data-testid="stSidebarCollapsedControl"]{{
+background:{SIDEBAR_BG} !important;
+background-color:{SIDEBAR_BG} !important;
 }}
 section[data-testid="stSidebar"]{{
 border-right:1px solid var(--mpc-border);
+background:{SIDEBAR_BG} !important;
+background-color:{SIDEBAR_BG} !important;
+}}
+section[data-testid="stSidebar"] div.st-key-sidebar_home,
+section[data-testid="stSidebar"] div.st-key-sidebar_home [data-testid="stButton"]{{
+background:{SIDEBAR_BG} !important;
+background-color:{SIDEBAR_BG} !important;
+box-shadow:none !important;
+border:0 !important;
+}}
+section[data-testid="stSidebar"] div.st-key-sidebar_home button{{
+background-color:transparent !important;
+border:0 !important;
+box-shadow:none !important;
 }}
 section[data-testid="stSidebar"] [data-testid="stCaption"]{{
 color:var(--mpc-text-2);
@@ -155,7 +179,8 @@ font-weight:700;
 color:var(--mpc-brand-dark);
 }}
 section[data-testid="stSidebar"] [data-testid="stExpander"]{{
-background:var(--mpc-sidebar);
+background:{SIDEBAR_BG} !important;
+background-color:{SIDEBAR_BG} !important;
 border:1px solid var(--mpc-border);
 border-radius:var(--mpc-radius);
 }}
@@ -286,18 +311,6 @@ min-width:0;
 background:var(--mpc-brand-soft) !important;
 border-color:var(--mpc-border-md) !important;
 }}
-[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-stripe-a),
-[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-card-even),
-[data-testid="stExpander"]:has(.mpc-stripe-a),
-[data-testid="stExpander"]:has(.mpc-card-even){{
-background:var(--mpc-white) !important;
-}}
-[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-stripe-b),
-[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-card-odd),
-[data-testid="stExpander"]:has(.mpc-stripe-b),
-[data-testid="stExpander"]:has(.mpc-card-odd){{
-background:var(--mpc-stripe) !important;
-}}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-danger-zone){{
 border-left:3px solid var(--mpc-danger) !important;
 background:var(--mpc-danger-soft);
@@ -320,7 +333,7 @@ text-transform:uppercase;
 color:var(--mpc-text) !important;
 font-weight:700 !important;
 }}
-[data-testid="stExpander"]{{
+section[data-testid="stMain"] [data-testid="stExpander"]{{
 background:var(--mpc-white);
 border:1px solid var(--mpc-border-md);
 border-radius:var(--mpc-radius);
@@ -416,8 +429,8 @@ padding:.75rem .9rem .7rem;
 .mpc-stack .mpc-record--muted,.mpc-record-boxed.mpc-record--muted{{border-left-color:var(--mpc-border-md);background:var(--mpc-soft);}}
 .mpc-stack .mpc-record--neutral,.mpc-record-boxed.mpc-record--neutral{{border-left-color:var(--mpc-border-md);}}
 .mpc-stack .mpc-record--info,.mpc-record-boxed.mpc-record--info{{border-left-color:var(--mpc-info);}}
-.mpc-stack .mpc-stripe-a,.mpc-stack .mpc-card-even,.mpc-record-boxed.mpc-stripe-a,.mpc-record-boxed.mpc-card-even{{background:var(--mpc-white);}}
-.mpc-stack .mpc-stripe-b,.mpc-stack .mpc-card-odd,.mpc-record-boxed.mpc-stripe-b,.mpc-record-boxed.mpc-card-odd{{background:var(--mpc-stripe);}}
+.mpc-stack .mpc-stripe-a,.mpc-stack .mpc-card-even,.mpc-record-boxed.mpc-stripe-a,.mpc-record-boxed.mpc-card-even{{background:var(--mpc-card-a);}}
+.mpc-stack .mpc-stripe-b,.mpc-stack .mpc-card-odd,.mpc-record-boxed.mpc-stripe-b,.mpc-record-boxed.mpc-card-odd{{background:var(--mpc-card-b);border-color:var(--mpc-card-border-b);}}
 .mpc-stack .mpc-surface-brand,.mpc-record-boxed.mpc-surface-brand{{background:var(--mpc-brand-soft);}}
 .mpc-stack .mpc-surface-success,.mpc-record-boxed.mpc-surface-success{{background:var(--mpc-success-soft);}}
 .mpc-stack .mpc-surface-warning,.mpc-record-boxed.mpc-surface-warning{{background:var(--mpc-warning-soft);}}
@@ -540,6 +553,40 @@ gap:.55rem;
 @media (max-width:768px){{
 .mpc-record-head{{flex-direction:column;gap:.35rem;}}
 .mpc-record-badges{{justify-content:flex-start;}}
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_a"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_a"] > div,
+section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stVerticalBlockBorderWrapper"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stVerticalBlock"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stExpander"]{{
+background:{CARD_SURFACE_A} !important;
+background-color:{CARD_SURFACE_A} !important;
+border-color:{CARD_BORDER_A} !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_b"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_b"] > div,
+section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stVerticalBlockBorderWrapper"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stVerticalBlock"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stExpander"]{{
+background:{CARD_SURFACE_B} !important;
+background-color:{CARD_SURFACE_B} !important;
+border-color:{CARD_BORDER_B} !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_danger"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_danger"] > div,
+section[data-testid="stMain"] [class*="st-key-mpc_card_danger"] [data-testid="stVerticalBlockBorderWrapper"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_danger"] [data-testid="stVerticalBlock"]{{
+background:{DANGER_SOFT} !important;
+background-color:{DANGER_SOFT} !important;
+border-color:rgba(176,42,42,.35) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stHorizontalBlock"] > div,
+section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stHorizontalBlock"] > div,
+section[data-testid="stMain"] [class*="st-key-mpc_card_danger"] [data-testid="stHorizontalBlock"] > div,
+section[data-testid="stMain"] [class*="st-key-mpc_card_a"] .mpc-record,
+section[data-testid="stMain"] [class*="st-key-mpc_card_b"] .mpc-record,
+section[data-testid="stMain"] [class*="st-key-mpc_card_danger"] .mpc-record{{
+background:transparent !important;
 }}
 """.strip()
 
@@ -686,6 +733,16 @@ def form_mark():
 
 def stripe_index(index):
     return "b" if index % 2 else "a"
+
+
+def card_container(index, identity, *, critical=False, border=True):
+    """Return the Streamlit container that actually paints a listing card.
+
+    Streamlit exposes ``key`` as a ``st-key-`` CSS class on the real wrapper,
+    so A/B backgrounds hit title, badges, actions and checkbox together.
+    """
+    variant = "danger" if critical else stripe_index(index)
+    return st.container(border=border, key=f"mpc_card_{variant}_{identity}")
 
 
 def stripe_mark(index):
