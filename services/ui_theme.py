@@ -588,6 +588,49 @@ section[data-testid="stMain"] [class*="st-key-mpc_card_b"] .mpc-record,
 section[data-testid="stMain"] [class*="st-key-mpc_card_danger"] .mpc-record{{
 background:transparent !important;
 }}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] button,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-primary"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-secondary"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-tertiary"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [class*="delete"] button,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [class*="excluir"] button,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [class*="cancel"] button{{
+background:{BRAND_RED} !important;
+background-color:{BRAND_RED} !important;
+border:1px solid {BRAND_RED} !important;
+color:{SURFACE_WHITE} !important;
+font-weight:600 !important;
+border-radius:.5rem !important;
+padding:.4rem .9rem !important;
+min-height:2.4rem;
+box-shadow:none !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] button p,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-primary"] p,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-secondary"] p,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-tertiary"] p{{
+color:{SURFACE_WHITE} !important;
+font-weight:600 !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] button:hover:not(:disabled),
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-primary"]:hover:not(:disabled),
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-secondary"]:hover:not(:disabled),
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-tertiary"]:hover:not(:disabled){{
+background:{BRAND_RED_DARK} !important;
+background-color:{BRAND_RED_DARK} !important;
+border-color:{BRAND_RED_DARK} !important;
+color:{SURFACE_WHITE} !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] button:active:not(:disabled),
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-secondary"]:active:not(:disabled){{
+background:{BRAND_RED_DARK} !important;
+border-color:{BRAND_RED_DARK} !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] button:disabled,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-secondary"]:disabled{{
+opacity:.55;
+cursor:not-allowed;
+}}
 """.strip()
 
 

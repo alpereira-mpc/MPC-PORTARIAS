@@ -77,3 +77,9 @@ def test_stripe_and_header_helpers_are_available():
     render = getsource(oficios_ui.render)
     assert "open_oficio_mov_" in render
     assert "Abrir ofício" in render
+    from services.ui_theme import _css
+
+    css = _css()
+    assert "st-key-mpc_card_" in css
+    assert BRAND_RED in css
+    assert '[class*="st-key-mpc_card_"]button' in css.replace(" ", "")

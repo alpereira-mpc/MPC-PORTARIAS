@@ -780,7 +780,7 @@ def _details_if_open(service, record_id, drawn):
     if not record:
         return
     drawn.add(record_id)
-    with st.container(border=True):
+    with st.container(border=True, key=f"mpc_card_detail_{record_id}"):
         detail_mark()
         details(service, record)
 
