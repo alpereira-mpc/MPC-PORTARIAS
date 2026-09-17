@@ -17,6 +17,8 @@ CARD_OPERATIONAL_BG = "#E6C7CC"
 CARD_OPERATIONAL_BORDER = "#D8DADD"
 CARD_INSTITUTIONAL_BG = "#FBF4F6"
 CARD_INSTITUTIONAL_BORDER = "#E7CDD3"
+SURFACE_PRIMARY_BG = CARD_INSTITUTIONAL_BG
+SURFACE_PRIMARY_BORDER = CARD_INSTITUTIONAL_BORDER
 CARD_SURFACE_A = CARD_OPERATIONAL_BG
 CARD_SURFACE_B = CARD_OPERATIONAL_BG
 CARD_BORDER_A = CARD_OPERATIONAL_BORDER
@@ -29,8 +31,8 @@ CONTROL_BG = EXPANDER_BG
 CONTROL_BORDER = EXPANDER_BORDER
 CONTROL_HOVER = EXPANDER_HOVER
 CONTROL_DISABLED = "#EEECEB"
-EMPTY_STATE_BG = "#F7F1F2"
-EMPTY_STATE_BORDER = "#E3D4D7"
+EMPTY_STATE_BG = SURFACE_PRIMARY_BG
+EMPTY_STATE_BORDER = SURFACE_PRIMARY_BORDER
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
 SURFACE_SOFT = "#FFFFFF"
@@ -122,6 +124,8 @@ def _css():
 --mpc-card-border-b:{CARD_BORDER_B};
 --mpc-card-institutional-bg:{CARD_INSTITUTIONAL_BG};
 --mpc-card-institutional-border:{CARD_INSTITUTIONAL_BORDER};
+--mpc-surface-primary-bg:var(--mpc-card-institutional-bg);
+--mpc-surface-primary-border:var(--mpc-card-institutional-border);
 --mpc-card-operational-bg:{CARD_OPERATIONAL_BG};
 --mpc-card-operational-border:{CARD_OPERATIONAL_BORDER};
 --mpc-sidebar:{SIDEBAR_BG};
@@ -132,8 +136,8 @@ def _css():
 --mpc-surface-control-bg:var(--mpc-control-bg);
 --mpc-surface-control-border:var(--mpc-control-border);
 --mpc-surface-control-hover:var(--mpc-control-hover);
---mpc-empty-state-bg:{EMPTY_STATE_BG};
---mpc-empty-state-border:{EMPTY_STATE_BORDER};
+--mpc-empty-state-bg:var(--mpc-surface-primary-bg);
+--mpc-empty-state-border:var(--mpc-surface-primary-border);
 --mpc-expander:var(--mpc-control-bg);
 --mpc-expander-border:var(--mpc-control-border);
 --mpc-expander-hover:var(--mpc-control-hover);
@@ -338,8 +342,8 @@ cursor:not-allowed;
 color:var(--mpc-text-2);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]{{
-background:var(--mpc-control-bg);
-border:1px solid var(--mpc-control-border) !important;
+background:var(--mpc-surface-primary-bg);
+border:1px solid var(--mpc-surface-primary-border) !important;
 border-radius:var(--mpc-radius);
 box-shadow:var(--mpc-shadow);
 }}
@@ -411,12 +415,13 @@ background:var(--mpc-danger-soft) !important;
 background:var(--mpc-muted-bg) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-neutral){{
-background:var(--mpc-control-bg) !important;
+background:var(--mpc-surface-primary-bg) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-filter-mark),
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-filter-mark){{
-background:var(--mpc-expander) !important;
-border-color:var(--mpc-expander-border) !important;
+background:var(--mpc-surface-primary-bg) !important;
+background-color:var(--mpc-surface-primary-bg) !important;
+border:1px solid var(--mpc-surface-primary-border) !important;
 border-radius:var(--mpc-radius);
 box-shadow:none;
 }}
@@ -432,19 +437,19 @@ border:1px solid var(--mpc-card-operational-border) !important;
 border-left:3px solid var(--mpc-brand) !important;
 }}
 [data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--danger) [data-testid="stMetric"]{{
-background:var(--mpc-card-institutional-bg);
+background:var(--mpc-surface-primary-bg);
 border-left-color:var(--mpc-danger);
 }}
 [data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--warning) [data-testid="stMetric"]{{
-background:var(--mpc-card-institutional-bg);
+background:var(--mpc-surface-primary-bg);
 border-left-color:var(--mpc-warning);
 }}
 [data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--brand) [data-testid="stMetric"]{{
-background:var(--mpc-card-institutional-bg);
+background:var(--mpc-surface-primary-bg);
 border-left-color:var(--mpc-brand);
 }}
 [data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--info) [data-testid="stMetric"]{{
-background:var(--mpc-card-institutional-bg);
+background:var(--mpc-surface-primary-bg);
 border-left-color:var(--mpc-info);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-actions) [data-testid="stHorizontalBlock"]{{
@@ -459,17 +464,17 @@ min-width:0;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark),
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-form-mark){{
-background:var(--mpc-control-bg) !important;
-background-color:var(--mpc-control-bg) !important;
-border-color:var(--mpc-control-border) !important;
+background:var(--mpc-surface-primary-bg) !important;
+background-color:var(--mpc-surface-primary-bg) !important;
+border:1px solid var(--mpc-surface-primary-border) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-danger-zone){{
 border-left:3px solid var(--mpc-danger) !important;
 background:var(--mpc-danger-soft);
 }}
 [data-testid="stMetric"]{{
-background:var(--mpc-card-institutional-bg);
-border:1px solid var(--mpc-card-institutional-border);
+background:var(--mpc-surface-primary-bg);
+border:1px solid var(--mpc-surface-primary-border);
 border-left:3px solid var(--mpc-brand);
 border-radius:var(--mpc-radius);
 padding:.7rem .85rem .65rem;
@@ -490,7 +495,13 @@ section[data-testid="stSidebar"] [data-testid="stExpander"]{{
 background:transparent;
 box-shadow:none;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] details,
+section[data-testid="stMain"] [data-testid="stExpander"] details{{
+background:var(--mpc-surface-primary-bg) !important;
+border:1px solid var(--mpc-surface-primary-border) !important;
+border-radius:var(--mpc-radius) !important;
+box-shadow:none !important;
+overflow:hidden;
+}}
 section[data-testid="stSidebar"] [data-testid="stExpander"] details{{
 background:var(--mpc-control-bg) !important;
 border:1px solid var(--mpc-control-border) !important;
@@ -498,7 +509,14 @@ border-radius:var(--mpc-radius) !important;
 box-shadow:none !important;
 overflow:hidden;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] summary,
+section[data-testid="stMain"] [data-testid="stExpander"] summary{{
+background:var(--mpc-surface-primary-bg) !important;
+color:var(--mpc-text) !important;
+font-weight:600;
+overflow-wrap:anywhere;
+white-space:normal;
+transition:border-color .15s ease !important;
+}}
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary{{
 background:var(--mpc-control-bg) !important;
 color:var(--mpc-text) !important;
@@ -509,19 +527,26 @@ transition:background-color .15s ease !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] summary:hover,
 section[data-testid="stMain"] [data-testid="stExpander"] summary:focus-visible,
-section[data-testid="stMain"] [data-testid="stExpander"] summary:active,
+section[data-testid="stMain"] [data-testid="stExpander"] summary:active{{
+background:var(--mpc-surface-primary-bg) !important;
+border-color:rgba(155,23,36,.22) !important;
+}}
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary:focus-visible,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary:active{{
 background:var(--mpc-control-hover) !important;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary,
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary{{
+background:var(--mpc-surface-primary-bg) !important;
+}}
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary{{
 background:var(--mpc-control-bg) !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:hover,
 section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:focus-visible,
-section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:active,
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:active{{
+background:var(--mpc-surface-primary-bg) !important;
+}}
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:hover,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:focus-visible,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:active{{
@@ -543,7 +568,10 @@ color:var(--mpc-text) !important;
 fill:currentColor !important;
 flex-shrink:0;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"],
+section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
+background:var(--mpc-surface-primary-bg) !important;
+border-top:1px solid var(--mpc-surface-primary-border) !important;
+}}
 section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
 background:var(--mpc-control-bg) !important;
 border-top:1px solid var(--mpc-control-border) !important;
