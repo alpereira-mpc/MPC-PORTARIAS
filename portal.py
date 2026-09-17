@@ -16,7 +16,7 @@ from services.branding import (
     render_sidebar_brand,
 )
 from services.ui_store import asset
-from services.ui_theme import apply_theme, badge, institutional_card_mark, render_html
+from services.ui_theme import apply_theme, badge, empty_state, institutional_card_mark, render_html
 
 LOGGER = logging.getLogger(__name__)
 
@@ -337,7 +337,7 @@ def home(principal, store=None):
     # Future modules remain registered, but only active tools occupy the Home grid.
     visible = [module for module in visible_modules(principal) if module.active]
     if not visible:
-        st.info("Nenhum módulo disponível para este usuário.")
+        empty_state("Nenhum módulo disponível para este usuário.")
         return
     _home_layout_style()
     for start in range(0, len(visible), 2):

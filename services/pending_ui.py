@@ -14,7 +14,7 @@ from services.pending import (
     summarize,
     visible_cabinets,
 )
-from services.ui_theme import badges, filter_mark, record_html, render_records, status_tone, stripe_index
+from services.ui_theme import badges, empty_state, filter_mark, record_html, render_records, status_tone, stripe_index
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
@@ -155,7 +155,7 @@ def render(store, principal):
         if errors.get(key):
             st.warning(f"Não foi possível carregar pendências de {label}.")
     if not items:
-        st.info("Nenhuma pendência encontrada.")
+        empty_state("Nenhuma pendência encontrada.")
         return
     pages = max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = st.number_input("Página", min_value=1, max_value=pages, value=1, step=1)

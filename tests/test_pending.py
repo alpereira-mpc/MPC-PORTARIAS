@@ -342,7 +342,7 @@ def test_menu_and_central_ui(store, monkeypatch):
     assert not app.exception
     headings = [str(h.value) for h in app.subheader]
     assert any("PENDÊNCIAS" in h for h in headings)
-    assert any("Nenhuma pendência encontrada." in str(i.value) for i in app.info)
+    assert any("Nenhuma pendência encontrada." in str(m.value) for m in app.markdown)
     app.sidebar.radio(key="portal_module").set_value("Início").run()
     assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
     assert not any(b.label == "Ver pendências" for b in app.button)

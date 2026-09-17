@@ -10,7 +10,7 @@ from services.audit import format_local, registrar_evento
 from services.backup import backup_filename, generate_backup, unique_backup_path
 from services.branding import APP_NAME, APP_SUBTITLE
 from services.system_health import ATTENTION, ERROR, OK, diagnose
-from services.ui_theme import badge, html_text, render_html, status_tone
+from services.ui_theme import badge, empty_state, html_text, render_html, status_tone
 
 LOGGER = logging.getLogger("mpc.sistema")
 HEALTH_KEY = "sistema_health"
@@ -207,7 +207,7 @@ def render_backup(store, principal):
     )
     previous = st.session_state.get(BACKUP_RESULT)
     if previous:
-        st.info(
+        empty_state(
             "Último backup gerado nesta sessão: "
             + previous.get("gerado_em_local", "—")
         )

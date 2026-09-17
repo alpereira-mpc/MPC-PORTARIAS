@@ -9,7 +9,7 @@ from database.tramita_reports import TramitaReportsStore
 from services.access import require_permission
 from services.audit import registrar_evento
 from services.tramita_reports import file_hash, parse_movements, parse_stock
-from services.ui_theme import filter_mark, kpi_mark, section_label
+from services.ui_theme import empty_state, filter_mark, kpi_mark, section_label
 
 
 MONTHS = (
@@ -81,7 +81,7 @@ def production(store, principal=None):
     read = lambda key, load: _cached_report(reports.store, principal, key, load)
     options = read(("competences",), reports.competences)
     if not options:
-        st.info("Nenhuma competência processual foi importada. Utilize a área Importações para carregar os relatórios do Tramita.")
+        empty_state("Nenhuma competência processual foi importada. Utilize a área Importações para carregar os relatórios do Tramita.")
         return
     with st.container(border=True):
         filter_mark()
@@ -134,7 +134,7 @@ def current_view(store, principal=None):
     read = lambda key, load: _cached_report(reports.store, principal, key, load)
     snapshot = read(("latest_snapshot",), reports.latest_snapshot)
     if not snapshot:
-        st.info("Nenhuma fotografia atual do estoque processual foi importada.")
+        empty_state("Nenhuma fotografia atual do estoque processual foi importada.")
         return
     summary = read(("stock_summary", snapshot), lambda: reports.stock_summary(snapshot))
     people = sorted(row["procurador"] for row in summary if row["procurador"])

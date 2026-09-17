@@ -31,8 +31,8 @@ CONTROL_BG = EXPANDER_BG
 CONTROL_BORDER = EXPANDER_BORDER
 CONTROL_HOVER = EXPANDER_HOVER
 CONTROL_DISABLED = "#EEECEB"
-EMPTY_STATE_BG = "#F7F1F2"
-EMPTY_STATE_BORDER = "#E3D4D7"
+EMPTY_STATE_BG = "#FAF6F7"
+EMPTY_STATE_BORDER = "#E7D7DB"
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
 SURFACE_SOFT = "#FFFFFF"
@@ -670,32 +670,35 @@ padding:0 !important;
 background-color:var(--mpc-control-hover) !important;
 color:var(--mpc-text) !important;
 }}
-section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]),
-section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stNotificationContent-info"]),
-section[data-testid="stMain"] [data-testid="stInfo"],
-section[data-testid="stMain"] [data-testid="stAlertContentInfo"],
-section[data-testid="stMain"] [data-testid="stNotificationContent-info"]{{
-background:var(--mpc-empty-state-bg) !important;
-background-color:var(--mpc-empty-state-bg) !important;
-border:1px solid var(--mpc-empty-state-border) !important;
-color:var(--mpc-text) !important;
-}}
-section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) p,
-section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) [data-testid="stMarkdownContainer"],
-section[data-testid="stMain"] [data-testid="stAlertContentInfo"],
-section[data-testid="stMain"] [data-testid="stInfo"] p,
-section[data-testid="stMain"] [data-testid="stInfo"] [data-testid="stMarkdownContainer"]{{
-color:var(--mpc-text) !important;
-}}
-section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) svg,
-section[data-testid="stMain"] [data-testid="stInfo"] svg,
-section[data-testid="stMain"] [data-testid="stAlertContentInfo"] svg{{
-fill:var(--mpc-text-2) !important;
-color:var(--mpc-text-2) !important;
-}}
 button:focus-visible{{
 outline:2px solid var(--mpc-red) !important;
 outline-offset:2px;
+}}
+.mpc-empty-state{{
+margin:.45rem 0 .75rem;
+padding:.8rem 1rem .75rem;
+background:var(--mpc-empty-state-bg);
+border:1px solid var(--mpc-empty-state-border);
+border-left:3px solid var(--mpc-red);
+border-radius:var(--mpc-radius);
+box-shadow:none;
+color:var(--mpc-text);
+}}
+.mpc-empty-state p{{
+margin:0;
+color:var(--mpc-text);
+font-size:.95rem;
+line-height:1.45;
+font-weight:450;
+}}
+section[data-testid="stMain"] [data-testid="stElementContainer"]:has(.mpc-empty-state),
+section[data-testid="stMain"] [data-testid="stMarkdown"]:has(.mpc-empty-state),
+section[data-testid="stMain"] [data-testid="stMarkdownContainer"]:has(.mpc-empty-state){{
+background:transparent !important;
+background-color:transparent !important;
+border:0 !important;
+box-shadow:none !important;
+padding:0 !important;
 }}
 .mpc-record{{
 margin:0;
@@ -1090,6 +1093,13 @@ def trip_html(title="Logística de viagem", body=""):
     if body:
         inner += f'<p class="mpc-record-meta">{html_text(body)}</p>'
     return f'<div class="mpc-trip">{inner}</div>'
+
+
+def empty_state(text):
+    """Single institutional empty-result notice. Not a KPI card or st.info."""
+    render_html(
+        f'<div class="mpc-empty-state"><p>{html_text(text)}</p></div>'
+    )
 
 
 def filter_mark():

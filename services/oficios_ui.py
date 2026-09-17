@@ -22,6 +22,7 @@ from services.ui_theme import (
     card_container,
     definition_block,
     detail_mark,
+    empty_state,
     filter_mark,
     form_mark,
     kpi_mark,
@@ -117,7 +118,7 @@ def configuration(service, people):
             submit = st.form_submit_button("Confirmar sequência")
         if sigla:
             seq = service.sequence(sigla, year)
-            st.info(
+            empty_state(
                 f"{sigla}/{year}: próximo {seq['proximo']} · "
                 + (
                     "confirmado"
@@ -595,10 +596,10 @@ def details(service, r):
     if r.get("corpo"):
         st.text(r["corpo"])
     if r.get("responde_a"):
-        st.info("Em resposta ao Ofício " + label(service.get(r["responde_a"])))
+        empty_state("Em resposta ao Ofício " + label(service.get(r["responde_a"])))
     if r["direcao"] == "RECEBIDO":
         for reply in read_list(service, related=r["id"]):
-            st.info(
+            empty_state(
                 (
                     "Respondido pelo Ofício "
                     if reply["numero"] and reply["status"] != "Cancelado"
@@ -806,7 +807,7 @@ def listing(service, people, direction=None, tracking=False, filters=None, detai
         offset=(page - 1) * 50,
     )
     if not rows:
-        st.info("Nenhum ofício nesta página para os filtros selecionados.")
+        empty_state("Nenhum ofício nesta página para os filtros selecionados.")
         return
     drawn = detail_drawn if detail_drawn is not None else set()
     for index, r in enumerate(rows):

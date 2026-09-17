@@ -22,7 +22,7 @@ from services.alerts import (
 from services.audit import format_local
 from services.pending import PAGE_SIZE, visible_cabinets
 from services.pending_ui import open_origin
-from services.ui_theme import badge, badges, card_container, record_html, render_html, render_record, status_tone
+from services.ui_theme import badge, badges, card_container, empty_state, record_html, render_html, render_record, status_tone
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
@@ -245,7 +245,7 @@ def render(store, principal):
         if errors.get(key):
             st.warning(f"Não foi possível carregar alertas da {name}.")
     if not items:
-        st.info("Nenhum alerta ativo no momento.")
+        empty_state("Nenhum alerta ativo no momento.")
         return
     pages = max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = st.number_input("Página", min_value=1, max_value=pages, value=1, step=1)

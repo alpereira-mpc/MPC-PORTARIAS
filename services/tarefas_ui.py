@@ -12,6 +12,7 @@ from services.ui_theme import (
     badge,
     badges,
     card_container,
+    empty_state,
     filter_mark,
     kpi_mark,
     priority_tone,
@@ -173,9 +174,9 @@ def render(store, principal):
             q=st.text_input("Pesquisa",key="tarefas_q"); priority=st.selectbox("Prioridade",[None,*PRIORITIES],format_func=lambda x: PRIORITY_LABELS.get(x,"Todas"),key="tarefas_priority"); deadline=st.selectbox("Prazo",[None,"atrasadas","hoje","sem_prazo"],format_func=lambda x:{None:"Todos","atrasadas":"Atrasadas","hoje":"Hoje","sem_prazo":"Sem prazo"}[x],key="tarefas_deadline")
         rows=repo.list_active(principal.id,{"pesquisa":q,"prioridade":priority,"prazo":deadline})
         opened=st.session_state.pop("tarefas_open_id",None)
-        if opened and not repo.get(opened,principal.id): st.info("Tarefa não encontrada.")
+        if opened and not repo.get(opened,principal.id): empty_state("Tarefa não encontrada.")
         for index, row in enumerate(rows): _card(repo,store,principal,row,index)
-        if not rows: st.info("Nenhuma tarefa ativa.")
+        if not rows: empty_state("Nenhuma tarefa ativa.")
     else:
         with st.expander("Filtros", expanded=False):
             filter_mark()

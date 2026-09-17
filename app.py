@@ -20,7 +20,7 @@ from services.wording import reason_text, normalized_payload
 from services.placeholders import assert_docx_clean
 from services.deletion import REASONS
 from services.branding import module_title
-from services.ui_theme import badges, form_mark, operational_card_mark, render_html, render_record, section_label, status_tone
+from services.ui_theme import badges, empty_state, form_mark, operational_card_mark, render_html, render_record, section_label, status_tone
 
 VERSION = "1.1.0"
 raw_store = unwrap_store(
@@ -569,7 +569,7 @@ def history():
         else sorted({r["ano"] for r in records}, reverse=True)
     )
     if not years:
-        st.info("Nenhuma Portaria registrada.")
+        empty_state("Nenhuma Portaria registrada.")
         return
     search = st.text_input("Pesquisar por nome, motivo ou texto").casefold()
     year = choose("Filtrar por ano", ["Todos", *years], key="history_year")

@@ -22,6 +22,7 @@ from services.branding import module_title
 from services.ui_theme import (
     badges,
     card_container,
+    empty_state,
     filter_mark,
     render_html,
     render_record,
@@ -565,7 +566,7 @@ def render(store=None, principal=None):
         rows = rows[:30]
         trips = agenda.trips_for_commitments(row["id"] for row in rows if not row.get("afastamento"))
         if not rows:
-            st.info("Nenhum item histórico para os filtros selecionados.")
+            empty_state("Nenhum item histórico para os filtros selecionados.")
         for index, row in enumerate(rows):
             with card_container(index, f"agh_{row['id']}"):
                 if row.get("afastamento"):
@@ -722,7 +723,7 @@ def render(store=None, principal=None):
     rows.sort(key=lambda row: (row["inicio"][:10], bool(row.get("afastamento")), row["inicio"], row["id"]))
     trips = agenda.trips_for_commitments(row["id"] for row in rows if not row.get("afastamento"))
     if not rows:
-        st.info("Nenhum compromisso no período selecionado.")
+        empty_state("Nenhum compromisso no período selecionado.")
     current_day = current_group = None
     for index, row in enumerate(rows):
         if row["inicio"][:10] != current_day:

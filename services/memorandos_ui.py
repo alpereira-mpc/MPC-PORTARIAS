@@ -4,7 +4,7 @@ import hashlib
 import streamlit as st
 from services.access import require_permission
 from services.branding import module_title
-from services.ui_theme import badges, card_container, filter_mark, render_record, status_tone
+from services.ui_theme import badges, card_container, empty_state, filter_mark, render_record, status_tone
 from services.memorandos import (
     MIME_DOCX,
     MIME_PDF,
@@ -290,7 +290,7 @@ def _documents(service, principal, record, identifier):
 
 def _editor(service, store, principal):
     people=service.servers(limit=600)
-    if len(people)<2: st.info("Importe ao menos dois servidores ativos."); return
+    if len(people)<2: empty_state("Importe ao menos dois servidores ativos."); return
     st.caption("Preencher → Gerar prévia → Baixar DOCX/PDF → Conferir → Finalizar")
     steps, complete = _chain(people)
     members=[p for p in store.catalog("procuradores") if p["ativo"]]
@@ -302,7 +302,7 @@ def _editor(service, store, principal):
     start,end=period if isinstance(period,tuple) else (period,period)
     if end<start: st.error("A data final deve ser igual ou posterior à inicial."); return
     if not complete:
-        st.info("Selecione o servidor afastado e o substituto(a) para continuar.")
+        empty_state("Selecione o servidor afastado e o substituto(a) para continuar.")
         return
     record={"tipo":TIPO_SUBSTITUICAO,"data_inicio":start.isoformat(),"data_fim":end.isoformat(),"natureza_funcao":nature,"motivo":motive,"motivo_texto":custom,"gabinete_procurador_id":cabinet["id"],"gabinete_snapshot":cabinet_text(cabinet,steps[0]["substituido"]["genero"]),"signatario_id":signer["id"],"signatario_nome":signer["nome"],"signatario_cargo":signature_role(signer),"etapas":steps}
     st.caption(f"Duração calculada: {(end-start).days+1} dias.")
@@ -497,7 +497,7 @@ def _listing(service, principal):
             )
             _details(service, focused, principal)
     if not rows and not focused:
-        st.info("Nenhum memorando encontrado.")
+        empty_state("Nenhum memorando encontrado.")
     for index, row in enumerate(rows):
         if row["id"] in shown:
             continue

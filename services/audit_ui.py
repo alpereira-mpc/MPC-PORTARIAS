@@ -14,7 +14,7 @@ from services.audit import (
     period_bounds,
     user_overview,
 )
-from services.ui_theme import section_label
+from services.ui_theme import empty_state, section_label
 
 
 PERIODS = (
@@ -129,7 +129,7 @@ def _render_accesses(store, principal):
     if perfil:
         rows = [r for r in rows if r.get("perfil") == perfil]
     if not rows:
-        st.info("Nenhum acesso no período filtrado.")
+        empty_state("Nenhum acesso no período filtrado.")
         return
     st.dataframe(
         [

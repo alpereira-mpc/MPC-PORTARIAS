@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from services.branding import BRAND_RED
-from services.ui_theme import badge, html_text, record_html, status_tone
+from services.ui_theme import badge, empty_state, html_text, record_html, status_tone
 
 
 def test_brand_red_matches_streamlit_theme():
@@ -24,6 +24,10 @@ def test_badge_and_record_escape_content():
     assert "mpc-record--brand" in block
     assert "mpc-surface-warning" in block
     assert html_text(None) == ""
+    from inspect import getsource
+
+    assert "mpc-empty-state" in getsource(empty_state)
+    assert "html_text" in getsource(empty_state)
 
 
 def test_status_tone_covers_semantic_labels():
@@ -157,10 +161,11 @@ def test_stripe_and_header_helpers_are_available():
     assert "--mpc-surface-primary-bg:var(--mpc-card-institutional-bg)" in compact
     assert "--mpc-surface-primary-border:var(--mpc-card-institutional-border)" in compact
     assert "--mpc-surface-control-bg:var(--mpc-control-bg)" in compact
-    assert EMPTY_STATE_BG == "#F7F1F2"
-    assert EMPTY_STATE_BORDER == "#E3D4D7"
+    assert EMPTY_STATE_BG == "#FAF6F7"
+    assert EMPTY_STATE_BORDER == "#E7D7DB"
     assert SURFACE_PRIMARY_BG == CARD_INSTITUTIONAL_BG == "#FBF4F6"
-    assert "stAlertContentInfo" in css
+    assert ".mpc-empty-state{" in compact
+    assert "stAlertContentInfo" not in css
     assert "[data-testid=\"stMetric\"]{\nbackground:var(--mpc-surface-primary-bg)" in css
     assert "[data-testid=\"stVerticalBlockBorderWrapper\"]{\nbackground:var(--mpc-control-bg)" in css
     assert "mpc-form-mark){\nbackground:var(--mpc-control-bg)" in css
