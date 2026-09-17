@@ -18,9 +18,12 @@ CARD_SURFACE_B = "#FCEFF1"
 CARD_BORDER_A = "#D8DADD"
 CARD_BORDER_B = "#E9C7CC"
 SIDEBAR_BG = "#F3F4F8"
-EXPANDER_BG = "#F1F4F7"
+EXPANDER_BG = "#F1F4F7"  # approved Filtros surface
 EXPANDER_BORDER = "#D8DEE5"
 EXPANDER_HOVER = "#E9EEF3"
+CONTROL_BG = EXPANDER_BG
+CONTROL_BORDER = EXPANDER_BORDER
+CONTROL_HOVER = EXPANDER_HOVER
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
 SURFACE_SOFT = "#FFFFFF"
@@ -102,6 +105,7 @@ def _css():
     return f"""
 :root{{
 --mpc-brand:{BRAND_RED};
+--mpc-red:{BRAND_RED};
 --mpc-brand-dark:{BRAND_RED_DARK};
 --mpc-brand-soft:{BRAND_RED_SOFT};
 --mpc-card-a:{CARD_SURFACE_A};
@@ -109,9 +113,12 @@ def _css():
 --mpc-card-border-a:{CARD_BORDER_A};
 --mpc-card-border-b:{CARD_BORDER_B};
 --mpc-sidebar:{SIDEBAR_BG};
---mpc-expander:{EXPANDER_BG};
---mpc-expander-border:{EXPANDER_BORDER};
---mpc-expander-hover:{EXPANDER_HOVER};
+--mpc-control-bg:{CONTROL_BG};
+--mpc-control-border:{CONTROL_BORDER};
+--mpc-control-hover:{CONTROL_HOVER};
+--mpc-expander:var(--mpc-control-bg);
+--mpc-expander-border:var(--mpc-control-border);
+--mpc-expander-hover:var(--mpc-control-hover);
 --mpc-page:{SURFACE_PAGE};
 --mpc-white:{SURFACE_WHITE};
 --mpc-soft:{SURFACE_SOFT};
@@ -185,9 +192,9 @@ font-weight:700;
 color:var(--mpc-brand-dark);
 }}
 section[data-testid="stSidebar"] [data-testid="stExpander"]{{
-background:{SIDEBAR_BG} !important;
-background-color:{SIDEBAR_BG} !important;
-border:1px solid var(--mpc-border);
+background:var(--mpc-control-bg) !important;
+background-color:var(--mpc-control-bg) !important;
+border:1px solid var(--mpc-control-border);
 border-radius:var(--mpc-radius);
 }}
 [data-testid="stHeading"] h1,
@@ -200,23 +207,116 @@ padding-left:.7rem;
 line-height:1.25;
 }}
 [data-testid="stCaption"]{{color:var(--mpc-text-2);}}
-section[data-testid="stMain"] [data-testid="stTextInput"] > div > div,
-section[data-testid="stMain"] [data-testid="stTextArea"] > div > div,
-section[data-testid="stMain"] [data-testid="stSelectbox"] > div > div,
-section[data-testid="stMain"] [data-testid="stMultiSelect"] > div > div,
-section[data-testid="stMain"] [data-testid="stNumberInput"] > div > div,
-section[data-testid="stMain"] [data-testid="stDateInput"] > div > div,
-section[data-testid="stMain"] [data-testid="stTimeInput"] > div > div,
-section[data-testid="stMain"] [data-baseweb="input"] > div,
-section[data-testid="stMain"] [data-baseweb="base-input"] > div,
-section[data-testid="stMain"] [data-baseweb="textarea"] > div,
-section[data-testid="stMain"] [data-baseweb="select"] > div{{
-background:var(--mpc-white) !important;
-border-color:var(--mpc-border-md) !important;
+[data-testid="stTextInputRootElement"],
+[data-testid="stTextAreaRootElement"],
+[data-testid="stNumberInputContainer"],
+[data-testid="stDateInputField"],
+[data-testid="stTimeInputTimeDisplay"],
+[data-testid="stTimeInput"] [data-baseweb="input"],
+[data-testid="stTextInput"] > div > div,
+[data-testid="stTextArea"] > div > div,
+[data-testid="stSelectbox"] > div > div,
+[data-testid="stMultiSelect"] > div > div,
+[data-testid="stNumberInput"] > div > div,
+[data-testid="stDateInput"] > div > div,
+[data-testid="stTimeInput"] > div > div,
+[data-testid="stTextInput"] [data-baseweb="input"],
+[data-testid="stTextInput"] [data-baseweb="base-input"],
+[data-testid="stNumberInput"] [data-baseweb="input"],
+[data-testid="stNumberInput"] [data-baseweb="base-input"],
+[data-testid="stDateInput"] [data-baseweb="input"],
+[data-testid="stDateInput"] [data-baseweb="base-input"],
+[data-testid="stTimeInput"] [data-baseweb="input"],
+[data-testid="stTimeInput"] [data-baseweb="base-input"],
+[data-testid="stTextArea"] [data-baseweb="textarea"],
+[data-testid="stTextArea"] textarea,
+[data-testid="stTimeInput"] [data-baseweb="select"] > div,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div{{
+background:var(--mpc-control-bg) !important;
+background-color:var(--mpc-control-bg) !important;
+border-color:var(--mpc-control-border) !important;
+box-shadow:inset 0 0 0 1px var(--mpc-control-border);
+color:var(--mpc-text) !important;
+transition:background-color .15s ease,border-color .15s ease,box-shadow .15s ease;
 }}
-section[data-testid="stMain"] input,
-section[data-testid="stMain"] textarea{{
-background:var(--mpc-white) !important;
+[data-testid="stTextInputRootElement"]:hover,
+[data-testid="stTextAreaRootElement"]:hover,
+[data-testid="stNumberInputContainer"]:hover,
+[data-testid="stDateInputField"]:hover,
+[data-testid="stTimeInputTimeDisplay"]:hover,
+[data-testid="stTextInput"] > div > div:hover,
+[data-testid="stTextArea"] > div > div:hover,
+[data-testid="stSelectbox"] > div > div:hover,
+[data-testid="stMultiSelect"] > div > div:hover,
+[data-testid="stNumberInput"] > div > div:hover,
+[data-testid="stDateInput"] > div > div:hover,
+[data-testid="stTimeInput"] > div > div:hover,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div:hover,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div:hover{{
+background:var(--mpc-control-hover) !important;
+background-color:var(--mpc-control-hover) !important;
+}}
+[data-testid="stTextInputRootElement"]:focus-within,
+[data-testid="stTextAreaRootElement"]:focus-within,
+[data-testid="stNumberInputContainer"]:focus-within,
+[data-testid="stDateInputField"]:focus-within,
+[data-testid="stTimeInput"]:focus-within,
+[data-testid="stTextArea"] > div > div:focus-within,
+[data-testid="stSelectbox"] > div > div:focus-within,
+[data-testid="stMultiSelect"] > div > div:focus-within,
+[data-testid="stNumberInput"] > div > div:focus-within,
+[data-testid="stDateInput"] > div > div:focus-within,
+[data-testid="stTimeInput"] > div > div:focus-within,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div:focus-within,
+[data-testid="stTextInput"] [data-baseweb="input"]:focus-within,
+[data-testid="stNumberInput"] [data-baseweb="input"]:focus-within,
+[data-testid="stDateInput"] [data-baseweb="input"]:focus-within,
+[data-testid="stTimeInput"] [data-baseweb="input"]:focus-within,
+[data-testid="stTextArea"] [data-baseweb="textarea"]:focus-within{{
+background:var(--mpc-control-bg) !important;
+border-color:var(--mpc-red) !important;
+box-shadow:0 0 0 1px var(--mpc-red) !important;
+outline:none !important;
+}}
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input,
+[data-testid="stTimeInput"] input,
+[data-testid="stTextArea"] textarea{{
+background:transparent !important;
+color:var(--mpc-text) !important;
+caret-color:var(--mpc-text);
+}}
+[data-testid="stTextInput"] input::placeholder,
+[data-testid="stNumberInput"] input::placeholder,
+[data-testid="stDateInput"] input::placeholder,
+[data-testid="stTimeInput"] input::placeholder,
+[data-testid="stTextArea"] textarea::placeholder,
+[data-testid="stMultiSelect"] input::placeholder{{
+color:var(--mpc-text-3) !important;
+opacity:1;
+}}
+[data-testid="stTextInput"] input:disabled,
+[data-testid="stNumberInput"] input:disabled,
+[data-testid="stDateInput"] input:disabled,
+[data-testid="stTimeInput"] input:disabled,
+[data-testid="stTextArea"] textarea:disabled,
+[data-testid="stSelectbox"] [data-baseweb="select"][aria-disabled="true"] > div,
+[data-testid="stMultiSelect"] [data-baseweb="select"][aria-disabled="true"] > div{{
+opacity:.72;
+color:var(--mpc-text-2) !important;
+cursor:not-allowed;
+}}
+[data-testid="stTextInput"] svg,
+[data-testid="stSelectbox"] svg,
+[data-testid="stMultiSelect"] svg,
+[data-testid="stDateInput"] svg,
+[data-testid="stTimeInput"] svg,
+[data-testid="stNumberInput"] svg,
+[data-testid="stNumberInput"] button{{
+color:var(--mpc-text-2);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]{{
 background:var(--mpc-white);
@@ -341,19 +441,22 @@ text-transform:uppercase;
 color:var(--mpc-text) !important;
 font-weight:700 !important;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"]{{
+section[data-testid="stMain"] [data-testid="stExpander"],
+section[data-testid="stSidebar"] [data-testid="stExpander"]{{
 background:transparent;
 box-shadow:none;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] details{{
-background:var(--mpc-expander) !important;
-border:1px solid var(--mpc-expander-border) !important;
+section[data-testid="stMain"] [data-testid="stExpander"] details,
+section[data-testid="stSidebar"] [data-testid="stExpander"] details{{
+background:var(--mpc-control-bg) !important;
+border:1px solid var(--mpc-control-border) !important;
 border-radius:var(--mpc-radius) !important;
 box-shadow:none !important;
 overflow:hidden;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] summary{{
-background:var(--mpc-expander) !important;
+section[data-testid="stMain"] [data-testid="stExpander"] summary,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary{{
+background:var(--mpc-control-bg) !important;
 color:var(--mpc-text) !important;
 font-weight:600;
 overflow-wrap:anywhere;
@@ -362,32 +465,48 @@ transition:background-color .15s ease !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] summary:hover,
 section[data-testid="stMain"] [data-testid="stExpander"] summary:focus-visible,
-section[data-testid="stMain"] [data-testid="stExpander"] summary:active{{
-background:var(--mpc-expander-hover) !important;
+section[data-testid="stMain"] [data-testid="stExpander"] summary:active,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary:focus-visible,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary:active{{
+background:var(--mpc-control-hover) !important;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary{{
-background:var(--mpc-expander) !important;
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary,
+section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary{{
+background:var(--mpc-control-bg) !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:hover,
 section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:focus-visible,
-section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:active{{
-background:var(--mpc-expander-hover) !important;
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:active,
+section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:hover,
+section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:focus-visible,
+section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:active{{
+background:var(--mpc-control-hover) !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] summary p,
-section[data-testid="stMain"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"]{{
+section[data-testid="stMain"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"],
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"]{{
 color:var(--mpc-text) !important;
 overflow-wrap:anywhere;
 white-space:normal;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] summary svg,
-section[data-testid="stMain"] [data-testid="stExpander"] svg[data-testid="stExpanderToggleIcon"]{{
+section[data-testid="stMain"] [data-testid="stExpander"] svg[data-testid="stExpanderToggleIcon"],
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary svg,
+section[data-testid="stSidebar"] [data-testid="stExpander"] svg[data-testid="stExpanderToggleIcon"]{{
 color:var(--mpc-text) !important;
 fill:currentColor !important;
 flex-shrink:0;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
+section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"],
+section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
 background:var(--mpc-white) !important;
-border-top:1px solid var(--mpc-expander-border) !important;
+border-top:1px solid var(--mpc-control-border) !important;
+}}
+section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stVerticalBlock"]{{
+background:var(--mpc-white) !important;
+background-color:var(--mpc-white) !important;
 }}
 [data-testid="stDataFrame"],[data-testid="stDataFrameResizable"]{{
 border:1px solid var(--mpc-border);
@@ -412,14 +531,24 @@ background:var(--mpc-soft);
 [data-testid="stRadio"] label:has(input:checked){{
 font-weight:650;
 }}
-section[data-testid="stMain"] button[kind="primary"],
-section[data-testid="stMain"] [data-testid="stBaseButton-primary"]{{
-background:var(--mpc-brand) !important;
-border-color:var(--mpc-brand) !important;
+button[kind="primary"],
+[data-testid="stBaseButton-primary"]{{
+background:var(--mpc-red) !important;
+border-color:var(--mpc-red) !important;
 color:{SURFACE_WHITE} !important;
 }}
-section[data-testid="stMain"] button[kind="primary"]:hover:not(:disabled),
-section[data-testid="stMain"] [data-testid="stBaseButton-primary"]:hover:not(:disabled){{
+button[kind="primary"] p,
+[data-testid="stBaseButton-primary"] p{{
+color:{SURFACE_WHITE} !important;
+font-weight:600 !important;
+}}
+button[kind="primary"]:hover:not(:disabled),
+[data-testid="stBaseButton-primary"]:hover:not(:disabled){{
+background:var(--mpc-brand-dark) !important;
+border-color:var(--mpc-brand-dark) !important;
+}}
+button[kind="primary"]:active:not(:disabled),
+[data-testid="stBaseButton-primary"]:active:not(:disabled){{
 background:var(--mpc-brand-dark) !important;
 border-color:var(--mpc-brand-dark) !important;
 }}
@@ -436,6 +565,8 @@ color:var(--mpc-brand-dark) !important;
 }}
 section[data-testid="stMain"] button[kind="primary"]:disabled,
 section[data-testid="stMain"] [data-testid="stBaseButton-primary"]:disabled,
+button[kind="primary"]:disabled,
+[data-testid="stBaseButton-primary"]:disabled,
 section[data-testid="stMain"] button[kind="secondary"]:disabled,
 section[data-testid="stMain"] [data-testid="stBaseButton-secondary"]:disabled{{
 opacity:.55;

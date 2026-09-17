@@ -5,8 +5,13 @@ from services.ui_theme import badge, html_text, record_html, status_tone
 
 
 def test_brand_red_matches_streamlit_theme():
+    from services.ui_theme import CONTROL_BG
+
     config = Path(__file__).resolve().parents[1] / ".streamlit" / "config.toml"
-    assert f'primaryColor = "{BRAND_RED}"' in config.read_text(encoding="utf-8")
+    text = config.read_text(encoding="utf-8")
+    assert f'primaryColor = "{BRAND_RED}"' in text
+    assert f'secondaryBackgroundColor = "{CONTROL_BG}"' in text
+    assert 'backgroundColor = "#F6F5F4"' in text
 
 
 def test_badge_and_record_escape_content():
@@ -43,6 +48,9 @@ def test_stripe_and_header_helpers_are_available():
     from services.ui_theme import (
         CARD_SURFACE_A,
         CARD_SURFACE_B,
+        CONTROL_BG,
+        CONTROL_BORDER,
+        CONTROL_HOVER,
         EXPANDER_BG,
         EXPANDER_BORDER,
         EXPANDER_HOVER,
@@ -90,11 +98,22 @@ def test_stripe_and_header_helpers_are_available():
     assert EXPANDER_BG == "#F1F4F7"
     assert EXPANDER_BORDER == "#D8DEE5"
     assert EXPANDER_HOVER == "#E9EEF3"
-    assert "--mpc-expander:" + EXPANDER_BG in compact
+    assert CONTROL_BG == EXPANDER_BG
+    assert CONTROL_BORDER == EXPANDER_BORDER
+    assert CONTROL_HOVER == EXPANDER_HOVER
+    assert "--mpc-control-bg:" + CONTROL_BG in compact
+    assert "--mpc-control-border:" + CONTROL_BORDER in compact
+    assert "--mpc-control-hover:" + CONTROL_HOVER in compact
+    assert "--mpc-red:" + BRAND_RED in compact
+    assert "--mpc-expander:var(--mpc-control-bg)" in compact
     assert 'section[data-testid="stMain"][data-testid="stExpander"]details' in compact
     assert "background-color.15sease" in compact
     assert ':has(>[data-testid="stElementContainer"].mpc-filter-mark)' in compact
     assert '[data-testid="stExpander"][data-testid="stVerticalBlock"]:has(.mpc-filter-mark)' in compact
+    assert '[data-testid="stTextInputRootElement"]' in compact
+    assert "inset0001pxvar(--mpc-control-border)" in compact
+    assert "var(--mpc-control-bg)!important" in compact
+    assert "stTextInput\"]>div>div{background:var(--mpc-white)" not in compact
     assert EXPANDER_BG in css
     assert EXPANDER_BORDER in css
     assert EXPANDER_HOVER in css
@@ -105,3 +124,8 @@ def test_stripe_and_header_helpers_are_available():
     assert 'section[data-testid="stSidebar"][data-testid="stExpander"]' in compact
     assert 'st.button("← Trocar gabinete", type="primary"' in render
     assert 'type="primary"' in render[render.index("Novo Ofício") :]
+    from portal import render_denied, render_portal
+
+    assert 'button("Sair", type="primary"' in getsource(render_denied)
+    assert 'button("Sair", type="primary", key="portal_logout"' in getsource(render_portal)
+    assert 'button[kind="primary"]' in compact

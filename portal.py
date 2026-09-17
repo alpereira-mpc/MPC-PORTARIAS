@@ -426,7 +426,7 @@ def render_denied(identity):
         "para acessar o " + APP_NAME + "."
     )
     st.write("Entre em contato com o administrador do sistema.")
-    if st.button("Sair"):
+    if st.button("Sair", type="primary"):
         _logout()
 
 
@@ -475,7 +475,7 @@ def render_portal():
         render_institutional_header()
         render_app_identity()
         st.error("Não foi possível verificar a autorização. Tente novamente.")
-        if st.button("Sair"):
+        if st.button("Sair", type="primary"):
             _logout()
         st.stop()
     try:
@@ -487,7 +487,7 @@ def render_portal():
         render_institutional_header()
         render_app_identity()
         st.error("Não foi possível verificar a autorização. Tente novamente.")
-        if st.button("Sair"):
+        if st.button("Sair", type="primary"):
             _logout()
         st.stop()
     st.session_state["_audit_identity"] = identity
@@ -540,7 +540,7 @@ def render_portal():
             "<style>div.st-key-portal_logout{display:flex;justify-content:flex-end;}</style>",
             unsafe_allow_html=True,
         )
-        if logout_column.button("Sair", key="portal_logout"):
+        if logout_column.button("Sair", type="primary", key="portal_logout"):
             _logout()
         if can_view_alertas(principal):
             render_bell(store, principal)
