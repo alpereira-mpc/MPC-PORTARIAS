@@ -43,6 +43,9 @@ def test_stripe_and_header_helpers_are_available():
     from services.ui_theme import (
         CARD_SURFACE_A,
         CARD_SURFACE_B,
+        EXPANDER_BG,
+        EXPANDER_BORDER,
+        EXPANDER_HOVER,
         SIDEBAR_BG,
         card_container,
         record_html,
@@ -80,6 +83,25 @@ def test_stripe_and_header_helpers_are_available():
     from services.ui_theme import _css
 
     css = _css()
+    compact = css.replace(" ", "")
     assert "st-key-mpc_card_" in css
     assert BRAND_RED in css
-    assert '[class*="st-key-mpc_card_"]button' in css.replace(" ", "")
+    assert '[class*="st-key-mpc_card_"]button' in compact
+    assert EXPANDER_BG == "#F1F4F7"
+    assert EXPANDER_BORDER == "#D8DEE5"
+    assert EXPANDER_HOVER == "#E9EEF3"
+    assert "--mpc-expander:" + EXPANDER_BG in compact
+    assert 'section[data-testid="stMain"][data-testid="stExpander"]details' in compact
+    assert "background-color.15sease" in compact
+    assert ':has(>[data-testid="stElementContainer"].mpc-filter-mark)' in compact
+    assert '[data-testid="stExpander"][data-testid="stVerticalBlock"]:has(.mpc-filter-mark)' in compact
+    assert EXPANDER_BG in css
+    assert EXPANDER_BORDER in css
+    assert EXPANDER_HOVER in css
+    assert CARD_SURFACE_A in css
+    assert CARD_SURFACE_B in css
+    assert 'st-key-mpc_card_a"][data-testid="stExpander"]' not in compact
+    assert 'st-key-mpc_card_b"][data-testid="stExpander"]' not in compact
+    assert 'section[data-testid="stSidebar"][data-testid="stExpander"]' in compact
+    assert 'st.button("← Trocar gabinete", type="primary"' in render
+    assert 'type="primary"' in render[render.index("Novo Ofício") :]

@@ -951,7 +951,7 @@ def render(store=None, principal=None):
         st.session_state["oficio_gabinete_member"] = office["membro_id"]
         st.subheader(module_title("oficios", f"OFÍCIOS — GABINETE {selected}"))
         st.caption(office["nome"])
-        st.button("← Trocar gabinete", on_click=switch_gabinete)
+        st.button("← Trocar gabinete", type="primary", on_click=switch_gabinete)
         page = st.radio(
             "Ofícios",
             ["Visão Geral", "Novo Ofício", "Enviados", "Recebidos", "Acompanhamento"],

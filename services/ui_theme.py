@@ -18,6 +18,9 @@ CARD_SURFACE_B = "#FCEFF1"
 CARD_BORDER_A = "#D8DADD"
 CARD_BORDER_B = "#E9C7CC"
 SIDEBAR_BG = "#F3F4F8"
+EXPANDER_BG = "#F1F4F7"
+EXPANDER_BORDER = "#D8DEE5"
+EXPANDER_HOVER = "#E9EEF3"
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
 SURFACE_SOFT = "#FFFFFF"
@@ -106,6 +109,9 @@ def _css():
 --mpc-card-border-a:{CARD_BORDER_A};
 --mpc-card-border-b:{CARD_BORDER_B};
 --mpc-sidebar:{SIDEBAR_BG};
+--mpc-expander:{EXPANDER_BG};
+--mpc-expander-border:{EXPANDER_BORDER};
+--mpc-expander-hover:{EXPANDER_HOVER};
 --mpc-page:{SURFACE_PAGE};
 --mpc-white:{SURFACE_WHITE};
 --mpc-soft:{SURFACE_SOFT};
@@ -268,14 +274,16 @@ background:var(--mpc-muted-bg) !important;
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-neutral){{
 background:var(--mpc-white) !important;
 }}
-[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-filter-mark){{
-background:var(--mpc-brand-soft) !important;
-border-color:var(--mpc-border-md) !important;
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-filter-mark),
+section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-filter-mark){{
+background:var(--mpc-expander) !important;
+border-color:var(--mpc-expander-border) !important;
+border-radius:var(--mpc-radius);
 box-shadow:none;
 }}
-[data-testid="stExpander"]:has(.mpc-filter-mark){{
-background:var(--mpc-brand-soft);
-border:1px solid var(--mpc-border-md);
+section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stVerticalBlock"]:has(.mpc-filter-mark){{
+background:transparent !important;
+background-color:transparent !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-detail-mark){{
 background:var(--mpc-white) !important;
@@ -334,12 +342,52 @@ color:var(--mpc-text) !important;
 font-weight:700 !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"]{{
-background:var(--mpc-white);
-border:1px solid var(--mpc-border-md);
-border-radius:var(--mpc-radius);
+background:transparent;
+box-shadow:none;
 }}
-[data-testid="stExpander"] details{{
-border:0;
+section[data-testid="stMain"] [data-testid="stExpander"] details{{
+background:var(--mpc-expander) !important;
+border:1px solid var(--mpc-expander-border) !important;
+border-radius:var(--mpc-radius) !important;
+box-shadow:none !important;
+overflow:hidden;
+}}
+section[data-testid="stMain"] [data-testid="stExpander"] summary{{
+background:var(--mpc-expander) !important;
+color:var(--mpc-text) !important;
+font-weight:600;
+overflow-wrap:anywhere;
+white-space:normal;
+transition:background-color .15s ease !important;
+}}
+section[data-testid="stMain"] [data-testid="stExpander"] summary:hover,
+section[data-testid="stMain"] [data-testid="stExpander"] summary:focus-visible,
+section[data-testid="stMain"] [data-testid="stExpander"] summary:active{{
+background:var(--mpc-expander-hover) !important;
+}}
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary{{
+background:var(--mpc-expander) !important;
+}}
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:hover,
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:focus-visible,
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:active{{
+background:var(--mpc-expander-hover) !important;
+}}
+section[data-testid="stMain"] [data-testid="stExpander"] summary p,
+section[data-testid="stMain"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"]{{
+color:var(--mpc-text) !important;
+overflow-wrap:anywhere;
+white-space:normal;
+}}
+section[data-testid="stMain"] [data-testid="stExpander"] summary svg,
+section[data-testid="stMain"] [data-testid="stExpander"] svg[data-testid="stExpanderToggleIcon"]{{
+color:var(--mpc-text) !important;
+fill:currentColor !important;
+flex-shrink:0;
+}}
+section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
+background:var(--mpc-white) !important;
+border-top:1px solid var(--mpc-expander-border) !important;
 }}
 [data-testid="stDataFrame"],[data-testid="stDataFrameResizable"]{{
 border:1px solid var(--mpc-border);
@@ -553,12 +601,15 @@ gap:.55rem;
 @media (max-width:768px){{
 .mpc-record-head{{flex-direction:column;gap:.35rem;}}
 .mpc-record-badges{{justify-content:flex-start;}}
+section[data-testid="stMain"] [data-testid="stExpander"] summary{{
+white-space:normal;
+overflow-wrap:anywhere;
+}}
 }}
 section[data-testid="stMain"] [class*="st-key-mpc_card_a"],
 section[data-testid="stMain"] [class*="st-key-mpc_card_a"] > div,
 section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stVerticalBlockBorderWrapper"],
-section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stVerticalBlock"],
-section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stExpander"]{{
+section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stVerticalBlock"]{{
 background:{CARD_SURFACE_A} !important;
 background-color:{CARD_SURFACE_A} !important;
 border-color:{CARD_BORDER_A} !important;
@@ -566,8 +617,7 @@ border-color:{CARD_BORDER_A} !important;
 section[data-testid="stMain"] [class*="st-key-mpc_card_b"],
 section[data-testid="stMain"] [class*="st-key-mpc_card_b"] > div,
 section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stVerticalBlockBorderWrapper"],
-section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stVerticalBlock"],
-section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stExpander"]{{
+section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stVerticalBlock"]{{
 background:{CARD_SURFACE_B} !important;
 background-color:{CARD_SURFACE_B} !important;
 border-color:{CARD_BORDER_B} !important;
@@ -630,6 +680,30 @@ section[data-testid="stMain"] [class*="st-key-mpc_card_"] button:disabled,
 section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stBaseButton-secondary"]:disabled{{
 opacity:.55;
 cursor:not-allowed;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpander"] [data-testid="stVerticalBlock"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpander"] [data-testid="stVerticalBlockBorderWrapper"]{{
+background:transparent !important;
+background-color:transparent !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpander"] details{{
+background:var(--mpc-expander) !important;
+background-color:var(--mpc-expander) !important;
+border:1px solid var(--mpc-expander-border) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpander"] summary{{
+background:var(--mpc-expander) !important;
+background-color:var(--mpc-expander) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpander"] summary:hover,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpander"] summary:focus-visible,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpander"] summary:active{{
+background:var(--mpc-expander-hover) !important;
+background-color:var(--mpc-expander-hover) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
+background:var(--mpc-white) !important;
+background-color:var(--mpc-white) !important;
 }}
 """.strip()
 
