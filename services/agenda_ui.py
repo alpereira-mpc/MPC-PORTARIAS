@@ -61,6 +61,11 @@ def done(message):
     st.rerun()
 
 
+def move_page(key, delta):
+    """Callbacks run before queries; Streamlit already supplies the rerun."""
+    st.session_state[key] = max(0, st.session_state.get(key, 0) + delta)
+
+
 def audit_agenda(evento, acao, identifier=None, extra=None, entity_type="compromisso"):
     from services.audit import registrar_evento
 
@@ -569,10 +574,8 @@ def render(store=None, principal=None):
                         render_trip_details(trip, names.get(procurador_id, ""), key=f"agenda_history_trip_message_{row['id']}_{procurador_id}", compromisso=row.get("titulo") or row.get("processo"))
                     if st.button("Abrir detalhes", key="agenda_history_edit_" + row["id"]): st.session_state["agenda_edit"] = row; st.rerun()
         previous, following = st.columns(2)
-        if previous.button("Anterior", disabled=offset == 0, key="agenda_history_previous"):
-            st.session_state["agenda_history_offset"] = max(0, offset - 30); st.rerun()
-        if following.button("Próxima", disabled=not has_next, key="agenda_history_next"):
-            st.session_state["agenda_history_offset"] = offset + 30; st.rerun()
+        previous.button("Anterior", disabled=offset == 0, key="agenda_history_previous", on_click=move_page, args=("agenda_history_offset", -30))
+        following.button("Próxima", disabled=not has_next, key="agenda_history_next", on_click=move_page, args=("agenda_history_offset", 30))
         return
     new, leave, _ = st.columns([1, 1.2, 6])
     if new.button("+ Novo compromisso", type="primary"):
@@ -646,30 +649,31 @@ def render(store=None, principal=None):
         offset = st.session_state.get("agenda_upcoming_offset", 0)
         rows = records(agenda, today.isoformat(), None, member, kind, status, offset=offset, active=True) if show_appointments else []
         leaves = (
-            agenda.active_leaves(today.isoformat(), None, member, upcoming=True)
+            agenda.active_leaves(today.isoformat(), None, member, upcoming=True, limit=30, offset=offset)
             if show_leaves
             and (item_scope == "Somente afastamentos" or (not kind and not status))
             else []
         )
         # A deletion in another session can empty the current page.
-        if not rows and offset:
+        if not rows and not leaves and offset:
             st.session_state["agenda_upcoming_offset"] = 0
             st.rerun()
-        has_next = len(rows) > 30
+        has_next = len(rows) > 30 or len(leaves) > 30
         rows = rows[:30]
-        if rows:
+        leaves = leaves[:30]
+        if leaves:
+            st.caption(f"Página {offset // 30 + 1} · {len(rows)} compromissos · {len(leaves)} afastamentos")
+        elif rows:
             st.caption(f"Exibindo {offset + 1}–{offset + len(rows)}")
         previous, following = st.columns(2)
-        if previous.button(
-            "Anterior", disabled=offset == 0, key="agenda_upcoming_previous"
-        ):
-            st.session_state["agenda_upcoming_offset"] = max(0, offset - 30)
-            st.rerun()
-        if following.button(
-            "Próxima", disabled=not has_next, key="agenda_upcoming_next"
-        ):
-            st.session_state["agenda_upcoming_offset"] = offset + 30
-            st.rerun()
+        previous.button(
+            "Anterior", disabled=offset == 0, key="agenda_upcoming_previous",
+            on_click=move_page, args=("agenda_upcoming_offset", -30),
+        )
+        following.button(
+            "Próxima", disabled=not has_next, key="agenda_upcoming_next",
+            on_click=move_page, args=("agenda_upcoming_offset", 30),
+        )
     else:
         rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status, active=True) if show_appointments else []
         leaves = (

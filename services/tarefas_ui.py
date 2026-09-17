@@ -138,8 +138,10 @@ def render(store, principal):
     if "tarefas_edit" in st.session_state: _editor(repo,store,principal); return
     counts=repo.situation_counts(principal.id); cols=st.columns(5)
     for col,key,label in zip(cols,counts,("Atrasadas","Hoje","Próximas","Em andamento","Aguardando")): col.metric(label,counts[key])
-    active_tab,history_tab=st.tabs(["Tarefas","Histórico"])
-    with active_tab:
+    if st.session_state.get("tarefas_open_id"):
+        st.session_state["tarefas_section"] = "Tarefas"
+    section = st.radio("Seção", ["Tarefas", "Histórico"], horizontal=True, key="tarefas_section")
+    if section == "Tarefas":
         with st.expander("Filtros",expanded=False):
             q=st.text_input("Pesquisa",key="tarefas_q"); priority=st.selectbox("Prioridade",[None,*PRIORITIES],format_func=lambda x: PRIORITY_LABELS.get(x,"Todas"),key="tarefas_priority"); deadline=st.selectbox("Prazo",[None,"atrasadas","hoje","sem_prazo"],format_func=lambda x:{None:"Todos","atrasadas":"Atrasadas","hoje":"Hoje","sem_prazo":"Sem prazo"}[x],key="tarefas_deadline")
         rows=repo.list_active(principal.id,{"pesquisa":q,"prioridade":priority,"prazo":deadline})
@@ -147,7 +149,7 @@ def render(store, principal):
         if opened and not repo.get(opened,principal.id): st.info("Tarefa não encontrada.")
         for row in rows: _card(repo,store,principal,row)
         if not rows: st.info("Nenhuma tarefa ativa.")
-    with history_tab:
+    else:
         with st.expander("Filtros", expanded=False):
             history_q=st.text_input("Pesquisa",key="tarefas_history_q")
             history_priority=st.selectbox("Prioridade",[None,*PRIORITIES],format_func=lambda x: PRIORITY_LABELS.get(x,"Todas"),key="tarefas_history_priority")

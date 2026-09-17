@@ -12,13 +12,15 @@ _READY = set()
 
 
 class AgendaStore:
-    def __init__(self, store):
+    def __init__(self, store, *, load_bindings=True):
         self.store = unwrap_store(store)
-        self.initialize()
+        self.initialize(load_bindings=load_bindings)
 
-    def initialize(self):
+    def initialize(self, *, load_bindings=True):
         key = schema_key_of(self.store)
         if key in _READY:
+            if not load_bindings:
+                return
             with self.store.connection(read_only=True) as c:
                 self.bindings = {
                     r["chave"].removeprefix("agenda_member_"): int(r["valor"])
@@ -258,9 +260,18 @@ class AgendaStore:
             if search:
                 clauses.append("a.payload LIKE ?"); values.append("%" + search + "%")
             rows = c.execute("SELECT a.* FROM agenda_compromissos a WHERE " + " AND ".join(clauses) + " ORDER BY a.inicio DESC,a.id DESC LIMIT ? OFFSET ?", [*values, limit + 1, offset]).fetchall()
+            participants = {}
+            if rows:
+                identifiers = [row["id"] for row in rows]
+                for participant in c.execute(
+                    "SELECT compromisso_id,procurador_id FROM agenda_compromisso_procuradores "
+                    "WHERE compromisso_id IN (" + ",".join("?" for _ in identifiers)
+                    + ") ORDER BY procurador_id", identifiers,
+                ):
+                    participants.setdefault(participant[0], []).append(participant[1])
             records = []
             for row in rows:
-                people = [r[0] for r in c.execute("SELECT procurador_id FROM agenda_compromisso_procuradores WHERE compromisso_id=? ORDER BY procurador_id", (row["id"],))]
+                people = participants.get(row["id"], [])
                 records.append({**json.loads(row["payload"]), **{k: row[k] for k in ("id", "tipo", "inicio", "fim", "situacao", "criada", "atualizada")}, "procuradores": people})
             return records
 
@@ -370,21 +381,27 @@ class AgendaStore:
         with self.store.connection() as c:
             c.execute("DELETE FROM agenda_compromissos WHERE id=?", (identifier,))
 
-    def _leaves(self, c, start, end, member=None, *, upcoming=False):
+    def _leaves(self, c, start, end, member=None, *, upcoming=False, limit=None, offset=0):
         clauses = ["cancelado=0", "data_inicio>=?" if upcoming else "data_inicio<=? AND data_fim>=?"]
         values = [start] if upcoming else [end, start]
         if member:
             clauses.append("procurador_id=?")
             values.append(member)
+        pagination = ""
+        if limit is not None:
+            if not isinstance(limit, int) or limit < 1 or not isinstance(offset, int) or offset < 0:
+                raise ValueError("Página inválida.")
+            pagination = " LIMIT ? OFFSET ?"
+            values.extend((limit + 1, offset))
         return [dict(r) | {"status": leave_status(dict(r))} for r in c.execute(
-            "SELECT id,procurador_id,motivo,motivo_outro,data_inicio,data_fim,substituto_id,observacao,cancelado,criado_por,criado_em,atualizado_em FROM agenda_afastamentos WHERE " + " AND ".join(clauses) + " ORDER BY data_inicio,id", values)]
+            "SELECT id,procurador_id,motivo,motivo_outro,data_inicio,data_fim,substituto_id,observacao,cancelado,criado_por,criado_em,atualizado_em FROM agenda_afastamentos WHERE " + " AND ".join(clauses) + " ORDER BY data_inicio,id" + pagination, values)]
 
-    def leaves(self, start, end, member=None, *, upcoming=False):
+    def leaves(self, start, end, member=None, *, upcoming=False, limit=None, offset=0):
         with self.store.connection(read_only=True) as c:
-            return self._leaves(c, start, end, member, upcoming=upcoming)
+            return self._leaves(c, start, end, member, upcoming=upcoming, limit=limit, offset=offset)
 
-    def active_leaves(self, start, end, member=None, *, upcoming=False):
-        return [row for row in self.leaves(start, end, member, upcoming=upcoming) if row["status"] in ("AGENDADO", "EM ANDAMENTO")]
+    def active_leaves(self, start, end, member=None, *, upcoming=False, limit=None, offset=0):
+        return [row for row in self.leaves(start, end, member, upcoming=upcoming, limit=limit, offset=offset) if row["status"] in ("AGENDADO", "EM ANDAMENTO")]
 
     def history_leaves(self, *, member=None, status=None, start=None, end=None, limit=30, offset=0):
         """Historical leave page. Ended status is deliberately derived, never persisted."""

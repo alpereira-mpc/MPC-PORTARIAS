@@ -263,6 +263,32 @@ def _seed_volume(store, today: date):
         )
 
 
+def _seed_v2(store, today):
+    """Cover the modules added since V1, using only the temporary SQLite DB."""
+    from database.tramita_reports import TramitaReportsStore
+    from database.tarefas import TarefasStore
+
+    reports = TramitaReportsStore(store)
+    rows = [dict(protocolo=f"{i:05}/26", tipo="Processo", subcategoria="Denúncia",
+                 origem="Origem sintética", data_realizacao="2026-09-01 09:00",
+                 procurador=f"Procurador {i % 7}", motivo_distribuicao="",
+                 data_devolucao="2026-09-03 09:00", motivo_devolucao="Analisado Com Parecer")
+            for i in range(2000)]
+    reports.import_rows(kind="ENTRADAS", file_name="sintetico-entrada.xls", file_hash="v2-entry", actor="profiler", competence="2026-09", rows=rows)
+    reports.import_rows(kind="SAIDAS", file_name="sintetico-saida.xls", file_hash="v2-exit", actor="profiler", competence="2026-09", rows=rows)
+    stock = [dict(protocolo=row["protocolo"], tipo="Processo", digital="Sim",
+                  subcategoria="Denúncia", jurisdicionado="Origem sintética", fase="Análise",
+                  procurador=row["procurador"], dias_com_procurador=i % 100, assistente="",
+                  dias_com_assistente=None, dias_no_mpc=100, prescricao="") for i, row in enumerate(rows)]
+    reports.import_rows(kind="ESTOQUE", file_name="sintetico-estoque.xls", file_hash="v2-stock", actor="profiler", snapshot_date=today.isoformat(), rows=stock)
+    tasks = TarefasStore(store)
+    for i in range(40):
+        tasks.create(1, {"titulo": f"Tarefa {i}", "prazo_data": today.isoformat()})
+    with store.connection() as c:
+        # Keep the next-day fixtures used by the original bell measurement.
+        c.execute("UPDATE agenda_compromissos SET situacao='Realizado' WHERE inicio>=?", ("2026-12-01",))
+
+
 def _measure(probe, name, fn, repeats=3):
     samples = []
     last = None
@@ -327,6 +353,7 @@ def main():
             today = date(2026, 9, 14)
             t1 = time.perf_counter()
             _seed_volume(store, today)
+            _seed_v2(store, today)
             report["seed_ms"] = round((time.perf_counter() - t1) * 1000, 2)
 
             from services.access import resolve_principal
@@ -367,6 +394,23 @@ def main():
             oficios = OficiosStore(store)
             agenda = AgendaStore(store)
             memorandos = MemorandosStore(store)
+            from database.tramita_reports import TramitaReportsStore
+            from database.tarefas import TarefasStore
+
+            reports = TramitaReportsStore(store)
+            tasks = TarefasStore(store)
+            extra_flows = {
+                "agenda_historico31": lambda: agenda.history(),
+                "tarefas_ativas": lambda: tasks.list_active(1),
+                "tarefas_historico": lambda: tasks.list_history(1),
+                "relatorios_schema_quente": lambda: TramitaReportsStore(store),
+                "relatorios_producao": lambda: reports.production_summary("2026-09"),
+                "relatorios_pagina": lambda: reports.movement_page("2026-09", {}),
+                "relatorios_estoque": lambda: reports.stock_summary(today.isoformat()),
+                "relatorios_estoque_pagina": lambda: reports.stock_details(today.isoformat(), {}),
+            }
+            for name, operation in extra_flows.items():
+                report["flows"][name], _ = _measure(probe, name, operation)
 
             report["flows"]["oficios_overview"], _ = _measure(
                 probe, "oficios", lambda: oficios.overview(2026, member=1)

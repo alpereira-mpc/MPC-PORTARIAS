@@ -132,6 +132,7 @@ def current_user(store):
         )
         if (
             cache
+            and cache.get("store_id") == id(store)
             and cache.get("email") == identity["email"]
             and time.monotonic() - cache.get("at", 0) < CACHE_SECONDS
         ):
@@ -143,6 +144,7 @@ def current_user(store):
         import streamlit as st
 
         st.session_state["_access_cache"] = {
+            "store_id": id(store),
             "email": identity["email"],
             "at": time.monotonic(),
             "principal": principal,

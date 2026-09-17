@@ -112,8 +112,11 @@ def load_bell_summary(store, principal):
     )
     now = time.monotonic()
     revision = alerts_revision()
+    # A permission change or a different account must never reuse old alerts.
+    scope = (id(store), principal)
     if (
         isinstance(cache, dict)
+        and cache.get("scope") == scope
         and cache.get("revision") == revision
         and now - cache.get("at", 0) < BELL_CACHE_SECONDS
     ):
@@ -127,6 +130,7 @@ def load_bell_summary(store, principal):
     st.session_state[BELL_CACHE_KEY] = {
         "at": now,
         "revision": revision,
+        "scope": scope,
         "payload": payload,
     }
     return payload

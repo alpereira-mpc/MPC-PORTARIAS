@@ -238,6 +238,8 @@ CREATE TABLE IF NOT EXISTS tramita_estoque (
 );
 CREATE INDEX IF NOT EXISTS tramita_movimentacoes_competencia_idx ON tramita_movimentacoes(competencia, tipo_movimentacao);
 CREATE INDEX IF NOT EXISTS tramita_estoque_snapshot_idx ON tramita_estoque(data_snapshot);
+CREATE INDEX IF NOT EXISTS tramita_movimentacoes_pagina_idx ON tramita_movimentacoes(competencia,procurador,protocolo,id);
+CREATE INDEX IF NOT EXISTS tramita_estoque_procurador_idx ON tramita_estoque(data_snapshot,procurador);
 
 -- Agenda leave is intentionally independent from agenda_compromissos.
 CREATE TABLE IF NOT EXISTS agenda_afastamentos (

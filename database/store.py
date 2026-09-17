@@ -249,6 +249,7 @@ class Store:
         _INITIALIZED.add(self.schema_key)
 
     def migrate(self, backup_required=True):
+        self.__dict__.pop("_tramita_schema_ready", None)
         _INITIALIZED.discard(self.schema_key)
         if self._postgres is not None:
             self._postgres.initialize(ROOT, force=True)

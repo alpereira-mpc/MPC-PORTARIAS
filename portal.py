@@ -406,6 +406,8 @@ def _logout():
         PORTAL_SPECIAL_RETURN,
         PORTAL_SPECIAL_ANCHOR,
         "_alerts_bell_cache",
+        "_reports_read_cache",
+        "_tramita_previews",
     ):
         st.session_state.pop(key, None)
     st.logout()
@@ -541,6 +543,8 @@ def render_portal():
         selected = st.radio("Portal", options, key="portal_module")
         if selected != "Memorandos":
             st.session_state["memorando_form_active"] = False
+        if selected != "Relatórios e Indicadores":
+            st.session_state.pop("_tramita_previews", None)
         with st.expander("Outras ferramentas"):
             for module in MODULES[1:]:
                 if not module.active:

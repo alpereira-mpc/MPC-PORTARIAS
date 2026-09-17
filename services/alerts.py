@@ -117,14 +117,16 @@ def _sort_key(item):
             item.title,
         )
     if item.category in ("viagem_ida", "viagem_volta"):
-        return (rank, int((item.metadata or {}).get("trip_rank", 99)), when, item.title)
-    return (rank, when, item.title)
+        return (rank, int((item.metadata or {}).get("trip_rank", 99)), 99, when, item.title)
+    # Every source must use the same tuple shape: mixing datetime and int in
+    # the second position fails when a task and another module share severity.
+    return (rank, 99, 99, when, item.title)
 
 
 def trip_alerts(store, tomorrow):
     from database.agenda import AgendaStore
     items = []
-    for row in AgendaStore(store).trip_alert_window(tomorrow.isoformat()):
+    for row in AgendaStore(store, load_bindings=False).trip_alert_window(tomorrow.isoformat()):
         informed = bool(row.get("motorista_informado"))
         payload = json.loads(row.get("payload") or "{}")
         commitment = payload.get("titulo") or payload.get("processo") or "Compromisso institucional"
@@ -501,7 +503,7 @@ def collect_alerts(
         except Exception as exc:
             LOGGER.exception("Falha ao carregar alertas de tarefas")
             errors["tarefas"] = "tarefas"
-    if wanted is None or "agenda" in wanted:
+    if has_permission(principal, "agenda") and (wanted is None or "agenda" in wanted):
         try:
             collected.extend(trip_alerts(store, today + timedelta(days=1)))
         except Exception:

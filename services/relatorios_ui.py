@@ -1,6 +1,5 @@
 """Interface administrativa de Relatórios e Indicadores."""
 
-from collections import Counter, defaultdict
 from datetime import date, datetime
 
 import streamlit as st
@@ -8,7 +7,7 @@ import streamlit as st
 from database.tramita_reports import TramitaReportsStore
 from services.access import require_permission
 from services.audit import registrar_evento
-from services.tramita_reports import aging_band, file_hash, is_result, parse_movements, parse_stock, turnaround_days
+from services.tramita_reports import file_hash, parse_movements, parse_stock
 
 
 MONTHS = (
@@ -23,96 +22,171 @@ def _format_date(value):
     return datetime.fromisoformat(value).strftime("%d/%m/%Y")
 
 
-def _read_rows(store, sql, values=()):
-    with store.connection(read_only=True) as c:
-        return [dict(row) for row in c.execute(sql, values)]
+def _cached_report(repo, principal, method, *args):
+    """Bounded session-only display cache; never used by import authorization."""
+    import time
+
+    store = repo.store
+    tables = ("tramita_importacoes", "tramita_movimentacoes", "tramita_estoque")
+    if store.backend == "postgresql":
+        revision = store.read_cache_key(tables)
+    else:
+        from pathlib import Path
+
+        wal = Path(str(store.path) + "-wal")
+        try:
+            wal_stat = wal.stat()
+            wal_revision = (wal_stat.st_mtime_ns, wal_stat.st_size)
+        except FileNotFoundError:
+            wal_revision = None
+        revision = (store.path.stat().st_mtime_ns, wal_revision)
+    scope = (id(store), principal, revision)
+    cache = st.session_state.get("_reports_read_cache")
+    if not cache or cache["scope"] != scope:
+        cache = {"scope": scope, "entries": {}}
+        st.session_state["_reports_read_cache"] = cache
+    key = (method, repr(args))
+    now = time.monotonic()
+    entry = cache["entries"].get(key)
+    if entry and now - entry[0] < 30:
+        return entry[1]
+    value = getattr(repo, method)(*args)
+    if len(cache["entries"]) >= 24:
+        cache["entries"].pop(next(iter(cache["entries"])))
+    cache["entries"][key] = (time.monotonic(), value)
+    return value
 
 
-def _movements(store, competence):
-    return _read_rows(store, "SELECT * FROM tramita_movimentacoes WHERE competencia=? ORDER BY protocolo", (competence,))
+def _page_offset(key, signature):
+    if st.session_state.get(key + "_filters") != signature:
+        st.session_state[key + "_filters"] = signature
+        st.session_state[key] = 0
+    return st.session_state.get(key, 0)
 
 
-def _kpis(rows):
-    entries = [row for row in rows if row["tipo_movimentacao"] == "ENTRADA"]
-    exits = [row for row in rows if row["tipo_movimentacao"] == "SAIDA"]
-    turns = [turnaround_days(row) for row in exits]
-    turns = [value for value in turns if value is not None]
-    return len(entries), len(exits), sum(is_result(row["motivo_devolucao"], "Analisado Com Parecer") for row in exits), sum(is_result(row["motivo_devolucao"], "Analisado Com Cota") for row in exits), sum(turns) / len(turns) if turns else None
+def _page_controls(key, offset, rows):
+    def move(delta):
+        st.session_state[key] = max(0, offset + delta)
+
+    st.caption(f"Página {offset // 100 + 1} · até 100 registros")
+    left, right = st.columns(2)
+    left.button("Anterior", key=key + "_previous", disabled=offset == 0, on_click=move, args=(-100,))
+    right.button("Próxima", key=key + "_next", disabled=len(rows) <= 100, on_click=move, args=(100,))
 
 
-def production(store):
+def production(store, principal=None):
     reports = TramitaReportsStore(store)
-    options = reports.competences()
+    read = lambda method, *args: _cached_report(reports, principal, method, *args)
+    options = read("competences")
     if not options:
         st.info("Nenhuma competência processual foi importada. Utilize a área Importações para carregar os relatórios do Tramita.")
         return
     competence = st.selectbox("Competência", options, format_func=lambda value: f"{value[5:7]}/{value[:4]}")
-    rows = _movements(store, competence)
-    entries, exits, opinions, quotas, average = _kpis(rows)
-    cols = st.columns(5)
-    for col, label, value in zip(cols, ("Entradas", "Saídas", "Pareceres", "Cotas", "Tempo médio até devolução"), (entries, exits, opinions, quotas, f"{average:.1f} dias" if average is not None else "—")):
+    summary = read("production_summary", competence)
+    totals = {key: sum(row[key] for row in summary.values()) for key in ("entries", "exits", "opinions", "quotas", "days", "timed")}
+    average = totals["days"] / totals["timed"] if totals["timed"] else None
+    for col, label, value in zip(st.columns(5), ("Entradas", "Saídas", "Pareceres", "Cotas", "Tempo médio até devolução"),
+                                (totals["entries"], totals["exits"], totals["opinions"], totals["quotas"], f"{average:.1f} dias" if average is not None else "—")):
         col.metric(label, value)
-    procuradores = sorted({row["procurador"] for row in rows if row["procurador"]})
-    selected = st.selectbox("Filtrar por procurador", ["Todos", *procuradores], key="rel_prod_procurador")
-    filtered = [row for row in rows if selected == "Todos" or row["procurador"] == selected]
+    selected = st.selectbox("Filtrar por procurador", ["Todos", *sorted(name for name in summary if name)], key="rel_prod_procurador")
+    person = None if selected == "Todos" else selected
     grouped = []
-    for name in procuradores:
-        subset = [row for row in filtered if row["procurador"] == name]
-        if not subset:
-            continue
-        e, s, p, c, t = _kpis(subset)
-        grouped.append({"Procurador": name, "Entradas": e, "Saídas": s, "Pareceres": p, "Cotas": c, "Tempo médio até devolução": round(t, 1) if t is not None else None})
+    for name, row in sorted(summary.items()):
+        if name and (person is None or name == person):
+            grouped.append({"Procurador": name, "Entradas": row["entries"], "Saídas": row["exits"],
+                            "Pareceres": row["opinions"], "Cotas": row["quotas"],
+                            "Tempo médio até devolução": round(row["days"] / row["timed"], 1) if row["timed"] else None})
     st.subheader("Comparativo por Procurador")
     st.dataframe(grouped, hide_index=True, use_container_width=True)
     if grouped:
         st.bar_chart(grouped, x="Procurador", y=["Entradas", "Saídas"])
+    facets = read("movement_facets", competence, person)
+    by_field = {field: [row for row in facets if row["field"] == field and row["value"]] for field in ("subcategoria", "origem")}
     st.subheader("Naturezas e jurisdicionados")
-    left, right = st.columns(2)
-    left.dataframe([{"Natureza": name, "Quantidade": count} for name, count in Counter(row["subcategoria"] for row in filtered if row["subcategoria"]).most_common(10)], hide_index=True, use_container_width=True)
-    right.dataframe([{"Jurisdicionado/Origem": name, "Quantidade": count} for name, count in Counter(row["origem"] for row in filtered if row["origem"]).most_common(10)], hide_index=True, use_container_width=True)
+    for col, field, label in zip(st.columns(2), ("subcategoria", "origem"), ("Natureza", "Jurisdicionado/Origem")):
+        col.dataframe([{label: row["value"], "Quantidade": row["n"]} for row in sorted(by_field[field], key=lambda row: (-row["n"], row["value"]))[:10]], hide_index=True, use_container_width=True)
     st.subheader("Detalhamento mensal")
-    naturezas = sorted({row["subcategoria"] for row in filtered if row["subcategoria"]})
-    origens = sorted({row["origem"] for row in filtered if row["origem"]})
     a, b, c = st.columns(3)
-    natureza = a.selectbox("Natureza", ["Todas", *naturezas])
-    origem = b.selectbox("Jurisdicionado", ["Todos", *origens])
+    natureza = a.selectbox("Natureza", ["Todas", *sorted(row["value"] for row in by_field["subcategoria"])])
+    origem = b.selectbox("Jurisdicionado", ["Todos", *sorted(row["value"] for row in by_field["origem"])])
     kind = c.selectbox("Tipo", ["Todos", "Entrada", "Saída"])
-    filtered = [row for row in filtered if (natureza == "Todas" or row["subcategoria"] == natureza) and (origem == "Todos" or row["origem"] == origem) and (kind == "Todos" or row["tipo_movimentacao"] == kind.upper())]
-    st.dataframe([{"Protocolo": row["protocolo"], "Natureza": row["subcategoria"], "Jurisdicionado": row["origem"], "Procurador": row["procurador"], "Entrada": _format_date(row["data_realizacao"]) if row["tipo_movimentacao"] == "ENTRADA" else "", "Saída": _format_date(row["data_devolucao"]) if row["tipo_movimentacao"] == "SAIDA" else "", "Resultado": row["motivo_devolucao"]} for row in filtered], hide_index=True, use_container_width=True)
+    filters = {"procurador": person, "subcategoria": None if natureza == "Todas" else natureza,
+               "origem": None if origem == "Todos" else origem,
+               "tipo_movimentacao": {"Todos": None, "Entrada": "ENTRADA", "Saída": "SAIDA"}[kind]}
+    offset = _page_offset("rel_prod_page", (competence, repr(filters)))
+    rows = read("movement_page", competence, filters, offset)
+    st.dataframe([{"Protocolo": row["protocolo"], "Natureza": row["subcategoria"], "Jurisdicionado": row["origem"],
+                   "Procurador": row["procurador"], "Entrada": _format_date(row["data_realizacao"]) if row["tipo_movimentacao"] == "ENTRADA" else "",
+                   "Saída": _format_date(row["data_devolucao"]) if row["tipo_movimentacao"] == "SAIDA" else "",
+                   "Resultado": row["motivo_devolucao"]} for row in rows[:100]], hide_index=True, use_container_width=True)
+    _page_controls("rel_prod_page", offset, rows)
 
 
-def current_view(store):
+def current_view(store, principal=None):
     reports = TramitaReportsStore(store)
-    snapshot = reports.latest_snapshot()
+    read = lambda method, *args: _cached_report(reports, principal, method, *args)
+    snapshot = read("latest_snapshot")
     if not snapshot:
         st.info("Nenhuma fotografia atual do estoque processual foi importada.")
         return
-    rows = _read_rows(store, "SELECT * FROM tramita_estoque WHERE data_snapshot=?", (snapshot,))
-    procuradores = sorted({row["procurador"] for row in rows if row["procurador"]})
-    days = [row["dias_com_procurador"] for row in rows if row["dias_com_procurador"] is not None]
+    summary = read("stock_summary", snapshot)
+    people = sorted(row["procurador"] for row in summary if row["procurador"])
+    days = sum(float(row["days"] or 0) for row in summary)
+    timed = sum(row["timed"] for row in summary)
     st.caption("Dados atualizados em " + datetime.fromisoformat(snapshot).strftime("%d/%m/%Y"))
-    cols = st.columns(4)
-    values = (len(rows), len(procuradores), f"{sum(days) / len(days):.1f} dias" if days else "—", sum(value > 30 for value in days))
-    for col, label, value in zip(cols, ("Processos atualmente no MPC-PB", "Procuradores com processos", "Tempo médio com procurador", "Processos há mais de 30 dias"), values): col.metric(label, value)
-    selected = st.selectbox("Procurador", ["Todos", *procuradores], key="rel_stock_procurador")
-    filtered = [row for row in rows if selected == "Todos" or row["procurador"] == selected]
+    values = (sum(row["n"] for row in summary), len(people), f"{days / timed:.1f} dias" if timed else "—", sum(row["over30"] for row in summary))
+    for col, label, value in zip(st.columns(4), ("Processos atualmente no MPC-PB", "Procuradores com processos", "Tempo médio com procurador", "Processos há mais de 30 dias"), values):
+        col.metric(label, value)
+    selected = st.selectbox("Procurador", ["Todos", *people], key="rel_stock_procurador")
     st.subheader("Estoque por Procurador")
-    overview = []
-    for name in procuradores:
-        values = [row["dias_com_procurador"] for row in rows if row["procurador"] == name and row["dias_com_procurador"] is not None]
-        overview.append({"Procurador": name, "Processos atualmente distribuídos": sum(row["procurador"] == name for row in rows), "Tempo médio com procurador": round(sum(values) / len(values), 1) if values else None, "Maior permanência atual": max(values) if values else None, "+30 dias": sum(value > 30 for value in values), "+60 dias": sum(value > 60 for value in values), "+90 dias": sum(value > 90 for value in values)})
-    st.dataframe(overview, hide_index=True, use_container_width=True)
-    filters = st.columns(5)
-    for key, label, field in (("natureza", "Natureza", "subcategoria"), ("jurisdicionado", "Jurisdicionado", "jurisdicionado"), ("fase", "Fase", "fase"), ("assistente", "Assistente", "assistente")):
-        options = sorted({row[field] for row in filtered if row[field]})
-        choice = filters[["natureza", "jurisdicionado", "fase", "assistente"].index(key)].selectbox(label, ["Todos", *options], key="stock_" + key)
-        filtered = [row for row in filtered if choice == "Todos" or row[field] == choice]
-    band = filters[4].selectbox("Faixa de dias", ["Todas", "0–7 dias", "8–15 dias", "16–30 dias", "31–60 dias", "61–90 dias", "Mais de 90 dias"])
-    filtered = [row for row in filtered if band == "Todas" or aging_band(row["dias_com_procurador"]) == band]
+    st.dataframe([{"Procurador": row["procurador"], "Processos atualmente distribuídos": row["n"],
+                   "Tempo médio com procurador": round(float(row["days"]) / row["timed"], 1) if row["timed"] else None,
+                   "Maior permanência atual": row["maximum"], "+30 dias": row["over30"],
+                   "+60 dias": row["over60"], "+90 dias": row["over90"]}
+                  for row in sorted(summary, key=lambda row: row["procurador"]) if row["procurador"]], hide_index=True, use_container_width=True)
+    fields = (("natureza", "Natureza", "subcategoria"), ("jurisdicionado", "Jurisdicionado", "jurisdicionado"),
+              ("fase", "Fase", "fase"), ("assistente", "Assistente", "assistente"))
+    filters = {"procurador": None if selected == "Todos" else selected}
+    filters.update({field: None if st.session_state.get("stock_" + key, "Todos") == "Todos" else st.session_state["stock_" + key] for key, _, field in fields})
+    # Normalize obsolete downstream choices before rendering their widgets.
+    # At most one corrective query per changed ancestor; cached on normal reruns.
+    facets = read("stock_options", snapshot, filters)
+    columns = st.columns(5)
+    for col, (key, label, field) in zip(columns, fields):
+        choices = ["Todos", *sorted(row["value"] for row in facets if row["field"] == field)]
+        if st.session_state.get("stock_" + key, "Todos") not in choices:
+            st.session_state["stock_" + key] = "Todos"
+            filters[field] = None
+            facets = read("stock_options", snapshot, filters)
+        choice = col.selectbox(label, choices, key="stock_" + key)
+        filters[field] = None if choice == "Todos" else choice
+    band = columns[4].selectbox("Faixa de dias", ["Todas", "0–7 dias", "8–15 dias", "16–30 dias", "31–60 dias", "61–90 dias", "Mais de 90 dias"])
+    offset = _page_offset("rel_stock_page", (snapshot, repr(filters), band))
+    bands, rows = read("stock_details", snapshot, filters, None if band == "Todas" else band, offset)
     st.subheader("Faixas de permanência")
-    st.dataframe([{"Faixa": name, "Processos": count} for name, count in Counter(aging_band(row["dias_com_procurador"]) for row in filtered).items() if name], hide_index=True, use_container_width=True)
+    st.dataframe([{"Faixa": row["faixa"], "Processos": row["n"]} for row in bands if row["faixa"]], hide_index=True, use_container_width=True)
     st.subheader("Processos há mais tempo com o Procurador")
-    st.dataframe([{"Protocolo": row["protocolo"], "Procurador": row["procurador"], "Natureza": row["subcategoria"], "Jurisdicionado": row["jurisdicionado"], "Fase": row["fase"], "Dias com Procurador": row["dias_com_procurador"], "Dias no MPC-PB": row["dias_no_mpc"], "Assistente": row["assistente"], "Prescrição": row["prescricao"]} for row in sorted(filtered, key=lambda row: row["dias_com_procurador"] or -1, reverse=True)], hide_index=True, use_container_width=True)
+    st.dataframe([{"Protocolo": row["protocolo"], "Procurador": row["procurador"], "Natureza": row["subcategoria"],
+                   "Jurisdicionado": row["jurisdicionado"], "Fase": row["fase"], "Dias com Procurador": row["dias_com_procurador"],
+                   "Dias no MPC-PB": row["dias_no_mpc"], "Assistente": row["assistente"], "Prescrição": row["prescricao"]}
+                  for row in rows[:100]], hide_index=True, use_container_width=True)
+    _page_controls("rel_stock_page", offset, rows)
+
+
+def _uploaded_preview(kind, uploaded, principal):
+    content = uploaded.getvalue()
+    digest = file_hash(content)
+    scope = (principal.id, principal.email)
+    cache = st.session_state.get("_tramita_previews")
+    if not cache or cache["scope"] != scope:
+        cache = {"scope": scope, "files": {}}
+        st.session_state["_tramita_previews"] = cache
+    entry = cache["files"].get(kind)
+    if not entry or entry[0] != digest:
+        parser = parse_stock if kind == "ESTOQUE" else parse_movements
+        entry = (digest, parser(content))
+        cache["files"][kind] = entry
+    return entry[1]
 
 
 def imports(store, principal):
@@ -133,7 +207,7 @@ def imports(store, principal):
     previews = []
     for kind, uploaded in (("ENTRADAS", incoming), ("SAIDAS", outgoing)):
         if uploaded:
-            rows, unknown = parse_movements(uploaded.getvalue())
+            rows, unknown = _uploaded_preview(kind, uploaded, principal)
             previews.append((kind, uploaded, rows, unknown))
     if previews:
         st.write(" · ".join(f"{kind.title()}: {len(rows)}" for kind, _, rows, _ in previews))
@@ -146,6 +220,7 @@ def imports(store, principal):
             for kind, uploaded, rows, _ in previews:
                 reports.import_rows(kind=kind, file_name=uploaded.name, file_hash=file_hash(uploaded.getvalue()), actor=principal.email, competence=competence, rows=rows)
                 registrar_evento(store, evento="TRAMITA_" + kind + "_IMPORTADAS", modulo="relatorios", acao="IMPORTAR", principal=principal, detalhes={"competencia": competence, "arquivo": uploaded.name, "quantidade": len(rows), "hash": file_hash(uploaded.getvalue())})
+            st.session_state.pop("_reports_read_cache", None)
             st.success("Produção mensal importada.")
             st.rerun()
     st.divider(); st.subheader("Importar Estoque Atual")
@@ -153,7 +228,7 @@ def imports(store, principal):
     uploaded = st.file_uploader("Arquivo de processos atuais", type=["xls"], key="tramita_stock")
     if uploaded:
         try:
-            rows, unknown = parse_stock(uploaded.getvalue())
+            rows, unknown = _uploaded_preview("ESTOQUE", uploaded, principal)
         except ValueError as exc:
             st.error(str(exc))
             return
@@ -164,6 +239,7 @@ def imports(store, principal):
         if st.button("Confirmar importação do estoque", disabled=bool(unknown) or repeated):
             reports.import_rows(kind="ESTOQUE", file_name=uploaded.name, file_hash=file_hash(uploaded.getvalue()), actor=principal.email, snapshot_date=snapshot.isoformat(), rows=rows)
             registrar_evento(store, evento="TRAMITA_ESTOQUE_IMPORTADO", modulo="relatorios", acao="IMPORTAR", principal=principal, detalhes={"data_snapshot": snapshot.isoformat(), "arquivo": uploaded.name, "quantidade": len(rows), "hash": file_hash(uploaded.getvalue())})
+            st.session_state.pop("_reports_read_cache", None)
             st.success("Estoque atual importado."); st.rerun()
 
 
@@ -175,6 +251,8 @@ def render(store, principal):
     if principal.administrator:
         sections += ("Importações",)
     section = st.radio("Seção", sections, horizontal=True)
-    if section == "Produção Mensal": production(store)
-    elif section == "Visão Atual": current_view(store)
+    if section != "Importações":
+        st.session_state.pop("_tramita_previews", None)
+    if section == "Produção Mensal": production(store, principal)
+    elif section == "Visão Atual": current_view(store, principal)
     else: imports(store, principal)

@@ -156,8 +156,15 @@ class Connection:
         return cursor
 
     def executemany(self, statement, rows):
-        for row in rows:
-            self.execute(statement, row)
+        # No caller consumes generated IDs from executemany. Let psycopg send
+        # the batch instead of waiting for one INSERT/RETURNING per row.
+        with self.raw.cursor() as cursor:
+            cursor.executemany(parameters(statement), rows)
+        mutation = re.match(
+            r"\s*(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)", statement, re.I
+        )
+        if mutation:
+            self.changed.add(mutation[1].lower())
 
     def commit(self):
         self.raw.commit()
