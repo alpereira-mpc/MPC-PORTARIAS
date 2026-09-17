@@ -14,9 +14,10 @@ def test_badge_and_record_escape_content():
     assert "<urgente>" not in mark
     assert "&lt;urgente&gt;" in mark
     assert "mpc-badge--danger" in mark
-    block = record_html('Título <x>', secondary="a & b", meta="ok", accent="brand")
+    block = record_html('Título <x>', secondary="a & b", meta="ok", accent="brand", surface="warning")
     assert "<x>" not in block
     assert "mpc-record--brand" in block
+    assert "mpc-surface-warning" in block
     assert html_text(None) == ""
 
 

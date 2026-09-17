@@ -20,7 +20,7 @@ from services.wording import reason_text, normalized_payload
 from services.placeholders import assert_docx_clean
 from services.deletion import REASONS
 from services.branding import module_title
-from services.ui_theme import badges, render_html, render_record, status_tone
+from services.ui_theme import badges, form_mark, render_html, render_record, section_label, status_tone
 
 VERSION = "1.1.0"
 raw_store = unwrap_store(
@@ -763,6 +763,7 @@ def substitution_fields(
             format_func=lambda j: people[j]["nome"],
             optional=True,
         )
+        section_label("Período")
         same_period = (
             st.checkbox(
                 "Usar o mesmo período da substituição anterior",
@@ -804,6 +805,7 @@ def substitution_fields(
             if i
             else False
         )
+        section_label("Fundamentação")
         reason_id = old.get("motivo_id")
         if dependent:
             reason_text = "decorrente da substituição anterior"
@@ -914,66 +916,73 @@ def new_portaria():
     seats = [x["nome"] for x in store.catalog("assentos")]
     reasons = {r["id"]: r for r in store.catalog("motivos_afastamento")}
     bases = {b["funcao"]: b for b in store.catalog("bases_legais")}
-    a, b = st.columns(2)
-    with a:
-        issued = st.date_input(
-            "Data da Portaria",
-            parsed(seed.get("data", date.today())),
-            min_value=date(1000, 1, 1),
-            max_value=date(9999, 12, 31),
-            key=prefix + "date",
-            format="DD/MM/YYYY",
-        )
-    with b:
-        st.metric(
-            "Próximo número previsto",
-            (
-                f"{store.display_number(issued.year) if store.backend == 'postgresql' else store.next_number(issued.year)}/{issued.year}"
-                if settings.get("sequence_confirmed") == "1"
-                else "A confirmar"
-            ),
-        )
-        st.caption("Prévias e rascunhos não consomem número.")
+    section_label("Dados da Portaria")
+    with st.container(border=True):
+        form_mark()
+        a, b = st.columns(2)
+        with a:
+            issued = st.date_input(
+                "Data da Portaria",
+                parsed(seed.get("data", date.today())),
+                min_value=date(1000, 1, 1),
+                max_value=date(9999, 12, 31),
+                key=prefix + "date",
+                format="DD/MM/YYYY",
+            )
+        with b:
+            st.metric(
+                "Próximo número previsto",
+                (
+                    f"{store.display_number(issued.year) if store.backend == 'postgresql' else store.next_number(issued.year)}/{issued.year}"
+                    if settings.get("sequence_confirmed") == "1"
+                    else "A confirmar"
+                ),
+            )
+            st.caption("Prévias e rascunhos não consomem número.")
     if settings.get("sequence_confirmed") != "1":
         st.warning(
             "Antes de finalizar, confirme a última Portaria emitida em Configurações."
         )
-    default_signer = int(settings.get("signer_id", "0")) or next(
-        (i for i, p in people.items() if p["funcao"] == "Procurador-Geral"), None
-    )
-    signer_id = choose(
-        "Signatário",
-        list(people),
-        (seed.get("signatario") or {}).get("id", default_signer),
-        key=prefix + "signer",
-        format_func=lambda i: people[i]["nome"],
-        optional=True,
-    )
-    quality = choose(
-        "Qualidade do signatário",
-        ["Titular", "Em exercício", "Outro"],
-        (
-            "Outro"
-            if seed.get("qualidade_outro")
-            else ("Em exercício" if seed.get("em_exercicio") else "Titular")
-        ),
-        key=prefix + "quality",
-    )
-    custom_quality = (
-        st.text_input(
-            "Outra qualidade",
-            seed.get("qualidade_outro", ""),
-            key=prefix + "other_quality",
+    section_label("Signatário")
+    with st.container(border=True):
+        form_mark()
+        default_signer = int(settings.get("signer_id", "0")) or next(
+            (i for i, p in people.items() if p["funcao"] == "Procurador-Geral"), None
         )
-        if quality == "Outro"
-        else ""
-    )
-    if signer_id:
-        st.caption(
-            "Cargo na assinatura: "
-            + (custom_quality or role("Procurador-Geral", people[signer_id]["genero"]))
-            + (" em exercício" if quality == "Em exercício" else "")
+        signer_id = choose(
+            "Signatário",
+            list(people),
+            (seed.get("signatario") or {}).get("id", default_signer),
+            key=prefix + "signer",
+            format_func=lambda i: people[i]["nome"],
+            optional=True,
         )
+        quality = choose(
+            "Qualidade do signatário",
+            ["Titular", "Em exercício", "Outro"],
+            (
+                "Outro"
+                if seed.get("qualidade_outro")
+                else ("Em exercício" if seed.get("em_exercicio") else "Titular")
+            ),
+            key=prefix + "quality",
+        )
+        custom_quality = (
+            st.text_input(
+                "Outra qualidade",
+                seed.get("qualidade_outro", ""),
+                key=prefix + "other_quality",
+            )
+            if quality == "Outro"
+            else ""
+        )
+        if signer_id:
+            st.caption(
+                "Cargo na assinatura: "
+                + (custom_quality or role("Procurador-Geral", people[signer_id]["genero"]))
+                + (" em exercício" if quality == "Em exercício" else "")
+            )
+    section_label("Substituição")
     count_key = prefix + "count"
     if count_key not in st.session_state:
         st.session_state[count_key] = max(1, len(seed.get("substituicoes", [])))

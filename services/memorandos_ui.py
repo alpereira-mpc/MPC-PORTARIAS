@@ -4,7 +4,7 @@ import hashlib
 import streamlit as st
 from services.access import require_permission
 from services.branding import module_title
-from services.ui_theme import badges, render_record, status_tone
+from services.ui_theme import badges, filter_mark, render_record, status_tone
 from services.memorandos import (
     MIME_DOCX,
     MIME_PDF,
@@ -450,6 +450,7 @@ def _listing(service, principal):
         except ValueError:
             focused = None
     with st.expander("Filtros", expanded=True):
+        filter_mark()
         a, b, c = st.columns(3)
         search = a.text_input("Busca textual")
         server = a.text_input("Servidor")

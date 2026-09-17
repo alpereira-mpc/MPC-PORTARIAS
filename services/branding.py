@@ -44,20 +44,25 @@ def _brand_styles():
         ".mpc-sidebar-brand img{"
         "display:block;width:10rem;height:auto;object-fit:contain;"
         "}"
+        ".mpc-institutional-header,.mpc-home-institutional-header{"
+        "margin:-1.35rem 0 .85rem 0;padding:.15rem 0 .2rem;"
+        "background:transparent;"
+        "}"
         ".mpc-home-institutional-header{"
         "margin:-1.75rem 0 1.1rem 0;"
         "}"
-        ".mpc-home-institutional-header img{"
+        ".mpc-institutional-header img,.mpc-home-institutional-header img{"
         "display:block;width:min(45rem,100%);max-width:100%;height:auto;"
+        "background:transparent;mix-blend-mode:multiply;"
         "}"
         "section[data-testid='stMain'] [data-testid='stMainBlockContainer'] "
         "> div > [data-testid='stImage']:first-child{"
-        "margin:0 0 1.1rem 0;"
+        "margin:0 0 1.1rem 0;background:transparent;"
         "}"
         "section[data-testid='stMain'] [data-testid='stMainBlockContainer'] "
         "> div > [data-testid='stImage']:first-child img{"
         "display:block;width:min(45rem,100%);max-width:100%;height:auto;"
-        "margin:0;"
+        "margin:0;background:transparent;mix-blend-mode:multiply;"
         "}"
         ".mpc-identity{"
         "max-width:100%;margin:.9rem 0 1rem 0;padding:0;text-align:left;"
@@ -150,16 +155,14 @@ def render_sidebar_brand(on_click=None):
 def render_institutional_header(*, home=False):
     """Horizontal institutional banner at the top of the main pane."""
     _brand_styles()
-    if home:
-        logo = base64.b64encode(asset(HEADER_IMAGE)).decode("ascii")
-        st.markdown(
-            '<div class="mpc-home-institutional-header"><img src="data:image/png;base64,'
-            + logo
-            + '" alt="MPC-PB — Ministério Público de Contas do Estado da Paraíba"></div>',
-            unsafe_allow_html=True,
-        )
-        return
-    st.image(asset(HEADER_IMAGE), width=HEADER_WIDTH)
+    logo = base64.b64encode(asset(HEADER_IMAGE)).decode("ascii")
+    klass = "mpc-institutional-header mpc-home-institutional-header" if home else "mpc-institutional-header"
+    st.markdown(
+        f'<div class="{klass}"><img src="data:image/png;base64,'
+        + logo
+        + '" alt="MPC-PB — Ministério Público de Contas do Estado da Paraíba"></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_app_identity(*, variant="presentation", prompt=None, action=None):

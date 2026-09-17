@@ -86,6 +86,7 @@ def _bell_item_markdown(item):
         secondary=item.description or "—",
         meta=meta,
         accent=status_tone(item.severity),
+        surface=status_tone(item.severity),
         boxed=True,
     )
 
@@ -266,6 +267,7 @@ def render(store, principal):
                     if part
                 ),
                 accent=status_tone(item.severity),
+                surface=status_tone(item.severity),
             )
             if st.button(_open_label(item), key=f"alert_open_{start + offset}"):
                 open_alert_origin(item)

@@ -8,8 +8,11 @@ from database.tarefas import ACTIVE, HISTORY, TarefasStore, effective_deadline
 from services.audit import INSTITUTIONAL_TZ, registrar_evento
 from services.branding import module_title
 from services.ui_theme import (
+    actions_mark,
     badge,
     badges,
+    filter_mark,
+    kpi_mark,
     priority_tone,
     render_record,
     section_label,
@@ -121,9 +124,9 @@ def _card(repo, store, principal, row):
     if due:
         due_label = "Atrasada" if overdue else "Vence hoje" if due == today else "Prazo"
         due_label = due_label + ": " + due.strftime("%d/%m/%Y") + (" às "+row["prazo_hora"] if row.get("prazo_hora") else "")
-    accent = "danger" if overdue else priority_tone(row["prioridade"])
-    if row["status"] in ("CONCLUIDA", "CANCELADA"):
-        accent = status_tone(STATUS_LABELS[row["status"]])
+    surfaces = {"A_FAZER": "neutral", "EM_ANDAMENTO": "brand", "AGUARDANDO": "warning", "CONCLUIDA": "success", "CANCELADA": "muted"}
+    surface = "danger" if overdue else surfaces.get(row["status"], "neutral")
+    accent = "danger" if overdue else "muted" if row["status"] == "CANCELADA" else priority_tone(row["prioridade"])
     marks = badges(
         (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
         (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"])),
@@ -131,7 +134,8 @@ def _card(repo, store, principal, row):
     if overdue:
         marks += badge("Atrasada", "danger")
     with st.container(border=True):
-        render_record(row["titulo"], badges_html=marks, meta=due_label, accent=accent)
+        render_record(row["titulo"], badges_html=marks, meta=due_label, accent=accent, surface=surface)
+        actions_mark()
         controls=st.columns(5)
         if row["status"] == "A_FAZER" and controls[0].button("Iniciar", key=f"task_start_{row['id']}"):
             repo.change_status(row["id"],principal.id,"EM_ANDAMENTO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","INICIAR",row["id"]); _done("Tarefa iniciada.")
@@ -157,12 +161,16 @@ def render(store, principal):
         st.session_state["tarefas_edit"]={}; st.rerun()
     if "tarefas_edit" in st.session_state: _editor(repo,store,principal); return
     counts=repo.situation_counts(principal.id); cols=st.columns(5)
-    for col,key,label in zip(cols,counts,("Atrasadas","Hoje","Próximas","Em andamento","Aguardando")): col.metric(label,counts[key])
+    for col,key,label,tone in zip(cols,counts,("Atrasadas","Hoje","Próximas","Em andamento","Aguardando"),("danger","warning","info","brand","warning")):
+        with col:
+            kpi_mark(tone)
+            st.metric(label,counts[key])
     if st.session_state.get("tarefas_open_id"):
         st.session_state["tarefas_section"] = "Tarefas"
     section = st.radio("Seção", ["Tarefas", "Histórico"], horizontal=True, key="tarefas_section")
     if section == "Tarefas":
         with st.expander("Filtros",expanded=False):
+            filter_mark()
             q=st.text_input("Pesquisa",key="tarefas_q"); priority=st.selectbox("Prioridade",[None,*PRIORITIES],format_func=lambda x: PRIORITY_LABELS.get(x,"Todas"),key="tarefas_priority"); deadline=st.selectbox("Prazo",[None,"atrasadas","hoje","sem_prazo"],format_func=lambda x:{None:"Todos","atrasadas":"Atrasadas","hoje":"Hoje","sem_prazo":"Sem prazo"}[x],key="tarefas_deadline")
         rows=repo.list_active(principal.id,{"pesquisa":q,"prioridade":priority,"prazo":deadline})
         opened=st.session_state.pop("tarefas_open_id",None)
@@ -171,6 +179,7 @@ def render(store, principal):
         if not rows: st.info("Nenhuma tarefa ativa.")
     else:
         with st.expander("Filtros", expanded=False):
+            filter_mark()
             history_q=st.text_input("Pesquisa",key="tarefas_history_q")
             history_priority=st.selectbox("Prioridade",[None,*PRIORITIES],format_func=lambda x: PRIORITY_LABELS.get(x,"Todas"),key="tarefas_history_priority")
             history_status=st.selectbox("Situação",[None,*HISTORY],format_func=lambda x: STATUS_LABELS.get(x,"Todas"),key="tarefas_history_status")
@@ -183,7 +192,8 @@ def render(store, principal):
                         (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
                         (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"])),
                     ),
-                    accent="muted",
+                    accent="muted" if row["status"] == "CANCELADA" else "success",
+                    surface="muted" if row["status"] == "CANCELADA" else "success",
                 )
                 if row["status"]=="CONCLUIDA" and st.button("Reabrir",key=f"task_reopen_{row['id']}"):
                     repo.change_status(row["id"],principal.id,"A_FAZER"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","REABRIR",row["id"]); _done("Tarefa reaberta.")

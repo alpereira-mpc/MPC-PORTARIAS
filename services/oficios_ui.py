@@ -17,7 +17,7 @@ from services.oficios import (
 )
 from services.ui_store import display_store
 from services.branding import module_title
-from services.ui_theme import badges, render_record, section_label, status_tone
+from services.ui_theme import badges, definition_block, filter_mark, form_mark, kpi_mark, render_record, section_label, status_tone
 
 
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
@@ -538,20 +538,29 @@ def details(service, r):
         ),
         meta="Data: " + date.fromisoformat(r["data"]).strftime("%d/%m/%Y"),
         accent=status_tone(r["status"]) if r["status"] in ("Cancelado", "Arquivado", "Concluído") else "brand",
+        surface=status_tone(r["status"]) if r["status"] in ("Cancelado", "Arquivado", "Concluído") else "neutral",
     )
-    for key, title in [
-        ("signatario", "Signatário"),
-        ("remetente", "Remetente"),
-        ("destinatario", "Destinatário"),
-        ("instituicao", "Instituição"),
-        ("processo", "Processo"),
-        ("procedimento", "Procedimento"),
-        ("referencia", "Referência"),
-        ("observacoes", "Observações"),
-    ]:
-        if r.get(key):
-            st.write(f"{title}: {r[key]}")
-    st.write("Data: " + date.fromisoformat(r["data"]).strftime("%d/%m/%Y"))
+    definition_block(
+        "Identificação",
+        [
+            ("Signatário", r.get("signatario")),
+            ("Remetente", r.get("remetente")),
+            ("Destinatário", r.get("destinatario")),
+            ("Instituição", r.get("instituicao")),
+        ],
+    )
+    definition_block(
+        "Referência",
+        [
+            ("Processo", r.get("processo")),
+            ("Procedimento", r.get("procedimento")),
+            ("Referência", r.get("referencia")),
+            ("Observações", r.get("observacoes")),
+        ],
+    )
+    tramitacao = [
+        ("Data", date.fromisoformat(r["data"]).strftime("%d/%m/%Y")),
+    ]
     for field, title in (
         ("data_envio", "Envio"),
         ("data_recebimento", "Recebimento"),
@@ -559,14 +568,18 @@ def details(service, r):
         ("cancelada", "Cancelamento"),
     ):
         if r.get(field):
-            st.write(
-                title + ": " + date.fromisoformat(r[field][:10]).strftime("%d/%m/%Y")
-            )
+            tramitacao.append((title, date.fromisoformat(r[field][:10]).strftime("%d/%m/%Y")))
+    definition_block("Tramitação", tramitacao)
     if r.get("membros"):
         people = {p["id"]: p["nome"] for p in service.store.catalog("procuradores")}
-        st.write(
-            "Destinatários internos: "
-            + ", ".join(people.get(i, "Membro indisponível") for i in r["membros"])
+        definition_block(
+            "Destinatários internos",
+            [
+                (
+                    "Membros",
+                    ", ".join(people.get(i, "Membro indisponível") for i in r["membros"]),
+                )
+            ],
         )
     if r.get("corpo"):
         st.text(r["corpo"])
@@ -593,22 +606,25 @@ def details(service, r):
                 audit_oficio("OFICIO_EXCLUIDO", "EXCLUIR", r)
                 st.session_state.pop("oficio_detail", None)
                 done("Ofício recebido excluído.")
-    for f in service.files(r["id"]):
-        st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
-        if st.button("Preparar download: " + f["nome"], key="oficio_file_" + f["id"]):
-            audit_oficio(
-                "DOCUMENTO_BAIXADO",
-                "EXPORTAR",
-                r,
-                extra={"formato": f.get("tipo"), "arquivo": f["nome"][:80]},
-            )
-            st.download_button(
-                "Baixar arquivo",
-                service.download(f["id"]),
-                f["nome"],
-                mime=f["tipo"],
-                key="oficio_download_" + f["id"],
-            )
+    files = list(service.files(r["id"]))
+    if files:
+        section_label("Arquivo")
+        for f in files:
+            st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
+            if st.button("Preparar download: " + f["nome"], key="oficio_file_" + f["id"]):
+                audit_oficio(
+                    "DOCUMENTO_BAIXADO",
+                    "EXPORTAR",
+                    r,
+                    extra={"formato": f.get("tipo"), "arquivo": f["nome"][:80]},
+                )
+                st.download_button(
+                    "Baixar arquivo",
+                    service.download(f["id"]),
+                    f["nome"],
+                    mime=f["tipo"],
+                    key="oficio_download_" + f["id"],
+                )
     if r["status"] == "Rascunho":
         st.button(
             "Editar rascunho",
@@ -649,7 +665,9 @@ def details(service, r):
                     done(
                         "Ofício preservado em quarentena e número liberado para reutilização."
                     )
+        section_label("Acompanhamento")
         with st.form("status_" + r["id"]):
+            form_mark()
             choices = [
                 s
                 for s in (SENT if r["direcao"] == "ENVIADO" else RECEIVED)
@@ -688,6 +706,7 @@ def details(service, r):
 def render_filters(*, direction=None, tracking=False, submit_label=None):
     """Render the shared listing filters once, always initially collapsed."""
     with st.expander("Filtros", expanded=False):
+        filter_mark()
         a, b, c = st.columns(3)
         with a:
             search = st.text_input("Pesquisa textual")
@@ -789,6 +808,7 @@ def listing(service, people, direction=None, tracking=False, filters=None):
                     if part
                 ),
                 accent=accent,
+                surface=accent,
             )
             if st.button("Abrir detalhes", key="open_oficio_" + r["id"]):
                 st.session_state["oficio_detail"] = r["id"]
@@ -922,8 +942,10 @@ def render(store=None, principal=None):
                 "Prazos vencidos",
                 "Prazos próximos (7 dias)",
             ]
-            for col, title, value in zip(st.columns(3) * 2, labels, values.values()):
+            tones = ("brand", "info", "warning", "warning", "danger", "warning")
+            for col, title, value, tone in zip(st.columns(3) * 2, labels, values.values(), tones):
                 with col:
+                    kpi_mark(tone)
                     st.metric(title, value)
             configuration(service, people)
             overview_filters = render_filters(submit_label="Consultar ofícios")
@@ -936,7 +958,8 @@ def render(store=None, principal=None):
                         label(row),
                         badges_html=badges((row["status"], status_tone(row["status"]))),
                         meta=row["atualizada"][:10],
-                        accent="brand",
+                        accent=status_tone(row["status"]),
+                        surface=status_tone(row["status"]),
                     )
         elif page == "Novo Ofício":
             editor(service, people)

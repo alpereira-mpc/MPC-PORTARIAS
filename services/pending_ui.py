@@ -14,7 +14,7 @@ from services.pending import (
     summarize,
     visible_cabinets,
 )
-from services.ui_theme import badges, record_html, render_records, status_tone
+from services.ui_theme import badges, filter_mark, record_html, render_records, status_tone
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
@@ -101,34 +101,36 @@ def render(store, principal):
     _require(principal)
     st.subheader("CENTRAL DE PENDÊNCIAS")
     cabinets = visible_cabinets(principal)
-    period = st.radio(
-        "Período",
-        [p[0] for p in PERIODS],
-        format_func=lambda k: dict(PERIODS)[k],
-        horizontal=True,
-        key="pending_period",
-    )
-    a, b, c = st.columns(3)
-    module = a.selectbox(
-        "Módulo",
-        [None, "oficios", "agenda", "memorandos"],
-        format_func=lambda k: dict(MODULE_OPTIONS).get(k, "Todos"),
-        key="pending_module",
-    )
-    gabinete_options = [None, *cabinets] if cabinets else [None]
-    gabinete = b.selectbox(
-        "Gabinete",
-        gabinete_options,
-        format_func=lambda g: g or "Todos permitidos",
-        key="pending_gabinete",
-        disabled=not cabinets,
-    )
-    urgency = c.selectbox(
-        "Situação",
-        [None, *URGENCY_ORDER],
-        format_func=lambda u: u or "Todas",
-        key="pending_urgency",
-    )
+    with st.container(border=True):
+        filter_mark()
+        period = st.radio(
+            "Período",
+            [p[0] for p in PERIODS],
+            format_func=lambda k: dict(PERIODS)[k],
+            horizontal=True,
+            key="pending_period",
+        )
+        a, b, c = st.columns(3)
+        module = a.selectbox(
+            "Módulo",
+            [None, "oficios", "agenda", "memorandos"],
+            format_func=lambda k: dict(MODULE_OPTIONS).get(k, "Todos"),
+            key="pending_module",
+        )
+        gabinete_options = [None, *cabinets] if cabinets else [None]
+        gabinete = b.selectbox(
+            "Gabinete",
+            gabinete_options,
+            format_func=lambda g: g or "Todos permitidos",
+            key="pending_gabinete",
+            disabled=not cabinets,
+        )
+        urgency = c.selectbox(
+            "Situação",
+            [None, *URGENCY_ORDER],
+            format_func=lambda u: u or "Todas",
+            key="pending_urgency",
+        )
     modules = (module,) if module else None
     items, errors, today = collect_pending(
         store,
@@ -180,6 +182,7 @@ def render(store, principal):
                     if part
                 ),
                 accent=status_tone(row.urgency),
+                surface=status_tone(row.urgency),
             )
             for row in view
         ]

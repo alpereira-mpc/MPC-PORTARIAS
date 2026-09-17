@@ -21,6 +21,7 @@ from services.ui_store import display_store
 from services.branding import module_title
 from services.ui_theme import (
     badges,
+    filter_mark,
     render_html,
     render_record,
     status_tone,
@@ -537,14 +538,16 @@ def render(store=None, principal=None):
         "Seção", ["Agenda", "Histórico"], horizontal=True, key="agenda_section"
     )
     if section == "Histórico":
-        a, b, c = st.columns(3)
-        history_member = a.selectbox("Procurador", [None, *names], format_func=lambda p: names.get(p, "Todos"), key="agenda_history_member")
-        history_scope = b.selectbox("Tipo de item", ("Todos", "Compromissos", "Afastamentos"), key="agenda_history_scope")
-        history_status = c.selectbox("Situação", [None, "Realizado", "Cancelado", "ENCERRADO", "CANCELADO"], format_func=lambda value: value or "Todas", key="agenda_history_status")
-        d, e, f = st.columns(3)
-        history_start = d.date_input("Período inicial", value=None, key="agenda_history_start", format="DD/MM/YYYY")
-        history_end = e.date_input("Período final", value=None, key="agenda_history_end", format="DD/MM/YYYY")
-        history_search = f.text_input("Busca", key="agenda_history_search")
+        with st.container(border=True):
+            filter_mark()
+            a, b, c = st.columns(3)
+            history_member = a.selectbox("Procurador", [None, *names], format_func=lambda p: names.get(p, "Todos"), key="agenda_history_member")
+            history_scope = b.selectbox("Tipo de item", ("Todos", "Compromissos", "Afastamentos"), key="agenda_history_scope")
+            history_status = c.selectbox("Situação", [None, "Realizado", "Cancelado", "ENCERRADO", "CANCELADO"], format_func=lambda value: value or "Todas", key="agenda_history_status")
+            d, e, f = st.columns(3)
+            history_start = d.date_input("Período inicial", value=None, key="agenda_history_start", format="DD/MM/YYYY")
+            history_end = e.date_input("Período final", value=None, key="agenda_history_end", format="DD/MM/YYYY")
+            history_search = f.text_input("Busca", key="agenda_history_search")
         signature = (history_member, history_scope, history_status, history_start, history_end, history_search, st.session_state.get("agenda_revision", 0))
         if st.session_state.get("agenda_history_filters") != signature:
             st.session_state["agenda_history_offset"] = 0; st.session_state["agenda_history_filters"] = signature
@@ -574,6 +577,7 @@ def render(store=None, principal=None):
                         secondary=f"{row['motivo']} · {row['data_inicio']} a {row['data_fim']}",
                         meta=("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"]))) if row.get("substituto_id") else (row.get("observacao") or ""),
                         accent="muted",
+                        surface="muted",
                     )
                     if row.get("observacao") and row.get("substituto_id"): st.write(row["observacao"])
                     if st.button("Abrir detalhes do afastamento", key="agenda_history_leave_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
@@ -595,6 +599,7 @@ def render(store=None, principal=None):
                             ) if part
                         ),
                         accent="muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "brand",
+                        surface="muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "neutral",
                     )
                     for procurador_id, trip in trips.get(row["id"], {}).items():
                         st.markdown("✈️ **Logística de viagem**")
@@ -612,30 +617,32 @@ def render(store=None, principal=None):
     if leave.button("Cadastrar afastamento", type="primary"):
         st.session_state["agenda_leave_edit"] = {}
         st.rerun()
-    a, b, c, d = st.columns(4)
-    member = a.selectbox(
-        "Procurador",
-        [None, *names],
-        format_func=lambda p: names.get(p, "Todos"),
-        key="agenda_filter_member",
-    )
-    kind = b.selectbox(
-        "Tipo",
-        [None, *TYPES],
-        format_func=lambda k: TYPES.get(k, "Todos"),
-        key="agenda_filter_type",
-    )
-    status = c.selectbox(
-        "Situação",
-        [None, *STATUSES],
-        format_func=lambda s: s or "Todas",
-        key="agenda_filter_status",
-    )
-    item_scope = d.selectbox(
-        "Tipo de item",
-        ("Todos", "Somente compromissos", "Somente afastamentos"),
-        key="agenda_filter_item_scope",
-    )
+    with st.container(border=True):
+        filter_mark()
+        a, b, c, d = st.columns(4)
+        member = a.selectbox(
+            "Procurador",
+            [None, *names],
+            format_func=lambda p: names.get(p, "Todos"),
+            key="agenda_filter_member",
+        )
+        kind = b.selectbox(
+            "Tipo",
+            [None, *TYPES],
+            format_func=lambda k: TYPES.get(k, "Todos"),
+            key="agenda_filter_type",
+        )
+        status = c.selectbox(
+            "Situação",
+            [None, *STATUSES],
+            format_func=lambda s: s or "Todas",
+            key="agenda_filter_status",
+        )
+        item_scope = d.selectbox(
+            "Tipo de item",
+            ("Todos", "Somente compromissos", "Somente afastamentos"),
+            key="agenda_filter_item_scope",
+        )
     show_appointments = item_scope != "Somente afastamentos"
     show_leaves = item_scope != "Somente compromissos"
     if st.session_state.get("agenda_view") == "Lista":
@@ -738,6 +745,7 @@ def render(store=None, principal=None):
                     secondary=f"{row['motivo']}{' · ' + row['motivo_outro'] if row.get('motivo_outro') else ''} · {display_datetime(row['inicio'], True)} a {datetime.fromisoformat(row['data_fim']).strftime('%d/%m/%Y')}",
                     meta=("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"]))) if row.get("substituto_id") else "",
                     accent="muted",
+                    surface="muted",
                 )
                 if not row.get("substituto_id") and substitution_pending(row, people):
                     st.warning("⚠ Substituto ainda não definido")
@@ -751,6 +759,7 @@ def render(store=None, principal=None):
         past = row["situacao"] not in ("Realizado", "Cancelado") and date.fromisoformat(row["inicio"][:10]) < today
         situation = row["situacao"]
         accent = "muted" if situation == "Cancelado" else "warning" if past else "brand"
+        surface = "muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "warning" if past else "neutral"
         with st.container(border=True):
             render_record(
                 title or "Compromisso",
@@ -766,6 +775,7 @@ def render(store=None, principal=None):
                     ) if part
                 ),
                 accent=accent,
+                surface=surface,
             )
             if past:
                 st.warning("⚠ Compromisso passado ainda não encerrado")

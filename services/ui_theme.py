@@ -137,9 +137,10 @@ section[data-testid="stSidebar"] [data-testid="stRadio"] label:hover{{
 background:rgba(155,23,36,.05);
 }}
 section[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){{
-background:rgba(155,23,36,.09);
+background:rgba(155,23,36,.16);
 box-shadow:inset 3px 0 0 var(--mpc-brand);
-font-weight:650;
+font-weight:700;
+color:var(--mpc-brand-dark);
 }}
 section[data-testid="stSidebar"] [data-testid="stExpander"]{{
 background:var(--mpc-white);
@@ -185,13 +186,70 @@ border-left:3px solid var(--mpc-border-md) !important;
 border-left:3px solid var(--mpc-info) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-home-card-mark){{
+border-top:3px solid var(--mpc-brand) !important;
 border-left:3px solid var(--mpc-brand) !important;
 background:var(--mpc-white);
 transition:box-shadow .15s ease,border-color .15s ease;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-home-card-mark):hover{{
 box-shadow:0 2px 10px rgba(32,40,50,.07);
+border-color:rgba(155,23,36,.28) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-brand){{
+background:var(--mpc-brand-soft) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-success){{
+background:var(--mpc-success-soft) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-warning){{
+background:var(--mpc-warning-soft) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-danger){{
+background:var(--mpc-danger-soft) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-muted){{
+background:var(--mpc-muted-bg) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-neutral){{
+background:var(--mpc-white) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-filter-mark){{
+background:var(--mpc-muted-bg) !important;
 border-color:var(--mpc-border-md) !important;
+box-shadow:none;
+}}
+[data-testid="stExpander"]:has(.mpc-filter-mark){{
+background:var(--mpc-muted-bg);
+border:1px solid var(--mpc-border-md);
+}}
+[data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--danger) [data-testid="stMetric"]{{
+background:var(--mpc-danger-soft);
+border-left-color:var(--mpc-danger);
+}}
+[data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--warning) [data-testid="stMetric"]{{
+background:var(--mpc-warning-soft);
+border-left-color:var(--mpc-warning);
+}}
+[data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--brand) [data-testid="stMetric"]{{
+background:var(--mpc-brand-soft);
+border-left-color:var(--mpc-brand);
+}}
+[data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--info) [data-testid="stMetric"]{{
+background:var(--mpc-info-soft);
+border-left-color:var(--mpc-info);
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-actions) [data-testid="stHorizontalBlock"]{{
+justify-content:flex-start;
+gap:.45rem;
+flex-wrap:wrap;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-actions) [data-testid="stHorizontalBlock"]>div{{
+flex:0 1 auto !important;
+width:auto !important;
+min-width:0;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark){{
+background:var(--mpc-soft) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-danger-zone){{
 border-left:3px solid var(--mpc-danger) !important;
@@ -311,6 +369,41 @@ padding:.75rem .9rem .7rem;
 .mpc-stack .mpc-record--muted,.mpc-record-boxed.mpc-record--muted{{border-left-color:var(--mpc-border-md);background:var(--mpc-soft);}}
 .mpc-stack .mpc-record--neutral,.mpc-record-boxed.mpc-record--neutral{{border-left-color:var(--mpc-border-md);}}
 .mpc-stack .mpc-record--info,.mpc-record-boxed.mpc-record--info{{border-left-color:var(--mpc-info);}}
+.mpc-stack .mpc-surface-brand,.mpc-record-boxed.mpc-surface-brand{{background:var(--mpc-brand-soft);}}
+.mpc-stack .mpc-surface-success,.mpc-record-boxed.mpc-surface-success{{background:var(--mpc-success-soft);}}
+.mpc-stack .mpc-surface-warning,.mpc-record-boxed.mpc-surface-warning{{background:var(--mpc-warning-soft);}}
+.mpc-stack .mpc-surface-danger,.mpc-record-boxed.mpc-surface-danger{{background:var(--mpc-danger-soft);}}
+.mpc-stack .mpc-surface-muted,.mpc-record-boxed.mpc-surface-muted{{background:var(--mpc-muted-bg);}}
+.mpc-def-block{{
+margin:.35rem 0 .7rem;
+padding:.65rem .8rem .55rem;
+background:var(--mpc-soft);
+border:1px solid var(--mpc-border);
+border-radius:8px;
+}}
+.mpc-def{{
+display:grid;
+grid-template-columns:minmax(7rem,11rem) 1fr;
+gap:.2rem .75rem;
+padding:.18rem 0;
+border-bottom:1px solid rgba(230,226,227,.9);
+}}
+.mpc-def:last-child{{border-bottom:0;}}
+.mpc-def-label{{
+font-size:.75rem;
+font-weight:700;
+letter-spacing:.04em;
+text-transform:uppercase;
+color:var(--mpc-text-3);
+}}
+.mpc-def-value{{
+font-size:.92rem;
+color:var(--mpc-text);
+overflow-wrap:anywhere;
+}}
+@media (max-width:768px){{
+.mpc-def{{grid-template-columns:1fr;}}
+}}
 .mpc-record-head{{
 display:flex;
 align-items:flex-start;
@@ -335,8 +428,9 @@ justify-content:flex-end;
 }}
 .mpc-record-secondary{{
 margin:.28rem 0 0;
-font-size:.95rem;
-color:var(--mpc-text);
+font-size:.9rem;
+font-weight:500;
+color:var(--mpc-text-2);
 line-height:1.4;
 overflow-wrap:anywhere;
 }}
@@ -472,15 +566,20 @@ def record_html(
     accent="brand",
     extra="",
     boxed=False,
+    surface=None,
 ):
     accent = _tone(accent)
+    surface_class = f" mpc-surface-{_tone(surface)}" if surface else ""
     boxed_class = " mpc-record-boxed" if boxed else ""
     head = ['<div class="mpc-record-head">']
     head.append(f'<p class="mpc-record-title">{html_text(title)}</p>')
     if badges_html:
         head.append(f'<div class="mpc-record-badges">{badges_html}</div>')
     head.append("</div>")
-    parts = [f'<div class="mpc-record mpc-record--{accent}{boxed_class}">', *head]
+    parts = [
+        f'<div class="mpc-record mpc-record--{accent}{surface_class}{boxed_class}">',
+        *head,
+    ]
     if secondary:
         parts.append(f'<p class="mpc-record-secondary">{html_text(secondary)}</p>')
     if meta:
@@ -515,3 +614,36 @@ def trip_html(title="Logística de viagem", body=""):
     if body:
         inner += f'<p class="mpc-record-meta">{html_text(body)}</p>'
     return f'<div class="mpc-trip">{inner}</div>'
+
+
+def filter_mark():
+    render_html('<div class="mpc-filter-mark" hidden></div>')
+
+
+def actions_mark():
+    render_html('<div class="mpc-actions" hidden></div>')
+
+
+def kpi_mark(tone="brand"):
+    render_html(f'<div class="mpc-kpi-mark mpc-kpi-mark--{_tone(tone)}" hidden></div>')
+
+
+def form_mark():
+    render_html('<div class="mpc-form-mark" hidden></div>')
+
+
+def definition_block(title, rows):
+    items = []
+    for label, value in rows:
+        if value in (None, ""):
+            continue
+        items.append(
+            '<div class="mpc-def">'
+            f'<span class="mpc-def-label">{html_text(label)}</span>'
+            f'<span class="mpc-def-value">{html_text(value)}</span>'
+            "</div>"
+        )
+    if not items:
+        return
+    heading = f'<p class="mpc-section-label">{html_text(title)}</p>' if title else ""
+    render_html(f'<div class="mpc-def-block">{heading}{"".join(items)}</div>')

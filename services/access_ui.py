@@ -7,7 +7,7 @@ from services.access import require_permission
 from services.audit import aplicar_exclusao_usuario, aplicar_usuario
 from services.oficios import GABINETES
 from services.branding import module_title
-from services.ui_theme import render_html, section_label
+from services.ui_theme import form_mark, render_html, section_label
 
 ADMIN_SECTIONS = ("Usuários", "Acessos e Auditoria", "Sistema")
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
@@ -138,6 +138,7 @@ def render(store, principal):
         hide_index=True,
         use_container_width=True,
     )
+    section_label("Cadastro")
     choices = {0: "Novo usuário"}
     for user in users:
         choices[user["id"]] = f"{user['nome']} ({user['email']})"
@@ -177,6 +178,7 @@ def render(store, principal):
         st.caption("Administrador protegido")
         profile_options = ("ADMINISTRADOR",)
     with st.form("acesso_user_" + str(selected)):
+        form_mark()
         nome = st.text_input("Nome", value=current["nome"], key=prefix + "nome")
         email = st.text_input(
             "E-mail",
