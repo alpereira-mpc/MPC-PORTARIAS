@@ -46,6 +46,10 @@ def test_stripe_and_header_helpers_are_available():
 
     from services import branding, oficios_ui, tarefas_ui
     from services.ui_theme import (
+        CARD_INSTITUTIONAL_BG,
+        CARD_INSTITUTIONAL_BORDER,
+        CARD_OPERATIONAL_BG,
+        CARD_OPERATIONAL_BORDER,
         CARD_SURFACE_A,
         CARD_SURFACE_B,
         BRAND_RED_DARK,
@@ -62,9 +66,15 @@ def test_stripe_and_header_helpers_are_available():
         stripe_index,
     )
 
-    assert CARD_SURFACE_A == "#E6C7CC"
-    assert CARD_SURFACE_B == "#FCEFF1"
-    assert CARD_SURFACE_A != "#FFFFFF"
+    assert CARD_OPERATIONAL_BG == "#E6C7CC"
+    assert CARD_OPERATIONAL_BORDER == "#D8DADD"
+    assert CARD_INSTITUTIONAL_BG == "#FBF4F6"
+    assert CARD_INSTITUTIONAL_BORDER == "#E7CDD3"
+    assert CARD_SURFACE_A == CARD_OPERATIONAL_BG
+    assert CARD_SURFACE_B == CARD_OPERATIONAL_BG
+    assert CARD_OPERATIONAL_BG != CARD_INSTITUTIONAL_BG
+    assert CARD_OPERATIONAL_BG != "#FFFFFF"
+    assert CARD_INSTITUTIONAL_BG != "#FFFFFF"
     assert SIDEBAR_BG == "#F3F4F8"
     assert stripe_index(0) == "a"
     assert stripe_index(1) == "b"
@@ -76,6 +86,8 @@ def test_stripe_and_header_helpers_are_available():
     helper = getsource(card_container)
     assert "st.container" in helper
     assert "mpc_card_" in helper
+    assert "operational" in helper
+    assert "stripe_index" not in helper
     assert "key=" in helper
     task_card = getsource(tarefas_ui._card)
     assert "card_container(" in task_card
@@ -129,10 +141,16 @@ def test_stripe_and_header_helpers_are_available():
     assert EXPANDER_BG in css
     assert EXPANDER_BORDER in css
     assert EXPANDER_HOVER in css
-    assert CARD_SURFACE_A in css
-    assert CARD_SURFACE_B in css
+    assert CARD_OPERATIONAL_BG in css
+    assert CARD_INSTITUTIONAL_BG in css
+    assert "#FCEFF1" not in compact
+    assert "--mpc-card-operational-bg:" + CARD_OPERATIONAL_BG in compact
+    assert "--mpc-card-institutional-bg:" + CARD_INSTITUTIONAL_BG in compact
+    assert "background:var(--mpc-card-institutional-bg)!important" in compact
+    assert "st-key-mpc_card_operational" in css
     assert 'st-key-mpc_card_a"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_b"][data-testid="stExpander"]' not in compact
+    assert 'st-key-mpc_card_operational"][data-testid="stExpander"]' not in compact
     assert 'section[data-testid="stSidebar"][data-testid="stExpander"]' in compact
     assert 'st.button("← Trocar gabinete", type="primary"' in render
     assert 'type="primary"' in render[render.index("Novo Ofício") :]

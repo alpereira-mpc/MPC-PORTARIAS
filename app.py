@@ -20,7 +20,7 @@ from services.wording import reason_text, normalized_payload
 from services.placeholders import assert_docx_clean
 from services.deletion import REASONS
 from services.branding import module_title
-from services.ui_theme import badges, form_mark, render_html, render_record, section_label, status_tone
+from services.ui_theme import badges, form_mark, operational_card_mark, render_html, render_record, section_label, status_tone
 
 VERSION = "1.1.0"
 raw_store = unwrap_store(
@@ -652,6 +652,7 @@ def history():
         return
     r = rm[selected]
     with st.container(border=True):
+        operational_card_mark()
         render_record(
             f"{r['numero'] or 'Rascunho'}/{r['ano']}",
             badges_html=badges((r["status"], status_tone(r["status"]))),

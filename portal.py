@@ -16,7 +16,7 @@ from services.branding import (
     render_sidebar_brand,
 )
 from services.ui_store import asset
-from services.ui_theme import apply_theme, badge, render_html
+from services.ui_theme import apply_theme, badge, institutional_card_mark, render_html
 
 LOGGER = logging.getLogger(__name__)
 
@@ -244,7 +244,7 @@ def open_relatorios():
 
 def card(module):
     with st.container(border=True):
-        render_html('<div class="mpc-home-card-mark" hidden></div>')
+        institutional_card_mark()
         st.caption(module.label.upper())
         st.markdown(f"### :material/{module.icon}: {module.title}")
         st.write(module.description)
