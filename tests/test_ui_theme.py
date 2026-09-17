@@ -185,6 +185,16 @@ def test_stripe_and_header_helpers_are_available():
     assert "background:var(--mpc-card-institutional-bg)!important" in compact
     assert "mpc-badge--info{background:#EEE8E6" in compact
     assert "stSidebar\"] .mpc-record-boxed" in css
+    assert 'st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-record-boxed' in css
+    assert "#FFF4CC" in css
+    assert "#E8D28A" in css
+    assert "#C99A1A" in css
+    assert "#FFEDB3" in css
+    from services import alerts_ui
+    bell_item = getsource(alerts_ui._bell_item_markdown)
+    assert "mpc-bell-alert" in bell_item
+    assert "mpc-bell-alert" not in getsource(alerts_ui.render)
+    assert 'st-key-mpc_bell_panel"] .mpc-bell-alert .mpc-badge--info' in css
     assert 'st-key-mpc_card_a"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_b"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_operational"][data-testid="stExpander"]' not in compact

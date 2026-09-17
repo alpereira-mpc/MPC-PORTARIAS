@@ -80,14 +80,18 @@ def _bell_item_markdown(item):
         if local and local.strip():
             meta_parts.append(local.strip())
     meta = " · ".join(part for part in meta_parts if part)
-    return record_html(
-        item.title or "",
-        badges_html=badge(item.severity, status_tone(item.severity)),
-        secondary=item.description or "—",
-        meta=meta,
-        accent=status_tone(item.severity),
-        surface=status_tone(item.severity),
-        boxed=True,
+    return (
+        '<div class="mpc-bell-alert">'
+        + record_html(
+            item.title or "",
+            badges_html=badge(item.severity, status_tone(item.severity)),
+            secondary=item.description or "—",
+            meta=meta,
+            accent=status_tone(item.severity),
+            surface=status_tone(item.severity),
+            boxed=True,
+        )
+        + "</div>"
     )
 
 
