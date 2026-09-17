@@ -10,6 +10,7 @@ from services.audit import format_local, registrar_evento
 from services.backup import backup_filename, generate_backup, unique_backup_path
 from services.branding import APP_NAME, APP_SUBTITLE
 from services.system_health import ATTENTION, ERROR, OK, diagnose
+from services.ui_theme import badge, html_text, render_html, status_tone
 
 LOGGER = logging.getLogger("mpc.sistema")
 HEALTH_KEY = "sistema_health"
@@ -28,8 +29,10 @@ def _tone(status):
 
 
 def _badge(status, summary):
-    color = _tone(status)
-    st.markdown(f":{color}[**{status}**] — {summary}")
+    render_html(
+        badge(status, status_tone(status))
+        + f' <span class="mpc-record-secondary">{html_text(summary)}</span>'
+    )
 
 
 def _event_line(item):

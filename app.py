@@ -20,6 +20,7 @@ from services.wording import reason_text, normalized_payload
 from services.placeholders import assert_docx_clean
 from services.deletion import REASONS
 from services.branding import module_title
+from services.ui_theme import badges, render_html, render_record, status_tone
 
 VERSION = "1.1.0"
 raw_store = unwrap_store(
@@ -518,6 +519,7 @@ def delete_controls(r):
     if not st.session_state.get(key + "confirm_open"):
         return
     with st.container(border=True):
+        render_html('<div class="mpc-danger-zone" hidden></div>')
         st.warning(
             "Esta operação excluirá definitivamente esta Portaria do cadastro ativo do sistema. Utilize-a apenas para testes, lançamentos incorretos ou atos que não chegaram a ser oficialmente emitidos."
         )
@@ -544,7 +546,6 @@ def delete_controls(r):
         typed = st.text_input("Digite EXCLUIR para confirmar", key=key + "typed")
         st.button(
             "EXCLUIR DEFINITIVAMENTE",
-            type="primary",
             key=key + "execute",
             disabled=not (confirmed and typed == "EXCLUIR" and reason.strip()),
             on_click=delete_from_history,
@@ -650,7 +651,12 @@ def history():
     if selected is None:
         return
     r = rm[selected]
-    st.markdown(f"**{r['numero'] or 'Rascunho'}/{r['ano']} — {r['status']}**")
+    with st.container(border=True):
+        render_record(
+            f"{r['numero'] or 'Rascunho'}/{r['ano']}",
+            badges_html=badges((r["status"], status_tone(r["status"]))),
+            accent=status_tone(r["status"]),
+        )
     st.dataframe(
         [row for row in rows if row["Criação"] == r["criada"]],
         hide_index=True,

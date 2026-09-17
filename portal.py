@@ -16,6 +16,7 @@ from services.branding import (
     render_sidebar_brand,
 )
 from services.ui_store import asset
+from services.ui_theme import apply_theme, badge, render_html
 
 LOGGER = logging.getLogger(__name__)
 
@@ -243,11 +244,12 @@ def open_relatorios():
 
 def card(module):
     with st.container(border=True):
+        render_html('<div class="mpc-home-card-mark" hidden></div>')
         st.caption(module.label.upper())
         st.markdown(f"### :material/{module.icon}: {module.title}")
         st.write(module.description)
         if module.active:
-            st.markdown(":green[**● ATIVO**]")
+            render_html(badge("ATIVO", "success"))
             st.button(
                 f"Acessar {module.label}",
                 key=f"open_{module.key}",
@@ -297,6 +299,7 @@ def _home_layout_style():
         "section[data-testid='stMain'] [data-testid='stHorizontalBlock'] "
         "[data-testid='stVerticalBlockBorderWrapper']{"
         "flex:1 1 auto;width:100%;min-height:19.5rem;height:100%;"
+        "border-left:3px solid #9B1724;"
         "}"
         "section[data-testid='stMain'] [data-testid='stHorizontalBlock'] "
         "[data-testid='stVerticalBlockBorderWrapper']>div{"
@@ -453,6 +456,7 @@ def render_portal():
         page_icon=str(SIDEBAR_LOGO),
         layout="wide",
     )
+    apply_theme()
     identity = oidc_identity()
     if identity is None:
         with st.sidebar:

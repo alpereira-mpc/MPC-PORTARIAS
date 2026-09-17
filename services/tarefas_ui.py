@@ -7,6 +7,14 @@ import streamlit as st
 from database.tarefas import ACTIVE, HISTORY, TarefasStore, effective_deadline
 from services.audit import INSTITUTIONAL_TZ, registrar_evento
 from services.branding import module_title
+from services.ui_theme import (
+    badge,
+    badges,
+    priority_tone,
+    render_record,
+    section_label,
+    status_tone,
+)
 
 PRIORITIES = ("BAIXA", "NORMAL", "ALTA", "URGENTE")
 STATUS_LABELS = {"A_FAZER": "A fazer", "EM_ANDAMENTO": "Em andamento", "AGUARDANDO": "Aguardando", "CONCLUIDA": "Concluída", "CANCELADA": "Cancelada"}
@@ -62,6 +70,7 @@ def _editor(repo, store, principal):
         st.session_state[reminder_state] = list(range(max(1, len(existing_reminders))))
     title = st.text_input("Título *", value=old.get("titulo", ""), key=prefix+"title")
     description = st.text_area("Descrição", value=old.get("descricao", ""), key=prefix+"description")
+    section_label("Classificação")
     priority_column, _ = st.columns([2, 5])
     priority = priority_column.selectbox("Prioridade", PRIORITIES, index=PRIORITIES.index(old.get("prioridade", "NORMAL")), format_func=PRIORITY_LABELS.get, key=prefix+"priority")
     status = st.selectbox("Status", ACTIVE, index=ACTIVE.index(old.get("status", "A_FAZER")) if old.get("status") in ACTIVE else 0, format_func=STATUS_LABELS.get, key=prefix+"status") if old else "A_FAZER"
@@ -84,6 +93,7 @@ def _editor(repo, store, principal):
                     st.session_state[reminder_state].remove(slot); st.rerun()
             if len(st.session_state[reminder_state]) < 3 and st.button("+ Adicionar lembrete", key=prefix+"add_reminder"):
                 st.session_state[reminder_state].append(max(st.session_state[reminder_state]) + 1); st.rerun()
+    section_label("Observações")
     notes = st.text_area("Observações", value=old.get("observacoes", ""), key=prefix+"notes")
     submitted = st.button("Salvar alterações" if old else "Criar tarefa", type="primary", key=prefix+"submit")
     if submitted:
@@ -106,12 +116,22 @@ def _card(repo, store, principal, row):
     today=date.today(); due=date.fromisoformat(row["prazo_data"]) if row.get("prazo_data") else None
     deadline = effective_deadline(row, INSTITUTIONAL_TZ)
     current = datetime.now(INSTITUTIONAL_TZ)
+    overdue = bool(due and deadline < current)
+    due_label = ""
+    if due:
+        due_label = "Atrasada" if overdue else "Vence hoje" if due == today else "Prazo"
+        due_label = due_label + ": " + due.strftime("%d/%m/%Y") + (" às "+row["prazo_hora"] if row.get("prazo_hora") else "")
+    accent = "danger" if overdue else priority_tone(row["prioridade"])
+    if row["status"] in ("CONCLUIDA", "CANCELADA"):
+        accent = status_tone(STATUS_LABELS[row["status"]])
+    marks = badges(
+        (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
+        (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"])),
+    )
+    if overdue:
+        marks += badge("Atrasada", "danger")
     with st.container(border=True):
-        st.markdown(f"**{row['titulo']}** · :{'red' if row['prioridade']=='URGENTE' else 'orange' if row['prioridade']=='ALTA' else 'blue' if row['prioridade']=='NORMAL' else 'gray'}[{PRIORITY_LABELS[row['prioridade']]}]")
-        st.caption(STATUS_LABELS[row["status"]])
-        if due:
-            label = "⚠ Atrasada" if deadline < current else "Vence hoje" if due == today else "Prazo"
-            st.write(label + ": " + due.strftime("%d/%m/%Y") + (" às "+row["prazo_hora"] if row.get("prazo_hora") else ""))
+        render_record(row["titulo"], badges_html=marks, meta=due_label, accent=accent)
         controls=st.columns(5)
         if row["status"] == "A_FAZER" and controls[0].button("Iniciar", key=f"task_start_{row['id']}"):
             repo.change_status(row["id"],principal.id,"EM_ANDAMENTO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","INICIAR",row["id"]); _done("Tarefa iniciada.")
@@ -156,8 +176,16 @@ def render(store, principal):
             history_status=st.selectbox("Situação",[None,*HISTORY],format_func=lambda x: STATUS_LABELS.get(x,"Todas"),key="tarefas_history_status")
         rows=repo.list_history(principal.id,{"pesquisa":history_q,"prioridade":history_priority,"status":history_status},limit=30)
         for row in rows:
-            st.write(f"**{row['titulo']}** · {STATUS_LABELS[row['status']]}")
-            if row["status"]=="CONCLUIDA" and st.button("Reabrir",key=f"task_reopen_{row['id']}"):
-                repo.change_status(row["id"],principal.id,"A_FAZER"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","REABRIR",row["id"]); _done("Tarefa reaberta.")
-            if st.checkbox("Confirmo a exclusão definitiva",key=f"history_confirm_{row['id']}") and st.button("Excluir",key=f"history_delete_{row['id']}"):
-                if repo.delete(row["id"],principal.id): _audit(store,principal,"TAREFA_EXCLUIDA","EXCLUIR",row["id"]); _done("Tarefa excluída.")
+            with st.container(border=True):
+                render_record(
+                    row["titulo"],
+                    badges_html=badges(
+                        (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
+                        (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"])),
+                    ),
+                    accent="muted",
+                )
+                if row["status"]=="CONCLUIDA" and st.button("Reabrir",key=f"task_reopen_{row['id']}"):
+                    repo.change_status(row["id"],principal.id,"A_FAZER"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","REABRIR",row["id"]); _done("Tarefa reaberta.")
+                if st.checkbox("Confirmo a exclusão definitiva",key=f"history_confirm_{row['id']}") and st.button("Excluir",key=f"history_delete_{row['id']}"):
+                    if repo.delete(row["id"],principal.id): _audit(store,principal,"TAREFA_EXCLUIDA","EXCLUIR",row["id"]); _done("Tarefa excluída.")

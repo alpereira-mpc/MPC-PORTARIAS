@@ -19,6 +19,13 @@ from services.agenda import (
 from services.afastamentos import MOTIVOS, eligible_substitutes, substitution_pending
 from services.ui_store import display_store
 from services.branding import module_title
+from services.ui_theme import (
+    badges,
+    render_html,
+    render_record,
+    status_tone,
+    trip_html,
+)
 
 
 def display_datetime(value, date_only=False):
@@ -399,6 +406,7 @@ def render_trip_details(trip, name, *, key, compromisso=None):
     def airport(leg):
         value = trip.get("aeroporto_" + leg) or trip.get("aeroporto")
         return trip.get("aeroporto_" + leg + "_outro") or trip.get("aeroporto_outro") if value == "Outro" else value
+    render_html(trip_html("Viagem aérea"))
     st.caption("✈️ Viagem aérea")
     if trip.get("ida_data"):
         text = "Ida: " + datetime.fromisoformat(trip["ida_data"]).strftime("%d/%m/%Y")
@@ -557,17 +565,37 @@ def render(store=None, principal=None):
         for row in rows:
             with st.container(border=True):
                 if row.get("afastamento"):
-                    st.markdown(f"**AFASTAMENTO — {names.get(row['procurador_id'], row['procurador_id'])}**")
-                    st.write(f"{row['motivo']} · {row['data_inicio']} a {row['data_fim']}")
-                    if row.get("substituto_id"): st.write("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"])))
-                    if row.get("observacao"): st.write(row["observacao"])
-                    st.caption(row["status"])
+                    render_record(
+                        "AFASTAMENTO — " + str(names.get(row["procurador_id"], row["procurador_id"])),
+                        badges_html=badges(
+                            ("Afastamento", "neutral"),
+                            (row["status"], status_tone(row["status"])),
+                        ),
+                        secondary=f"{row['motivo']} · {row['data_inicio']} a {row['data_fim']}",
+                        meta=("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"]))) if row.get("substituto_id") else (row.get("observacao") or ""),
+                        accent="muted",
+                    )
+                    if row.get("observacao") and row.get("substituto_id"): st.write(row["observacao"])
                     if st.button("Abrir detalhes do afastamento", key="agenda_history_leave_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
                 else:
                     hour = "Dia inteiro" if row.get("sem_hora") else row["inicio"][11:16]
-                    st.markdown(f"**{display_datetime(row['inicio'], row.get('sem_hora'))} · {hour} · {TYPES[row['tipo']]} · {row.get('titulo') or row.get('processo')}**")
-                    st.write(" / ".join(names.get(p, str(p)) for p in row["procuradores"]))
-                    st.caption(f"{row.get('local', '')} · {row['situacao']}")
+                    title = row.get("titulo") or row.get("processo") or "Compromisso"
+                    situation = row.get("situacao") or ""
+                    render_record(
+                        title,
+                        badges_html=badges(
+                            (TYPES[row["tipo"]], "brand"),
+                            (situation, status_tone(situation)),
+                        ),
+                        secondary=display_datetime(row["inicio"], row.get("sem_hora")) + " · " + hour,
+                        meta=" · ".join(
+                            part for part in (
+                                " / ".join(names.get(p, str(p)) for p in row["procuradores"]),
+                                row.get("local") or "",
+                            ) if part
+                        ),
+                        accent="muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "brand",
+                    )
                     for procurador_id, trip in trips.get(row["id"], {}).items():
                         st.markdown("✈️ **Logística de viagem**")
                         st.write(names.get(procurador_id, str(procurador_id)))
@@ -701,13 +729,18 @@ def render(store=None, principal=None):
             st.markdown(f"#### {group}")
         if row.get("afastamento"):
             with st.container(border=True):
-                st.markdown(f"**AFASTAMENTO — {names.get(row['procurador_id'], row['procurador_id'])}**")
-                detail = f"{row['motivo']}{' · ' + row['motivo_outro'] if row.get('motivo_outro') else ''} · {display_datetime(row['inicio'], True)} a {datetime.fromisoformat(row['data_fim']).strftime('%d/%m/%Y')}"
-                st.write(detail)
-                if row.get("substituto_id"): st.write("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"])))
-                elif substitution_pending(row, people):
+                render_record(
+                    "AFASTAMENTO — " + str(names.get(row["procurador_id"], row["procurador_id"])),
+                    badges_html=badges(
+                        ("Afastamento", "neutral"),
+                        (row["status"], status_tone(row["status"])),
+                    ),
+                    secondary=f"{row['motivo']}{' · ' + row['motivo_outro'] if row.get('motivo_outro') else ''} · {display_datetime(row['inicio'], True)} a {datetime.fromisoformat(row['data_fim']).strftime('%d/%m/%Y')}",
+                    meta=("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"]))) if row.get("substituto_id") else "",
+                    accent="muted",
+                )
+                if not row.get("substituto_id") and substitution_pending(row, people):
                     st.warning("⚠ Substituto ainda não definido")
-                st.caption(row["status"])
                 if st.button("Editar afastamento", key="agenda_leave_edit_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
                 if row["status"] != "CANCELADO" and st.button("Cancelar afastamento", key="agenda_leave_cancel_" + row["id"]):
                     agenda.cancel_leave(row["id"]); audit_agenda("AFASTAMENTO_CANCELADO", "CANCELAR", row["id"], entity_type="afastamento"); done("Afastamento cancelado; registro preservado.")
@@ -715,11 +748,26 @@ def render(store=None, principal=None):
         # From here down, every record is a compromisso and has its own fields.
         hour = "Dia inteiro" if row["sem_hora"] else row["inicio"][11:16]
         title = row.get("titulo") or row.get("processo")
+        past = row["situacao"] not in ("Realizado", "Cancelado") and date.fromisoformat(row["inicio"][:10]) < today
+        situation = row["situacao"]
+        accent = "muted" if situation == "Cancelado" else "warning" if past else "brand"
         with st.container(border=True):
-            st.markdown(f"**{hour} · {TYPES[row['tipo']]} · {title}**")
-            st.write(" / ".join(names.get(p, str(p)) for p in row["procuradores"]))
-            st.caption(f"{row['local']} · {row['situacao']}")
-            if row["situacao"] not in ("Realizado", "Cancelado") and date.fromisoformat(row["inicio"][:10]) < today:
+            render_record(
+                title or "Compromisso",
+                badges_html=badges(
+                    (TYPES[row["tipo"]], "brand"),
+                    (situation, status_tone(situation)),
+                ),
+                secondary=f"{hour} · {TYPES[row['tipo']]}",
+                meta=" · ".join(
+                    part for part in (
+                        " / ".join(names.get(p, str(p)) for p in row["procuradores"]),
+                        row.get("local") or "",
+                    ) if part
+                ),
+                accent=accent,
+            )
+            if past:
                 st.warning("⚠ Compromisso passado ainda não encerrado")
             with st.expander("Detalhes e ações"):
                 st.write("Início:", display_datetime(row["inicio"], row["sem_hora"]))

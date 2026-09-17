@@ -1,7 +1,6 @@
 """Internal alerts UI. Bell in the sidebar; full view is a special overlay."""
 
 from datetime import date
-from html import escape
 import time
 import streamlit as st
 
@@ -23,6 +22,7 @@ from services.alerts import (
 from services.audit import format_local
 from services.pending import PAGE_SIZE, visible_cabinets
 from services.pending_ui import open_origin
+from services.ui_theme import badge, badges, record_html, render_html, render_record, status_tone
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
@@ -74,29 +74,19 @@ def _open_label(item):
 
 
 def _bell_item_markdown(item):
-    colors = {
-        CRITICO: "#c62828",
-        ALTO: "#e65100",
-        ATENCAO: "#e65100",
-        INFORMATIVO: "#1565c0",
-    }
-    color = colors.get(item.severity, "#31333F")
-    context = escape((item.description or "").strip() or "—")
     meta_parts = [item.gabinete, _date_text(item)]
     if item.source_module == "agenda":
         local = (item.metadata or {}).get("local")
         if local and local.strip():
             meta_parts.append(local.strip())
-    meta = escape(" · ".join(part for part in meta_parts if part))
-    title = escape(item.title or "")
-    severity = escape(item.severity)
-    return (
-        '<div style="line-height:1.35">'
-        f'<div><span style="color:{color};font-weight:600">{severity}</span>'
-        f" — {title}</div>"
-        f'<div style="margin-top:.12rem;opacity:.88">{context}</div>'
-        f'<div style="margin-top:.08rem;font-size:.92em;opacity:.72">{meta}</div>'
-        "</div>"
+    meta = " · ".join(part for part in meta_parts if part)
+    return record_html(
+        item.title or "",
+        badges_html=badge(item.severity, status_tone(item.severity)),
+        secondary=item.description or "—",
+        meta=meta,
+        accent=status_tone(item.severity),
+        boxed=True,
     )
 
 
@@ -263,11 +253,19 @@ def render(store, principal):
     st.caption(f"{len(items)} alerta(s) · página {int(page)} de {pages}")
     for offset, item in enumerate(view):
         with st.container(border=True):
-            st.markdown(_severity_label(item.severity))
-            st.markdown(f"**{item.title}**")
-            st.write(item.description)
-            st.caption(
-                f"{_module_label(item.source_module)} · {item.gabinete} · {_date_text(item)}"
+            render_record(
+                item.title,
+                badges_html=badges(
+                    (item.severity, status_tone(item.severity)),
+                    (_module_label(item.source_module), "neutral"),
+                ),
+                secondary=item.description,
+                meta=" · ".join(
+                    part
+                    for part in (_module_label(item.source_module), item.gabinete, _date_text(item))
+                    if part
+                ),
+                accent=status_tone(item.severity),
             )
             if st.button(_open_label(item), key=f"alert_open_{start + offset}"):
                 open_alert_origin(item)

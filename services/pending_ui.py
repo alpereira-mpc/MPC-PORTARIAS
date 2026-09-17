@@ -14,6 +14,7 @@ from services.pending import (
     summarize,
     visible_cabinets,
 )
+from services.ui_theme import badges, record_html, render_records, status_tone
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
@@ -159,6 +160,30 @@ def render(store, principal):
     start = (int(page) - 1) * PAGE_SIZE
     view = items[start : start + PAGE_SIZE]
     st.caption(f"{len(items)} pendência(s) · página {int(page)} de {pages}")
+    module_names = dict(MODULE_OPTIONS)
+    render_records(
+        [
+            record_html(
+                row.title,
+                badges_html=badges(
+                    (row.urgency, status_tone(row.urgency)),
+                    (module_names.get(row.source_module, row.navigation), "neutral"),
+                ),
+                secondary=row.subtitle or row.navigation,
+                meta=" · ".join(
+                    part
+                    for part in (
+                        _date_text(row.due_date),
+                        row.gabinete if row.gabinete and row.gabinete != "—" else "",
+                        row.status_original,
+                    )
+                    if part
+                ),
+                accent=status_tone(row.urgency),
+            )
+            for row in view
+        ]
+    )
     st.dataframe(
         [
             {

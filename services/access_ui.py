@@ -7,6 +7,7 @@ from services.access import require_permission
 from services.audit import aplicar_exclusao_usuario, aplicar_usuario
 from services.oficios import GABINETES
 from services.branding import module_title
+from services.ui_theme import render_html, section_label
 
 ADMIN_SECTIONS = ("Usuários", "Acessos e Auditoria", "Sistema")
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
@@ -116,6 +117,7 @@ def render(store, principal):
         st.success(st.session_state.pop("acesso_message"))
     if st.session_state.pop("acesso_select_new", False):
         st.session_state["acesso_pick"] = 0
+    section_label("Usuários")
     st.dataframe(
         [
             {
@@ -288,38 +290,40 @@ def render(store, principal):
         elif last_admin:
             st.caption("Não é possível excluir o último administrador ativo.")
         elif st.session_state.get("acesso_delete_id") == selected:
-            st.error("Exclusão definitiva")
-            st.write("Será excluído: **" + current["nome"] + "** · " + current["email"])
-            confirmed = st.checkbox(
-                "Confirmo a exclusão definitiva",
-                key="acesso_delete_confirm_" + str(selected),
-            )
-            typed = st.text_input(
-                "Digite EXCLUIR para confirmar",
-                key="acesso_delete_typed_" + str(selected),
-            )
-            cancel, destroy = st.columns(2)
-            with cancel:
-                if st.button("Cancelar exclusão"):
-                    st.session_state.pop("acesso_delete_id", None)
-                    st.rerun()
-            with destroy:
-                if st.button("Confirmar exclusão"):
-                    if not confirmed or typed.strip() != "EXCLUIR":
-                        st.error(
-                            "Marque a confirmação e digite EXCLUIR para excluir o usuário."
-                        )
-                    else:
-                        try:
-                            aplicar_exclusao_usuario(store, principal, selected)
-                        except ValueError as exc:
-                            st.error(str(exc))
+            with st.container(border=True):
+                render_html('<div class="mpc-danger-zone" hidden></div>')
+                st.error("Exclusão definitiva")
+                st.write("Será excluído: **" + current["nome"] + "** · " + current["email"])
+                confirmed = st.checkbox(
+                    "Confirmo a exclusão definitiva",
+                    key="acesso_delete_confirm_" + str(selected),
+                )
+                typed = st.text_input(
+                    "Digite EXCLUIR para confirmar",
+                    key="acesso_delete_typed_" + str(selected),
+                )
+                cancel, destroy = st.columns(2)
+                with cancel:
+                    if st.button("Cancelar exclusão"):
+                        st.session_state.pop("acesso_delete_id", None)
+                        st.rerun()
+                with destroy:
+                    if st.button("Confirmar exclusão"):
+                        if not confirmed or typed.strip() != "EXCLUIR":
+                            st.error(
+                                "Marque a confirmação e digite EXCLUIR para excluir o usuário."
+                            )
                         else:
-                            st.session_state.pop("acesso_delete_id", None)
-                            st.session_state.pop("_access_cache", None)
-                            st.session_state["acesso_select_new"] = True
-                            st.session_state["acesso_message"] = "Usuário excluído."
-                            st.rerun()
+                            try:
+                                aplicar_exclusao_usuario(store, principal, selected)
+                            except ValueError as exc:
+                                st.error(str(exc))
+                            else:
+                                st.session_state.pop("acesso_delete_id", None)
+                                st.session_state.pop("_access_cache", None)
+                                st.session_state["acesso_select_new"] = True
+                                st.session_state["acesso_message"] = "Usuário excluído."
+                                st.rerun()
         elif st.button("Excluir usuário"):
             st.session_state["acesso_delete_id"] = selected
             st.rerun()

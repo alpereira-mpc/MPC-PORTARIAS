@@ -9,6 +9,7 @@ from database.tramita_reports import TramitaReportsStore
 from services.access import require_permission
 from services.audit import registrar_evento
 from services.tramita_reports import file_hash, parse_movements, parse_stock
+from services.ui_theme import section_label
 
 
 MONTHS = (
@@ -86,6 +87,7 @@ def production(store, principal=None):
     summary = read(("production_summary", competence), lambda: reports.production_summary(competence))
     totals = {key: sum(row[key] for row in summary.values()) for key in ("entries", "exits", "opinions", "quotas", "days", "timed")}
     average = totals["days"] / totals["timed"] if totals["timed"] else None
+    section_label("Indicadores")
     for col, label, value in zip(st.columns(5), ("Entradas", "Saídas", "Pareceres", "Cotas", "Tempo médio até devolução"),
                                 (totals["entries"], totals["exits"], totals["opinions"], totals["quotas"], f"{average:.1f} dias" if average is not None else "—")):
         col.metric(label, value)
@@ -136,6 +138,7 @@ def current_view(store, principal=None):
     timed = sum(row["timed"] for row in summary)
     st.caption("Dados atualizados em " + datetime.fromisoformat(snapshot).strftime("%d/%m/%Y"))
     values = (sum(row["n"] for row in summary), len(people), f"{days / timed:.1f} dias" if timed else "—", sum(row["over30"] for row in summary))
+    section_label("Indicadores")
     for col, label, value in zip(st.columns(4), ("Processos atualmente no MPC-PB", "Procuradores com processos", "Tempo médio com procurador", "Processos há mais de 30 dias"), values):
         col.metric(label, value)
     selected = st.selectbox("Procurador", ["Todos", *people], key="rel_stock_procurador")

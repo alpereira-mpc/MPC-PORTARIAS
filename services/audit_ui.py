@@ -14,6 +14,7 @@ from services.audit import (
     period_bounds,
     user_overview,
 )
+from services.ui_theme import section_label
 
 
 PERIODS = (
@@ -52,6 +53,7 @@ def _module_label(code):
 def _render_overview(store, principal):
     data = overview(store, principal)
     st.caption("Indicadores calculados no fuso institucional America/Recife. Logs em UTC.")
+    section_label("Indicadores")
     today, week, month = st.columns(3)
     with today:
         st.markdown("**Hoje**")

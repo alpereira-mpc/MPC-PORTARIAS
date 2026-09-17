@@ -14,6 +14,8 @@ SIDEBAR_LOGO_WIDTH = 160
 HEADER_WIDTH = 720
 APP_NAME = "Ferramentas MPC-PB"
 APP_SHORT_SUBTITLE = "Portal Integrado de Gestão e Apoio Operacional"
+# Same value as .streamlit/config.toml primaryColor — the institutional MPC-PB red.
+BRAND_RED = "#9B1724"
 APP_SUBTITLE = (
     APP_SHORT_SUBTITLE + " do Ministério Público de Contas da Paraíba"
 )

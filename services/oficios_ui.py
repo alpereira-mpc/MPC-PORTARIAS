@@ -17,6 +17,7 @@ from services.oficios import (
 )
 from services.ui_store import display_store
 from services.branding import module_title
+from services.ui_theme import badges, render_record, section_label, status_tone
 
 
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
@@ -528,8 +529,16 @@ def edit_draft(identifier):
 
 
 def details(service, r):
-    st.write(label(r))
-    st.write("Status: " + r["status"])
+    direction = "Enviado" if r.get("direcao") == "ENVIADO" else "Recebido"
+    render_record(
+        label(r),
+        badges_html=badges(
+            (direction, "brand" if r.get("direcao") == "ENVIADO" else "info"),
+            (r["status"], status_tone(r["status"])),
+        ),
+        meta="Data: " + date.fromisoformat(r["data"]).strftime("%d/%m/%Y"),
+        accent=status_tone(r["status"]) if r["status"] in ("Cancelado", "Arquivado", "Concluído") else "brand",
+    )
     for key, title in [
         ("signatario", "Signatário"),
         ("remetente", "Remetente"),
@@ -752,13 +761,34 @@ def listing(service, people, direction=None, tracking=False, filters=None):
         return
     for r in rows:
         with st.container(border=True):
-            st.write(label(r))
-            st.caption(
-                r["status"]
-                + " · "
-                + date.fromisoformat(r["data"]).strftime("%d/%m/%Y")
-                + " · "
-                + attention(r)
+            attention_text = attention(r)
+            direction = "Enviado" if r.get("direcao") == "ENVIADO" else "Recebido"
+            marks = badges(
+                (direction, "brand" if r.get("direcao") == "ENVIADO" else "info"),
+                (r["status"], status_tone(r["status"])),
+            )
+            if "vencido" in attention_text.casefold():
+                marks += badges(("Prazo vencido", "danger"))
+                accent = "danger"
+            elif "próximo" in attention_text.casefold():
+                marks += badges(("Prazo próximo", "warning"))
+                accent = "warning"
+            elif r["status"] in ("Cancelado", "Arquivado", "Concluído", "Respondido"):
+                accent = status_tone(r["status"])
+            else:
+                accent = "brand"
+            render_record(
+                label(r),
+                badges_html=marks,
+                meta=" · ".join(
+                    part
+                    for part in (
+                        date.fromisoformat(r["data"]).strftime("%d/%m/%Y"),
+                        attention_text,
+                    )
+                    if part
+                ),
+                accent=accent,
             )
             if st.button("Abrir detalhes", key="open_oficio_" + r["id"]):
                 st.session_state["oficio_detail"] = r["id"]
@@ -899,10 +929,15 @@ def render(store=None, principal=None):
             overview_filters = render_filters(submit_label="Consultar ofícios")
             if overview_filters["submitted"]:
                 listing(service, people, filters=overview_filters)
-            st.write("Últimas movimentações")
+            section_label("Últimas movimentações")
             for row in read_list(service, limit=5):
-                st.write(label(row))
-                st.caption(row["status"] + " · " + row["atualizada"][:10])
+                with st.container(border=True):
+                    render_record(
+                        label(row),
+                        badges_html=badges((row["status"], status_tone(row["status"]))),
+                        meta=row["atualizada"][:10],
+                        accent="brand",
+                    )
         elif page == "Novo Ofício":
             editor(service, people)
         elif page == "Recebidos":

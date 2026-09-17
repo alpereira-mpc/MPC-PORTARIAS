@@ -4,6 +4,7 @@ import hashlib
 import streamlit as st
 from services.access import require_permission
 from services.branding import module_title
+from services.ui_theme import badges, render_record, status_tone
 from services.memorandos import (
     MIME_DOCX,
     MIME_PDF,
@@ -483,11 +484,16 @@ def _listing(service, principal):
     if focused:
         shown.add(focused["id"])
         with st.expander(focused["cadeia"] + " · " + focused["situacao"], expanded=True):
-            st.write(
-                f"{focused['data_inicio']} a {focused['data_fim']} · {focused['gabinete_snapshot']} · {focused['motivo']}"
+            render_record(
+                focused["cadeia"],
+                badges_html=badges(
+                    (focused.get("status") or focused["situacao"], status_tone(focused.get("status") or focused["situacao"])),
+                    (focused["situacao"], status_tone(focused["situacao"])),
+                ),
+                secondary=f"{focused['data_inicio']} a {focused['data_fim']} · {focused['gabinete_snapshot']} · {focused['motivo']}",
+                meta=("Número oficial: " + focused["numero_oficial"]) if focused.get("numero_oficial") else "",
+                accent=status_tone(focused.get("status") or focused["situacao"]),
             )
-            if focused.get("numero_oficial"):
-                st.caption("Número oficial: " + focused["numero_oficial"])
             _details(service, focused, principal)
     if not rows and not focused:
         st.info("Nenhum memorando encontrado.")
@@ -495,11 +501,17 @@ def _listing(service, principal):
         if row["id"] in shown:
             continue
         with st.expander(row["cadeia"] + " · " + row["situacao"], expanded=False):
-            st.write(
-                f"{row['data_inicio']} a {row['data_fim']} · {row['gabinete_snapshot']} · {row['motivo']}"
+            accent = "muted" if (row.get("status") == "CANCELADO" or row["situacao"] in ("ENCERRADA", "CANCELADA")) else status_tone(row["situacao"])
+            render_record(
+                row["cadeia"],
+                badges_html=badges(
+                    (row.get("status"), status_tone(row.get("status"))) if row.get("status") else None,
+                    (row["situacao"], status_tone(row["situacao"])),
+                ),
+                secondary=f"{row['data_inicio']} a {row['data_fim']} · {row['gabinete_snapshot']} · {row['motivo']}",
+                meta=("Número oficial: " + row["numero_oficial"]) if row.get("numero_oficial") else "",
+                accent=accent,
             )
-            if row["numero_oficial"]:
-                st.caption("Número oficial: " + row["numero_oficial"])
             _details(service, row, principal)
 
 
