@@ -63,6 +63,7 @@ def test_stripe_and_header_helpers_are_available():
         EXPANDER_BORDER,
         EXPANDER_HOVER,
         SIDEBAR_BG,
+        SURFACE_PRIMARY_BG,
         card_container,
         record_html,
         stripe_index,
@@ -151,20 +152,21 @@ def test_stripe_and_header_helpers_are_available():
     assert EXPANDER_BG in css
     assert EXPANDER_BORDER in css
     assert EXPANDER_HOVER in css
-    assert "--mpc-empty-state-bg:var(--mpc-surface-primary-bg)" in compact
-    assert "--mpc-empty-state-border:var(--mpc-surface-primary-border)" in compact
+    assert "--mpc-empty-state-bg:" + EMPTY_STATE_BG in compact
+    assert "--mpc-empty-state-border:" + EMPTY_STATE_BORDER in compact
     assert "--mpc-surface-primary-bg:var(--mpc-card-institutional-bg)" in compact
     assert "--mpc-surface-primary-border:var(--mpc-card-institutional-border)" in compact
     assert "--mpc-surface-control-bg:var(--mpc-control-bg)" in compact
-    assert EMPTY_STATE_BG == CARD_INSTITUTIONAL_BG == "#FBF4F6"
-    assert EMPTY_STATE_BORDER == CARD_INSTITUTIONAL_BORDER == "#E7CDD3"
+    assert EMPTY_STATE_BG == "#F7F1F2"
+    assert EMPTY_STATE_BORDER == "#E3D4D7"
+    assert SURFACE_PRIMARY_BG == CARD_INSTITUTIONAL_BG == "#FBF4F6"
     assert "stAlertContentInfo" in css
     assert "[data-testid=\"stMetric\"]{\nbackground:var(--mpc-surface-primary-bg)" in css
-    assert "[data-testid=\"stVerticalBlockBorderWrapper\"]{\nbackground:var(--mpc-surface-primary-bg)" in css
-    assert "mpc-form-mark){\nbackground:var(--mpc-surface-primary-bg)" in css
-    assert "mpc-filter-mark){\nbackground:var(--mpc-surface-primary-bg)" in css
-    assert 'stMain"] [data-testid="stExpander"] details{\nbackground:var(--mpc-surface-primary-bg)' in css
-    assert 'stSidebar"] [data-testid="stExpander"] details{\nbackground:var(--mpc-control-bg)' in css
+    assert "[data-testid=\"stVerticalBlockBorderWrapper\"]{\nbackground:var(--mpc-control-bg)" in css
+    assert "mpc-form-mark){\nbackground:var(--mpc-control-bg)" in css
+    assert "mpc-filter-mark){\nbackground:var(--mpc-control-bg)" in css
+    assert 'stExpander"] details{\nbackground:var(--mpc-control-bg)' in css
+    assert 'stExpander"] details{\nbackground:var(--mpc-surface-primary-bg)' not in css
     assert CARD_OPERATIONAL_BG in css
     assert CARD_INSTITUTIONAL_BG in css
     assert "#FCEFF1" not in compact

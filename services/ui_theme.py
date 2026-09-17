@@ -31,8 +31,8 @@ CONTROL_BG = EXPANDER_BG
 CONTROL_BORDER = EXPANDER_BORDER
 CONTROL_HOVER = EXPANDER_HOVER
 CONTROL_DISABLED = "#EEECEB"
-EMPTY_STATE_BG = SURFACE_PRIMARY_BG
-EMPTY_STATE_BORDER = SURFACE_PRIMARY_BORDER
+EMPTY_STATE_BG = "#F7F1F2"
+EMPTY_STATE_BORDER = "#E3D4D7"
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
 SURFACE_SOFT = "#FFFFFF"
@@ -136,8 +136,8 @@ def _css():
 --mpc-surface-control-bg:var(--mpc-control-bg);
 --mpc-surface-control-border:var(--mpc-control-border);
 --mpc-surface-control-hover:var(--mpc-control-hover);
---mpc-empty-state-bg:var(--mpc-surface-primary-bg);
---mpc-empty-state-border:var(--mpc-surface-primary-border);
+--mpc-empty-state-bg:{EMPTY_STATE_BG};
+--mpc-empty-state-border:{EMPTY_STATE_BORDER};
 --mpc-expander:var(--mpc-control-bg);
 --mpc-expander-border:var(--mpc-control-border);
 --mpc-expander-hover:var(--mpc-control-hover);
@@ -342,8 +342,8 @@ cursor:not-allowed;
 color:var(--mpc-text-2);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]{{
-background:var(--mpc-surface-primary-bg);
-border:1px solid var(--mpc-surface-primary-border) !important;
+background:var(--mpc-control-bg);
+border:1px solid var(--mpc-control-border) !important;
 border-radius:var(--mpc-radius);
 box-shadow:var(--mpc-shadow);
 }}
@@ -415,13 +415,13 @@ background:var(--mpc-danger-soft) !important;
 background:var(--mpc-muted-bg) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-neutral){{
-background:var(--mpc-surface-primary-bg) !important;
+background:var(--mpc-control-bg) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-filter-mark),
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-filter-mark){{
-background:var(--mpc-surface-primary-bg) !important;
-background-color:var(--mpc-surface-primary-bg) !important;
-border:1px solid var(--mpc-surface-primary-border) !important;
+background:var(--mpc-control-bg) !important;
+background-color:var(--mpc-control-bg) !important;
+border:1px solid var(--mpc-control-border) !important;
 border-radius:var(--mpc-radius);
 box-shadow:none;
 }}
@@ -464,9 +464,9 @@ min-width:0;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark),
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-form-mark){{
-background:var(--mpc-surface-primary-bg) !important;
-background-color:var(--mpc-surface-primary-bg) !important;
-border:1px solid var(--mpc-surface-primary-border) !important;
+background:var(--mpc-control-bg) !important;
+background-color:var(--mpc-control-bg) !important;
+border:1px solid var(--mpc-control-border) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-danger-zone){{
 border-left:3px solid var(--mpc-danger) !important;
@@ -495,13 +495,7 @@ section[data-testid="stSidebar"] [data-testid="stExpander"]{{
 background:transparent;
 box-shadow:none;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] details{{
-background:var(--mpc-surface-primary-bg) !important;
-border:1px solid var(--mpc-surface-primary-border) !important;
-border-radius:var(--mpc-radius) !important;
-box-shadow:none !important;
-overflow:hidden;
-}}
+section[data-testid="stMain"] [data-testid="stExpander"] details,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details{{
 background:var(--mpc-control-bg) !important;
 border:1px solid var(--mpc-control-border) !important;
@@ -509,14 +503,7 @@ border-radius:var(--mpc-radius) !important;
 box-shadow:none !important;
 overflow:hidden;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] summary{{
-background:var(--mpc-surface-primary-bg) !important;
-color:var(--mpc-text) !important;
-font-weight:600;
-overflow-wrap:anywhere;
-white-space:normal;
-transition:border-color .15s ease !important;
-}}
+section[data-testid="stMain"] [data-testid="stExpander"] summary,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary{{
 background:var(--mpc-control-bg) !important;
 color:var(--mpc-text) !important;
@@ -527,26 +514,19 @@ transition:background-color .15s ease !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] summary:hover,
 section[data-testid="stMain"] [data-testid="stExpander"] summary:focus-visible,
-section[data-testid="stMain"] [data-testid="stExpander"] summary:active{{
-background:var(--mpc-surface-primary-bg) !important;
-border-color:rgba(155,23,36,.22) !important;
-}}
+section[data-testid="stMain"] [data-testid="stExpander"] summary:active,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary:focus-visible,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary:active{{
 background:var(--mpc-control-hover) !important;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary{{
-background:var(--mpc-surface-primary-bg) !important;
-}}
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary{{
 background:var(--mpc-control-bg) !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:hover,
 section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:focus-visible,
-section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:active{{
-background:var(--mpc-surface-primary-bg) !important;
-}}
+section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:active,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:hover,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:focus-visible,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:active{{
@@ -568,10 +548,7 @@ color:var(--mpc-text) !important;
 fill:currentColor !important;
 flex-shrink:0;
 }}
-section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
-background:var(--mpc-surface-primary-bg) !important;
-border-top:1px solid var(--mpc-surface-primary-border) !important;
-}}
+section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"],
 section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
 background:var(--mpc-control-bg) !important;
 border-top:1px solid var(--mpc-control-border) !important;
