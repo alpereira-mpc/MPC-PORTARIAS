@@ -96,6 +96,8 @@ def test_stripe_and_header_helpers_are_available():
     assert "object-fit:contain" in styles.replace(" ", "")
     assert "margin:-1.35rem" not in styles
     assert "mix-blend-mode:multiply" not in getsource(branding.render_sidebar_brand)
+    assert "background-image:url(" in getsource(branding.render_sidebar_brand).replace(" ", "")
+    assert "st-key-sidebar_home'] button:hover" in getsource(branding.render_sidebar_brand)
     listing = getsource(oficios_ui.listing)
     assert listing.index("for index, r in enumerate(rows):") < listing.index("_details_if_open")
     assert "card_container(" in listing
@@ -129,6 +131,12 @@ def test_stripe_and_header_helpers_are_available():
     assert '[data-testid="stDownloadButton"]button' in compact
     assert '[data-testid="stFormSubmitButton"]button' in compact
     assert '[data-testid="stButton"]button' in compact
+    assert "background-color:var(--mpc-red)!important" in compact
+    assert '[data-testid="stButton"]button{background:var(--mpc-red)' not in compact
+    logo_btn = compact[compact.find('[class*="st-key-sidebar_home"]button') :]
+    logo_btn = logo_btn[: logo_btn.find("[data-testid=\"stNumberInput\"]button")]
+    assert "background-color:transparent" in logo_btn
+    assert "background:transparent" not in logo_btn.replace("background-color:transparent", "")
     assert 'button[kind="secondary"]{background:var(--mpc-white)' not in compact
     assert 'section[data-testid="stMain"][data-testid="stExpander"]details' in compact
     assert "background-color.15sease" in compact

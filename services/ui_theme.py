@@ -176,17 +176,11 @@ border-right:1px solid var(--mpc-border);
 background:{SIDEBAR_BG} !important;
 background-color:{SIDEBAR_BG} !important;
 }}
-section[data-testid="stSidebar"] div.st-key-sidebar_home,
-section[data-testid="stSidebar"] div.st-key-sidebar_home [data-testid="stButton"]{{
-background:{SIDEBAR_BG} !important;
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"],
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] [data-testid="stButton"]{{
 background-color:{SIDEBAR_BG} !important;
 box-shadow:none !important;
 border:0 !important;
-}}
-section[data-testid="stSidebar"] div.st-key-sidebar_home button{{
-background-color:transparent !important;
-border:0 !important;
-box-shadow:none !important;
 }}
 section[data-testid="stSidebar"] [data-testid="stCaption"]{{
 color:var(--mpc-text-2);
@@ -577,7 +571,6 @@ font-weight:650;
 [data-testid="stFormSubmitButton"] button,
 button[kind="primary"],
 [data-testid="stBaseButton-primary"]{{
-background:var(--mpc-red) !important;
 background-color:var(--mpc-red) !important;
 border:1px solid var(--mpc-red) !important;
 color:{SURFACE_WHITE} !important;
@@ -597,7 +590,6 @@ font-weight:600 !important;
 [data-testid="stFormSubmitButton"] button:hover:not(:disabled),
 button[kind="primary"]:hover:not(:disabled),
 [data-testid="stBaseButton-primary"]:hover:not(:disabled){{
-background:var(--mpc-red-hover) !important;
 background-color:var(--mpc-red-hover) !important;
 border-color:var(--mpc-red-hover) !important;
 color:{SURFACE_WHITE} !important;
@@ -607,7 +599,7 @@ color:{SURFACE_WHITE} !important;
 [data-testid="stFormSubmitButton"] button:active:not(:disabled),
 button[kind="primary"]:active:not(:disabled),
 [data-testid="stBaseButton-primary"]:active:not(:disabled){{
-background:var(--mpc-red-hover) !important;
+background-color:var(--mpc-red-hover) !important;
 border-color:var(--mpc-red-hover) !important;
 }}
 [data-testid="stButton"] button:disabled,
@@ -618,12 +610,30 @@ button[kind="primary"]:disabled,
 opacity:.55;
 cursor:not-allowed;
 }}
-section[data-testid="stSidebar"] div.st-key-sidebar_home button{{
-background-color:transparent !important;
-background:transparent !important;
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"],
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] [data-testid="stButton"]{{
+background-color:{SIDEBAR_BG} !important;
 border:0 !important;
 box-shadow:none !important;
-color:inherit !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button,
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:hover,
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:hover:not(:disabled),
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:active:not(:disabled),
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:focus,
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:focus-visible,
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:disabled{{
+background-color:transparent !important;
+border:0 !important;
+box-shadow:none !important;
+color:transparent !important;
+opacity:1 !important;
+min-height:0;
+padding:0 !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button p{{
+color:transparent !important;
+font-size:0 !important;
 }}
 [data-testid="stNumberInput"] button,
 [data-testid="stNumberInputStepUp"],
