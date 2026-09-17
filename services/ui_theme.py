@@ -20,9 +20,9 @@ CARD_INSTITUTIONAL_BORDER = "#E7CDD3"
 SURFACE_PRIMARY_BG = CARD_INSTITUTIONAL_BG
 SURFACE_PRIMARY_BORDER = CARD_INSTITUTIONAL_BORDER
 CARD_SURFACE_A = CARD_OPERATIONAL_BG
-CARD_SURFACE_B = CARD_OPERATIONAL_BG
+CARD_SURFACE_B = "#FCEFF1"
 CARD_BORDER_A = CARD_OPERATIONAL_BORDER
-CARD_BORDER_B = CARD_OPERATIONAL_BORDER
+CARD_BORDER_B = "#E9C7CC"
 SIDEBAR_BG = "#F3F4F8"
 EXPANDER_BG = "#F5F2F1"
 EXPANDER_BORDER = "#D9D1CE"
@@ -721,11 +721,8 @@ padding:.75rem .9rem .7rem;
 .mpc-stack .mpc-record--muted,.mpc-record-boxed.mpc-record--muted{{border-left-color:var(--mpc-border-md);background:var(--mpc-soft);}}
 .mpc-stack .mpc-record--neutral,.mpc-record-boxed.mpc-record--neutral{{border-left-color:var(--mpc-border-md);}}
 .mpc-stack .mpc-record--info,.mpc-record-boxed.mpc-record--info{{border-left-color:var(--mpc-info);}}
-.mpc-stack .mpc-stripe-a,.mpc-stack .mpc-card-even,.mpc-record-boxed.mpc-stripe-a,.mpc-record-boxed.mpc-card-even,
-.mpc-stack .mpc-stripe-b,.mpc-stack .mpc-card-odd,.mpc-record-boxed.mpc-stripe-b,.mpc-record-boxed.mpc-card-odd{{
-background:var(--mpc-card-operational-bg);
-border-color:var(--mpc-card-operational-border);
-}}
+.mpc-stack .mpc-stripe-a,.mpc-stack .mpc-card-even,.mpc-record-boxed.mpc-stripe-a,.mpc-record-boxed.mpc-card-even{{background:var(--mpc-card-a);}}
+.mpc-stack .mpc-stripe-b,.mpc-stack .mpc-card-odd,.mpc-record-boxed.mpc-stripe-b,.mpc-record-boxed.mpc-card-odd{{background:var(--mpc-card-b);border-color:var(--mpc-card-border-b);}}
 .mpc-stack .mpc-surface-brand,.mpc-record-boxed.mpc-surface-brand{{background:var(--mpc-brand-soft);}}
 .mpc-stack .mpc-surface-success,.mpc-record-boxed.mpc-surface-success{{background:var(--mpc-success-soft);}}
 .mpc-stack .mpc-surface-warning,.mpc-record-boxed.mpc-surface-warning{{background:var(--mpc-warning-soft);}}
@@ -815,7 +812,30 @@ border:1px solid transparent;
 .mpc-badge--warning{{background:var(--mpc-warning-soft);color:var(--mpc-warning);border-color:rgba(181,129,18,.22);}}
 .mpc-badge--danger{{background:var(--mpc-danger-soft);color:var(--mpc-danger);border-color:rgba(176,42,42,.2);}}
 .mpc-badge--muted,.mpc-badge--neutral{{background:var(--mpc-muted-bg);color:var(--mpc-text-2);border-color:var(--mpc-border);}}
-.mpc-badge--info{{background:var(--mpc-info-soft);color:var(--mpc-info);border-color:rgba(61,90,128,.18);}}
+.mpc-badge--info{{background:#EEE8E6;color:var(--mpc-text);border-color:#DED5D2;}}
+section[data-testid="stSidebar"] .mpc-record-boxed,
+section[data-testid="stSidebar"] .mpc-record-boxed.mpc-surface-brand,
+section[data-testid="stSidebar"] .mpc-record-boxed.mpc-surface-success,
+section[data-testid="stSidebar"] .mpc-record-boxed.mpc-surface-warning,
+section[data-testid="stSidebar"] .mpc-record-boxed.mpc-surface-danger,
+section[data-testid="stSidebar"] .mpc-record-boxed.mpc-surface-muted,
+section[data-testid="stSidebar"] .mpc-record-boxed.mpc-surface-info,
+section[data-testid="stSidebar"] .mpc-record-boxed.mpc-stripe-a,
+section[data-testid="stSidebar"] .mpc-record-boxed.mpc-stripe-b{{
+background:#F5F2F1 !important;
+border:1px solid #DED5D2 !important;
+border-left:3px solid var(--mpc-red) !important;
+box-shadow:none;
+}}
+section[data-testid="stSidebar"] .mpc-record-title,
+section[data-testid="stSidebar"] .mpc-record-secondary,
+section[data-testid="stSidebar"] .mpc-record-meta{{
+color:var(--mpc-text);
+}}
+section[data-testid="stSidebar"] .mpc-record-secondary,
+section[data-testid="stSidebar"] .mpc-record-meta{{
+color:var(--mpc-text-2);
+}}
 .mpc-section-label{{
 margin:1.05rem 0 .4rem;
 font-size:.78rem;
@@ -860,14 +880,18 @@ section[data-testid="stMain"] [class*="st-key-mpc_card_operational"] [data-testi
 section[data-testid="stMain"] [class*="st-key-mpc_card_a"],
 section[data-testid="stMain"] [class*="st-key-mpc_card_a"] > div,
 section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stVerticalBlockBorderWrapper"],
-section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stVerticalBlock"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stVerticalBlock"]{{
+background:{CARD_SURFACE_A} !important;
+background-color:{CARD_SURFACE_A} !important;
+border-color:{CARD_BORDER_A} !important;
+}}
 section[data-testid="stMain"] [class*="st-key-mpc_card_b"],
 section[data-testid="stMain"] [class*="st-key-mpc_card_b"] > div,
 section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stVerticalBlockBorderWrapper"],
 section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stVerticalBlock"]{{
-background:{CARD_OPERATIONAL_BG} !important;
-background-color:{CARD_OPERATIONAL_BG} !important;
-border-color:{CARD_OPERATIONAL_BORDER} !important;
+background:{CARD_SURFACE_B} !important;
+background-color:{CARD_SURFACE_B} !important;
+border-color:{CARD_BORDER_B} !important;
 }}
 section[data-testid="stMain"] [class*="st-key-mpc_card_danger"],
 section[data-testid="stMain"] [class*="st-key-mpc_card_danger"] > div,
@@ -1134,11 +1158,9 @@ def card_container(index, identity, *, critical=False, border=True):
     """Return the Streamlit container for an operational listing card.
 
     Streamlit exposes ``key`` as a ``st-key-`` CSS class on the real wrapper,
-    so the operational fill covers title, badges, actions and checkbox together.
-    ``index`` is kept for call-site compatibility and is not used for color.
+    so A/B backgrounds hit title, badges, actions and checkbox together.
     """
-    _ = index
-    variant = "danger" if critical else "operational"
+    variant = "danger" if critical else stripe_index(index)
     return st.container(border=border, key=f"mpc_card_{variant}_{identity}")
 
 

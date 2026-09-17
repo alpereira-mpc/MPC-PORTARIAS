@@ -101,6 +101,12 @@ def _editor(repo, store, principal):
     section_label("Observações")
     notes = st.text_area("Observações", value=old.get("observacoes", ""), key=prefix+"notes")
     submitted = st.button("Salvar alterações" if old else "Criar tarefa", type="primary", key=prefix+"submit")
+    if st.button("Cancelar", key=prefix+"cancel"):
+        for key in list(st.session_state):
+            if key.startswith(prefix):
+                st.session_state.pop(key, None)
+        st.session_state.pop("tarefas_edit", None)
+        st.rerun()
     if submitted:
         try:
             if due_time is not None:
@@ -157,9 +163,14 @@ def render(store, principal):
     repo=TarefasStore(store)
     st.title(module_title("tarefas", "TAREFAS")); st.caption("Organização pessoal de demandas, prazos e prioridades")
     if st.session_state.pop("tarefas_message",None): st.success("Alteração realizada.")
-    if st.button("+ Nova tarefa",type="primary"):
-        st.session_state["tarefas_edit"]={}; st.rerun()
-    if "tarefas_edit" in st.session_state: _editor(repo,store,principal); return
+    if st.button("+ Nova tarefa", type="primary", key="tarefas_new"):
+        st.session_state["tarefas_edit"] = {}
+        st.rerun()
+    if st.session_state.get("tarefas_open_id"):
+        st.session_state.pop("tarefas_edit", None)
+    if "tarefas_edit" in st.session_state:
+        _editor(repo, store, principal)
+        return
     counts=repo.situation_counts(principal.id); cols=st.columns(5)
     for col,key,label,tone in zip(cols,counts,("Atrasadas","Hoje","Próximas","Em andamento","Aguardando"),("danger","warning","info","brand","warning")):
         with col:

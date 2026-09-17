@@ -77,8 +77,9 @@ def test_stripe_and_header_helpers_are_available():
     assert CARD_OPERATIONAL_BORDER == "#D8DADD"
     assert CARD_INSTITUTIONAL_BG == "#FBF4F6"
     assert CARD_INSTITUTIONAL_BORDER == "#E7CDD3"
-    assert CARD_SURFACE_A == CARD_OPERATIONAL_BG
-    assert CARD_SURFACE_B == CARD_OPERATIONAL_BG
+    assert CARD_SURFACE_A == CARD_OPERATIONAL_BG == "#E6C7CC"
+    assert CARD_SURFACE_B == "#FCEFF1"
+    assert CARD_SURFACE_A != CARD_SURFACE_B
     assert CARD_OPERATIONAL_BG != CARD_INSTITUTIONAL_BG
     assert CARD_OPERATIONAL_BG != "#FFFFFF"
     assert CARD_INSTITUTIONAL_BG != "#FFFFFF"
@@ -93,12 +94,13 @@ def test_stripe_and_header_helpers_are_available():
     helper = getsource(card_container)
     assert "st.container" in helper
     assert "mpc_card_" in helper
-    assert "operational" in helper
-    assert "stripe_index" not in helper
+    assert "stripe_index" in helper
     assert "key=" in helper
     task_card = getsource(tarefas_ui._card)
     assert "card_container(" in task_card
     assert "task_" in task_card
+    assert 'key="tarefas_new"' in getsource(tarefas_ui.render)
+    assert 'key=prefix+"cancel"' in getsource(tarefas_ui._editor)
     styles = getsource(branding._brand_styles)
     assert "object-fit:contain" in styles.replace(" ", "")
     assert "margin:-1.35rem" not in styles
@@ -174,11 +176,12 @@ def test_stripe_and_header_helpers_are_available():
     assert 'stExpander"] details{\nbackground:var(--mpc-surface-primary-bg)' not in css
     assert CARD_OPERATIONAL_BG in css
     assert CARD_INSTITUTIONAL_BG in css
-    assert "#FCEFF1" not in compact
+    assert CARD_SURFACE_B in css
     assert "--mpc-card-operational-bg:" + CARD_OPERATIONAL_BG in compact
     assert "--mpc-card-institutional-bg:" + CARD_INSTITUTIONAL_BG in compact
     assert "background:var(--mpc-card-institutional-bg)!important" in compact
-    assert "st-key-mpc_card_operational" in css
+    assert "mpc-badge--info{background:#EEE8E6" in compact
+    assert "stSidebar\"] .mpc-record-boxed" in css
     assert 'st-key-mpc_card_a"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_b"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_operational"][data-testid="stExpander"]' not in compact
