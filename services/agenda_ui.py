@@ -579,7 +579,6 @@ def render(store=None, principal=None):
                         secondary=f"{row['motivo']} · {row['data_inicio']} a {row['data_fim']}",
                         meta=("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"]))) if row.get("substituto_id") else (row.get("observacao") or ""),
                         accent="muted",
-                        surface="muted",
                     )
                     if row.get("observacao") and row.get("substituto_id"): st.write(row["observacao"])
                     if st.button("Abrir detalhes do afastamento", key="agenda_history_leave_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
@@ -601,7 +600,6 @@ def render(store=None, principal=None):
                             ) if part
                         ),
                         accent="muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "brand",
-                        surface="muted" if situation == "Cancelado" else "success" if situation == "Realizado" else None,
                     )
                     for procurador_id, trip in trips.get(row["id"], {}).items():
                         st.markdown("✈️ **Logística de viagem**")
@@ -748,7 +746,6 @@ def render(store=None, principal=None):
                     secondary=f"{row['motivo']}{' · ' + row['motivo_outro'] if row.get('motivo_outro') else ''} · {display_datetime(row['inicio'], True)} a {datetime.fromisoformat(row['data_fim']).strftime('%d/%m/%Y')}",
                     meta=("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"]))) if row.get("substituto_id") else "",
                     accent="muted",
-                    surface="muted",
                 )
                 if not row.get("substituto_id") and substitution_pending(row, people):
                     st.warning("⚠ Substituto ainda não definido")
@@ -762,7 +759,6 @@ def render(store=None, principal=None):
         past = row["situacao"] not in ("Realizado", "Cancelado") and date.fromisoformat(row["inicio"][:10]) < today
         situation = row["situacao"]
         accent = "muted" if situation == "Cancelado" else "warning" if past else "brand"
-        surface = "muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "warning" if past else None
         with st.container(border=True):
             stripe_mark(index)
             render_record(
@@ -779,7 +775,6 @@ def render(store=None, principal=None):
                     ) if part
                 ),
                 accent=accent,
-                surface=surface,
             )
             if past:
                 st.warning("⚠ Compromisso passado ainda não encerrado")

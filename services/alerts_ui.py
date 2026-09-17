@@ -22,7 +22,7 @@ from services.alerts import (
 from services.audit import format_local
 from services.pending import PAGE_SIZE, visible_cabinets
 from services.pending_ui import open_origin
-from services.ui_theme import badge, badges, record_html, render_html, render_record, status_tone
+from services.ui_theme import badge, badges, record_html, render_html, render_record, status_tone, stripe_mark
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
@@ -254,6 +254,7 @@ def render(store, principal):
     st.caption(f"{len(items)} alerta(s) · página {int(page)} de {pages}")
     for offset, item in enumerate(view):
         with st.container(border=True):
+            stripe_mark(offset)
             render_record(
                 item.title,
                 badges_html=badges(
@@ -267,7 +268,6 @@ def render(store, principal):
                     if part
                 ),
                 accent=status_tone(item.severity),
-                surface=status_tone(item.severity),
             )
             if st.button(_open_label(item), key=f"alert_open_{start + offset}"):
                 open_alert_origin(item)

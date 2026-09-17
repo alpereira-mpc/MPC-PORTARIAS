@@ -14,7 +14,7 @@ from services.pending import (
     summarize,
     visible_cabinets,
 )
-from services.ui_theme import badges, filter_mark, record_html, render_records, status_tone
+from services.ui_theme import badges, filter_mark, record_html, render_records, status_tone, stripe_index
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
@@ -182,9 +182,9 @@ def render(store, principal):
                     if part
                 ),
                 accent=status_tone(row.urgency),
-                surface=status_tone(row.urgency),
+                stripe=stripe_index(index),
             )
-            for row in view
+            for index, row in enumerate(view)
         ]
     )
     st.dataframe(

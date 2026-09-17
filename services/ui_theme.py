@@ -13,6 +13,8 @@ from services.branding import BRAND_RED
 # --- Tokens (aligned with .streamlit/config.toml) ---
 BRAND_RED_DARK = "#7E121C"
 BRAND_RED_SOFT = "#F3E6E8"
+STRIPE_SOFT = "#F6E4E7"
+SIDEBAR_SURFACE = "#F3F4F8"
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
 SURFACE_SOFT = "#FFFFFF"
@@ -96,6 +98,8 @@ def _css():
 --mpc-brand:{BRAND_RED};
 --mpc-brand-dark:{BRAND_RED_DARK};
 --mpc-brand-soft:{BRAND_RED_SOFT};
+--mpc-stripe:{STRIPE_SOFT};
+--mpc-sidebar:{SIDEBAR_SURFACE};
 --mpc-page:{SURFACE_PAGE};
 --mpc-white:{SURFACE_WHITE};
 --mpc-soft:{SURFACE_SOFT};
@@ -123,6 +127,14 @@ background:var(--mpc-page);
 section[data-testid="stMain"] [data-testid="stMainBlockContainer"]{{
 padding-top:1.35rem;
 }}
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div,
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+section[data-testid="stSidebar"] [data-testid="stSidebarHeader"],
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
+[data-testid="stSidebarCollapsedControl"]{{
+background:var(--mpc-sidebar) !important;
+}}
 section[data-testid="stSidebar"]{{
 border-right:1px solid var(--mpc-border);
 }}
@@ -143,7 +155,7 @@ font-weight:700;
 color:var(--mpc-brand-dark);
 }}
 section[data-testid="stSidebar"] [data-testid="stExpander"]{{
-background:var(--mpc-white);
+background:var(--mpc-sidebar);
 border:1px solid var(--mpc-border);
 border-radius:var(--mpc-radius);
 }}
@@ -202,14 +214,6 @@ border-left:3px solid var(--mpc-border-md) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-record--info){{
 border-left:3px solid var(--mpc-info) !important;
-}}
-[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-stripe-a),
-[data-testid="stExpander"]:has(.mpc-stripe-a){{
-background:var(--mpc-white) !important;
-}}
-[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-stripe-b),
-[data-testid="stExpander"]:has(.mpc-stripe-b){{
-background:var(--mpc-brand-soft) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-home-card-mark){{
 border-top:3px solid var(--mpc-brand) !important;
@@ -281,6 +285,18 @@ min-width:0;
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark){{
 background:var(--mpc-brand-soft) !important;
 border-color:var(--mpc-border-md) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-stripe-a),
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-card-even),
+[data-testid="stExpander"]:has(.mpc-stripe-a),
+[data-testid="stExpander"]:has(.mpc-card-even){{
+background:var(--mpc-white) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-stripe-b),
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-card-odd),
+[data-testid="stExpander"]:has(.mpc-stripe-b),
+[data-testid="stExpander"]:has(.mpc-card-odd){{
+background:var(--mpc-stripe) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-danger-zone){{
 border-left:3px solid var(--mpc-danger) !important;
@@ -400,8 +416,8 @@ padding:.75rem .9rem .7rem;
 .mpc-stack .mpc-record--muted,.mpc-record-boxed.mpc-record--muted{{border-left-color:var(--mpc-border-md);background:var(--mpc-soft);}}
 .mpc-stack .mpc-record--neutral,.mpc-record-boxed.mpc-record--neutral{{border-left-color:var(--mpc-border-md);}}
 .mpc-stack .mpc-record--info,.mpc-record-boxed.mpc-record--info{{border-left-color:var(--mpc-info);}}
-.mpc-stack .mpc-stripe-a,.mpc-record-boxed.mpc-stripe-a{{background:var(--mpc-white);}}
-.mpc-stack .mpc-stripe-b,.mpc-record-boxed.mpc-stripe-b{{background:var(--mpc-brand-soft);}}
+.mpc-stack .mpc-stripe-a,.mpc-stack .mpc-card-even,.mpc-record-boxed.mpc-stripe-a,.mpc-record-boxed.mpc-card-even{{background:var(--mpc-white);}}
+.mpc-stack .mpc-stripe-b,.mpc-stack .mpc-card-odd,.mpc-record-boxed.mpc-stripe-b,.mpc-record-boxed.mpc-card-odd{{background:var(--mpc-stripe);}}
 .mpc-stack .mpc-surface-brand,.mpc-record-boxed.mpc-surface-brand{{background:var(--mpc-brand-soft);}}
 .mpc-stack .mpc-surface-success,.mpc-record-boxed.mpc-surface-success{{background:var(--mpc-success-soft);}}
 .mpc-stack .mpc-surface-warning,.mpc-record-boxed.mpc-surface-warning{{background:var(--mpc-warning-soft);}}
@@ -604,7 +620,8 @@ def record_html(
 ):
     accent = _tone(accent)
     surface_class = f" mpc-surface-{_tone(surface)}" if surface else ""
-    stripe_class = f" mpc-stripe-{stripe}" if stripe in ("a", "b") else ""
+    kind = stripe if stripe in ("a", "b") else ""
+    stripe_class = f" mpc-stripe-{kind} mpc-card-{'even' if kind == 'a' else 'odd'}" if kind else ""
     boxed_class = " mpc-record-boxed" if boxed else ""
     head = ['<div class="mpc-record-head">']
     head.append(f'<p class="mpc-record-title">{html_text(title)}</p>')
@@ -672,7 +689,11 @@ def stripe_index(index):
 
 
 def stripe_mark(index):
-    render_html(f'<div class="mpc-stripe mpc-stripe-{stripe_index(index)}" hidden></div>')
+    kind = stripe_index(index)
+    parity = "even" if kind == "a" else "odd"
+    render_html(
+        f'<div class="mpc-stripe mpc-stripe-{kind} mpc-card-{parity}" hidden></div>'
+    )
 
 
 def detail_mark():

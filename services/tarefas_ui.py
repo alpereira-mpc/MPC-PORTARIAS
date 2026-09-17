@@ -125,8 +125,6 @@ def _card(repo, store, principal, row, index=0):
     if due:
         due_label = "Atrasada" if overdue else "Vence hoje" if due == today else "Prazo"
         due_label = due_label + ": " + due.strftime("%d/%m/%Y") + (" às "+row["prazo_hora"] if row.get("prazo_hora") else "")
-    surfaces = {"EM_ANDAMENTO": "brand", "AGUARDANDO": "warning", "CONCLUIDA": "success", "CANCELADA": "muted"}
-    surface = "danger" if overdue else surfaces.get(row["status"])
     accent = "danger" if overdue else "muted" if row["status"] == "CANCELADA" else priority_tone(row["prioridade"])
     marks = badges(
         (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
@@ -136,7 +134,7 @@ def _card(repo, store, principal, row, index=0):
         marks += badge("Atrasada", "danger")
     with st.container(border=True):
         stripe_mark(index)
-        render_record(row["titulo"], badges_html=marks, meta=due_label, accent=accent, surface=surface)
+        render_record(row["titulo"], badges_html=marks, meta=due_label, accent=accent)
         actions_mark()
         controls=st.columns(5)
         if row["status"] == "A_FAZER" and controls[0].button("Iniciar", key=f"task_start_{row['id']}"):
@@ -196,7 +194,6 @@ def render(store, principal):
                         (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"])),
                     ),
                     accent="muted" if row["status"] == "CANCELADA" else "success",
-                    surface="muted" if row["status"] == "CANCELADA" else "success",
                 )
                 if row["status"]=="CONCLUIDA" and st.button("Reabrir",key=f"task_reopen_{row['id']}"):
                     repo.change_status(row["id"],principal.id,"A_FAZER"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","REABRIR",row["id"]); _done("Tarefa reaberta.")

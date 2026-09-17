@@ -46,6 +46,9 @@ def test_stripe_and_header_helpers_are_available():
     assert stripe_index(1) == "b"
     block = record_html("Item", stripe="b", accent="brand")
     assert "mpc-stripe-b" in block
+    assert "mpc-card-odd" in block
+    even = record_html("Item", stripe="a")
+    assert "mpc-card-even" in even
     styles = getsource(branding._brand_styles)
     assert "object-fit:contain" in styles.replace(" ", "")
     assert "margin:-1.35rem" not in styles

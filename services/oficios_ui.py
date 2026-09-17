@@ -828,7 +828,6 @@ def listing(service, people, direction=None, tracking=False, filters=None, detai
                 accent = status_tone(r["status"])
             else:
                 accent = "brand"
-            surface = accent if accent in ("danger", "warning", "success", "muted") else None
             opened = st.session_state.get("oficio_detail") == r["id"]
             render_record(
                 label(r),
@@ -842,7 +841,6 @@ def listing(service, people, direction=None, tracking=False, filters=None, detai
                     if part
                 ),
                 accent=accent,
-                surface=surface,
             )
             if st.button(
                 "Ocultar detalhes" if opened else "Abrir detalhes",
@@ -998,11 +996,6 @@ def render(store=None, principal=None):
                         badges_html=badges((row["status"], status_tone(row["status"]))),
                         meta=row["atualizada"][:10],
                         accent=status_tone(row["status"]),
-                        surface=(
-                            status_tone(row["status"])
-                            if status_tone(row["status"]) in ("success", "muted", "danger", "warning")
-                            else None
-                        ),
                     )
                     if st.button(
                         "Ocultar ofício" if opened else "Abrir ofício",

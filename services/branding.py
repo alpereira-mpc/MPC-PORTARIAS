@@ -40,9 +40,11 @@ def _brand_styles():
         "<style>"
         ".mpc-sidebar-brand{"
         "display:flex;justify-content:center;margin:.4rem 0 .9rem 0;"
+        "background:transparent;"
         "}"
         ".mpc-sidebar-brand img{"
         "display:block;width:10rem;height:auto;object-fit:contain;"
+        "background:transparent;mix-blend-mode:multiply;"
         "}"
         "[data-testid='stMarkdown']:has(.mpc-institutional-header),"
         "[data-testid='stMarkdownContainer']:has(.mpc-institutional-header),"
@@ -136,11 +138,12 @@ def render_sidebar_brand(on_click=None):
     if on_click is not None:
         st.markdown(
             "<style>"
-            "div.st-key-sidebar_home{display:block;width:100%;margin:.4rem 0 .9rem 0;}"
+            "div.st-key-sidebar_home{display:block;width:100%;margin:.4rem 0 .9rem 0;background:transparent;}"
             "div.st-key-sidebar_home button{display:block;width:10rem;height:12rem;margin:0 auto;padding:0;border:0;"
             "background:transparent url('data:image/png;base64,"
             + logo
-            + "') center/contain no-repeat;color:transparent;font-size:0;cursor:pointer;}"
+            + "') center/contain no-repeat;color:transparent;font-size:0;cursor:pointer;"
+            "mix-blend-mode:multiply;}"
             "div.st-key-sidebar_home button:hover{opacity:.96;}"
             "div.st-key-sidebar_home button:focus-visible{outline:2px solid currentColor;outline-offset:3px;}"
             "</style>",
