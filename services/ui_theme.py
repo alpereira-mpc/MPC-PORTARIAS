@@ -29,6 +29,8 @@ CONTROL_BG = EXPANDER_BG
 CONTROL_BORDER = EXPANDER_BORDER
 CONTROL_HOVER = EXPANDER_HOVER
 CONTROL_DISABLED = "#EEECEB"
+EMPTY_STATE_BG = "#F7F1F2"
+EMPTY_STATE_BORDER = "#E3D4D7"
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
 SURFACE_SOFT = "#FFFFFF"
@@ -127,6 +129,11 @@ def _css():
 --mpc-control-border:{CONTROL_BORDER};
 --mpc-control-hover:{CONTROL_HOVER};
 --mpc-control-disabled:{CONTROL_DISABLED};
+--mpc-surface-control-bg:var(--mpc-control-bg);
+--mpc-surface-control-border:var(--mpc-control-border);
+--mpc-surface-control-hover:var(--mpc-control-hover);
+--mpc-empty-state-bg:{EMPTY_STATE_BG};
+--mpc-empty-state-border:{EMPTY_STATE_BORDER};
 --mpc-expander:var(--mpc-control-bg);
 --mpc-expander-border:var(--mpc-control-border);
 --mpc-expander-hover:var(--mpc-control-hover);
@@ -331,8 +338,8 @@ cursor:not-allowed;
 color:var(--mpc-text-2);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]{{
-background:var(--mpc-white);
-border:1px solid var(--mpc-border-md) !important;
+background:var(--mpc-control-bg);
+border:1px solid var(--mpc-control-border) !important;
 border-radius:var(--mpc-radius);
 box-shadow:var(--mpc-shadow);
 }}
@@ -404,7 +411,7 @@ background:var(--mpc-danger-soft) !important;
 background:var(--mpc-muted-bg) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-neutral){{
-background:var(--mpc-white) !important;
+background:var(--mpc-control-bg) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-filter-mark),
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-filter-mark){{
@@ -425,19 +432,19 @@ border:1px solid var(--mpc-card-operational-border) !important;
 border-left:3px solid var(--mpc-brand) !important;
 }}
 [data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--danger) [data-testid="stMetric"]{{
-background:var(--mpc-danger-soft);
+background:var(--mpc-card-institutional-bg);
 border-left-color:var(--mpc-danger);
 }}
 [data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--warning) [data-testid="stMetric"]{{
-background:var(--mpc-warning-soft);
+background:var(--mpc-card-institutional-bg);
 border-left-color:var(--mpc-warning);
 }}
 [data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--brand) [data-testid="stMetric"]{{
-background:var(--mpc-brand-soft);
+background:var(--mpc-card-institutional-bg);
 border-left-color:var(--mpc-brand);
 }}
 [data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--info) [data-testid="stMetric"]{{
-background:var(--mpc-info-soft);
+background:var(--mpc-card-institutional-bg);
 border-left-color:var(--mpc-info);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-actions) [data-testid="stHorizontalBlock"]{{
@@ -450,17 +457,19 @@ flex:0 1 auto !important;
 width:auto !important;
 min-width:0;
 }}
-[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark){{
-background:var(--mpc-brand-soft) !important;
-border-color:var(--mpc-border-md) !important;
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark),
+section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-form-mark){{
+background:var(--mpc-control-bg) !important;
+background-color:var(--mpc-control-bg) !important;
+border-color:var(--mpc-control-border) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-danger-zone){{
 border-left:3px solid var(--mpc-danger) !important;
 background:var(--mpc-danger-soft);
 }}
 [data-testid="stMetric"]{{
-background:var(--mpc-white);
-border:1px solid var(--mpc-border);
+background:var(--mpc-card-institutional-bg);
+border:1px solid var(--mpc-card-institutional-border);
 border-left:3px solid var(--mpc-brand);
 border-radius:var(--mpc-radius);
 padding:.7rem .85rem .65rem;
@@ -536,12 +545,12 @@ flex-shrink:0;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"],
 section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
-background:var(--mpc-white) !important;
+background:var(--mpc-control-bg) !important;
 border-top:1px solid var(--mpc-control-border) !important;
 }}
 section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stVerticalBlock"]{{
-background:var(--mpc-white) !important;
-background-color:var(--mpc-white) !important;
+background:var(--mpc-control-bg) !important;
+background-color:var(--mpc-control-bg) !important;
 }}
 [data-testid="stDataFrame"],[data-testid="stDataFrameResizable"]{{
 border:1px solid var(--mpc-border);
@@ -649,6 +658,35 @@ box-shadow:none !important;
 color:var(--mpc-text-2) !important;
 min-height:auto;
 padding:0 !important;
+}}
+[data-testid="stNumberInput"] button:hover:not(:disabled),
+[data-testid="stNumberInputStepUp"]:hover:not(:disabled),
+[data-testid="stNumberInputStepDown"]:hover:not(:disabled){{
+background-color:var(--mpc-control-hover) !important;
+color:var(--mpc-text) !important;
+}}
+section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]),
+section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stNotificationContent-info"]),
+section[data-testid="stMain"] [data-testid="stInfo"],
+section[data-testid="stMain"] [data-testid="stAlertContentInfo"],
+section[data-testid="stMain"] [data-testid="stNotificationContent-info"]{{
+background:var(--mpc-empty-state-bg) !important;
+background-color:var(--mpc-empty-state-bg) !important;
+border:1px solid var(--mpc-empty-state-border) !important;
+color:var(--mpc-text) !important;
+}}
+section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) p,
+section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) [data-testid="stMarkdownContainer"],
+section[data-testid="stMain"] [data-testid="stAlertContentInfo"],
+section[data-testid="stMain"] [data-testid="stInfo"] p,
+section[data-testid="stMain"] [data-testid="stInfo"] [data-testid="stMarkdownContainer"]{{
+color:var(--mpc-text) !important;
+}}
+section[data-testid="stMain"] [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) svg,
+section[data-testid="stMain"] [data-testid="stInfo"] svg,
+section[data-testid="stMain"] [data-testid="stAlertContentInfo"] svg{{
+fill:var(--mpc-text-2) !important;
+color:var(--mpc-text-2) !important;
 }}
 button:focus-visible{{
 outline:2px solid var(--mpc-red) !important;
@@ -919,8 +957,8 @@ background:var(--mpc-expander-hover) !important;
 background-color:var(--mpc-expander-hover) !important;
 }}
 section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
-background:var(--mpc-white) !important;
-background-color:var(--mpc-white) !important;
+background:var(--mpc-control-bg) !important;
+background-color:var(--mpc-control-bg) !important;
 }}
 """.strip()
 

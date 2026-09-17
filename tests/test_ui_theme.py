@@ -57,6 +57,8 @@ def test_stripe_and_header_helpers_are_available():
         CONTROL_BORDER,
         CONTROL_DISABLED,
         CONTROL_HOVER,
+        EMPTY_STATE_BG,
+        EMPTY_STATE_BORDER,
         EXPANDER_BG,
         EXPANDER_BORDER,
         EXPANDER_HOVER,
@@ -149,6 +151,16 @@ def test_stripe_and_header_helpers_are_available():
     assert EXPANDER_BG in css
     assert EXPANDER_BORDER in css
     assert EXPANDER_HOVER in css
+    assert "--mpc-empty-state-bg:" + EMPTY_STATE_BG in compact
+    assert "--mpc-empty-state-border:" + EMPTY_STATE_BORDER in compact
+    assert "--mpc-surface-control-bg:var(--mpc-control-bg)" in compact
+    assert EMPTY_STATE_BG == "#F7F1F2"
+    assert EMPTY_STATE_BORDER == "#E3D4D7"
+    assert "stAlertContentInfo" in css
+    assert "[data-testid=\"stMetric\"]{\nbackground:var(--mpc-card-institutional-bg)" in css
+    assert "[data-testid=\"stVerticalBlockBorderWrapper\"]{\nbackground:var(--mpc-control-bg)" in css
+    assert "mpc-form-mark){\nbackground:var(--mpc-control-bg)" in css
+    assert '[data-testid="stExpanderDetails"]{\nbackground:var(--mpc-control-bg)' in css
     assert CARD_OPERATIONAL_BG in css
     assert CARD_INSTITUTIONAL_BG in css
     assert "#FCEFF1" not in compact
