@@ -18,12 +18,13 @@ CARD_SURFACE_B = "#FCEFF1"
 CARD_BORDER_A = "#D8DADD"
 CARD_BORDER_B = "#E9C7CC"
 SIDEBAR_BG = "#F3F4F8"
-EXPANDER_BG = "#F1F4F7"  # approved Filtros surface
-EXPANDER_BORDER = "#D8DEE5"
-EXPANDER_HOVER = "#E9EEF3"
+EXPANDER_BG = "#F5F2F1"
+EXPANDER_BORDER = "#D9D1CE"
+EXPANDER_HOVER = "#EEE8E6"
 CONTROL_BG = EXPANDER_BG
 CONTROL_BORDER = EXPANDER_BORDER
 CONTROL_HOVER = EXPANDER_HOVER
+CONTROL_DISABLED = "#EEECEB"
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
 SURFACE_SOFT = "#FFFFFF"
@@ -106,6 +107,7 @@ def _css():
 :root{{
 --mpc-brand:{BRAND_RED};
 --mpc-red:{BRAND_RED};
+--mpc-red-hover:{BRAND_RED_DARK};
 --mpc-brand-dark:{BRAND_RED_DARK};
 --mpc-brand-soft:{BRAND_RED_SOFT};
 --mpc-card-a:{CARD_SURFACE_A};
@@ -116,6 +118,7 @@ def _css():
 --mpc-control-bg:{CONTROL_BG};
 --mpc-control-border:{CONTROL_BORDER};
 --mpc-control-hover:{CONTROL_HOVER};
+--mpc-control-disabled:{CONTROL_DISABLED};
 --mpc-expander:var(--mpc-control-bg);
 --mpc-expander-border:var(--mpc-control-border);
 --mpc-expander-hover:var(--mpc-control-hover);
@@ -126,7 +129,9 @@ def _css():
 --mpc-border:{BORDER_LIGHT};
 --mpc-border-md:{BORDER_MEDIUM};
 --mpc-text:{TEXT_PRIMARY};
+--mpc-text-primary:{TEXT_PRIMARY};
 --mpc-text-2:{TEXT_SECONDARY};
+--mpc-text-secondary:{TEXT_SECONDARY};
 --mpc-text-3:{TEXT_MUTED};
 --mpc-success:{SUCCESS};
 --mpc-success-soft:{SUCCESS_SOFT};
@@ -304,7 +309,12 @@ opacity:1;
 [data-testid="stTimeInput"] input:disabled,
 [data-testid="stTextArea"] textarea:disabled,
 [data-testid="stSelectbox"] [data-baseweb="select"][aria-disabled="true"] > div,
-[data-testid="stMultiSelect"] [data-baseweb="select"][aria-disabled="true"] > div{{
+[data-testid="stMultiSelect"] [data-baseweb="select"][aria-disabled="true"] > div,
+[data-testid="stTextInputRootElement"]:has(input:disabled),
+[data-testid="stTextAreaRootElement"]:has(textarea:disabled),
+[data-testid="stNumberInputContainer"]:has(input:disabled){{
+background:var(--mpc-control-disabled) !important;
+background-color:var(--mpc-control-disabled) !important;
 opacity:.72;
 color:var(--mpc-text-2) !important;
 cursor:not-allowed;
@@ -531,61 +541,77 @@ background:var(--mpc-soft);
 [data-testid="stRadio"] label:has(input:checked){{
 font-weight:650;
 }}
+[data-testid="stButton"] button,
+[data-testid="stDownloadButton"] button,
+[data-testid="stFormSubmitButton"] button,
 button[kind="primary"],
 [data-testid="stBaseButton-primary"]{{
 background:var(--mpc-red) !important;
-border-color:var(--mpc-red) !important;
+background-color:var(--mpc-red) !important;
+border:1px solid var(--mpc-red) !important;
 color:{SURFACE_WHITE} !important;
+font-weight:600;
+box-shadow:none !important;
 }}
+[data-testid="stButton"] button p,
+[data-testid="stDownloadButton"] button p,
+[data-testid="stFormSubmitButton"] button p,
 button[kind="primary"] p,
 [data-testid="stBaseButton-primary"] p{{
 color:{SURFACE_WHITE} !important;
 font-weight:600 !important;
 }}
+[data-testid="stButton"] button:hover:not(:disabled),
+[data-testid="stDownloadButton"] button:hover:not(:disabled),
+[data-testid="stFormSubmitButton"] button:hover:not(:disabled),
 button[kind="primary"]:hover:not(:disabled),
 [data-testid="stBaseButton-primary"]:hover:not(:disabled){{
-background:var(--mpc-brand-dark) !important;
-border-color:var(--mpc-brand-dark) !important;
+background:var(--mpc-red-hover) !important;
+background-color:var(--mpc-red-hover) !important;
+border-color:var(--mpc-red-hover) !important;
+color:{SURFACE_WHITE} !important;
 }}
+[data-testid="stButton"] button:active:not(:disabled),
+[data-testid="stDownloadButton"] button:active:not(:disabled),
+[data-testid="stFormSubmitButton"] button:active:not(:disabled),
 button[kind="primary"]:active:not(:disabled),
 [data-testid="stBaseButton-primary"]:active:not(:disabled){{
-background:var(--mpc-brand-dark) !important;
-border-color:var(--mpc-brand-dark) !important;
+background:var(--mpc-red-hover) !important;
+border-color:var(--mpc-red-hover) !important;
 }}
-section[data-testid="stMain"] button[kind="secondary"],
-section[data-testid="stMain"] [data-testid="stBaseButton-secondary"]{{
-background:var(--mpc-white) !important;
-color:var(--mpc-text) !important;
-border:1px solid var(--mpc-border-md) !important;
-}}
-section[data-testid="stMain"] button[kind="secondary"]:hover:not(:disabled),
-section[data-testid="stMain"] [data-testid="stBaseButton-secondary"]:hover:not(:disabled){{
-border-color:var(--mpc-brand) !important;
-color:var(--mpc-brand-dark) !important;
-}}
-section[data-testid="stMain"] button[kind="primary"]:disabled,
-section[data-testid="stMain"] [data-testid="stBaseButton-primary"]:disabled,
+[data-testid="stButton"] button:disabled,
+[data-testid="stDownloadButton"] button:disabled,
+[data-testid="stFormSubmitButton"] button:disabled,
 button[kind="primary"]:disabled,
-[data-testid="stBaseButton-primary"]:disabled,
-section[data-testid="stMain"] button[kind="secondary"]:disabled,
-section[data-testid="stMain"] [data-testid="stBaseButton-secondary"]:disabled{{
+[data-testid="stBaseButton-primary"]:disabled{{
 opacity:.55;
 cursor:not-allowed;
 }}
-button:focus-visible{{
-outline:2px solid var(--mpc-brand) !important;
-outline-offset:2px;
+section[data-testid="stSidebar"] div.st-key-sidebar_home button{{
+background-color:transparent !important;
+background:transparent !important;
+border:0 !important;
+box-shadow:none !important;
+color:inherit !important;
 }}
-div[class*="st-key-"][class*="delete"] button,
-div[class*="st-key-"][class*="excluir"] button,
-div[class*="st-key-acesso_delete"] button,
-div[class*="st-key-task_cancel"] button,
-div[class*="st-key-agenda_cancel"] button,
-div[class*="st-key-agenda_leave_cancel"] button,
-div[class*="st-key-agenda_delete"] button{{
-background:var(--mpc-white) !important;
-color:var(--mpc-danger) !important;
-border:1px solid rgba(176,42,42,.35) !important;
+[data-testid="stNumberInput"] button,
+[data-testid="stNumberInputStepUp"],
+[data-testid="stNumberInputStepDown"],
+[data-testid="stSelectbox"] button,
+[data-testid="stMultiSelect"] button,
+[data-testid="stDateInput"] button,
+[data-testid="stTimeInput"] button{{
+background:transparent !important;
+background-color:transparent !important;
+border:0 !important;
+box-shadow:none !important;
+color:var(--mpc-text-2) !important;
+min-height:auto;
+padding:0 !important;
+}}
+button:focus-visible{{
+outline:2px solid var(--mpc-red) !important;
+outline-offset:2px;
 }}
 .mpc-record{{
 margin:0;

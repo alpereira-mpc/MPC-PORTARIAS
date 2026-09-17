@@ -48,8 +48,10 @@ def test_stripe_and_header_helpers_are_available():
     from services.ui_theme import (
         CARD_SURFACE_A,
         CARD_SURFACE_B,
+        BRAND_RED_DARK,
         CONTROL_BG,
         CONTROL_BORDER,
+        CONTROL_DISABLED,
         CONTROL_HOVER,
         EXPANDER_BG,
         EXPANDER_BORDER,
@@ -95,17 +97,27 @@ def test_stripe_and_header_helpers_are_available():
     assert "st-key-mpc_card_" in css
     assert BRAND_RED in css
     assert '[class*="st-key-mpc_card_"]button' in compact
-    assert EXPANDER_BG == "#F1F4F7"
-    assert EXPANDER_BORDER == "#D8DEE5"
-    assert EXPANDER_HOVER == "#E9EEF3"
+    assert EXPANDER_BG == "#F5F2F1"
+    assert EXPANDER_BORDER == "#D9D1CE"
+    assert EXPANDER_HOVER == "#EEE8E6"
+    assert CONTROL_DISABLED == "#EEECEB"
     assert CONTROL_BG == EXPANDER_BG
     assert CONTROL_BORDER == EXPANDER_BORDER
     assert CONTROL_HOVER == EXPANDER_HOVER
     assert "--mpc-control-bg:" + CONTROL_BG in compact
     assert "--mpc-control-border:" + CONTROL_BORDER in compact
     assert "--mpc-control-hover:" + CONTROL_HOVER in compact
+    assert "--mpc-control-disabled:" + CONTROL_DISABLED in compact
     assert "--mpc-red:" + BRAND_RED in compact
+    assert "--mpc-red-hover:" + BRAND_RED_DARK in compact
     assert "--mpc-expander:var(--mpc-control-bg)" in compact
+    assert "#F1F4F7" not in compact
+    assert "#D8DEE5" not in compact
+    assert "#E9EEF3" not in compact
+    assert '[data-testid="stDownloadButton"]button' in compact
+    assert '[data-testid="stFormSubmitButton"]button' in compact
+    assert '[data-testid="stButton"]button' in compact
+    assert 'button[kind="secondary"]{background:var(--mpc-white)' not in compact
     assert 'section[data-testid="stMain"][data-testid="stExpander"]details' in compact
     assert "background-color.15sease" in compact
     assert ':has(>[data-testid="stElementContainer"].mpc-filter-mark)' in compact
