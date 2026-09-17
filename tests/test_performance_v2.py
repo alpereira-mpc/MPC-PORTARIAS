@@ -143,13 +143,28 @@ def test_report_cache_is_session_scoped_and_expires(store, monkeypatch):
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     repo = SimpleNamespace(store=store, summary=lambda: calls.append(1) or {"n": 1})
     first, second = _principal(1), _principal(2)
-    ui._cached_report(repo, first, "summary")
-    ui._cached_report(repo, first, "summary")
+    ui._cached_report(repo.store, first, ("summary",), repo.summary)
+    ui._cached_report(repo.store, first, ("summary",), repo.summary)
     assert len(calls) == 1
     clock[0] += 31
-    ui._cached_report(repo, first, "summary")
-    ui._cached_report(repo, second, "summary")
+    ui._cached_report(repo.store, first, ("summary",), repo.summary)
+    ui._cached_report(repo.store, second, ("summary",), repo.summary)
     assert len(calls) == 3
+
+
+def test_report_renderer_logs_failure_and_shows_friendly_message(monkeypatch, caplog):
+    from services import relatorios_ui as ui
+
+    errors = []
+    monkeypatch.setattr(ui.st, "error", errors.append)
+
+    def unavailable(*_):
+        raise RuntimeError("consulta indisponível")
+
+    ui._render_indicators("produção mensal", unavailable, object(), object())
+
+    assert errors == ["Não foi possível carregar os indicadores neste momento. Tente novamente mais tarde."]
+    assert "Falha ao carregar indicadores de produção mensal" in caplog.text
 
 
 def test_upload_preview_parses_once_per_file_and_account(monkeypatch):

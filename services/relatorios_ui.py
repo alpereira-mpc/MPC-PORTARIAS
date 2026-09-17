@@ -1,5 +1,6 @@
 """Interface administrativa de Relatórios e Indicadores."""
 
+import logging
 from datetime import date, datetime
 
 import streamlit as st
@@ -14,6 +15,7 @@ MONTHS = (
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 )
+LOGGER = logging.getLogger(__name__)
 
 
 def _format_date(value):
@@ -22,11 +24,10 @@ def _format_date(value):
     return datetime.fromisoformat(value).strftime("%d/%m/%Y")
 
 
-def _cached_report(repo, principal, method, *args):
-    """Bounded session-only display cache; never used by import authorization."""
+def _cached_report(store, principal, key, load):
+    """Cache limitado de leitura da tela, sem reflexão sobre métodos do repositório."""
     import time
 
-    store = repo.store
     tables = ("tramita_importacoes", "tramita_movimentacoes", "tramita_estoque")
     if store.backend == "postgresql":
         revision = store.read_cache_key(tables)
@@ -45,12 +46,12 @@ def _cached_report(repo, principal, method, *args):
     if not cache or cache["scope"] != scope:
         cache = {"scope": scope, "entries": {}}
         st.session_state["_reports_read_cache"] = cache
-    key = (method, repr(args))
+    key = repr(key)
     now = time.monotonic()
     entry = cache["entries"].get(key)
     if entry and now - entry[0] < 30:
         return entry[1]
-    value = getattr(repo, method)(*args)
+    value = load()
     if len(cache["entries"]) >= 24:
         cache["entries"].pop(next(iter(cache["entries"])))
     cache["entries"][key] = (time.monotonic(), value)
@@ -76,13 +77,13 @@ def _page_controls(key, offset, rows):
 
 def production(store, principal=None):
     reports = TramitaReportsStore(store)
-    read = lambda method, *args: _cached_report(reports, principal, method, *args)
-    options = read("competences")
+    read = lambda key, load: _cached_report(reports.store, principal, key, load)
+    options = read(("competences",), reports.competences)
     if not options:
         st.info("Nenhuma competência processual foi importada. Utilize a área Importações para carregar os relatórios do Tramita.")
         return
     competence = st.selectbox("Competência", options, format_func=lambda value: f"{value[5:7]}/{value[:4]}")
-    summary = read("production_summary", competence)
+    summary = read(("production_summary", competence), lambda: reports.production_summary(competence))
     totals = {key: sum(row[key] for row in summary.values()) for key in ("entries", "exits", "opinions", "quotas", "days", "timed")}
     average = totals["days"] / totals["timed"] if totals["timed"] else None
     for col, label, value in zip(st.columns(5), ("Entradas", "Saídas", "Pareceres", "Cotas", "Tempo médio até devolução"),
@@ -100,7 +101,7 @@ def production(store, principal=None):
     st.dataframe(grouped, hide_index=True, use_container_width=True)
     if grouped:
         st.bar_chart(grouped, x="Procurador", y=["Entradas", "Saídas"])
-    facets = read("movement_facets", competence, person)
+    facets = read(("movement_facets", competence, person), lambda: reports.movement_facets(competence, person))
     by_field = {field: [row for row in facets if row["field"] == field and row["value"]] for field in ("subcategoria", "origem")}
     st.subheader("Naturezas e jurisdicionados")
     for col, field, label in zip(st.columns(2), ("subcategoria", "origem"), ("Natureza", "Jurisdicionado/Origem")):
@@ -114,7 +115,7 @@ def production(store, principal=None):
                "origem": None if origem == "Todos" else origem,
                "tipo_movimentacao": {"Todos": None, "Entrada": "ENTRADA", "Saída": "SAIDA"}[kind]}
     offset = _page_offset("rel_prod_page", (competence, repr(filters)))
-    rows = read("movement_page", competence, filters, offset)
+    rows = read(("movement_page", competence, filters, offset), lambda: reports.movement_page(competence, filters, offset))
     st.dataframe([{"Protocolo": row["protocolo"], "Natureza": row["subcategoria"], "Jurisdicionado": row["origem"],
                    "Procurador": row["procurador"], "Entrada": _format_date(row["data_realizacao"]) if row["tipo_movimentacao"] == "ENTRADA" else "",
                    "Saída": _format_date(row["data_devolucao"]) if row["tipo_movimentacao"] == "SAIDA" else "",
@@ -124,12 +125,12 @@ def production(store, principal=None):
 
 def current_view(store, principal=None):
     reports = TramitaReportsStore(store)
-    read = lambda method, *args: _cached_report(reports, principal, method, *args)
-    snapshot = read("latest_snapshot")
+    read = lambda key, load: _cached_report(reports.store, principal, key, load)
+    snapshot = read(("latest_snapshot",), reports.latest_snapshot)
     if not snapshot:
         st.info("Nenhuma fotografia atual do estoque processual foi importada.")
         return
-    summary = read("stock_summary", snapshot)
+    summary = read(("stock_summary", snapshot), lambda: reports.stock_summary(snapshot))
     people = sorted(row["procurador"] for row in summary if row["procurador"])
     days = sum(float(row["days"] or 0) for row in summary)
     timed = sum(row["timed"] for row in summary)
@@ -150,19 +151,22 @@ def current_view(store, principal=None):
     filters.update({field: None if st.session_state.get("stock_" + key, "Todos") == "Todos" else st.session_state["stock_" + key] for key, _, field in fields})
     # Normalize obsolete downstream choices before rendering their widgets.
     # At most one corrective query per changed ancestor; cached on normal reruns.
-    facets = read("stock_options", snapshot, filters)
+    facets = read(("stock_options", snapshot, filters), lambda: reports.stock_options(snapshot, filters))
     columns = st.columns(5)
     for col, (key, label, field) in zip(columns, fields):
         choices = ["Todos", *sorted(row["value"] for row in facets if row["field"] == field)]
         if st.session_state.get("stock_" + key, "Todos") not in choices:
             st.session_state["stock_" + key] = "Todos"
             filters[field] = None
-            facets = read("stock_options", snapshot, filters)
+            facets = read(("stock_options", snapshot, filters), lambda: reports.stock_options(snapshot, filters))
         choice = col.selectbox(label, choices, key="stock_" + key)
         filters[field] = None if choice == "Todos" else choice
     band = columns[4].selectbox("Faixa de dias", ["Todas", "0–7 dias", "8–15 dias", "16–30 dias", "31–60 dias", "61–90 dias", "Mais de 90 dias"])
     offset = _page_offset("rel_stock_page", (snapshot, repr(filters), band))
-    bands, rows = read("stock_details", snapshot, filters, None if band == "Todas" else band, offset)
+    bands, rows = read(
+        ("stock_details", snapshot, filters, None if band == "Todas" else band, offset),
+        lambda: reports.stock_details(snapshot, filters, None if band == "Todas" else band, offset),
+    )
     st.subheader("Faixas de permanência")
     st.dataframe([{"Faixa": row["faixa"], "Processos": row["n"]} for row in bands if row["faixa"]], hide_index=True, use_container_width=True)
     st.subheader("Processos há mais tempo com o Procurador")
@@ -253,6 +257,16 @@ def render(store, principal):
     section = st.radio("Seção", sections, horizontal=True)
     if section != "Importações":
         st.session_state.pop("_tramita_previews", None)
-    if section == "Produção Mensal": production(store, principal)
-    elif section == "Visão Atual": current_view(store, principal)
+    if section == "Produção Mensal":
+        _render_indicators("produção mensal", production, store, principal)
+    elif section == "Visão Atual":
+        _render_indicators("visão atual", current_view, store, principal)
     else: imports(store, principal)
+
+
+def _render_indicators(name, renderer, store, principal):
+    try:
+        renderer(store, principal)
+    except Exception:
+        LOGGER.exception("Falha ao carregar indicadores de %s", name)
+        st.error("Não foi possível carregar os indicadores neste momento. Tente novamente mais tarde.")
