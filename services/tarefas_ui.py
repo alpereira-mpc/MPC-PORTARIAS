@@ -17,6 +17,7 @@ from services.ui_theme import (
     render_record,
     section_label,
     status_tone,
+    stripe_mark,
 )
 
 PRIORITIES = ("BAIXA", "NORMAL", "ALTA", "URGENTE")
@@ -115,7 +116,7 @@ def _editor(repo, store, principal):
         except ValueError as exc: st.error(str(exc))
 
 
-def _card(repo, store, principal, row):
+def _card(repo, store, principal, row, index=0):
     today=date.today(); due=date.fromisoformat(row["prazo_data"]) if row.get("prazo_data") else None
     deadline = effective_deadline(row, INSTITUTIONAL_TZ)
     current = datetime.now(INSTITUTIONAL_TZ)
@@ -124,8 +125,8 @@ def _card(repo, store, principal, row):
     if due:
         due_label = "Atrasada" if overdue else "Vence hoje" if due == today else "Prazo"
         due_label = due_label + ": " + due.strftime("%d/%m/%Y") + (" às "+row["prazo_hora"] if row.get("prazo_hora") else "")
-    surfaces = {"A_FAZER": "neutral", "EM_ANDAMENTO": "brand", "AGUARDANDO": "warning", "CONCLUIDA": "success", "CANCELADA": "muted"}
-    surface = "danger" if overdue else surfaces.get(row["status"], "neutral")
+    surfaces = {"EM_ANDAMENTO": "brand", "AGUARDANDO": "warning", "CONCLUIDA": "success", "CANCELADA": "muted"}
+    surface = "danger" if overdue else surfaces.get(row["status"])
     accent = "danger" if overdue else "muted" if row["status"] == "CANCELADA" else priority_tone(row["prioridade"])
     marks = badges(
         (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
@@ -134,6 +135,7 @@ def _card(repo, store, principal, row):
     if overdue:
         marks += badge("Atrasada", "danger")
     with st.container(border=True):
+        stripe_mark(index)
         render_record(row["titulo"], badges_html=marks, meta=due_label, accent=accent, surface=surface)
         actions_mark()
         controls=st.columns(5)
@@ -175,7 +177,7 @@ def render(store, principal):
         rows=repo.list_active(principal.id,{"pesquisa":q,"prioridade":priority,"prazo":deadline})
         opened=st.session_state.pop("tarefas_open_id",None)
         if opened and not repo.get(opened,principal.id): st.info("Tarefa não encontrada.")
-        for row in rows: _card(repo,store,principal,row)
+        for index, row in enumerate(rows): _card(repo,store,principal,row,index)
         if not rows: st.info("Nenhuma tarefa ativa.")
     else:
         with st.expander("Filtros", expanded=False):
@@ -184,8 +186,9 @@ def render(store, principal):
             history_priority=st.selectbox("Prioridade",[None,*PRIORITIES],format_func=lambda x: PRIORITY_LABELS.get(x,"Todas"),key="tarefas_history_priority")
             history_status=st.selectbox("Situação",[None,*HISTORY],format_func=lambda x: STATUS_LABELS.get(x,"Todas"),key="tarefas_history_status")
         rows=repo.list_history(principal.id,{"pesquisa":history_q,"prioridade":history_priority,"status":history_status},limit=30)
-        for row in rows:
+        for index, row in enumerate(rows):
             with st.container(border=True):
+                stripe_mark(index)
                 render_record(
                     row["titulo"],
                     badges_html=badges(

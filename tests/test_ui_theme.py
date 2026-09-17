@@ -34,3 +34,23 @@ def test_status_tone_covers_semantic_labels():
     assert status_tone("INFORMATIVO") == "info"
     assert status_tone("ALTA") == "brand"
     assert status_tone("ALTO") == "warning"
+
+
+def test_stripe_and_header_helpers_are_available():
+    from inspect import getsource
+
+    from services import branding, oficios_ui
+    from services.ui_theme import record_html, stripe_index
+
+    assert stripe_index(0) == "a"
+    assert stripe_index(1) == "b"
+    block = record_html("Item", stripe="b", accent="brand")
+    assert "mpc-stripe-b" in block
+    styles = getsource(branding._brand_styles)
+    assert "object-fit:contain" in styles.replace(" ", "")
+    assert "margin:-1.35rem" not in styles
+    listing = getsource(oficios_ui.listing)
+    assert listing.index("for index, r in enumerate(rows):") < listing.index("_details_if_open")
+    render = getsource(oficios_ui.render)
+    assert "open_oficio_mov_" in render
+    assert "Abrir ofício" in render

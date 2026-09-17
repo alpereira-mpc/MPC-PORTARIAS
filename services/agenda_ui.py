@@ -25,6 +25,7 @@ from services.ui_theme import (
     render_html,
     render_record,
     status_tone,
+    stripe_mark,
     trip_html,
 )
 
@@ -565,8 +566,9 @@ def render(store=None, principal=None):
         trips = agenda.trips_for_commitments(row["id"] for row in rows if not row.get("afastamento"))
         if not rows:
             st.info("Nenhum item histórico para os filtros selecionados.")
-        for row in rows:
+        for index, row in enumerate(rows):
             with st.container(border=True):
+                stripe_mark(index)
                 if row.get("afastamento"):
                     render_record(
                         "AFASTAMENTO — " + str(names.get(row["procurador_id"], row["procurador_id"])),
@@ -599,7 +601,7 @@ def render(store=None, principal=None):
                             ) if part
                         ),
                         accent="muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "brand",
-                        surface="muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "neutral",
+                        surface="muted" if situation == "Cancelado" else "success" if situation == "Realizado" else None,
                     )
                     for procurador_id, trip in trips.get(row["id"], {}).items():
                         st.markdown("✈️ **Logística de viagem**")
@@ -725,7 +727,7 @@ def render(store=None, principal=None):
     if not rows:
         st.info("Nenhum compromisso no período selecionado.")
     current_day = current_group = None
-    for row in rows:
+    for index, row in enumerate(rows):
         if row["inicio"][:10] != current_day:
             current_day = row["inicio"][:10]
             current_group = None
@@ -736,6 +738,7 @@ def render(store=None, principal=None):
             st.markdown(f"#### {group}")
         if row.get("afastamento"):
             with st.container(border=True):
+                stripe_mark(index)
                 render_record(
                     "AFASTAMENTO — " + str(names.get(row["procurador_id"], row["procurador_id"])),
                     badges_html=badges(
@@ -759,8 +762,9 @@ def render(store=None, principal=None):
         past = row["situacao"] not in ("Realizado", "Cancelado") and date.fromisoformat(row["inicio"][:10]) < today
         situation = row["situacao"]
         accent = "muted" if situation == "Cancelado" else "warning" if past else "brand"
-        surface = "muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "warning" if past else "neutral"
+        surface = "muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "warning" if past else None
         with st.container(border=True):
+            stripe_mark(index)
             render_record(
                 title or "Compromisso",
                 badges_html=badges(

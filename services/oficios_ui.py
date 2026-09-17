@@ -17,7 +17,18 @@ from services.oficios import (
 )
 from services.ui_store import display_store
 from services.branding import module_title
-from services.ui_theme import badges, definition_block, filter_mark, form_mark, kpi_mark, render_record, section_label, status_tone
+from services.ui_theme import (
+    badges,
+    definition_block,
+    detail_mark,
+    filter_mark,
+    form_mark,
+    kpi_mark,
+    render_record,
+    section_label,
+    status_tone,
+    stripe_mark,
+)
 
 
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
@@ -755,7 +766,26 @@ def render_filters(*, direction=None, tracking=False, submit_label=None):
     }
 
 
-def listing(service, people, direction=None, tracking=False, filters=None):
+def _toggle_oficio_detail(record_id):
+    if st.session_state.get("oficio_detail") == record_id:
+        st.session_state.pop("oficio_detail", None)
+    else:
+        st.session_state["oficio_detail"] = record_id
+
+
+def _details_if_open(service, record_id, drawn):
+    if st.session_state.get("oficio_detail") != record_id or record_id in drawn:
+        return
+    record = service.get(record_id)
+    if not record:
+        return
+    drawn.add(record_id)
+    with st.container(border=True):
+        detail_mark()
+        details(service, record)
+
+
+def listing(service, people, direction=None, tracking=False, filters=None, detail_drawn=None):
     filters = filters or render_filters(direction=direction, tracking=tracking)
     page = st.number_input("Página", 1, value=1)
     rows = read_list(
@@ -778,12 +808,14 @@ def listing(service, people, direction=None, tracking=False, filters=None):
     if not rows:
         st.info("Nenhum ofício nesta página para os filtros selecionados.")
         return
-    for r in rows:
+    drawn = detail_drawn if detail_drawn is not None else set()
+    for index, r in enumerate(rows):
         with st.container(border=True):
+            stripe_mark(index)
             attention_text = attention(r)
-            direction = "Enviado" if r.get("direcao") == "ENVIADO" else "Recebido"
+            direction_label = "Enviado" if r.get("direcao") == "ENVIADO" else "Recebido"
             marks = badges(
-                (direction, "brand" if r.get("direcao") == "ENVIADO" else "info"),
+                (direction_label, "brand" if r.get("direcao") == "ENVIADO" else "info"),
                 (r["status"], status_tone(r["status"])),
             )
             if "vencido" in attention_text.casefold():
@@ -796,6 +828,8 @@ def listing(service, people, direction=None, tracking=False, filters=None):
                 accent = status_tone(r["status"])
             else:
                 accent = "brand"
+            surface = accent if accent in ("danger", "warning", "success", "muted") else None
+            opened = st.session_state.get("oficio_detail") == r["id"]
             render_record(
                 label(r),
                 badges_html=marks,
@@ -808,12 +842,14 @@ def listing(service, people, direction=None, tracking=False, filters=None):
                     if part
                 ),
                 accent=accent,
-                surface=accent,
+                surface=surface,
             )
-            if st.button("Abrir detalhes", key="open_oficio_" + r["id"]):
-                st.session_state["oficio_detail"] = r["id"]
-    if st.session_state.get("oficio_detail") in {r["id"] for r in rows}:
-        details(service, service.get(st.session_state["oficio_detail"]))
+            if st.button(
+                "Ocultar detalhes" if opened else "Abrir detalhes",
+                key="open_oficio_" + r["id"],
+            ):
+                _toggle_oficio_detail(r["id"])
+        _details_if_open(service, r["id"], drawn)
 
 
 def render(store=None, principal=None):
@@ -949,18 +985,31 @@ def render(store=None, principal=None):
                     st.metric(title, value)
             configuration(service, people)
             overview_filters = render_filters(submit_label="Consultar ofícios")
+            detail_drawn = set()
             if overview_filters["submitted"]:
-                listing(service, people, filters=overview_filters)
+                listing(service, people, filters=overview_filters, detail_drawn=detail_drawn)
             section_label("Últimas movimentações")
-            for row in read_list(service, limit=5):
+            for index, row in enumerate(read_list(service, limit=5)):
+                opened = st.session_state.get("oficio_detail") == row["id"]
                 with st.container(border=True):
+                    stripe_mark(index)
                     render_record(
                         label(row),
                         badges_html=badges((row["status"], status_tone(row["status"]))),
                         meta=row["atualizada"][:10],
                         accent=status_tone(row["status"]),
-                        surface=status_tone(row["status"]),
+                        surface=(
+                            status_tone(row["status"])
+                            if status_tone(row["status"]) in ("success", "muted", "danger", "warning")
+                            else None
+                        ),
                     )
+                    if st.button(
+                        "Ocultar ofício" if opened else "Abrir ofício",
+                        key="open_oficio_mov_" + row["id"],
+                    ):
+                        _toggle_oficio_detail(row["id"])
+                _details_if_open(service, row["id"], detail_drawn)
         elif page == "Novo Ofício":
             editor(service, people)
         elif page == "Recebidos":

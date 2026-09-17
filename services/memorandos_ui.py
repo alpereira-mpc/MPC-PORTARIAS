@@ -4,7 +4,7 @@ import hashlib
 import streamlit as st
 from services.access import require_permission
 from services.branding import module_title
-from services.ui_theme import badges, filter_mark, render_record, status_tone
+from services.ui_theme import badges, filter_mark, render_record, status_tone, stripe_mark
 from services.memorandos import (
     MIME_DOCX,
     MIME_PDF,
@@ -498,10 +498,11 @@ def _listing(service, principal):
             _details(service, focused, principal)
     if not rows and not focused:
         st.info("Nenhum memorando encontrado.")
-    for row in rows:
+    for index, row in enumerate(rows):
         if row["id"] in shown:
             continue
         with st.expander(row["cadeia"] + " · " + row["situacao"], expanded=False):
+            stripe_mark(index)
             accent = "muted" if (row.get("status") == "CANCELADO" or row["situacao"] in ("ENCERRADA", "CANCELADA")) else status_tone(row["situacao"])
             render_record(
                 row["cadeia"],

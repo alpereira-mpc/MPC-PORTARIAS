@@ -12,13 +12,13 @@ from services.branding import BRAND_RED
 
 # --- Tokens (aligned with .streamlit/config.toml) ---
 BRAND_RED_DARK = "#7E121C"
-BRAND_RED_SOFT = "#F8EEF0"
+BRAND_RED_SOFT = "#F3E6E8"
 SURFACE_WHITE = "#FFFFFF"
 SURFACE_PAGE = "#F6F5F4"
-SURFACE_SOFT = "#F7F6F5"
-SURFACE_MUTED = "#F0EEEF"
-BORDER_LIGHT = "#E6E2E3"
-BORDER_MEDIUM = "#D5D0D1"
+SURFACE_SOFT = "#FFFFFF"
+SURFACE_MUTED = "#E8E4E5"
+BORDER_LIGHT = "#D8D2D3"
+BORDER_MEDIUM = "#C4BDBE"
 TEXT_PRIMARY = "#202832"
 TEXT_SECONDARY = "#5C6570"
 TEXT_MUTED = "#7A838E"
@@ -114,7 +114,7 @@ def _css():
 --mpc-info:{INFO};
 --mpc-info-soft:{INFO_SOFT};
 --mpc-radius:10px;
---mpc-shadow:0 1px 2px rgba(32,40,50,.045);
+--mpc-shadow:0 1px 3px rgba(32,40,50,.07);
 }}
 .stApp,[data-testid="stAppViewContainer"],[data-testid="stHeader"]{{
 background:var(--mpc-page);
@@ -157,9 +157,27 @@ padding-left:.7rem;
 line-height:1.25;
 }}
 [data-testid="stCaption"]{{color:var(--mpc-text-2);}}
+section[data-testid="stMain"] [data-testid="stTextInput"] > div > div,
+section[data-testid="stMain"] [data-testid="stTextArea"] > div > div,
+section[data-testid="stMain"] [data-testid="stSelectbox"] > div > div,
+section[data-testid="stMain"] [data-testid="stMultiSelect"] > div > div,
+section[data-testid="stMain"] [data-testid="stNumberInput"] > div > div,
+section[data-testid="stMain"] [data-testid="stDateInput"] > div > div,
+section[data-testid="stMain"] [data-testid="stTimeInput"] > div > div,
+section[data-testid="stMain"] [data-baseweb="input"] > div,
+section[data-testid="stMain"] [data-baseweb="base-input"] > div,
+section[data-testid="stMain"] [data-baseweb="textarea"] > div,
+section[data-testid="stMain"] [data-baseweb="select"] > div{{
+background:var(--mpc-white) !important;
+border-color:var(--mpc-border-md) !important;
+}}
+section[data-testid="stMain"] input,
+section[data-testid="stMain"] textarea{{
+background:var(--mpc-white) !important;
+}}
 [data-testid="stVerticalBlockBorderWrapper"]{{
 background:var(--mpc-white);
-border:1px solid var(--mpc-border) !important;
+border:1px solid var(--mpc-border-md) !important;
 border-radius:var(--mpc-radius);
 box-shadow:var(--mpc-shadow);
 }}
@@ -184,6 +202,14 @@ border-left:3px solid var(--mpc-border-md) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-record--info){{
 border-left:3px solid var(--mpc-info) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-stripe-a),
+[data-testid="stExpander"]:has(.mpc-stripe-a){{
+background:var(--mpc-white) !important;
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-stripe-b),
+[data-testid="stExpander"]:has(.mpc-stripe-b){{
+background:var(--mpc-brand-soft) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-home-card-mark){{
 border-top:3px solid var(--mpc-brand) !important;
@@ -214,13 +240,17 @@ background:var(--mpc-muted-bg) !important;
 background:var(--mpc-white) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-filter-mark){{
-background:var(--mpc-muted-bg) !important;
+background:var(--mpc-brand-soft) !important;
 border-color:var(--mpc-border-md) !important;
 box-shadow:none;
 }}
 [data-testid="stExpander"]:has(.mpc-filter-mark){{
-background:var(--mpc-muted-bg);
+background:var(--mpc-brand-soft);
 border:1px solid var(--mpc-border-md);
+}}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-detail-mark){{
+background:var(--mpc-white) !important;
+border-left:3px solid var(--mpc-brand) !important;
 }}
 [data-testid="stVerticalBlock"]:has(> div .mpc-kpi-mark--danger) [data-testid="stMetric"]{{
 background:var(--mpc-danger-soft);
@@ -249,7 +279,8 @@ width:auto !important;
 min-width:0;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark){{
-background:var(--mpc-soft) !important;
+background:var(--mpc-brand-soft) !important;
+border-color:var(--mpc-border-md) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-danger-zone){{
 border-left:3px solid var(--mpc-danger) !important;
@@ -274,8 +305,8 @@ color:var(--mpc-text) !important;
 font-weight:700 !important;
 }}
 [data-testid="stExpander"]{{
-background:var(--mpc-soft);
-border:1px solid var(--mpc-border);
+background:var(--mpc-white);
+border:1px solid var(--mpc-border-md);
 border-radius:var(--mpc-radius);
 }}
 [data-testid="stExpander"] details{{
@@ -369,6 +400,8 @@ padding:.75rem .9rem .7rem;
 .mpc-stack .mpc-record--muted,.mpc-record-boxed.mpc-record--muted{{border-left-color:var(--mpc-border-md);background:var(--mpc-soft);}}
 .mpc-stack .mpc-record--neutral,.mpc-record-boxed.mpc-record--neutral{{border-left-color:var(--mpc-border-md);}}
 .mpc-stack .mpc-record--info,.mpc-record-boxed.mpc-record--info{{border-left-color:var(--mpc-info);}}
+.mpc-stack .mpc-stripe-a,.mpc-record-boxed.mpc-stripe-a{{background:var(--mpc-white);}}
+.mpc-stack .mpc-stripe-b,.mpc-record-boxed.mpc-stripe-b{{background:var(--mpc-brand-soft);}}
 .mpc-stack .mpc-surface-brand,.mpc-record-boxed.mpc-surface-brand{{background:var(--mpc-brand-soft);}}
 .mpc-stack .mpc-surface-success,.mpc-record-boxed.mpc-surface-success{{background:var(--mpc-success-soft);}}
 .mpc-stack .mpc-surface-warning,.mpc-record-boxed.mpc-surface-warning{{background:var(--mpc-warning-soft);}}
@@ -376,9 +409,9 @@ padding:.75rem .9rem .7rem;
 .mpc-stack .mpc-surface-muted,.mpc-record-boxed.mpc-surface-muted{{background:var(--mpc-muted-bg);}}
 .mpc-def-block{{
 margin:.35rem 0 .7rem;
-padding:.65rem .8rem .55rem;
-background:var(--mpc-soft);
-border:1px solid var(--mpc-border);
+padding:.7rem .85rem .6rem;
+background:var(--mpc-brand-soft);
+border:1px solid var(--mpc-border-md);
 border-radius:8px;
 }}
 .mpc-def{{
@@ -567,9 +600,11 @@ def record_html(
     extra="",
     boxed=False,
     surface=None,
+    stripe=None,
 ):
     accent = _tone(accent)
     surface_class = f" mpc-surface-{_tone(surface)}" if surface else ""
+    stripe_class = f" mpc-stripe-{stripe}" if stripe in ("a", "b") else ""
     boxed_class = " mpc-record-boxed" if boxed else ""
     head = ['<div class="mpc-record-head">']
     head.append(f'<p class="mpc-record-title">{html_text(title)}</p>')
@@ -577,7 +612,7 @@ def record_html(
         head.append(f'<div class="mpc-record-badges">{badges_html}</div>')
     head.append("</div>")
     parts = [
-        f'<div class="mpc-record mpc-record--{accent}{surface_class}{boxed_class}">',
+        f'<div class="mpc-record mpc-record--{accent}{surface_class}{stripe_class}{boxed_class}">',
         *head,
     ]
     if secondary:
@@ -630,6 +665,18 @@ def kpi_mark(tone="brand"):
 
 def form_mark():
     render_html('<div class="mpc-form-mark" hidden></div>')
+
+
+def stripe_index(index):
+    return "b" if index % 2 else "a"
+
+
+def stripe_mark(index):
+    render_html(f'<div class="mpc-stripe mpc-stripe-{stripe_index(index)}" hidden></div>')
+
+
+def detail_mark():
+    render_html('<div class="mpc-detail-mark" hidden></div>')
 
 
 def definition_block(title, rows):
