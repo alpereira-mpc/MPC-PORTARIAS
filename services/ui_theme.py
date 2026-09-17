@@ -13,7 +13,7 @@ from services.branding import BRAND_RED
 # --- Tokens (aligned with .streamlit/config.toml) ---
 BRAND_RED_DARK = "#7E121C"
 BRAND_RED_SOFT = "#F3E6E8"
-CARD_SURFACE_A = "#FFFFFF"
+CARD_SURFACE_A = "#E6C7CC"
 CARD_SURFACE_B = "#FCEFF1"
 CARD_BORDER_A = "#D8DADD"
 CARD_BORDER_B = "#E9C7CC"

@@ -49,8 +49,9 @@ def test_stripe_and_header_helpers_are_available():
         stripe_index,
     )
 
-    assert CARD_SURFACE_A == "#FFFFFF"
+    assert CARD_SURFACE_A == "#E6C7CC"
     assert CARD_SURFACE_B == "#FCEFF1"
+    assert CARD_SURFACE_A != "#FFFFFF"
     assert SIDEBAR_BG == "#F3F4F8"
     assert stripe_index(0) == "a"
     assert stripe_index(1) == "b"
