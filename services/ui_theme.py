@@ -24,7 +24,7 @@ CARD_SURFACE_A = CARD_OPERATIONAL_BG
 CARD_SURFACE_B = "#FCEFF1"
 CARD_BORDER_A = CARD_OPERATIONAL_BORDER
 CARD_BORDER_B = "#E9C7CC"
-SIDEBAR_BG = "#F3F4F8"
+SIDEBAR_BG = "#F1E5E7"
 EXPANDER_BG = "#F5F2F1"
 EXPANDER_BORDER = "#D9D1CE"
 EXPANDER_HOVER = "#EEE8E6"
@@ -622,6 +622,10 @@ button[kind="primary"] p,
 [data-testid="stBaseButton-primary"] p{{
 color:{SURFACE_WHITE} !important;
 font-weight:600 !important;
+}}
+[class*="st-key-agenda_new"] button{{
+white-space:nowrap;
+min-width:max-content;
 }}
 [data-testid="stButton"] button:hover:not(:disabled),
 [data-testid="stDownloadButton"] button:hover:not(:disabled),

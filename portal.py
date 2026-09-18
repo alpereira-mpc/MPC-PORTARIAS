@@ -556,10 +556,6 @@ def render_portal():
             st.session_state["memorando_form_active"] = False
         if selected != "Relatórios e Indicadores":
             st.session_state.pop("_tramita_previews", None)
-        with st.expander("Outras ferramentas"):
-            for module in MODULES[1:]:
-                if not module.active:
-                    st.caption(f"{module.label} · Em breve")
     render_institutional_header(home=selected == "Início")
     if alerts_overlay_active(selected):
         from services.alerts_ui import render as render_alerts

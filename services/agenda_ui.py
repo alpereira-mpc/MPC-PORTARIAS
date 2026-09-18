@@ -611,7 +611,7 @@ def render(store=None, principal=None):
         following.button("Próxima", disabled=not has_next, key="agenda_history_next", on_click=move_page, args=("agenda_history_offset", 30))
         return
     if "agenda_edit" not in st.session_state and "agenda_leave_edit" not in st.session_state:
-        new, leave, _ = st.columns([1, 1.2, 6])
+        new, leave, _ = st.columns([1.6, 1.8, 4.8])
         if new.button("+ Novo compromisso", type="primary", key="agenda_new"):
             st.session_state.pop("agenda_leave_edit", None)
             st.session_state["agenda_edit"] = {}
