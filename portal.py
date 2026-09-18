@@ -488,7 +488,7 @@ def _application_store():
     return store
 
 
-def render_portal():
+def render_portal(sidebar_context=None):
     from services.access import (
         current_user,
         has_permission,
@@ -597,15 +597,12 @@ def render_portal():
                 "Agenda e Afastamentos" if option == "Agenda" else option
             ),
         )
-        if selected == "Portarias" and not alerts_overlay_active(selected):
-            if "next_nav" in st.session_state:
-                st.session_state["nav"] = st.session_state.pop("next_nav")
-            st.markdown("**Portarias**")
-            portarias_menu = st.radio(
-                "Navegação",
-                ["Nova Portaria", "Histórico", "Procuradores", "Configurações"],
-                key="nav",
-            )
+        if (
+            selected == "Portarias"
+            and sidebar_context is not None
+            and not alerts_overlay_active(selected)
+        ):
+            portarias_menu = sidebar_context()
         theme_key = f"portal_theme_select_{principal.id}"
         active_theme = _active_theme(identity)
         if st.session_state.get(theme_key) != active_theme:

@@ -139,6 +139,28 @@ def test_portal_navigation_and_lazy_return(store, pg_store, monkeypatch, backend
     assert not app.exception and not app.error
 
 
+def test_portarias_sidebar_initializes_navigation_from_fresh_or_legacy_state(
+    store, monkeypatch
+):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio(key="portal_module").set_value("Portarias").run()
+    assert not app.exception
+    assert app.sidebar.radio(key="nav").value == "Nova Portaria"
+    assert len([radio for radio in app.sidebar.radio if radio.key == "nav"]) == 1
+    assert len([box for box in app.sidebar.selectbox if box.label == "Tema"]) == 1
+    assert "Nova Portaria" in _visible_text(app)
+
+    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    app.session_state["nav"] = "Página legada"
+    app.sidebar.radio(key="portal_module").set_value("Portarias").run()
+    assert not app.exception
+    assert app.sidebar.radio(key="nav").value == "Nova Portaria"
+
+
 def test_home_shows_only_authorized_modules(store, monkeypatch):
     from tests.access_testing import seed_access
 

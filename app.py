@@ -2,7 +2,20 @@
 
 from portal import render_portal
 
-portarias_menu = render_portal()
+
+def render_portarias_sidebar():
+    import streamlit as st
+
+    options = ["Nova Portaria", "Histórico", "Procuradores", "Configurações"]
+    if "next_nav" in st.session_state:
+        st.session_state["nav"] = st.session_state.pop("next_nav")
+    if st.session_state.get("nav", options[0]) not in options:
+        st.session_state["nav"] = options[0]
+    st.markdown("**Portarias**")
+    return st.radio("Navegação", options, key="nav")
+
+
+portarias_menu = render_portal(sidebar_context=render_portarias_sidebar)
 
 from copy import deepcopy
 from datetime import date, datetime
