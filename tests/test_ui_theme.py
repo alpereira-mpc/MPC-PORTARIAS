@@ -330,3 +330,73 @@ def test_two_received_details_can_render_in_the_same_rerun():
     assert len(app.date_input) == 6
     assert len(app.text_area) >= 3
 
+
+def test_oficio_detail_button_uses_the_same_open_state():
+    from inspect import getsource
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+
+    from services import oficios_ui
+    from services.themes import THEMES
+    from services.ui_theme import _css
+
+    listing = getsource(oficios_ui.listing)
+    details = getsource(oficios_ui.details)
+    assert listing.count("_oficio_detail_is_open(r[\"id\"])") == 1
+    assert "Ocultar detalhes" in listing
+    assert "Abrir detalhes" in listing
+    assert "on_click=_toggle_oficio_detail" in listing
+    assert 'if st.button(\n                "Ocultar detalhes"' not in listing
+    assert "recebidos_excluir_key(r[\"id\"])" in details
+    assert oficios_ui.recebidos_excluir_key("of-1") != oficios_ui.recebidos_excluir_key(
+        "of-2"
+    )
+    marker = '[class*="st-key-oficios_recebidos_excluir_"]'
+    global_head = _css("vermelho").split(marker, 1)[0]
+    assert '[data-testid="stExpander"] details{\nbackground:var(--mpc-brand-soft)' not in global_head
+    assert "\nsummary{\nbackground:var(--mpc-brand-soft)" not in global_head
+    for name in THEMES:
+        css = _css(name)
+        compact = css.replace(" ", "")
+        assert marker in css
+        assert 'st-key-oficios_recebidos_excluir_"][data-testid="stExpander"]details' in compact
+        assert "var(--mpc-brand-soft)" in css[css.find(marker) :]
+
+    app = AppTest.from_file(
+        str(Path(__file__).resolve().parent / "oficios_detail_toggle_app.py"),
+        default_timeout=30,
+    ).run()
+    assert not app.exception
+
+    def label(oid):
+        return next(item.label for item in app.button if item.key == "open_oficio_" + oid)
+
+    def shown():
+        return " ".join(item.value for item in app.markdown)
+
+    assert label("A") == "Abrir detalhes"
+    assert label("B") == "Abrir detalhes"
+    assert "DETAIL_A" not in shown()
+    app.button(key="open_oficio_A").click().run()
+    assert not app.exception
+    assert label("A") == "Ocultar detalhes"
+    assert "DETAIL_A" in shown()
+    app.button(key="open_oficio_B").click().run()
+    assert label("A") == "Ocultar detalhes"
+    assert label("B") == "Ocultar detalhes"
+    assert "DETAIL_A" in shown() and "DETAIL_B" in shown()
+    app.button(key="open_oficio_C").click().run()
+    assert label("C") == "Ocultar detalhes"
+    assert "DETAIL_C" in shown()
+    app.button(key="open_oficio_A").click().run()
+    assert label("A") == "Abrir detalhes"
+    assert label("B") == "Ocultar detalhes"
+    assert "DETAIL_A" not in shown()
+    assert "DETAIL_B" in shown()
+    app.button(key="open_oficio_B").click().run()
+    app.button(key="open_oficio_C").click().run()
+    assert label("A") == "Abrir detalhes"
+    assert label("B") == "Abrir detalhes"
+    assert label("C") == "Abrir detalhes"
+    assert "DETAIL_" not in shown()
+

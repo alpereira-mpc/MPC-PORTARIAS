@@ -45,12 +45,19 @@ def recebidos_historico_key(record_id):
     return f"oficios_recebidos_historico_{record_id}"
 
 
+def recebidos_excluir_key(record_id):
+    return f"oficios_recebidos_excluir_{record_id}"
+
+
 def _open_oficio_ids():
-    stored = st.session_state.get("oficio_open_ids")
-    if stored:
-        return set(stored)
+    if "oficio_open_ids" in st.session_state:
+        return set(st.session_state["oficio_open_ids"])
     current = st.session_state.get("oficio_detail")
     return {current} if current else set()
+
+
+def _oficio_detail_is_open(record_id):
+    return record_id in _open_oficio_ids()
 
 
 def _render_recebidos_historico(rows):
@@ -651,18 +658,19 @@ def details(service, r):
                 )
                 + label(reply)
             )
-        with st.expander("Excluir ofício recebido"):
-            ack = st.checkbox(
-                "Confirmo que desejo excluir definitivamente este ofício recebido",
-                key="recv_ack_" + r["id"],
-            )
-            typed = st.text_input("Digite EXCLUIR", key="recv_typed_" + r["id"])
-            if st.button("Excluir definitivamente", key="recv_purge_" + r["id"]):
-                service.delete_received(r["id"], ack, typed)
-                audit_oficio("OFICIO_EXCLUIDO", "EXCLUIR", r)
-                st.session_state.pop("oficio_detail", None)
-                st.session_state.pop("oficio_open_ids", None)
-                done("Ofício recebido excluído.")
+        with st.container(key=recebidos_excluir_key(r["id"])):
+            with st.expander("Excluir ofício recebido"):
+                ack = st.checkbox(
+                    "Confirmo que desejo excluir definitivamente este ofício recebido",
+                    key="recv_ack_" + r["id"],
+                )
+                typed = st.text_input("Digite EXCLUIR", key="recv_typed_" + r["id"])
+                if st.button("Excluir definitivamente", key="recv_purge_" + r["id"]):
+                    service.delete_received(r["id"], ack, typed)
+                    audit_oficio("OFICIO_EXCLUIDO", "EXCLUIR", r)
+                    st.session_state.pop("oficio_detail", None)
+                    st.session_state.pop("oficio_open_ids", None)
+                    done("Ofício recebido excluído.")
     files = list(service.files(r["id"]))
     if files:
         section_label("Arquivo")
@@ -837,16 +845,17 @@ def _toggle_oficio_detail(record_id):
         opened.discard(record_id)
     else:
         opened.add(record_id)
-        st.session_state["oficio_detail"] = record_id
     st.session_state["oficio_open_ids"] = opened
-    if not opened:
-        st.session_state.pop("oficio_detail", None)
-    elif st.session_state.get("oficio_detail") not in opened:
+    if record_id in opened:
+        st.session_state["oficio_detail"] = record_id
+    elif opened:
         st.session_state["oficio_detail"] = next(iter(opened))
+    else:
+        st.session_state.pop("oficio_detail", None)
 
 
 def _details_if_open(service, record_id, drawn):
-    if record_id not in _open_oficio_ids() or record_id in drawn:
+    if not _oficio_detail_is_open(record_id) or record_id in drawn:
         return
     record = service.get(record_id)
     if not record:
@@ -898,7 +907,7 @@ def listing(service, people, direction=None, tracking=False, filters=None, detai
             accent = status_tone(r["status"])
         else:
             accent = "brand"
-        opened = r["id"] in _open_oficio_ids()
+        is_open = _oficio_detail_is_open(r["id"])
         with card_container(index, f"of_{r['id']}", critical="vencido" in attention_text.casefold()):
             render_record(
                 label(r),
@@ -913,12 +922,14 @@ def listing(service, people, direction=None, tracking=False, filters=None, detai
                 ),
                 accent=accent,
             )
-            if st.button(
-                "Ocultar detalhes" if opened else "Abrir detalhes",
+            st.button(
+                "Ocultar detalhes" if is_open else "Abrir detalhes",
                 key="open_oficio_" + r["id"],
-            ):
-                _toggle_oficio_detail(r["id"])
-        _details_if_open(service, r["id"], drawn)
+                on_click=_toggle_oficio_detail,
+                args=(r["id"],),
+            )
+        if is_open:
+            _details_if_open(service, r["id"], drawn)
 
 
 def render(store=None, principal=None):
@@ -1059,7 +1070,7 @@ def render(store=None, principal=None):
                 listing(service, people, filters=overview_filters, detail_drawn=detail_drawn)
             section_label("Últimas movimentações")
             for index, row in enumerate(read_list(service, limit=5)):
-                opened = row["id"] in _open_oficio_ids()
+                is_open = _oficio_detail_is_open(row["id"])
                 with card_container(index, f"ofm_{row['id']}"):
                     render_record(
                         label(row),
@@ -1067,12 +1078,14 @@ def render(store=None, principal=None):
                         meta=row["atualizada"][:10],
                         accent=status_tone(row["status"]),
                     )
-                    if st.button(
-                        "Ocultar ofício" if opened else "Abrir ofício",
+                    st.button(
+                        "Ocultar ofício" if is_open else "Abrir ofício",
                         key="open_oficio_mov_" + row["id"],
-                    ):
-                        _toggle_oficio_detail(row["id"])
-                _details_if_open(service, row["id"], detail_drawn)
+                        on_click=_toggle_oficio_detail,
+                        args=(row["id"],),
+                    )
+                if is_open:
+                    _details_if_open(service, row["id"], detail_drawn)
         elif page == "Novo Ofício":
             editor(service, people)
         elif page == "Recebidos":

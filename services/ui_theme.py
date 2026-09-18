@@ -1249,6 +1249,35 @@ section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stExpand
 background:var(--mpc-control-bg) !important;
 background-color:var(--mpc-control-bg) !important;
 }}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] details,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] summary,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
+background:var(--mpc-brand-soft) !important;
+background-color:var(--mpc-brand-soft) !important;
+border-color:var(--mpc-border-md) !important;
+color:var(--mpc-text) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] details{{
+border:1px solid var(--mpc-border-md) !important;
+border-radius:8px !important;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] summary:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] summary:focus-visible,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] summary:active,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] details[open] > summary,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] details[open] > summary:hover{{
+background:var(--mpc-card-institutional-bg) !important;
+background-color:var(--mpc-card-institutional-bg) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] summary p,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"]{{
+color:var(--mpc-text) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] summary svg,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_excluir_"] [data-testid="stExpander"] svg[data-testid="stExpanderToggleIcon"]{{
+color:var(--mpc-text-2) !important;
+fill:currentColor !important;
+}}
 """.strip()
     if theme_name == "vermelho":
         return css
