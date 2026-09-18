@@ -83,7 +83,7 @@ def test_stripe_and_header_helpers_are_available():
     assert CARD_OPERATIONAL_BG != CARD_INSTITUTIONAL_BG
     assert CARD_OPERATIONAL_BG != "#FFFFFF"
     assert CARD_INSTITUTIONAL_BG != "#FFFFFF"
-    assert SIDEBAR_BG == "#F3F4F8"
+    assert SIDEBAR_BG == "#D48792"
     assert stripe_index(0) == "a"
     assert stripe_index(1) == "b"
     block = record_html("Item", stripe="b", accent="brand")
@@ -159,8 +159,8 @@ def test_stripe_and_header_helpers_are_available():
     assert '[data-testid="stButton"]button{background:var(--mpc-red)' not in compact
     logo_btn = compact[compact.find('[class*="st-key-sidebar_home"]button') :]
     logo_btn = logo_btn[: logo_btn.find("[data-testid=\"stNumberInput\"]button")]
-    assert "background-color:transparent" in logo_btn
-    assert "background:transparent" not in logo_btn.replace("background-color:transparent", "")
+    assert f"background-color:{SIDEBAR_BG}" in logo_btn
+    assert "background:transparent" not in logo_btn
     assert 'button[kind="secondary"]{background:var(--mpc-white)' not in compact
     assert 'section[data-testid="stMain"][data-testid="stExpander"]details' in compact
     assert "background-color.15sease" in compact

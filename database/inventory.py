@@ -79,7 +79,7 @@ SCHEMA_MARKERS = (
 )
 
 ESSENTIAL_COLUMNS = {
-    "usuarios_acesso": ("email", "perfil", "pode_admin", "pode_memorandos", "protegido"),
+    "usuarios_acesso": ("email", "perfil", "pode_admin", "pode_memorandos", "protegido", "tema"),
     "usuario_gabinetes": ("usuario_id", "gabinete"),
     "auditoria_eventos": ("evento", "modulo", "resultado", "criado_em"),
     "portarias": ("numero", "ano", "status", "payload", "docx", "pdf"),

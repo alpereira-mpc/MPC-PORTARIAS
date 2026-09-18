@@ -6,6 +6,7 @@ from pathlib import Path
 import streamlit as st
 
 from services.ui_store import asset
+from services.themes import theme_tokens
 
 ROOT = Path(__file__).resolve().parents[1]
 SIDEBAR_LOGO = ROOT / "assets" / "mpcpb_logo_sidebar_transparent.png"
@@ -15,7 +16,7 @@ HEADER_WIDTH = 720
 APP_NAME = "Ferramentas MPC-PB"
 APP_SHORT_SUBTITLE = "Portal Integrado de Gestão e Apoio Operacional"
 # Same value as .streamlit/config.toml primaryColor — the institutional MPC-PB red.
-BRAND_RED = "#9B1724"
+BRAND_RED = theme_tokens("vermelho")["primary"]
 APP_SUBTITLE = (
     APP_SHORT_SUBTITLE + " do Ministério Público de Contas da Paraíba"
 )

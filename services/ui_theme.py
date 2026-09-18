@@ -9,22 +9,23 @@ from html import escape
 
 import streamlit as st
 
-from services.branding import BRAND_RED
+from services.themes import theme_tokens, valid_theme
 
 # --- Tokens (aligned with .streamlit/config.toml) ---
-BRAND_RED_DARK = "#7E121C"
-BRAND_RED_SOFT = "#F3E6E8"
-CARD_OPERATIONAL_BG = "#E6C7CC"
-CARD_OPERATIONAL_BORDER = "#D8DADD"
-CARD_INSTITUTIONAL_BG = "#FBF4F6"
-CARD_INSTITUTIONAL_BORDER = "#E7CDD3"
+_RED = theme_tokens("vermelho")
+BRAND_RED_DARK = _RED["primary_hover"]
+BRAND_RED_SOFT = _RED["primary_soft"]
+CARD_OPERATIONAL_BG = _RED["card_operational_bg"]
+CARD_OPERATIONAL_BORDER = _RED["card_operational_border"]
+CARD_INSTITUTIONAL_BG = _RED["card_institutional_bg"]
+CARD_INSTITUTIONAL_BORDER = _RED["card_institutional_border"]
 SURFACE_PRIMARY_BG = CARD_INSTITUTIONAL_BG
 SURFACE_PRIMARY_BORDER = CARD_INSTITUTIONAL_BORDER
 CARD_SURFACE_A = CARD_OPERATIONAL_BG
-CARD_SURFACE_B = "#FCEFF1"
+CARD_SURFACE_B = _RED["card_b_bg"]
 CARD_BORDER_A = CARD_OPERATIONAL_BORDER
-CARD_BORDER_B = "#E9C7CC"
-SIDEBAR_BG = "#D48792"
+CARD_BORDER_B = _RED["card_b_border"]
+SIDEBAR_BG = _RED["sidebar_bg"]
 EXPANDER_BG = "#F5F2F1"
 EXPANDER_BORDER = "#D9D1CE"
 EXPANDER_HOVER = "#EEE8E6"
@@ -111,8 +112,27 @@ _PRIORITY_TONES = {
     "SEM PRAZO": "muted",
 }
 
-def _css():
-    return f"""
+def _css(theme_name="vermelho"):
+    theme_name = valid_theme(theme_name)
+    palette = theme_tokens(theme_name)
+    BRAND_RED = palette["primary"]
+    BRAND_RED_DARK = palette["primary_hover"]
+    BRAND_RED_SOFT = palette["primary_soft"]
+    CARD_OPERATIONAL_BG = palette["card_operational_bg"]
+    CARD_OPERATIONAL_BORDER = palette["card_operational_border"]
+    CARD_INSTITUTIONAL_BG = palette["card_institutional_bg"]
+    CARD_INSTITUTIONAL_BORDER = palette["card_institutional_border"]
+    SURFACE_PRIMARY_BG = CARD_INSTITUTIONAL_BG
+    SURFACE_PRIMARY_BORDER = CARD_INSTITUTIONAL_BORDER
+    CARD_SURFACE_A = CARD_OPERATIONAL_BG
+    CARD_SURFACE_B = palette["card_b_bg"]
+    CARD_BORDER_A = CARD_OPERATIONAL_BORDER
+    CARD_BORDER_B = palette["card_b_border"]
+    SIDEBAR_BG = palette["sidebar_bg"]
+    primary_rgb = ",".join(
+        str(int(BRAND_RED[index : index + 2], 16)) for index in (1, 3, 5)
+    )
+    css = f"""
 :root{{
 --mpc-brand:{BRAND_RED};
 --mpc-red:{BRAND_RED};
@@ -202,10 +222,10 @@ border-radius:8px;
 transition:background .12s ease;
 }}
 section[data-testid="stSidebar"] [data-testid="stRadio"] label:hover{{
-background:rgba(155,23,36,.05);
+background:rgba({primary_rgb},.05);
 }}
 section[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){{
-background:rgba(155,23,36,.16);
+background:rgba({primary_rgb},.16);
 box-shadow:inset 3px 0 0 var(--mpc-brand);
 font-weight:700;
 color:var(--mpc-brand-dark);
@@ -407,7 +427,7 @@ transition:border-color .15s ease,box-shadow .15s ease;
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-institutional-card-mark):hover,
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-home-card-mark):hover,
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-institutional-card-mark):hover{{
-border-color:rgba(155,23,36,.22) !important;
+border-color:rgba({primary_rgb},.22) !important;
 box-shadow:0 1px 4px rgba(32,40,50,.06);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-operational-card-mark),
@@ -420,7 +440,7 @@ transition:border-color .15s ease,box-shadow .15s ease;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-operational-card-mark):hover,
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-operational-card-mark):hover{{
-border-color:rgba(155,23,36,.22) !important;
+border-color:rgba({primary_rgb},.22) !important;
 box-shadow:0 1px 4px rgba(32,40,50,.06);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-brand){{
@@ -835,7 +855,7 @@ white-space:nowrap;
 text-transform:uppercase;
 border:1px solid transparent;
 }}
-.mpc-badge--brand{{background:var(--mpc-brand-soft);color:var(--mpc-brand-dark);border-color:rgba(155,23,36,.16);}}
+.mpc-badge--brand{{background:var(--mpc-brand-soft);color:var(--mpc-brand-dark);border-color:rgba({primary_rgb},.16);}}
 .mpc-badge--success{{background:var(--mpc-success-soft);color:var(--mpc-success);border-color:rgba(46,125,79,.18);}}
 .mpc-badge--warning{{background:var(--mpc-warning-soft);color:var(--mpc-warning);border-color:rgba(181,129,18,.22);}}
 .mpc-badge--danger{{background:var(--mpc-danger-soft);color:var(--mpc-danger);border-color:rgba(176,42,42,.2);}}
@@ -978,7 +998,7 @@ border-color:rgba(176,42,42,.35) !important;
 section[data-testid="stMain"] [class*="st-key-mpc_card_operational"]:hover,
 section[data-testid="stMain"] [class*="st-key-mpc_card_a"]:hover,
 section[data-testid="stMain"] [class*="st-key-mpc_card_b"]:hover{{
-border-color:rgba(155,23,36,.22) !important;
+border-color:rgba({primary_rgb},.22) !important;
 box-shadow:0 1px 4px rgba(32,40,50,.06);
 }}
 section[data-testid="stMain"] [class*="st-key-mpc_card_detail"],
@@ -1067,11 +1087,37 @@ background:var(--mpc-control-bg) !important;
 background-color:var(--mpc-control-bg) !important;
 }}
 """.strip()
+    if theme_name == "vermelho":
+        return css
+    return css + """
+[data-testid="stRadio"] input,
+[data-testid="stCheckbox"] input,
+[data-testid="stToggle"] input{
+accent-color:var(--mpc-brand) !important;
+}
+label[data-baseweb="radio"]:has(input:checked) > div:first-child{
+background-color:var(--mpc-brand) !important;
+}
+label[data-baseweb="checkbox"]:has(input:checked) > span:first-child{
+background-color:var(--mpc-brand) !important;
+border-color:var(--mpc-brand) !important;
+}
+[data-testid="stTabs"] button[aria-selected="true"]{
+color:var(--mpc-brand) !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab-highlight"]{
+background-color:var(--mpc-brand) !important;
+}
+[data-testid="stMultiSelect"] [data-baseweb="tag"]{
+background-color:var(--mpc-brand-soft) !important;
+color:var(--mpc-brand-dark) !important;
+}
+"""
 
 
-def apply_theme():
+def apply_theme(theme_name="vermelho"):
     """Inject the portal stylesheet. Call once from the portal shell per run."""
-    st.markdown("<style>" + _css() + "</style>", unsafe_allow_html=True)
+    st.markdown("<style>" + _css(theme_name) + "</style>", unsafe_allow_html=True)
 
 
 def html_text(value):

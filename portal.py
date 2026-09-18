@@ -17,6 +17,7 @@ from services.branding import (
 )
 from services.ui_store import asset
 from services.ui_theme import apply_theme, badge, empty_state, institutional_card_mark, render_html
+from services.themes import THEME_LABELS, valid_theme
 
 LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +45,45 @@ PORTAL_NAV_STATE_KEYS = frozenset(
 def _session_get(key, default=None):
     state = st.session_state
     return state[key] if key in state else default
+
+
+def _active_theme(identity):
+    if identity is None:
+        return "vermelho"
+    email = identity["email"]
+    cached = _session_get("_portal_theme")
+    if cached and cached.get("email") == email:
+        return valid_theme(cached.get("name"))
+    try:
+        from database.access import AccessStore
+
+        saved = AccessStore(_application_store()).get_theme_by_email(email)
+    except Exception:
+        LOGGER.exception("Falha ao carregar preferência visual")
+        st.session_state["_portal_theme"] = {"email": email, "name": "vermelho"}
+        return "vermelho"
+    name = valid_theme(saved)
+    st.session_state["_portal_theme"] = {"email": email, "name": name}
+    return name
+
+
+def _change_theme(store, user_id, email, widget_key):
+    chosen = valid_theme(st.session_state[widget_key])
+    current = _session_get("_portal_theme", {"name": "vermelho"})["name"]
+    if chosen == current:
+        return
+    try:
+        from database.access import AccessStore
+
+        AccessStore(store).set_theme(user_id, chosen)
+    except Exception:
+        LOGGER.exception("Falha ao salvar preferência visual")
+        st.session_state[widget_key] = current
+        st.session_state["_portal_theme_error"] = (
+            "Não foi possível salvar o tema. O tema anterior foi mantido."
+        )
+        return
+    st.session_state["_portal_theme"] = {"email": email, "name": chosen}
 
 
 @dataclass(frozen=True)
@@ -299,7 +339,7 @@ def _home_layout_style():
         "section[data-testid='stMain'] [data-testid='stHorizontalBlock'] "
         "[data-testid='stVerticalBlockBorderWrapper']{"
         "flex:1 1 auto;width:100%;min-height:19.5rem;height:100%;"
-        "border-left:3px solid #9B1724;"
+        "border-left:3px solid var(--mpc-brand);"
         "}"
         "section[data-testid='stMain'] [data-testid='stHorizontalBlock'] "
         "[data-testid='stVerticalBlockBorderWrapper']>div{"
@@ -398,7 +438,12 @@ def _logout():
         del st.session_state["_access_cache"]
     if "portal_module" in st.session_state:
         del st.session_state["portal_module"]
+    actor = st.session_state.get("_audit_actor")
+    if actor is not None:
+        st.session_state.pop(f"portal_theme_select_{actor.id}", None)
     for key in (
+        "_portal_theme",
+        "_portal_theme_error",
         "_audit_actor",
         "_audit_identity",
         "audit_sessao_registrada",
@@ -456,8 +501,8 @@ def render_portal():
         page_icon=str(SIDEBAR_LOGO),
         layout="wide",
     )
-    apply_theme()
     identity = oidc_identity()
+    apply_theme(_active_theme(identity))
     if identity is None:
         with st.sidebar:
             render_sidebar_brand()
@@ -552,6 +597,20 @@ def render_portal():
                 "Agenda e Afastamentos" if option == "Agenda" else option
             ),
         )
+        theme_key = f"portal_theme_select_{principal.id}"
+        active_theme = _active_theme(identity)
+        if st.session_state.get(theme_key) != active_theme:
+            st.session_state[theme_key] = active_theme
+        st.selectbox(
+            "Tema",
+            tuple(THEME_LABELS),
+            format_func=THEME_LABELS.get,
+            key=theme_key,
+            on_change=_change_theme,
+            args=(store, principal.id, identity["email"], theme_key),
+        )
+        if message := st.session_state.pop("_portal_theme_error", None):
+            st.warning(message)
         if selected != "Memorandos":
             st.session_state["memorando_form_active"] = False
         if selected != "Relatórios e Indicadores":

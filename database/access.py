@@ -50,7 +50,7 @@ class AccessStore:
                     (PROTECTED_ADMIN_EMAIL,),
                 ).fetchone()
                 protected = bool(row and int(row[0] or 0))
-        if marker and {"pode_memorandos", "pode_relatorios", "protegido"} <= columns:
+        if marker and {"pode_memorandos", "pode_relatorios", "protegido", "tema"} <= columns:
             if not protected:
                 with self.store.connection() as c:
                     c.execute("BEGIN IMMEDIATE")
@@ -78,6 +78,7 @@ class AccessStore:
                 "pode_relatorios INTEGER NOT NULL DEFAULT 0 CHECK(pode_relatorios IN (0,1)),"
                 "pode_admin INTEGER NOT NULL DEFAULT 0 CHECK(pode_admin IN (0,1)),"
                 "protegido INTEGER NOT NULL DEFAULT 0 CHECK(protegido IN (0,1)),"
+                "tema TEXT NOT NULL DEFAULT 'vermelho',"
                 "criado_em TEXT NOT NULL,"
                 "atualizado_em TEXT NOT NULL)"
             )
@@ -103,6 +104,10 @@ class AccessStore:
             if "protegido" not in columns:
                 c.execute(
                     "ALTER TABLE usuarios_acesso ADD COLUMN protegido INTEGER NOT NULL DEFAULT 0"
+                )
+            if "tema" not in columns:
+                c.execute(
+                    "ALTER TABLE usuarios_acesso ADD COLUMN tema TEXT NOT NULL DEFAULT 'vermelho'"
                 )
             c.execute(
                 "UPDATE usuarios_acesso SET pode_memorandos=1, pode_relatorios=1 "
@@ -163,6 +168,39 @@ class AccessStore:
                 (email,),
             ).fetchone()
             return self._hydrate(c, row) if row else None
+
+    def get_theme(self, identifier):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT tema FROM usuarios_acesso WHERE id=?", (identifier,)
+            ).fetchone()
+            return row[0] if row else None
+
+    def get_theme_by_email(self, email):
+        email = normalize_email(email)
+        if not email:
+            return None
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT tema FROM usuarios_acesso WHERE email=?", (email,)
+            ).fetchone()
+            return row[0] if row else None
+
+    def set_theme(self, identifier, theme):
+        from services.themes import THEMES
+
+        if theme not in THEMES:
+            raise ValueError("Tema inválido.")
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            result = c.execute(
+                "UPDATE usuarios_acesso SET tema=? WHERE id=?", (theme, identifier)
+            )
+            rowcount = getattr(result, "rowcount", None)
+            if rowcount is None:
+                rowcount = result.cursor.rowcount
+            if not rowcount:
+                raise ValueError("Usuário não encontrado.")
 
     def get(self, identifier):
         with self.store.connection(read_only=True) as c:
