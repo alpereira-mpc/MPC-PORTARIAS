@@ -24,7 +24,7 @@ CARD_SURFACE_A = CARD_OPERATIONAL_BG
 CARD_SURFACE_B = "#FCEFF1"
 CARD_BORDER_A = CARD_OPERATIONAL_BORDER
 CARD_BORDER_B = "#E9C7CC"
-SIDEBAR_BG = "#E8DADB"
+SIDEBAR_BG = "#D6B8BC"
 EXPANDER_BG = "#F5F2F1"
 EXPANDER_BORDER = "#D9D1CE"
 EXPANDER_HOVER = "#EEE8E6"
@@ -665,7 +665,7 @@ section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:active:no
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:focus,
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:focus-visible,
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:disabled{{
-background-color:transparent !important;
+background-color:{SIDEBAR_BG} !important;
 border:0 !important;
 box-shadow:none !important;
 color:transparent !important;
