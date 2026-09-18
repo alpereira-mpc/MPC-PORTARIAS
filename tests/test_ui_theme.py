@@ -142,13 +142,16 @@ def test_stripe_and_header_helpers_are_available():
     assert CONTROL_BG == EXPANDER_BG
     assert CONTROL_BORDER == EXPANDER_BORDER
     assert CONTROL_HOVER == EXPANDER_HOVER
-    assert "--mpc-control-bg:" + CONTROL_BG in compact
-    assert "--mpc-control-border:" + CONTROL_BORDER in compact
-    assert "--mpc-control-hover:" + CONTROL_HOVER in compact
-    assert "--mpc-control-disabled:" + CONTROL_DISABLED in compact
+    from services.themes import theme_tokens
+
+    palette = theme_tokens("vermelho")
+    assert "--mpc-control-bg:" + palette["themed_control_bg"] in compact
+    assert "--mpc-control-border:" + palette["themed_control_border"] in compact
+    assert "--mpc-control-hover:" + palette["themed_control_hover"] in compact
+    assert "--mpc-control-fg:" + palette["themed_control_fg"] in compact
     assert "--mpc-red:" + BRAND_RED in compact
     assert "--mpc-red-hover:" + BRAND_RED_DARK in compact
-    assert "--mpc-expander:var(--mpc-control-bg)" in compact
+    assert "--mpc-expander:var(--mpc-card-b)" in compact
     assert "#F1F4F7" not in compact
     assert "#D8DEE5" not in compact
     assert "#E9EEF3" not in compact
@@ -170,9 +173,8 @@ def test_stripe_and_header_helpers_are_available():
     assert "inset0001pxvar(--mpc-control-border)" in compact
     assert "var(--mpc-control-bg)!important" in compact
     assert "stTextInput\"]>div>div{background:var(--mpc-white)" not in compact
-    assert EXPANDER_BG in css
-    assert EXPANDER_BORDER in css
-    assert EXPANDER_HOVER in css
+    assert "--mpc-expander-border:var(--mpc-card-border-b)" in css
+    assert "--mpc-expander-hover:var(--mpc-card-institutional-bg)" in css
     assert "--mpc-empty-state-bg:" + EMPTY_STATE_BG in compact
     assert "--mpc-empty-state-border:" + EMPTY_STATE_BORDER in compact
     assert "--mpc-surface-primary-bg:var(--mpc-card-institutional-bg)" in compact
@@ -184,10 +186,10 @@ def test_stripe_and_header_helpers_are_available():
     assert ".mpc-empty-state{" in compact
     assert "stAlertContentInfo" not in css
     assert "[data-testid=\"stMetric\"]{\nbackground:var(--mpc-surface-primary-bg)" in css
-    assert "[data-testid=\"stVerticalBlockBorderWrapper\"]{\nbackground:var(--mpc-control-bg)" in css
-    assert "mpc-form-mark){\nbackground:var(--mpc-control-bg)" in css
-    assert "mpc-filter-mark){\nbackground:var(--mpc-control-bg)" in css
-    assert 'stExpander"] details{\nbackground:var(--mpc-control-bg)' in css
+    assert "[data-testid=\"stVerticalBlockBorderWrapper\"]{\nbackground:var(--mpc-card-b)" in css
+    assert "mpc-form-mark){\nbackground:var(--mpc-card-b)" in css
+    assert "mpc-filter-mark){\nbackground:var(--mpc-card-b)" in css
+    assert 'stExpander"] details{\nbackground:var(--mpc-expander)' in css
     assert 'stExpander"] details{\nbackground:var(--mpc-surface-primary-bg)' not in css
     assert CARD_OPERATIONAL_BG in css
     assert CARD_INSTITUTIONAL_BG in css

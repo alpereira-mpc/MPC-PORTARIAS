@@ -150,10 +150,12 @@ def _css(theme_name="vermelho"):
 --mpc-card-operational-bg:{CARD_OPERATIONAL_BG};
 --mpc-card-operational-border:{CARD_OPERATIONAL_BORDER};
 --mpc-sidebar:{SIDEBAR_BG};
---mpc-control-bg:{CONTROL_BG};
---mpc-control-border:{CONTROL_BORDER};
---mpc-control-hover:{CONTROL_HOVER};
---mpc-control-disabled:{CONTROL_DISABLED};
+--mpc-control-bg:{palette["themed_control_bg"]};
+--mpc-control-border:{palette["themed_control_border"]};
+--mpc-control-hover:{palette["themed_control_hover"]};
+--mpc-control-disabled:{palette["themed_control_hover"]};
+--mpc-control-fg:{palette["themed_control_fg"]};
+--mpc-control-placeholder:{palette["themed_control_placeholder"]};
 --mpc-themed-control-bg:{palette["themed_control_bg"]};
 --mpc-themed-control-border:{palette["themed_control_border"]};
 --mpc-themed-control-hover:{palette["themed_control_hover"]};
@@ -163,14 +165,16 @@ def _css(theme_name="vermelho"):
 --mpc-themed-table-header-bg:{palette["themed_table_header_bg"]};
 --mpc-themed-table-border:{palette["themed_table_border"]};
 --mpc-themed-table-fg:{palette["themed_table_fg"]};
+--mpc-themed-table-header-fg:{palette["themed_table_header_fg"]};
+--mpc-themed-table-stripe-bg:{palette["themed_table_stripe_bg"]};
 --mpc-surface-control-bg:var(--mpc-control-bg);
 --mpc-surface-control-border:var(--mpc-control-border);
 --mpc-surface-control-hover:var(--mpc-control-hover);
 --mpc-empty-state-bg:{EMPTY_STATE_BG};
 --mpc-empty-state-border:{EMPTY_STATE_BORDER};
---mpc-expander:var(--mpc-control-bg);
---mpc-expander-border:var(--mpc-control-border);
---mpc-expander-hover:var(--mpc-control-hover);
+--mpc-expander:var(--mpc-card-b);
+--mpc-expander-border:var(--mpc-card-border-b);
+--mpc-expander-hover:var(--mpc-card-institutional-bg);
 --mpc-page:{SURFACE_PAGE};
 --mpc-white:{SURFACE_WHITE};
 --mpc-soft:{SURFACE_SOFT};
@@ -330,7 +334,7 @@ background:var(--mpc-control-bg) !important;
 background-color:var(--mpc-control-bg) !important;
 border-color:var(--mpc-control-border) !important;
 box-shadow:inset 0 0 0 1px var(--mpc-control-border);
-color:var(--mpc-text) !important;
+color:var(--mpc-control-fg) !important;
 transition:background-color .15s ease,border-color .15s ease,box-shadow .15s ease;
 }}
 [data-testid="stTextInputRootElement"]:hover,
@@ -379,8 +383,8 @@ outline:none !important;
 [data-testid="stTimeInput"] input,
 [data-testid="stTextArea"] textarea{{
 background:transparent !important;
-color:var(--mpc-text) !important;
-caret-color:var(--mpc-text);
+color:var(--mpc-control-fg) !important;
+caret-color:var(--mpc-control-fg);
 }}
 [data-testid="stTextInput"] input::placeholder,
 [data-testid="stNumberInput"] input::placeholder,
@@ -388,7 +392,7 @@ caret-color:var(--mpc-text);
 [data-testid="stTimeInput"] input::placeholder,
 [data-testid="stTextArea"] textarea::placeholder,
 [data-testid="stMultiSelect"] input::placeholder{{
-color:var(--mpc-text-3) !important;
+color:var(--mpc-control-placeholder) !important;
 opacity:1;
 }}
 [data-testid="stTextInput"] input:disabled,
@@ -404,7 +408,7 @@ opacity:1;
 background:var(--mpc-control-disabled) !important;
 background-color:var(--mpc-control-disabled) !important;
 opacity:.72;
-color:var(--mpc-text-2) !important;
+color:var(--mpc-control-fg) !important;
 cursor:not-allowed;
 }}
 [data-testid="stTextInput"] svg,
@@ -414,13 +418,17 @@ cursor:not-allowed;
 [data-testid="stTimeInput"] svg,
 [data-testid="stNumberInput"] svg,
 [data-testid="stNumberInput"] button{{
-color:var(--mpc-text-2);
+color:var(--mpc-control-fg);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]{{
-background:var(--mpc-control-bg);
-border:1px solid var(--mpc-control-border) !important;
+background:var(--mpc-card-b);
+border:1px solid var(--mpc-card-border-b) !important;
 border-radius:var(--mpc-radius);
 box-shadow:var(--mpc-shadow);
+}}
+[data-testid="stForm"]{{
+background:var(--mpc-card-b) !important;
+border-color:var(--mpc-card-border-b) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-record--brand){{
 border-left:3px solid var(--mpc-brand) !important;
@@ -490,13 +498,13 @@ background:var(--mpc-danger-soft) !important;
 background:var(--mpc-muted-bg) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-surface-neutral){{
-background:var(--mpc-control-bg) !important;
+background:var(--mpc-card-b) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-filter-mark),
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-filter-mark){{
-background:var(--mpc-control-bg) !important;
-background-color:var(--mpc-control-bg) !important;
-border:1px solid var(--mpc-control-border) !important;
+background:var(--mpc-card-b) !important;
+background-color:var(--mpc-card-b) !important;
+border:1px solid var(--mpc-card-border-b) !important;
 border-radius:var(--mpc-radius);
 box-shadow:none;
 }}
@@ -539,9 +547,9 @@ min-width:0;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark),
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-form-mark){{
-background:var(--mpc-control-bg) !important;
-background-color:var(--mpc-control-bg) !important;
-border:1px solid var(--mpc-control-border) !important;
+background:var(--mpc-card-b) !important;
+background-color:var(--mpc-card-b) !important;
+border:1px solid var(--mpc-card-border-b) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-danger-zone){{
 border-left:3px solid var(--mpc-danger) !important;
@@ -572,15 +580,15 @@ box-shadow:none;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] details,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details{{
-background:var(--mpc-control-bg) !important;
-border:1px solid var(--mpc-control-border) !important;
+background:var(--mpc-expander) !important;
+border:1px solid var(--mpc-expander-border) !important;
 border-radius:var(--mpc-radius) !important;
 box-shadow:none !important;
 overflow:hidden;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] summary,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary{{
-background:var(--mpc-control-bg) !important;
+background:var(--mpc-expander) !important;
 color:var(--mpc-text) !important;
 font-weight:600;
 overflow-wrap:anywhere;
@@ -593,11 +601,11 @@ section[data-testid="stMain"] [data-testid="stExpander"] summary:active,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary:focus-visible,
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary:active{{
-background:var(--mpc-control-hover) !important;
+background:var(--mpc-expander-hover) !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary{{
-background:var(--mpc-control-bg) !important;
+background:var(--mpc-expander) !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:hover,
 section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary:focus-visible,
@@ -605,7 +613,7 @@ section[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:hover,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:focus-visible,
 section[data-testid="stSidebar"] [data-testid="stExpander"] details[open] > summary:active{{
-background:var(--mpc-control-hover) !important;
+background:var(--mpc-expander-hover) !important;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] summary p,
 section[data-testid="stMain"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"],
@@ -625,32 +633,33 @@ flex-shrink:0;
 }}
 section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"],
 section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
-background:var(--mpc-control-bg) !important;
-border-top:1px solid var(--mpc-control-border) !important;
+background:var(--mpc-expander) !important;
+border-top:1px solid var(--mpc-expander-border) !important;
 }}
 section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stVerticalBlock"]{{
-background:var(--mpc-control-bg) !important;
-background-color:var(--mpc-control-bg) !important;
+background:var(--mpc-expander) !important;
+background-color:var(--mpc-expander) !important;
 }}
 [data-testid="stDataFrame"],[data-testid="stDataFrameResizable"]{{
-border:1px solid var(--mpc-border);
+border:1px solid var(--mpc-themed-table-border);
 border-radius:var(--mpc-radius);
 overflow:hidden;
-background:var(--mpc-white);
+background:var(--mpc-themed-table-bg);
 }}
 section[data-testid="stMain"] table{{
 width:100%;
 border-collapse:collapse;
-background:var(--mpc-white);
+background:var(--mpc-themed-table-bg);
+color:var(--mpc-themed-table-fg);
 }}
 section[data-testid="stMain"] thead th{{
-background:var(--mpc-brand-soft);
-color:var(--mpc-text);
+background:var(--mpc-themed-table-header-bg);
+color:var(--mpc-themed-table-header-fg);
 font-weight:650;
-border-bottom:1px solid var(--mpc-border);
+border-bottom:1px solid var(--mpc-themed-table-border);
 }}
 section[data-testid="stMain"] tbody tr:nth-child(even){{
-background:var(--mpc-soft);
+background:var(--mpc-themed-table-stripe-bg);
 }}
 [data-testid="stRadio"] label:has(input:checked){{
 font-weight:650;
@@ -1162,12 +1171,12 @@ color:var(--mpc-text);
 }}
 section[data-testid="stMain"] [class*="st-key-oficios_recebidos_historico_"] .mpc-oficios-historico-table thead th{{
 background:var(--mpc-themed-table-header-bg);
-color:var(--mpc-themed-table-fg);
+color:var(--mpc-themed-table-header-fg);
 font-weight:700;
 border-bottom:1px solid var(--mpc-themed-table-border);
 }}
 section[data-testid="stMain"] [class*="st-key-oficios_recebidos_historico_"] .mpc-oficios-historico-table tbody tr:nth-child(even) td{{
-background:var(--mpc-themed-control-hover);
+background:var(--mpc-themed-table-stripe-bg);
 }}
 section[data-testid="stMain"] [class*="st-key-oficios_recebidos_historico_"] .mpc-oficios-historico-table tbody tr:nth-child(odd) td{{
 background:transparent;

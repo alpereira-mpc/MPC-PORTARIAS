@@ -87,13 +87,13 @@ def _mix_hex(left, right, amount):
 def _themed_surfaces(name, palette):
     tokens = dict(palette)
     if name == "vermelho_escuro":
-        control = _mix_hex(palette["sidebar_bg"], palette["primary"], 0.28)
+        control = _mix_hex(palette["sidebar_bg"], palette["primary"], 0.52)
         tokens["themed_control_bg"] = control
         tokens["themed_control_border"] = _mix_hex(
-            palette["sidebar_bg"], palette["primary"], 0.46
+            palette["sidebar_bg"], palette["primary"], 0.62
         )
         tokens["themed_control_hover"] = _mix_hex(
-            palette["sidebar_bg"], palette["primary"], 0.14
+            palette["sidebar_bg"], palette["primary"], 0.4
         )
         tokens["themed_control_fg"] = palette["card_institutional_bg"]
         tokens["themed_control_placeholder"] = _mix_hex(
@@ -106,7 +106,11 @@ def _themed_surfaces(name, palette):
         tokens["themed_table_border"] = _mix_hex(
             palette["sidebar_bg"], palette["primary"], 0.4
         )
-        tokens["themed_table_fg"] = palette["card_institutional_bg"]
+        tokens["themed_table_fg"] = _TEXT_PRIMARY
+        tokens["themed_table_header_fg"] = palette["card_institutional_bg"]
+        tokens["themed_table_stripe_bg"] = _mix_hex(
+            tokens["themed_table_bg"], palette["card_institutional_bg"], 0.35
+        )
         return tokens
     tokens["themed_control_bg"] = _mix_hex(
         palette["primary_soft"], palette["card_operational_bg"], 0.34
@@ -123,6 +127,8 @@ def _themed_surfaces(name, palette):
     )
     tokens["themed_table_border"] = palette["card_institutional_border"]
     tokens["themed_table_fg"] = _TEXT_PRIMARY
+    tokens["themed_table_header_fg"] = _TEXT_PRIMARY
+    tokens["themed_table_stripe_bg"] = tokens["themed_control_hover"]
     return tokens
 
 

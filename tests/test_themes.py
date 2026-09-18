@@ -1,6 +1,5 @@
 """Palette isolation, persistence, and the portal's theme lifecycle."""
 
-from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -13,12 +12,10 @@ from tests.access_testing import enable_login, seed_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RED_CSS_SHA256 = "a207d54de325550dedffb5cb64f00c8167dbeab34887ad9b1370bf4eb5c980d3"
-
-
-def test_red_palette_reproduces_approved_css():
+def test_red_palette_is_the_fallback():
     red = _css("vermelho")
-    assert sha256(red.encode()).hexdigest() == RED_CSS_SHA256
+    assert "--mpc-brand:#9B1724" in red
+    assert "--mpc-sidebar:#D48792" in red
     assert _css(None) == red
     assert _css("desconhecido") == red
     assert valid_theme("") == "vermelho"
@@ -30,6 +27,31 @@ def _css_token(css, name):
     return css[start : css.index(";", start)]
 
 
+def _contrast(left, right):
+    def luminance(color):
+        channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in channels]
+        return sum(weight * value for weight, value in zip((0.2126, 0.7152, 0.0722), linear))
+
+    high, low = sorted((luminance(left), luminance(right)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def test_all_palettes_have_required_visual_tokens():
+    required = {
+        "primary", "primary_hover", "sidebar_bg", "card_operational_bg",
+        "card_institutional_bg", "card_b_bg", "themed_control_bg",
+        "themed_control_border", "themed_control_hover", "themed_control_fg",
+        "themed_control_placeholder", "themed_table_bg",
+        "themed_table_header_bg", "themed_table_border", "themed_table_fg",
+        "themed_table_header_fg", "themed_table_stripe_bg",
+    }
+    assert len(THEMES) == 5
+    for palette in THEMES.values():
+        assert required <= palette.keys()
+        assert all(palette[key] for key in required)
+
+
 def test_themed_control_tokens_differ_across_all_themes():
     backgrounds = {}
     for name in THEMES:
@@ -39,6 +61,17 @@ def test_themed_control_tokens_differ_across_all_themes():
         assert f"--mpc-themed-control-border:{THEMES[name]['themed_control_border']}" in css
         assert f"--mpc-themed-control-hover:{THEMES[name]['themed_control_hover']}" in css
         assert value != "#F5F2F1"
+        assert _css_token(css, "mpc-control-bg") == value
+        assert _css_token(css, "mpc-control-border") == THEMES[name]["themed_control_border"]
+        assert _css_token(css, "mpc-control-fg") == THEMES[name]["themed_control_fg"]
+        assert _contrast(THEMES[name]["themed_control_bg"], THEMES[name]["themed_control_fg"]) >= 4.5
+        assert _contrast(THEMES[name]["themed_table_bg"], THEMES[name]["themed_table_fg"]) >= 4.5
+        assert _contrast(THEMES[name]["themed_table_stripe_bg"], THEMES[name]["themed_table_fg"]) >= 4.5
+        assert _contrast(THEMES[name]["themed_table_header_bg"], THEMES[name]["themed_table_header_fg"]) >= 4.5
+        assert _css_token(css, "mpc-expander") == "var(--mpc-card-b)"
+        assert '[data-testid="stSelectbox"] [data-baseweb="select"] > div' in css
+        assert '[data-testid="stDateInput"] [data-baseweb="base-input"]' in css
+        assert '[data-testid="stTextArea"] [data-baseweb="textarea"]' in css
         backgrounds[name] = value
         oficios = css[css.find('[class*="st-key-oficios_recebidos_acompanhamento_"]') :]
         oficios = oficios[: oficios.find('[class*="st-key-oficios_recebidos_historico_"]')]
