@@ -610,15 +610,16 @@ def render(store=None, principal=None):
         previous.button("Anterior", disabled=offset == 0, key="agenda_history_previous", on_click=move_page, args=("agenda_history_offset", -30))
         following.button("Próxima", disabled=not has_next, key="agenda_history_next", on_click=move_page, args=("agenda_history_offset", 30))
         return
-    new, leave, _ = st.columns([1, 1.2, 6])
-    if new.button("+ Novo compromisso", type="primary", key="agenda_new"):
-        st.session_state.pop("agenda_leave_edit", None)
-        st.session_state["agenda_edit"] = {}
-        st.rerun()
-    if leave.button("Cadastrar afastamento", type="primary", key="agenda_new_leave"):
-        st.session_state.pop("agenda_edit", None)
-        st.session_state["agenda_leave_edit"] = {}
-        st.rerun()
+    if "agenda_edit" not in st.session_state and "agenda_leave_edit" not in st.session_state:
+        new, leave, _ = st.columns([1, 1.2, 6])
+        if new.button("+ Novo compromisso", type="primary", key="agenda_new"):
+            st.session_state.pop("agenda_leave_edit", None)
+            st.session_state["agenda_edit"] = {}
+            st.rerun()
+        if leave.button("Cadastrar afastamento", type="primary", key="agenda_new_leave"):
+            st.session_state.pop("agenda_edit", None)
+            st.session_state["agenda_leave_edit"] = {}
+            st.rerun()
     with st.container(border=True):
         filter_mark()
         a, b, c, d = st.columns(4)

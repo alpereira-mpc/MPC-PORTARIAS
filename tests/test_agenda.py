@@ -443,6 +443,7 @@ def test_create_forms_keep_existing_agenda_and_leave_records(store, monkeypatch)
     app.button(key="agenda_new").click().run()
     assert not app.exception
     assert any("Novo compromisso" in str(item.value) for item in app.subheader)
+    assert not any(button.key in {"agenda_new", "agenda_new_leave"} for button in app.button)
     displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
     assert "Compromisso visível" in displayed
     assert "AFASTAMENTO" in displayed
@@ -453,17 +454,22 @@ def test_create_forms_keep_existing_agenda_and_leave_records(store, monkeypatch)
     assert not app.exception
     headings = " ".join(str(item.value) for item in app.subheader)
     assert "Novo compromisso" not in headings
+    assert any(button.key == "agenda_new" for button in app.button)
+    assert any(button.key == "agenda_new_leave" for button in app.button)
     displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
     assert "Compromisso visível" in displayed
     app.button(key="agenda_new_leave").click().run()
     assert not app.exception
     assert any("Cadastrar afastamento" in str(item.value) for item in app.subheader)
+    assert not any(button.key in {"agenda_new", "agenda_new_leave"} for button in app.button)
     displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
     assert "AFASTAMENTO" in displayed
     assert "Compromisso visível" in displayed
     assert not any(widget.label == "Possui viagem aérea" for widget in app.checkbox)
     next(button for button in app.button if button.label == "Voltar à agenda").click().run()
     assert not app.exception
+    assert any(button.key == "agenda_new" for button in app.button)
+    assert any(button.key == "agenda_new_leave" for button in app.button)
     displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
     assert "Compromisso visível" in displayed
     assert "AFASTAMENTO" in displayed
