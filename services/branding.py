@@ -188,7 +188,7 @@ def render_institutional_header(*, home=False):
     logo = base64.b64encode(asset(HEADER_IMAGE)).decode("ascii")
     klass = "mpc-institutional-header mpc-home-institutional-header" if home else "mpc-institutional-header"
     st.markdown(
-        f'<div class="{klass}"><img src="data:image/png;base64,'
+        f'<div class="{klass}" style="background:var(--mpc-page,#F6F5F4)"><img src="data:image/png;base64,'
         + logo
         + '" alt="MPC-PB — Ministério Público de Contas do Estado da Paraíba"></div>',
         unsafe_allow_html=True,
