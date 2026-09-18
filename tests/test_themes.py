@@ -13,7 +13,7 @@ from tests.access_testing import enable_login, seed_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RED_CSS_SHA256 = "ce494457ac17405c36d2721f87c2b18a92e4dd4ea9f6a9dc601288b6a5ef7cc6"
+RED_CSS_SHA256 = "90598827da1198fdae35df938930fe26d75128f3445b6a0409326cd365823c21"
 
 
 def test_red_palette_reproduces_approved_css():

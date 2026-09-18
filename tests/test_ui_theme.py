@@ -238,8 +238,12 @@ def test_oficios_recebidos_acompanhamento_controls_are_scoped():
 
     details = getsource(oficios_ui.details)
     assert 'key="oficios_recebidos_acompanhamento"' in details
+    assert 'key="oficios_recebidos_historico"' in details
     assert details.index('r["direcao"] == "RECEBIDO"') < details.index(
         'key="oficios_recebidos_acompanhamento"'
+    )
+    assert details.index('key="oficios_recebidos_historico"') < details.index(
+        'st.dataframe'
     )
     marker = '[class*="st-key-oficios_recebidos_acompanhamento"]'
     for name in THEMES:
@@ -258,12 +262,20 @@ def test_oficios_recebidos_acompanhamento_controls_are_scoped():
             'st-key-oficios_recebidos_acompanhamento"][data-testid="stTextArea"]'
             in compact
         )
+        assert 'st-key-oficios_recebidos_acompanhamento"][data-testid="stForm"]' in compact
+        assert 'st-key-oficios_recebidos_historico"][data-testid="stDataFrame"]' in compact
+        assert "--gdg-bg-cell:var(--mpc-white)" in css
         scoped = css[css.find(marker) :]
-        assert "var(--mpc-card-institutional-bg)" in scoped
-        assert "var(--mpc-card-institutional-border)" in scoped
-        assert "var(--mpc-card-b)" in scoped
+        assert "var(--mpc-control-bg)" in scoped
+        assert "var(--mpc-control-border)" in scoped
+        assert "var(--mpc-control-hover)" in scoped
+        assert "var(--mpc-red)" in scoped
+        assert "var(--mpc-brand-soft)" in scoped
         assert "var(--mpc-text-3)" in scoped
-        assert "var(--mpc-brand)" in scoped
         assert "var(--mpc-control-disabled)" in scoped
+        assert "var(--mpc-card-institutional-bg)" not in scoped
+        assert "var(--mpc-card-institutional-border)" not in scoped
+        assert "var(--mpc-card-b)" not in scoped
         assert '[data-testid="stSelectbox"] > div > div{\nbackground:var(--mpc-card-institutional-bg)' not in css
+        assert '[data-testid="stDataFrame"],[data-testid="stDataFrameResizable"]{\nbackground:var(--mpc-card-institutional-bg)' not in css
 

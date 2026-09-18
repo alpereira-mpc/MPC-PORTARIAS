@@ -720,8 +720,16 @@ def details(service, r):
             evento = "OFICIO_CANCELADO" if status == "Cancelado" else "OFICIO_ALTERADO"
             audit_oficio(evento, "MOVIMENTAR", {**r, "status": status})
             done("Movimentação registrada.")
-    st.write("Histórico")
-    st.dataframe(service.movements(r["id"]), hide_index=True, use_container_width=True)
+    history = (
+        st.container(key="oficios_recebidos_historico")
+        if r["direcao"] == "RECEBIDO"
+        else nullcontext()
+    )
+    with history:
+        st.write("Histórico")
+        st.dataframe(
+            service.movements(r["id"]), hide_index=True, use_container_width=True
+        )
 
 
 def render_filters(*, direction=None, tracking=False, submit_label=None):
