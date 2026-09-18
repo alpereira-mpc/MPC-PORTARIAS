@@ -8,7 +8,7 @@ import streamlit as st
 from services.ui_store import asset
 
 ROOT = Path(__file__).resolve().parents[1]
-SIDEBAR_LOGO = ROOT / "assets" / "mpcpb_logo_sidebar.png"
+SIDEBAR_LOGO = ROOT / "assets" / "mpcpb_logo_sidebar_transparent.png"
 HEADER_IMAGE = ROOT / "assets" / "mpcpb_header_horizontal.png"
 SIDEBAR_LOGO_WIDTH = 160
 HEADER_WIDTH = 720

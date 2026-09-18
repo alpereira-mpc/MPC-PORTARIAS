@@ -54,7 +54,7 @@ def test_brand_assets_are_packaged_with_the_repository():
     assert branding.HEADER_IMAGE.is_file()
     assert branding.SIDEBAR_LOGO.relative_to(branding.ROOT).parts[0] == "assets"
     assert branding.HEADER_IMAGE.relative_to(branding.ROOT).parts[0] == "assets"
-    assert branding.SIDEBAR_LOGO.name == "mpcpb_logo_sidebar.png"
+    assert branding.SIDEBAR_LOGO.name == "mpcpb_logo_sidebar_transparent.png"
     assert branding.HEADER_IMAGE.name == "mpcpb_header_horizontal.png"
     assert branding.APP_NAME == "Ferramentas MPC-PB"
     assert branding.APP_SHORT_SUBTITLE == "Portal Integrado de Gestão e Apoio Operacional"
