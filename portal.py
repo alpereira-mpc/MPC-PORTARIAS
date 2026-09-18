@@ -597,6 +597,15 @@ def render_portal():
                 "Agenda e Afastamentos" if option == "Agenda" else option
             ),
         )
+        if selected == "Portarias" and not alerts_overlay_active(selected):
+            if "next_nav" in st.session_state:
+                st.session_state["nav"] = st.session_state.pop("next_nav")
+            st.markdown("**Portarias**")
+            st.radio(
+                "Navegação",
+                ["Nova Portaria", "Histórico", "Procuradores", "Configurações"],
+                key="nav",
+            )
         theme_key = f"portal_theme_select_{principal.id}"
         active_theme = _active_theme(identity)
         if st.session_state.get(theme_key) != active_theme:

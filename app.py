@@ -37,8 +37,6 @@ setup_logging(store.path.parent)
 for cached_key in list(st.session_state):
     if cached_key.endswith(("filedocx", "filepdf")):
         st.session_state.pop(cached_key, None)
-if "next_nav" in st.session_state:
-    st.session_state["nav"] = st.session_state.pop("next_nav")
 
 
 def navigate(page):
@@ -1216,15 +1214,7 @@ def new_portaria():
             error(exc)
 
 
-with st.sidebar:
-    st.markdown("**Portarias**")
-    menu = st.radio(
-        "Navegação",
-        ["Nova Portaria", "Histórico", "Procuradores", "Configurações"],
-        key="nav",
-    )
-    st.divider()
-    st.caption("Gerador de Portarias PROGE · v" + VERSION)
+menu = st.session_state["nav"]
 st.markdown("### " + module_title("portarias", "Gerador de Portarias PROGE"))
 try:
     if menu == "Nova Portaria":
