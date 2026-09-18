@@ -208,6 +208,27 @@ border-right:1px solid var(--mpc-border);
 background:{SIDEBAR_BG} !important;
 background-color:{SIDEBAR_BG} !important;
 }}
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"]:has(.st-key-portal_theme_footer){{
+display:flex;
+flex-direction:column;
+}}
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]:has(.st-key-portal_theme_footer){{
+display:flex;
+flex:1 0 auto;
+flex-direction:column;
+padding-bottom:calc(.75rem + env(safe-area-inset-bottom));
+}}
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]:has(.st-key-portal_theme_footer) > div{{
+display:flex;
+flex:1 0 auto;
+flex-direction:column;
+}}
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]:has(.st-key-portal_theme_footer) > div > [data-testid="stVerticalBlock"]{{
+flex:1 0 auto;
+}}
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:is(.st-key-portal_theme_footer, :has(.st-key-portal_theme_footer)){{
+margin-top:auto;
+}}
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"],
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] [data-testid="stButton"]{{
 background-color:{SIDEBAR_BG} !important;

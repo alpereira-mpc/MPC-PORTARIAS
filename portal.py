@@ -601,16 +601,17 @@ def render_portal():
         active_theme = _active_theme(identity)
         if st.session_state.get(theme_key) != active_theme:
             st.session_state[theme_key] = active_theme
-        st.selectbox(
-            "Tema",
-            tuple(THEME_LABELS),
-            format_func=THEME_LABELS.get,
-            key=theme_key,
-            on_change=_change_theme,
-            args=(store, principal.id, identity["email"], theme_key),
-        )
-        if message := st.session_state.pop("_portal_theme_error", None):
-            st.warning(message)
+        with st.container(key="portal_theme_footer"):
+            st.selectbox(
+                "Tema",
+                tuple(THEME_LABELS),
+                format_func=THEME_LABELS.get,
+                key=theme_key,
+                on_change=_change_theme,
+                args=(store, principal.id, identity["email"], theme_key),
+            )
+            if message := st.session_state.pop("_portal_theme_error", None):
+                st.warning(message)
         if selected != "Memorandos":
             st.session_state["memorando_form_active"] = False
         if selected != "Relatórios e Indicadores":
