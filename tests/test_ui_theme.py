@@ -237,11 +237,10 @@ def test_oficios_recebidos_acompanhamento_controls_are_scoped():
     from services.ui_theme import _css
 
     details = getsource(oficios_ui.details)
-    assert 'key="oficios_recebidos_acompanhamento"' in details
-    assert 'key="oficios_recebidos_historico"' in details
-    assert details.index('r["direcao"] == "RECEBIDO"') < details.index(
-        'key="oficios_recebidos_acompanhamento"'
-    )
+    assert "recebidos_acompanhamento_key(r[\"id\"])" in details
+    assert "recebidos_historico_key(r[\"id\"])" in details
+    assert 'key="oficios_recebidos_acompanhamento"' not in details
+    assert 'key="oficios_recebidos_historico"' not in details
     assert "_render_recebidos_historico" in details
     assert "st.dataframe" in details
     assert oficios_ui._RECEBIDOS_HISTORICO_COLUMNS == (
@@ -250,7 +249,14 @@ def test_oficios_recebidos_acompanhamento_controls_are_scoped():
         "novo",
         "observacao",
     )
-    marker = ".st-key-oficios_recebidos_acompanhamento"
+    first, second = "of-aaa", "of-bbb"
+    assert oficios_ui.recebidos_acompanhamento_key(first) != (
+        oficios_ui.recebidos_acompanhamento_key(second)
+    )
+    assert oficios_ui.recebidos_historico_key(first) != (
+        oficios_ui.recebidos_historico_key(second)
+    )
+    marker = '[class*="st-key-oficios_recebidos_acompanhamento_"]'
     after = 'section[data-testid="stMain"] [class*="st-key-mpc_card_operational"] [data-testid="stHorizontalBlock"]'
     for name in THEMES:
         css = _css(name)
@@ -258,29 +264,69 @@ def test_oficios_recebidos_acompanhamento_controls_are_scoped():
         assert marker in css
         scoped = css[css.find(marker) : css.find(after)]
         assert (
-            '.st-key-oficios_recebidos_acompanhamento[data-baseweb="select"]>div'
+            'st-key-oficios_recebidos_acompanhamento_"][data-baseweb="select"]>div'
             in compact
         )
         assert (
-            '.st-key-oficios_recebidos_acompanhamento[data-baseweb="input"]' in compact
-        )
-        assert (
-            '.st-key-oficios_recebidos_acompanhamento[data-baseweb="textarea"]'
+            'st-key-oficios_recebidos_acompanhamento_"][data-baseweb="input"]'
             in compact
         )
-        assert 'st-key-oficios_recebidos_acompanhamento"][data-testid="stForm"]' not in compact
+        assert (
+            'st-key-oficios_recebidos_acompanhamento_"][data-baseweb="textarea"]'
+            in compact
+        )
+        assert (
+            'st-key-oficios_recebidos_acompanhamento_"][data-testid="stForm"]'
+            in compact
+        )
+        assert "background:var(--mpc-brand-soft)!important" in compact
         assert 'st-key-oficios_recebidos_historico"][data-testid="stDataFrame"]' not in compact
         assert "--gdg-bg-cell" not in scoped
         assert "var(--mpc-themed-control-bg)" in scoped
         assert "var(--mpc-themed-control-border)" in scoped
         assert "var(--mpc-themed-control-hover)" in scoped
         assert "var(--mpc-themed-control-fg)" in scoped
-        assert "var(--mpc-brand)" in scoped
-        assert "var(--mpc-themed-table-bg)" in scoped
+        assert "var(--mpc-brand-soft)" in scoped
+        assert "var(--mpc-themed-table-header-bg)" in scoped
         assert "var(--mpc-card-institutional-bg)" not in scoped
-        assert "var(--mpc-card-institutional-border)" not in scoped
         assert "var(--mpc-card-b)" not in scoped
         assert "var(--mpc-control-bg)" not in scoped
         assert '[data-testid="stSelectbox"] > div > div{\nbackground:var(--mpc-card-institutional-bg)' not in css
         assert '[data-testid="stDataFrame"],[data-testid="stDataFrameResizable"]{\nbackground:var(--mpc-card-institutional-bg)' not in css
+
+
+def test_recebidos_historico_html_escapes_dynamic_values(monkeypatch):
+    from services import oficios_ui
+
+    captured = []
+    monkeypatch.setattr(oficios_ui, "render_html", captured.append)
+    oficios_ui._render_recebidos_historico(
+        [
+            {
+                "instante": "<script>alert(1)</script>",
+                "anterior": "A&B",
+                "novo": '"x"',
+                "observacao": "ok",
+            }
+        ]
+    )
+    html = captured[0]
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "A&amp;B" in html
+    assert "&quot;x&quot;" in html
+
+
+def test_two_received_details_can_render_in_the_same_rerun():
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(
+        str(Path(__file__).resolve().parent / "oficios_two_details_app.py"),
+        default_timeout=30,
+    ).run()
+    assert not app.exception
+    assert len(app.selectbox) == 3
+    assert len(app.date_input) == 6
+    assert len(app.text_area) >= 3
 

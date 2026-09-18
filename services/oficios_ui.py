@@ -37,6 +37,22 @@ from services.ui_theme import (
 _RECEBIDOS_HISTORICO_COLUMNS = ("instante", "anterior", "novo", "observacao")
 
 
+def recebidos_acompanhamento_key(record_id):
+    return f"oficios_recebidos_acompanhamento_{record_id}"
+
+
+def recebidos_historico_key(record_id):
+    return f"oficios_recebidos_historico_{record_id}"
+
+
+def _open_oficio_ids():
+    stored = st.session_state.get("oficio_open_ids")
+    if stored:
+        return set(stored)
+    current = st.session_state.get("oficio_detail")
+    return {current} if current else set()
+
+
 def _render_recebidos_historico(rows):
     head = "".join(
         f"<th>{html_text(column)}</th>" for column in _RECEBIDOS_HISTORICO_COLUMNS
@@ -49,7 +65,9 @@ def _render_recebidos_historico(rows):
         )
         body.append(f"<tr>{cells}</tr>")
     render_html(
-        '<div class="mpc-oficios-historico-table"><table><thead><tr>'
+        '<div class="mpc-def-block mpc-oficios-historico-table">'
+        f'<p class="mpc-section-label">{html_text("Histórico")}</p>'
+        "<table><thead><tr>"
         f"{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
     )
 
@@ -190,6 +208,7 @@ def reset_editor():
                 "oficio_preview",
                 "oficio_final",
                 "oficio_detail",
+                "oficio_open_ids",
                 "oficio_day",
                 "oficio_member",
             )
@@ -220,6 +239,9 @@ def consume_pending_open_oficio(offices):
     source_id = pending.get("id")
     if source_id:
         st.session_state["oficio_detail"] = source_id
+        opened = set(st.session_state.get("oficio_open_ids") or ())
+        opened.add(source_id)
+        st.session_state["oficio_open_ids"] = opened
     return pending
 
 
@@ -639,6 +661,7 @@ def details(service, r):
                 service.delete_received(r["id"], ack, typed)
                 audit_oficio("OFICIO_EXCLUIDO", "EXCLUIR", r)
                 st.session_state.pop("oficio_detail", None)
+                st.session_state.pop("oficio_open_ids", None)
                 done("Ofício recebido excluído.")
     files = list(service.files(r["id"]))
     if files:
@@ -701,7 +724,7 @@ def details(service, r):
                     )
         section_label("Acompanhamento")
         tracking = (
-            st.container(key="oficios_recebidos_acompanhamento")
+            st.container(key=recebidos_acompanhamento_key(r["id"]))
             if r["direcao"] == "RECEBIDO"
             else nullcontext()
         )
@@ -742,17 +765,18 @@ def details(service, r):
             audit_oficio(evento, "MOVIMENTAR", {**r, "status": status})
             done("Movimentação registrada.")
     history = (
-        st.container(key="oficios_recebidos_historico")
+        st.container(key=recebidos_historico_key(r["id"]))
         if r["direcao"] == "RECEBIDO"
         else nullcontext()
     )
     with history:
-        st.write("Histórico")
-        movements = service.movements(r["id"])
         if r["direcao"] == "RECEBIDO":
-            _render_recebidos_historico(movements)
+            _render_recebidos_historico(service.movements(r["id"]))
         else:
-            st.dataframe(movements, hide_index=True, use_container_width=True)
+            st.write("Histórico")
+            st.dataframe(
+                service.movements(r["id"]), hide_index=True, use_container_width=True
+            )
 
 
 def render_filters(*, direction=None, tracking=False, submit_label=None):
@@ -808,14 +832,21 @@ def render_filters(*, direction=None, tracking=False, submit_label=None):
 
 
 def _toggle_oficio_detail(record_id):
-    if st.session_state.get("oficio_detail") == record_id:
-        st.session_state.pop("oficio_detail", None)
+    opened = _open_oficio_ids()
+    if record_id in opened:
+        opened.discard(record_id)
     else:
+        opened.add(record_id)
         st.session_state["oficio_detail"] = record_id
+    st.session_state["oficio_open_ids"] = opened
+    if not opened:
+        st.session_state.pop("oficio_detail", None)
+    elif st.session_state.get("oficio_detail") not in opened:
+        st.session_state["oficio_detail"] = next(iter(opened))
 
 
 def _details_if_open(service, record_id, drawn):
-    if st.session_state.get("oficio_detail") != record_id or record_id in drawn:
+    if record_id not in _open_oficio_ids() or record_id in drawn:
         return
     record = service.get(record_id)
     if not record:
@@ -867,7 +898,7 @@ def listing(service, people, direction=None, tracking=False, filters=None, detai
             accent = status_tone(r["status"])
         else:
             accent = "brand"
-        opened = st.session_state.get("oficio_detail") == r["id"]
+        opened = r["id"] in _open_oficio_ids()
         with card_container(index, f"of_{r['id']}", critical="vencido" in attention_text.casefold()):
             render_record(
                 label(r),
@@ -1028,7 +1059,7 @@ def render(store=None, principal=None):
                 listing(service, people, filters=overview_filters, detail_drawn=detail_drawn)
             section_label("Últimas movimentações")
             for index, row in enumerate(read_list(service, limit=5)):
-                opened = st.session_state.get("oficio_detail") == row["id"]
+                opened = row["id"] in _open_oficio_ids()
                 with card_container(index, f"ofm_{row['id']}"):
                     render_record(
                         label(row),

@@ -1082,87 +1082,95 @@ background:{CARD_OPERATIONAL_BG} !important;
 background-color:{CARD_OPERATIONAL_BG} !important;
 border-color:{CARD_OPERATIONAL_BORDER} !important;
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="select"] > div,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="select"] > div > div,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="input"],
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="input"] > div,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="base-input"],
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="textarea"],
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-testid="stTextAreaRootElement"]{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-testid="stForm"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-testid="stForm"] form,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark),
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-testid="stVerticalBlock"]:has(.mpc-form-mark){{
+background:var(--mpc-brand-soft) !important;
+background-color:var(--mpc-brand-soft) !important;
+border:1px solid var(--mpc-border-md) !important;
+border-radius:8px;
+box-shadow:none !important;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="select"] > div,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="select"] > div > div,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="input"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="input"] > div,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="base-input"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="textarea"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-testid="stTextAreaRootElement"]{{
 background:var(--mpc-themed-control-bg) !important;
 background-color:var(--mpc-themed-control-bg) !important;
 border-color:var(--mpc-themed-control-border) !important;
 box-shadow:inset 0 0 0 1px var(--mpc-themed-control-border);
 color:var(--mpc-themed-control-fg) !important;
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="select"] > div:hover,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="select"] > div > div:hover,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="input"]:hover,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="textarea"]:hover,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-testid="stTextAreaRootElement"]:hover{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="select"] > div:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="select"] > div > div:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="input"]:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="textarea"]:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-testid="stTextAreaRootElement"]:hover{{
 background:var(--mpc-themed-control-hover) !important;
 background-color:var(--mpc-themed-control-hover) !important;
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="select"] > div:focus-within,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="input"]:focus-within,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="textarea"]:focus-within,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-testid="stTextAreaRootElement"]:focus-within{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="select"] > div:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="input"]:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="textarea"]:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-testid="stTextAreaRootElement"]:focus-within{{
 background:var(--mpc-themed-control-bg) !important;
 border-color:var(--mpc-brand) !important;
 box-shadow:0 0 0 1px var(--mpc-brand) !important;
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="input"] input,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="select"] input,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento textarea{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="input"] input,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="select"] input,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] textarea{{
 background:transparent !important;
 color:var(--mpc-themed-control-fg) !important;
 caret-color:var(--mpc-themed-control-fg);
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="input"] input::placeholder,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento textarea::placeholder{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="input"] input::placeholder,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] textarea::placeholder{{
 color:var(--mpc-themed-control-placeholder) !important;
 opacity:1;
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="select"] svg,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="input"] svg{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="select"] svg,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="input"] svg{{
 color:var(--mpc-themed-control-fg);
 fill:currentColor;
 opacity:.82;
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="select"][aria-disabled="true"] > div,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento [data-baseweb="input"] input:disabled,
-section[data-testid="stMain"] .st-key-oficios_recebidos_acompanhamento textarea:disabled{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="select"][aria-disabled="true"] > div,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] [data-baseweb="input"] input:disabled,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento_"] textarea:disabled{{
 background:var(--mpc-themed-control-hover) !important;
 background-color:var(--mpc-themed-control-hover) !important;
 color:var(--mpc-themed-control-fg) !important;
 opacity:.72;
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_historico .mpc-oficios-historico-table table{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_historico_"] .mpc-oficios-historico-table table{{
 width:100%;
 border-collapse:collapse;
-background:var(--mpc-themed-table-bg);
-color:var(--mpc-themed-table-fg);
-border:1px solid var(--mpc-themed-table-border);
-border-radius:var(--mpc-radius);
-overflow:hidden;
+background:transparent;
+color:var(--mpc-text);
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_historico .mpc-oficios-historico-table th,
-section[data-testid="stMain"] .st-key-oficios_recebidos_historico .mpc-oficios-historico-table td{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_historico_"] .mpc-oficios-historico-table th,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_historico_"] .mpc-oficios-historico-table td{{
 padding:.55rem .7rem;
-border-bottom:1px solid var(--mpc-themed-table-border);
+border-bottom:1px solid rgba(230,226,227,.9);
 text-align:left;
-color:var(--mpc-themed-table-fg);
+color:var(--mpc-text);
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_historico .mpc-oficios-historico-table thead th{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_historico_"] .mpc-oficios-historico-table thead th{{
 background:var(--mpc-themed-table-header-bg);
 color:var(--mpc-themed-table-fg);
 font-weight:700;
+border-bottom:1px solid var(--mpc-themed-table-border);
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_historico .mpc-oficios-historico-table tbody tr:nth-child(even) td{{
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_historico_"] .mpc-oficios-historico-table tbody tr:nth-child(even) td{{
 background:var(--mpc-themed-control-hover);
 }}
-section[data-testid="stMain"] .st-key-oficios_recebidos_historico .mpc-oficios-historico-table tbody tr:nth-child(odd) td{{
-background:var(--mpc-themed-table-bg);
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_historico_"] .mpc-oficios-historico-table tbody tr:nth-child(odd) td{{
+background:transparent;
 }}
 section[data-testid="stMain"] [class*="st-key-mpc_card_operational"] [data-testid="stHorizontalBlock"] > div,
 section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stHorizontalBlock"] > div,

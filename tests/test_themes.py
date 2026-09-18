@@ -13,7 +13,7 @@ from tests.access_testing import enable_login, seed_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RED_CSS_SHA256 = "f35ea9f849e245cf553ea2c950899f7a4083565f804af2122d0ddd8818e35702"
+RED_CSS_SHA256 = "aed5987ce3a3a6d64ce0b56b91a29eaeb46c3c65de17280022feb82ad189a7c3"
 
 
 def test_red_palette_reproduces_approved_css():
@@ -40,16 +40,17 @@ def test_themed_control_tokens_differ_across_all_themes():
         assert f"--mpc-themed-control-hover:{THEMES[name]['themed_control_hover']}" in css
         assert value != "#F5F2F1"
         backgrounds[name] = value
-        oficios = css[css.find(".st-key-oficios_recebidos_acompanhamento") :]
-        oficios = oficios[: oficios.find(".st-key-oficios_recebidos_historico")]
+        oficios = css[css.find('[class*="st-key-oficios_recebidos_acompanhamento_"]') :]
+        oficios = oficios[: oficios.find('[class*="st-key-oficios_recebidos_historico_"]')]
         assert "var(--mpc-themed-control-bg)" in oficios
+        assert "var(--mpc-brand-soft)" in oficios
         for block in oficios.split("{")[:-1]:
             selector = block.rsplit("}", 1)[-1].strip()
             if not selector:
                 continue
             for part in selector.split(","):
-                assert ".st-key-oficios_recebidos_acompanhamento" in part
-        global_css = css.split(".st-key-oficios_recebidos_acompanhamento", 1)[0]
+                assert 'st-key-oficios_recebidos_acompanhamento_' in part
+        global_css = css.split('[class*="st-key-oficios_recebidos_acompanhamento_"]', 1)[0]
         assert "background:var(--mpc-themed-control-bg)" not in global_css
         assert "background-color:var(--mpc-themed-control-bg)" not in global_css
         assert '[data-testid="stSelectbox"] > div > div{\nbackground:var(--mpc-themed-control-bg)' not in global_css
