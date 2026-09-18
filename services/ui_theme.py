@@ -226,8 +226,9 @@ flex-direction:column;
 section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]:has(.st-key-portal_theme_footer) > div > [data-testid="stVerticalBlock"]{{
 flex:1 0 auto;
 }}
-section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:is(.st-key-portal_theme_footer, :has(.st-key-portal_theme_footer)){{
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"]:has(> [data-testid="stVerticalBlock"].st-key-portal_theme_footer){{
 margin-top:auto;
+flex-shrink:0;
 }}
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"],
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] [data-testid="stButton"]{{
