@@ -962,6 +962,48 @@ gap:.55rem;
 @media (max-width:768px){{
 .mpc-record-head{{flex-direction:column;gap:.35rem;}}
 .mpc-record-badges{{justify-content:flex-start;}}
+/* Keep the bell panel inside the visible mobile viewport, including iOS safe areas. */
+section[data-testid="stSidebar"] [data-testid="stPopover"] [data-baseweb="popover"]:has(.mpc-bell-alert),
+[data-baseweb="popover"]:has(.mpc-bell-alert){{
+position:fixed !important;
+top:max(12px, env(safe-area-inset-top)) !important;
+bottom:auto !important;
+left:12px !important;
+right:12px !important;
+transform:none !important;
+width:auto !important;
+max-width:none !important;
+z-index:10002 !important;
+}}
+section[data-testid="stSidebar"] [data-testid="stPopover"] [data-testid="stPopoverBody"]:has(.mpc-bell-alert),
+[data-testid="stPopoverBody"]:has(.mpc-bell-alert){{
+box-sizing:border-box;
+width:100%;
+max-width:100%;
+height:auto !important;
+min-height:0 !important;
+max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+overflow-x:hidden !important;
+overflow-y:auto !important;
+}}
+[data-testid="stPopoverBody"]:has(.mpc-bell-alert) [data-testid="stVerticalBlock"]{{
+gap:.5rem;
+}}
+[data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card{{
+box-sizing:border-box;
+height:auto;
+min-height:0;
+padding:.55rem .65rem;
+overflow-wrap:anywhere;
+}}
+[data-testid="stPopoverBody"] .mpc-bell-alert .mpc-record-title{{
+flex:none;
+}}
+[data-testid="stPopoverBody"]:has(.mpc-bell-alert) button{{
+min-height:2.5rem;
+white-space:normal;
+overflow-wrap:anywhere;
+}}
 section[data-testid="stMain"] [data-testid="stExpander"] summary{{
 white-space:normal;
 overflow-wrap:anywhere;
