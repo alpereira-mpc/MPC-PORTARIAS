@@ -2,7 +2,7 @@
 
 from portal import render_portal
 
-render_portal()
+portarias_menu = render_portal()
 
 from copy import deepcopy
 from datetime import date, datetime
@@ -1214,7 +1214,7 @@ def new_portaria():
             error(exc)
 
 
-menu = st.session_state["nav"]
+menu = portarias_menu
 st.markdown("### " + module_title("portarias", "Gerador de Portarias PROGE"))
 try:
     if menu == "Nova Portaria":

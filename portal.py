@@ -601,7 +601,7 @@ def render_portal():
             if "next_nav" in st.session_state:
                 st.session_state["nav"] = st.session_state.pop("next_nav")
             st.markdown("**Portarias**")
-            st.radio(
+            portarias_menu = st.radio(
                 "Navegação",
                 ["Nova Portaria", "Histórico", "Procuradores", "Configurações"],
                 key="nav",
@@ -702,3 +702,4 @@ def render_portal():
         )
         st.error(str(exc))
         st.stop()
+    return portarias_menu
