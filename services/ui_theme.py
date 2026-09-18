@@ -1073,6 +1073,72 @@ background:{CARD_OPERATIONAL_BG} !important;
 background-color:{CARD_OPERATIONAL_BG} !important;
 border-color:{CARD_OPERATIONAL_BORDER} !important;
 }}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stForm"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark){{
+background:transparent !important;
+background-color:transparent !important;
+border-color:transparent !important;
+box-shadow:none !important;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextAreaRootElement"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInputField"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextArea"] > div > div,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stSelectbox"] > div > div,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] > div > div,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] [data-baseweb="input"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] [data-baseweb="base-input"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextArea"] [data-baseweb="textarea"],
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextArea"] textarea,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stSelectbox"] [data-baseweb="select"] > div{{
+background:var(--mpc-card-institutional-bg) !important;
+background-color:var(--mpc-card-institutional-bg) !important;
+border-color:var(--mpc-card-institutional-border) !important;
+box-shadow:inset 0 0 0 1px var(--mpc-card-institutional-border);
+color:var(--mpc-text) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextAreaRootElement"]:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInputField"]:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextArea"] > div > div:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stSelectbox"] > div > div:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] > div > div:hover,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stSelectbox"] [data-baseweb="select"] > div:hover{{
+background:var(--mpc-card-b) !important;
+background-color:var(--mpc-card-b) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextAreaRootElement"]:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInputField"]:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextArea"] > div > div:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stSelectbox"] > div > div:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] > div > div:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] [data-baseweb="input"]:focus-within,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextArea"] [data-baseweb="textarea"]:focus-within{{
+background:var(--mpc-card-institutional-bg) !important;
+border-color:var(--mpc-brand) !important;
+box-shadow:0 0 0 1px var(--mpc-brand) !important;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] input,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextArea"] textarea{{
+background:transparent !important;
+color:var(--mpc-text) !important;
+caret-color:var(--mpc-text);
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] input::placeholder,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextArea"] textarea::placeholder{{
+color:var(--mpc-text-3) !important;
+opacity:1;
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stSelectbox"] svg,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] svg{{
+color:var(--mpc-text-2);
+}}
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stDateInput"] input:disabled,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stTextArea"] textarea:disabled,
+section[data-testid="stMain"] [class*="st-key-oficios_recebidos_acompanhamento"] [data-testid="stSelectbox"] [data-baseweb="select"][aria-disabled="true"] > div{{
+background:var(--mpc-control-disabled) !important;
+background-color:var(--mpc-control-disabled) !important;
+color:var(--mpc-text-2) !important;
+}}
 section[data-testid="stMain"] [class*="st-key-mpc_card_operational"] [data-testid="stHorizontalBlock"] > div,
 section[data-testid="stMain"] [class*="st-key-mpc_card_a"] [data-testid="stHorizontalBlock"] > div,
 section[data-testid="stMain"] [class*="st-key-mpc_card_b"] [data-testid="stHorizontalBlock"] > div,

@@ -228,3 +228,42 @@ def test_stripe_and_header_helpers_are_available():
     assert 'button("Sair", type="primary"' in getsource(render_denied)
     assert 'button("Sair", type="primary", key="portal_logout"' in getsource(render_portal)
     assert 'button[kind="primary"]' in compact
+
+
+def test_oficios_recebidos_acompanhamento_controls_are_scoped():
+    from inspect import getsource
+    from services import oficios_ui
+    from services.themes import THEMES
+    from services.ui_theme import _css
+
+    details = getsource(oficios_ui.details)
+    assert 'key="oficios_recebidos_acompanhamento"' in details
+    assert details.index('r["direcao"] == "RECEBIDO"') < details.index(
+        'key="oficios_recebidos_acompanhamento"'
+    )
+    marker = '[class*="st-key-oficios_recebidos_acompanhamento"]'
+    for name in THEMES:
+        css = _css(name)
+        compact = css.replace(" ", "")
+        assert marker in css
+        assert (
+            'st-key-oficios_recebidos_acompanhamento"][data-testid="stSelectbox"]'
+            in compact
+        )
+        assert (
+            'st-key-oficios_recebidos_acompanhamento"][data-testid="stDateInput"]'
+            in compact
+        )
+        assert (
+            'st-key-oficios_recebidos_acompanhamento"][data-testid="stTextArea"]'
+            in compact
+        )
+        scoped = css[css.find(marker) :]
+        assert "var(--mpc-card-institutional-bg)" in scoped
+        assert "var(--mpc-card-institutional-border)" in scoped
+        assert "var(--mpc-card-b)" in scoped
+        assert "var(--mpc-text-3)" in scoped
+        assert "var(--mpc-brand)" in scoped
+        assert "var(--mpc-control-disabled)" in scoped
+        assert '[data-testid="stSelectbox"] > div > div{\nbackground:var(--mpc-card-institutional-bg)' not in css
+

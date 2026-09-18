@@ -1,5 +1,6 @@
 """Lazy native Streamlit correspondence UI."""
 
+from contextlib import nullcontext
 from datetime import date
 import hashlib
 import streamlit as st
@@ -678,28 +679,36 @@ def details(service, r):
                         "Ofício preservado em quarentena e número liberado para reutilização."
                     )
         section_label("Acompanhamento")
-        with st.form("status_" + r["id"]):
-            form_mark()
-            choices = [
-                s
-                for s in (SENT if r["direcao"] == "ENVIADO" else RECEIVED)
-                if s not in ("Rascunho", "Gerado")
-            ]
-            status = st.selectbox(
-                "Novo status",
-                choices,
-                index=choices.index(r["status"]) if r["status"] in choices else 0,
-            )
-            due = st.date_input(
-                "Prazo",
-                value=date.fromisoformat(r["prazo"]) if r.get("prazo") else None,
-                format="DD/MM/YYYY",
-            )
-            sent = st.date_input(
-                "Data de envio (para status Enviado)", value=None, format="DD/MM/YYYY"
-            )
-            note = st.text_area("Observação / motivo do cancelamento")
-            submit = st.form_submit_button("Registrar movimentação")
+        tracking = (
+            st.container(key="oficios_recebidos_acompanhamento")
+            if r["direcao"] == "RECEBIDO"
+            else nullcontext()
+        )
+        with tracking:
+            with st.form("status_" + r["id"]):
+                form_mark()
+                choices = [
+                    s
+                    for s in (SENT if r["direcao"] == "ENVIADO" else RECEIVED)
+                    if s not in ("Rascunho", "Gerado")
+                ]
+                status = st.selectbox(
+                    "Novo status",
+                    choices,
+                    index=choices.index(r["status"]) if r["status"] in choices else 0,
+                )
+                due = st.date_input(
+                    "Prazo",
+                    value=date.fromisoformat(r["prazo"]) if r.get("prazo") else None,
+                    format="DD/MM/YYYY",
+                )
+                sent = st.date_input(
+                    "Data de envio (para status Enviado)",
+                    value=None,
+                    format="DD/MM/YYYY",
+                )
+                note = st.text_area("Observação / motivo do cancelamento")
+                submit = st.form_submit_button("Registrar movimentação")
         if submit:
             service.update_status(
                 r["id"],
