@@ -489,12 +489,15 @@ def delete_from_history(identifier, key, draft=False):
                 st.session_state.get(key + "files", True),
             )
         reset_editor()
+        if draft:
+            st.session_state.pop("history_open", None)
         st.session_state["history_message"] = result["message"]
-        audit_portaria(
-            "RASCUNHO_EXCLUIDO" if draft else "PORTARIA_EXCLUIDA",
-            "EXCLUIR",
-            {"id": identifier},
-        )
+        if not draft or not result.get("already_deleted"):
+            audit_portaria(
+                "RASCUNHO_EXCLUIDO" if draft else "PORTARIA_EXCLUIDA",
+                "EXCLUIR",
+                {"id": identifier},
+            )
     except Exception as exc:
         logging.exception("Exclusão administrativa não concluída")
         st.session_state["history_error"] = (

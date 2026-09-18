@@ -154,14 +154,16 @@ def delete_portaria(
             raise ValueError(
                 "O status mudou. Atualize o Histórico e use a ação correspondente."
             )
-        try:
-            backup = store.automatic_backup(
-                f"antes_exclusao_{row['numero'] or 'rascunho'}_{row['ano']}"
-            )
-        except Exception as exc:
-            raise ValueError(
-                "Não foi possível criar o backup de segurança. A Portaria não foi excluída."
-            ) from exc
+        backup = ""
+        if not draft_only:
+            try:
+                backup = store.automatic_backup(
+                    f"antes_exclusao_{row['numero'] or 'rascunho'}_{row['ano']}"
+                )
+            except Exception as exc:
+                raise ValueError(
+                    "Não foi possível criar o backup de segurança. A Portaria não foi excluída."
+                ) from exc
         files = [
             dict(r)
             for r in c.execute(
@@ -222,14 +224,15 @@ def delete_portaria(
                 "arquivos_vinculados": len(files),
             },
         )
-    try:
-        finish_files(store, audit_id)
-    except Exception:
-        import logging
+    if staged:
+        try:
+            finish_files(store, audit_id)
+        except Exception:
+            import logging
 
-        logging.exception(
-            "Exclusão confirmada no banco; confira arquivos pendentes no registro de exclusões."
-        )
+            logging.exception(
+                "Exclusão confirmada no banco; confira arquivos pendentes no registro de exclusões."
+            )
     if draft_only:
         message = "Rascunho excluído. A sequência não foi alterada."
     elif later:

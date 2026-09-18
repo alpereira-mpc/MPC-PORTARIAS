@@ -129,6 +129,36 @@ def test_delete_draft_no_sequence_change(store):
     assert not store.history()
 
 
+def test_delete_draft_does_not_run_full_backup(store, monkeypatch):
+    identifier = store.save_draft(sample(store))
+
+    def forbidden_work(*args):
+        pytest.fail("Rascunho sem arquivos não deve iniciar trabalho externo")
+
+    monkeypatch.setattr(store, "automatic_backup", forbidden_work)
+    monkeypatch.setattr("services.deletion.finish_files", forbidden_work)
+    result = store.delete_draft(identifier, True)
+    assert result["backup"] == ""
+    assert store.deletion_history()[0]["backup"] == ""
+    assert not store.history()
+    assert store.next_number(2026) == 9
+    assert store.delete_draft(identifier, True)["already_deleted"]
+
+
+def test_delete_draft_rolls_back_on_audit_failure(store, monkeypatch):
+    identifier = store.save_draft(sample(store))
+
+    def fail_event(*args):
+        raise OSError("Falha de auditoria injetada")
+
+    monkeypatch.setattr(store, "event", fail_event)
+    with pytest.raises(OSError, match="Falha de auditoria injetada"):
+        store.delete_draft(identifier, True)
+    assert store.get(identifier)["status"] == "Rascunho"
+    assert not store.deletion_history()
+    assert store.next_number(2026) == 9
+
+
 def test_delete_repeat_does_not_touch_reused_number(store):
     identifier = finalized(store)[0]
     remove(store, identifier)

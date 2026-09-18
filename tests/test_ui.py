@@ -92,7 +92,13 @@ def test_ui_administrative_deletion_confirmation(tmp_path, monkeypatch):
     ).check().run()
     next(x for x in app.button if x.label == "Excluir rascunho").click().run()
     assert not app.error and not app.exception
-    assert not store.history()
+    assert not store.history() and store.next_number(2026) == 9
+    state = app.session_state.filtered_state
+    assert state.get("history_open") != draft_id
+    assert state.get("editor_id") != draft_id
+    app.run()
+    assert not app.error and not app.exception
+    assert app.session_state.filtered_state.get("history_open") != draft_id
 
 
 def test_ui_draft_delete_and_natural_legacy_reason(tmp_path, monkeypatch):
@@ -125,6 +131,13 @@ def test_ui_draft_delete_and_natural_legacy_reason(tmp_path, monkeypatch):
     next(x for x in app.button if x.label == "Excluir rascunho").click().run()
     assert not app.error and not app.exception
     assert not store.history() and store.next_number(2026) == 9
+    state = app.session_state.filtered_state
+    assert state.get("history_open") != identifier
+    assert state.get("editor_id") != identifier
+    app.run()
+    assert not app.error and not app.exception
+    assert app.session_state.filtered_state.get("history_open") != identifier
+    assert app.session_state.filtered_state.get("editor_id") != identifier
 
 
 def test_member_editor_preserves_custom_seat(tmp_path, monkeypatch):
