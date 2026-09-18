@@ -1,6 +1,9 @@
 """Institutional color palettes; functional status colors stay in ui_theme."""
 
-THEMES = {
+_TEXT_PRIMARY = "#202832"
+_TEXT_MUTED = "#7A838E"
+
+_BASE_THEMES = {
     "vermelho": {
         "primary": "#9B1724",
         "primary_hover": "#7E121C",
@@ -61,6 +64,70 @@ THEMES = {
         "card_b_bg": "#F8ECEE",
         "card_b_border": "#DDBFC5",
     },
+}
+
+
+def _hex_to_rgb(value):
+    raw = value.lstrip("#")
+    return tuple(int(raw[index : index + 2], 16) for index in (0, 2, 4))
+
+
+def _rgb_to_hex(red, green, blue):
+    return f"#{red:02X}{green:02X}{blue:02X}"
+
+
+def _mix_hex(left, right, amount):
+    start = _hex_to_rgb(left)
+    end = _hex_to_rgb(right)
+    return _rgb_to_hex(
+        *[round(first + (second - first) * amount) for first, second in zip(start, end)]
+    )
+
+
+def _themed_surfaces(name, palette):
+    tokens = dict(palette)
+    if name == "vermelho_escuro":
+        control = _mix_hex(palette["sidebar_bg"], palette["primary"], 0.28)
+        tokens["themed_control_bg"] = control
+        tokens["themed_control_border"] = _mix_hex(
+            palette["sidebar_bg"], palette["primary"], 0.46
+        )
+        tokens["themed_control_hover"] = _mix_hex(
+            palette["sidebar_bg"], palette["primary"], 0.14
+        )
+        tokens["themed_control_fg"] = palette["card_institutional_bg"]
+        tokens["themed_control_placeholder"] = _mix_hex(
+            palette["card_institutional_bg"], palette["sidebar_bg"], 0.28
+        )
+        tokens["themed_table_bg"] = _mix_hex(
+            palette["sidebar_bg"], palette["primary_soft"], 0.18
+        )
+        tokens["themed_table_header_bg"] = palette["primary"]
+        tokens["themed_table_border"] = _mix_hex(
+            palette["sidebar_bg"], palette["primary"], 0.4
+        )
+        tokens["themed_table_fg"] = palette["card_institutional_bg"]
+        return tokens
+    tokens["themed_control_bg"] = _mix_hex(
+        palette["primary_soft"], palette["card_operational_bg"], 0.34
+    )
+    tokens["themed_control_border"] = palette["card_b_border"]
+    tokens["themed_control_hover"] = _mix_hex(
+        palette["primary_soft"], palette["card_operational_bg"], 0.55
+    )
+    tokens["themed_control_fg"] = _TEXT_PRIMARY
+    tokens["themed_control_placeholder"] = _TEXT_MUTED
+    tokens["themed_table_bg"] = palette["primary_soft"]
+    tokens["themed_table_header_bg"] = _mix_hex(
+        palette["primary_soft"], palette["card_operational_bg"], 0.58
+    )
+    tokens["themed_table_border"] = palette["card_institutional_border"]
+    tokens["themed_table_fg"] = _TEXT_PRIMARY
+    return tokens
+
+
+THEMES = {
+    name: _themed_surfaces(name, palette) for name, palette in _BASE_THEMES.items()
 }
 
 THEME_LABELS = {

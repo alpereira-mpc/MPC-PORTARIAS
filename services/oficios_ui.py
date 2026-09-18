@@ -26,11 +26,32 @@ from services.ui_theme import (
     empty_state,
     filter_mark,
     form_mark,
+    html_text,
     kpi_mark,
+    render_html,
     render_record,
     section_label,
     status_tone,
 )
+
+_RECEBIDOS_HISTORICO_COLUMNS = ("instante", "anterior", "novo", "observacao")
+
+
+def _render_recebidos_historico(rows):
+    head = "".join(
+        f"<th>{html_text(column)}</th>" for column in _RECEBIDOS_HISTORICO_COLUMNS
+    )
+    body = []
+    for row in rows or ():
+        cells = "".join(
+            f"<td>{html_text(row.get(column))}</td>"
+            for column in _RECEBIDOS_HISTORICO_COLUMNS
+        )
+        body.append(f"<tr>{cells}</tr>")
+    render_html(
+        '<div class="mpc-oficios-historico-table"><table><thead><tr>'
+        f"{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
+    )
 
 
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
@@ -727,9 +748,11 @@ def details(service, r):
     )
     with history:
         st.write("Histórico")
-        st.dataframe(
-            service.movements(r["id"]), hide_index=True, use_container_width=True
-        )
+        movements = service.movements(r["id"])
+        if r["direcao"] == "RECEBIDO":
+            _render_recebidos_historico(movements)
+        else:
+            st.dataframe(movements, hide_index=True, use_container_width=True)
 
 
 def render_filters(*, direction=None, tracking=False, submit_label=None):

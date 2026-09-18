@@ -242,40 +242,45 @@ def test_oficios_recebidos_acompanhamento_controls_are_scoped():
     assert details.index('r["direcao"] == "RECEBIDO"') < details.index(
         'key="oficios_recebidos_acompanhamento"'
     )
-    assert details.index('key="oficios_recebidos_historico"') < details.index(
-        'st.dataframe'
+    assert "_render_recebidos_historico" in details
+    assert "st.dataframe" in details
+    assert oficios_ui._RECEBIDOS_HISTORICO_COLUMNS == (
+        "instante",
+        "anterior",
+        "novo",
+        "observacao",
     )
-    marker = '[class*="st-key-oficios_recebidos_acompanhamento"]'
+    marker = ".st-key-oficios_recebidos_acompanhamento"
+    after = 'section[data-testid="stMain"] [class*="st-key-mpc_card_operational"] [data-testid="stHorizontalBlock"]'
     for name in THEMES:
         css = _css(name)
         compact = css.replace(" ", "")
         assert marker in css
+        scoped = css[css.find(marker) : css.find(after)]
         assert (
-            'st-key-oficios_recebidos_acompanhamento"][data-testid="stSelectbox"]'
+            '.st-key-oficios_recebidos_acompanhamento[data-baseweb="select"]>div'
             in compact
         )
         assert (
-            'st-key-oficios_recebidos_acompanhamento"][data-testid="stDateInput"]'
-            in compact
+            '.st-key-oficios_recebidos_acompanhamento[data-baseweb="input"]' in compact
         )
         assert (
-            'st-key-oficios_recebidos_acompanhamento"][data-testid="stTextArea"]'
+            '.st-key-oficios_recebidos_acompanhamento[data-baseweb="textarea"]'
             in compact
         )
-        assert 'st-key-oficios_recebidos_acompanhamento"][data-testid="stForm"]' in compact
-        assert 'st-key-oficios_recebidos_historico"][data-testid="stDataFrame"]' in compact
-        assert "--gdg-bg-cell:var(--mpc-white)" in css
-        scoped = css[css.find(marker) :]
-        assert "var(--mpc-control-bg)" in scoped
-        assert "var(--mpc-control-border)" in scoped
-        assert "var(--mpc-control-hover)" in scoped
-        assert "var(--mpc-red)" in scoped
-        assert "var(--mpc-brand-soft)" in scoped
-        assert "var(--mpc-text-3)" in scoped
-        assert "var(--mpc-control-disabled)" in scoped
+        assert 'st-key-oficios_recebidos_acompanhamento"][data-testid="stForm"]' not in compact
+        assert 'st-key-oficios_recebidos_historico"][data-testid="stDataFrame"]' not in compact
+        assert "--gdg-bg-cell" not in scoped
+        assert "var(--mpc-themed-control-bg)" in scoped
+        assert "var(--mpc-themed-control-border)" in scoped
+        assert "var(--mpc-themed-control-hover)" in scoped
+        assert "var(--mpc-themed-control-fg)" in scoped
+        assert "var(--mpc-brand)" in scoped
+        assert "var(--mpc-themed-table-bg)" in scoped
         assert "var(--mpc-card-institutional-bg)" not in scoped
         assert "var(--mpc-card-institutional-border)" not in scoped
         assert "var(--mpc-card-b)" not in scoped
+        assert "var(--mpc-control-bg)" not in scoped
         assert '[data-testid="stSelectbox"] > div > div{\nbackground:var(--mpc-card-institutional-bg)' not in css
         assert '[data-testid="stDataFrame"],[data-testid="stDataFrameResizable"]{\nbackground:var(--mpc-card-institutional-bg)' not in css
 

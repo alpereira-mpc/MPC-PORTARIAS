@@ -13,7 +13,7 @@ from tests.access_testing import enable_login, seed_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RED_CSS_SHA256 = "90598827da1198fdae35df938930fe26d75128f3445b6a0409326cd365823c21"
+RED_CSS_SHA256 = "f35ea9f849e245cf553ea2c950899f7a4083565f804af2122d0ddd8818e35702"
 
 
 def test_red_palette_reproduces_approved_css():
@@ -22,6 +22,47 @@ def test_red_palette_reproduces_approved_css():
     assert _css(None) == red
     assert _css("desconhecido") == red
     assert valid_theme("") == "vermelho"
+
+
+def _css_token(css, name):
+    marker = f"--{name}:"
+    start = css.index(marker) + len(marker)
+    return css[start : css.index(";", start)]
+
+
+def test_themed_control_tokens_differ_across_all_themes():
+    backgrounds = {}
+    for name in THEMES:
+        css = _css(name)
+        value = _css_token(css, "mpc-themed-control-bg")
+        assert value == THEMES[name]["themed_control_bg"]
+        assert f"--mpc-themed-control-border:{THEMES[name]['themed_control_border']}" in css
+        assert f"--mpc-themed-control-hover:{THEMES[name]['themed_control_hover']}" in css
+        assert value != "#F5F2F1"
+        backgrounds[name] = value
+        oficios = css[css.find(".st-key-oficios_recebidos_acompanhamento") :]
+        oficios = oficios[: oficios.find(".st-key-oficios_recebidos_historico")]
+        assert "var(--mpc-themed-control-bg)" in oficios
+        for block in oficios.split("{")[:-1]:
+            selector = block.rsplit("}", 1)[-1].strip()
+            if not selector:
+                continue
+            for part in selector.split(","):
+                assert ".st-key-oficios_recebidos_acompanhamento" in part
+        global_css = css.split(".st-key-oficios_recebidos_acompanhamento", 1)[0]
+        assert "background:var(--mpc-themed-control-bg)" not in global_css
+        assert "background-color:var(--mpc-themed-control-bg)" not in global_css
+        assert '[data-testid="stSelectbox"] > div > div{\nbackground:var(--mpc-themed-control-bg)' not in global_css
+        assert '[data-testid="stDateInput"] > div > div{\nbackground:var(--mpc-themed-control-bg)' not in global_css
+        assert '[data-testid="stTextArea"] > div > div{\nbackground:var(--mpc-themed-control-bg)' not in global_css
+        assert '[data-testid="stTextArea"] textarea{\nbackground:var(--mpc-themed-control-bg)' not in global_css
+        assert "\ninput{\nbackground:var(--mpc-themed-control-bg)" not in global_css
+        assert "\ntextarea{\nbackground:var(--mpc-themed-control-bg)" not in global_css
+    assert len(set(backgrounds.values())) == len(THEMES)
+    assert backgrounds["dourado"] != backgrounds["verde"]
+    assert backgrounds["verde"] != backgrounds["vermelho"]
+    assert backgrounds["vermelho"] != backgrounds["azul"]
+    assert backgrounds["azul"] != backgrounds["vermelho_escuro"]
 
 
 @pytest.mark.parametrize("name", ("azul", "verde", "dourado", "vermelho_escuro"))
