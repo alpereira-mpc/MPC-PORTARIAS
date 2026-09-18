@@ -18,7 +18,7 @@ from services.ui_theme import badges, empty_state, filter_mark, record_html, ren
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
-    ("agenda", "Agenda"),
+    ("agenda", "Agenda e Afastamentos"),
     ("memorandos", "Memorandos"),
 )
 
@@ -149,7 +149,7 @@ def render(store, principal):
     cards[4].metric("Total ativo", counts["total"])
     for key, label in (
         ("oficios", "Ofícios"),
-        ("agenda", "Agenda"),
+        ("agenda", "Agenda e Afastamentos"),
         ("memorandos", "Memorandos"),
     ):
         if errors.get(key):

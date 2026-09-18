@@ -544,7 +544,14 @@ def render_portal():
             _logout()
         if can_view_alertas(principal):
             render_bell(store, principal)
-        selected = st.radio("Portal", options, key="portal_module")
+        selected = st.radio(
+            "Portal",
+            options,
+            key="portal_module",
+            format_func=lambda option: (
+                "Agenda e Afastamentos" if option == "Agenda" else option
+            ),
+        )
         if selected != "Memorandos":
             st.session_state["memorando_form_active"] = False
         if selected != "Relatórios e Indicadores":

@@ -126,7 +126,7 @@ def render(store, principal):
                 "Perfil": u["perfil"],
                 "Ativo": "Sim" if u["ativo"] else "Não",
                 "Portarias": "Sim" if u["pode_portarias"] else "Não",
-                "Agenda": "Sim" if u["pode_agenda"] else "Não",
+                "Agenda e Afastamentos": "Sim" if u["pode_agenda"] else "Não",
                 "Ofícios": "Sim" if u["pode_oficios"] else "Não",
                 "Memorandos": "Sim" if u["pode_memorandos"] else "Não",
                 "Relatórios": "Sim" if u["pode_relatorios"] else "Não",
@@ -200,7 +200,7 @@ def render(store, principal):
             "Portarias", value=current["pode_portarias"], key=prefix + "portarias"
         )
         agenda = st.checkbox(
-            "Agenda", value=current["pode_agenda"], key=prefix + "agenda"
+            "Agenda e Afastamentos", value=current["pode_agenda"], key=prefix + "agenda"
         )
         oficios = st.checkbox(
             "Ofícios", value=current["pode_oficios"], key=prefix + "oficios"

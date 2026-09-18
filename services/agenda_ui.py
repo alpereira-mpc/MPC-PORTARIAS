@@ -323,6 +323,7 @@ def editor(agenda, people, principal=None):
     if st.button(
         "Salvar compromisso",
         type="primary",
+        key=prefix + "save",
         disabled=not members
         or bool(alerts and not institution_ok)
         or bool(overlaps and not conflict_ok),
@@ -360,7 +361,7 @@ def editor(agenda, people, principal=None):
             done("Compromisso salvo com sucesso.")
         except ValueError as exc:
             st.error(str(exc))
-    if st.button("Voltar à agenda"):
+    if st.button("Voltar à agenda", key=prefix + "back"):
         st.session_state.pop("agenda_edit", None)
         st.rerun()
 
@@ -487,21 +488,22 @@ def leave_editor(agenda, people, principal):
     record = {"id": old.get("id"), "procurador_id": holder_id, "motivo": motive, "motivo_outro": other, "data_inicio": start.isoformat(), "data_fim": end.isoformat(), "substituto_id": substitute, "observacao": notes}
     if agenda.leave_substitute_warning(substitute, record["data_inicio"], record["data_fim"], record["id"]):
         st.warning("Atenção: este procurador já está indicado como substituto em outro afastamento durante parte deste período.")
-    if st.button("Salvar afastamento", type="primary"):
+    if st.button("Salvar afastamento", type="primary", key=prefix + "save"):
         try:
             identifier = agenda.save_leave(record, created_by=getattr(principal, "email", None))
             audit_agenda("AFASTAMENTO_EDITADO" if old.get("id") else "AFASTAMENTO_CRIADO", "ALTERAR" if old.get("id") else "CRIAR", identifier, {"procurador": holder["nome"], "periodo": f"{record['data_inicio']} a {record['data_fim']}", "motivo": motive, "substituto": next((p["nome"] for p in people if p["id"] == substitute), None)}, "afastamento")
             done("Afastamento salvo. Substituto ainda não definido." if substitution_pending(record, people) else "Afastamento salvo com sucesso.")
         except ValueError as exc: st.error(str(exc))
-    if st.button("Voltar à agenda"):
-        st.session_state.pop("agenda_leave_edit", None); st.rerun()
+    if st.button("Voltar à agenda", key=prefix + "back"):
+        st.session_state.pop("agenda_leave_edit", None)
+        st.rerun()
 
 
 def render(store=None, principal=None):
     from database.store import Store, unwrap_store
     from services.access import current_user, require_permission
 
-    st.header(module_title("agenda", "AGENDA DOS PROCURADORES"))
+    st.header(module_title("agenda", "AGENDA E AFASTAMENTOS DOS PROCURADORES"))
     if store is None:
         store = Store()
     else:
@@ -532,10 +534,8 @@ def render(store=None, principal=None):
     consume_pending_open_agenda(agenda)
     if "agenda_edit" in st.session_state:
         editor(agenda, people, principal)
-        return
     if "agenda_leave_edit" in st.session_state:
         leave_editor(agenda, people, principal)
-        return
     section = st.radio(
         "Seção", ["Agenda", "Histórico"], horizontal=True, key="agenda_section"
     )
@@ -611,10 +611,12 @@ def render(store=None, principal=None):
         following.button("Próxima", disabled=not has_next, key="agenda_history_next", on_click=move_page, args=("agenda_history_offset", 30))
         return
     new, leave, _ = st.columns([1, 1.2, 6])
-    if new.button("+ Novo compromisso", type="primary"):
+    if new.button("+ Novo compromisso", type="primary", key="agenda_new"):
+        st.session_state.pop("agenda_leave_edit", None)
         st.session_state["agenda_edit"] = {}
         st.rerun()
-    if leave.button("Cadastrar afastamento", type="primary"):
+    if leave.button("Cadastrar afastamento", type="primary", key="agenda_new_leave"):
+        st.session_state.pop("agenda_edit", None)
         st.session_state["agenda_leave_edit"] = {}
         st.rerun()
     with st.container(border=True):

@@ -406,3 +406,65 @@ def test_agenda_renders_leave_records_separately_from_appointments(
         assert any(button.label == "Editar" for button in app.button)
         assert not any(button.label == "Editar afastamento" for button in app.button)
 
+
+def test_create_forms_keep_existing_agenda_and_leave_records(store, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date().isoformat()
+    agenda = AgendaStore(store)
+    record = draft("EVENTO", members=[1], day=today)
+    record["titulo"] = "Compromisso visível"
+    agenda.save(record)
+    agenda.save_leave(
+        {
+            "procurador_id": 4,
+            "motivo": "Férias",
+            "data_inicio": today,
+            "data_fim": today,
+            "observacao": "Afastamento visível",
+        }
+    )
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_agenda").click().run()
+    assert not app.exception
+    headings = " ".join(str(item.value) for item in (*app.header, *app.title, *app.subheader))
+    assert "AGENDA E AFASTAMENTOS DOS PROCURADORES" in headings
+    assert "Novo compromisso" not in headings
+    displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
+    assert "Compromisso visível" in displayed
+    assert "AFASTAMENTO" in displayed
+    assert any(button.label == "+ Novo compromisso" for button in app.button)
+    assert any(button.label == "Cadastrar afastamento" for button in app.button)
+    app.button(key="agenda_new").click().run()
+    assert not app.exception
+    assert any("Novo compromisso" in str(item.value) for item in app.subheader)
+    displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
+    assert "Compromisso visível" in displayed
+    assert "AFASTAMENTO" in displayed
+    assert any(radio.label == "Visualização" for radio in app.radio)
+    assert any(widget.label == "Possui viagem aérea" for widget in app.checkbox)
+    back = next(button for button in app.button if button.label == "Voltar à agenda")
+    back.click().run()
+    assert not app.exception
+    headings = " ".join(str(item.value) for item in app.subheader)
+    assert "Novo compromisso" not in headings
+    displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
+    assert "Compromisso visível" in displayed
+    app.button(key="agenda_new_leave").click().run()
+    assert not app.exception
+    assert any("Cadastrar afastamento" in str(item.value) for item in app.subheader)
+    displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
+    assert "AFASTAMENTO" in displayed
+    assert "Compromisso visível" in displayed
+    assert not any(widget.label == "Possui viagem aérea" for widget in app.checkbox)
+    next(button for button in app.button if button.label == "Voltar à agenda").click().run()
+    assert not app.exception
+    displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
+    assert "Compromisso visível" in displayed
+    assert "AFASTAMENTO" in displayed
+

@@ -46,7 +46,7 @@ MAX_STRING = 200
 MAX_KEYS = 24
 MODULE_LABELS = {
     "portarias": "Portarias",
-    "agenda": "Agenda",
+    "agenda": "Agenda e Afastamentos",
     "oficios": "Ofícios",
     "memorandos": "Memorandos",
     "admin": "Administração",

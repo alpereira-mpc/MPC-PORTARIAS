@@ -26,7 +26,7 @@ from services.ui_theme import badge, badges, card_container, empty_state, record
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
-    ("agenda", "Agenda"),
+    ("agenda", "Agenda e Afastamentos"),
     ("memorandos", "Memorandos"),
     ("tarefas", "Tarefas"),
     ("sistema", "Sistema"),
@@ -241,7 +241,7 @@ def render(store, principal):
     cards[3].metric("Total", len(items))
     labels = {
         "oficios": "Ofícios",
-        "agenda": "Agenda",
+        "agenda": "Agenda e Afastamentos",
         "memorandos": "Memorandos",
         "sistema": "Sistema",
     }

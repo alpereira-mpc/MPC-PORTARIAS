@@ -102,6 +102,20 @@ def test_stripe_and_header_helpers_are_available():
     assert "task_" in task_card
     assert 'key="tarefas_new"' in getsource(tarefas_ui.render)
     assert 'key=prefix+"cancel"' in getsource(tarefas_ui._editor)
+    from services import agenda_ui
+    agenda_page = getsource(agenda_ui.render)
+    opening = agenda_page[
+        agenda_page.index('if "agenda_edit" in st.session_state:') : agenda_page.index(
+            "section = st.radio"
+        )
+    ]
+    assert "editor(agenda, people, principal)" in opening
+    assert "leave_editor(agenda, people, principal)" in opening
+    assert "return" not in opening
+    assert "AGENDA E AFASTAMENTOS DOS PROCURADORES" in agenda_page
+    assert "AGENDA DOS PROCURADORES" not in agenda_page
+    assert 'key="agenda_new"' in agenda_page
+    assert 'key="agenda_new_leave"' in agenda_page
     styles = getsource(branding._brand_styles)
     assert "object-fit:contain" in styles.replace(" ", "")
     assert "margin:-1.35rem" not in styles

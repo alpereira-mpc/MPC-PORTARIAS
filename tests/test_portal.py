@@ -96,6 +96,7 @@ def test_home_uses_page_title_not_generic_banner(store, monkeypatch):
     assert app.sidebar.radio(key="portal_module").value == "Início"
     assert "FERRAMENTAS MPC-PB" not in headings
     assert "AGENDA DOS PROCURADORES" not in headings
+    assert "AGENDA E AFASTAMENTOS DOS PROCURADORES" not in headings
 
     import streamlit as st
 
@@ -169,9 +170,14 @@ def test_home_shows_only_authorized_modules(store, monkeypatch):
     portal = next(
         r for r in app.sidebar.radio if getattr(r, "key", None) == "portal_module"
     )
-    assert "Agenda" in portal.options
+    assert "Agenda e Afastamentos" in portal.options
+    assert "Agenda" not in portal.options
     assert "Ofícios" not in portal.options
     assert "Portarias" not in portal.options
+    from inspect import getsource
+    from portal import render_portal
+
+    assert '"Agenda e Afastamentos" if option == "Agenda"' in getsource(render_portal)
 
 
 def test_relatorios_card_menu_and_route_follow_module_permission(store, monkeypatch):
