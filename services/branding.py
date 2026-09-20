@@ -208,7 +208,7 @@ def render_app_identity(*, variant="presentation", prompt=None, action=None):
         extra = " mpc-identity--home"
     parts = [
         f'<div class="mpc-identity{extra}">',
-        f'<p class="mpc-identity-name">{APP_NAME}</p>',
+        f'<p class="mpc-identity-name">{APP_NAME if variant != "home" else "FERRAMENTAS MPC-PB - TESTE DE RECOVERY"}</p>',
         f'<p class="mpc-identity-subtitle">{subtitle}</p>',
     ]
     if prompt:
