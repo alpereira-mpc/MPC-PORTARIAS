@@ -21,6 +21,27 @@ def test_red_palette_is_the_fallback():
     assert valid_theme("") == "vermelho"
 
 
+def test_anonymous_portal_uses_gold_without_storing_user_preference(monkeypatch):
+    import portal
+
+    state = {}
+    monkeypatch.setattr(portal.st, "session_state", state)
+
+    assert portal._active_theme(None) == "dourado"
+    assert state == {}
+
+
+def test_login_screen_injects_existing_gold_theme(monkeypatch):
+    monkeypatch.setattr("services.access.oidc_identity", lambda: None)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+
+    assert not app.exception
+    styles = "\n".join(str(item.value) for item in app.markdown)
+    assert f"--mpc-brand:{THEMES['dourado']['primary']}" in styles
+    assert f"--mpc-sidebar:{THEMES['dourado']['sidebar_bg']}" in styles
+    assert "_portal_theme" not in app.session_state.filtered_state
+
+
 def _css_token(css, name):
     marker = f"--{name}:"
     start = css.index(marker) + len(marker)
@@ -127,7 +148,9 @@ def test_user_themes_are_independent_and_survive_reopening(store):
     assert reopened.get_theme_by_email("outro@test.local") == "verde"
 
 
-@pytest.mark.parametrize("name", ("vermelho", "azul", "verde"))
+@pytest.mark.parametrize(
+    "name", ("vermelho", "azul", "verde", "dourado", "vermelho_escuro")
+)
 def test_portal_theme_survives_navigation(store, monkeypatch, name):
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)

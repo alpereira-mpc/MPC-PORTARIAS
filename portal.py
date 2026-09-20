@@ -49,7 +49,7 @@ def _session_get(key, default=None):
 
 def _active_theme(identity):
     if identity is None:
-        return "vermelho"
+        return "dourado"
     email = identity["email"]
     cached = _session_get("_portal_theme")
     if cached and cached.get("email") == email:
