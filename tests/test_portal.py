@@ -37,11 +37,7 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     assert not any(getattr(t, "value", "") == "FERRAMENTAS MPC-PB" for t in app.title)
     assert any(b.label == "Entrar com Gmail" for b in app.button)
     assert any(getattr(b, "key", None) == "oidc_gmail_login" for b in app.button)
-    assert any(
-        getattr(c, "value", "")
-        == "Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br."
-        for c in app.caption
-    )
+    assert "Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br." in visible
     assert not any(getattr(b, "key", None) == "open_portarias" for b in app.button)
 
 
@@ -80,8 +76,9 @@ def test_brand_assets_are_packaged_with_the_repository():
     login_src = getsource(render_login)
     assert 'variant="login"' in login_src
     assert "max-width:50rem" in login_src
-    assert "st-key-login_access_caption" in login_src
-    assert "font-size:14px;font-weight:700;color:var(--mpc-brand-dark)" in login_src
+    assert 'class="login-domain-hint"' in login_src
+    assert "font-size:14px!important;font-weight:700!important" in login_src
+    assert "color:var(--mpc-brand-dark)!important" in login_src
 
 
 def test_home_uses_page_title_not_generic_banner(store, monkeypatch):
