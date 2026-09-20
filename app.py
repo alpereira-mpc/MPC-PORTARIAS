@@ -1,11 +1,5 @@
 """Ferramentas MPC-PB portal and preserved Portarias module."""
 
-import streamlit as st
-
-if st.query_params.get("keepalive") == "1":
-    st.write("Ferramentas MPC-PB — Keep Alive OK")
-    st.stop()
-
 from portal import render_portal
 
 
@@ -27,6 +21,7 @@ from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
 import logging
+import streamlit as st
 from database.store import Store, ROOT, unwrap_store
 from services.ui_store import display_store
 from document_generator.docx import generate
