@@ -409,7 +409,7 @@ def render_login():
         "background-size:contain;background-repeat:no-repeat;background-position:center;"
         "}"
         ".login-domain-hint{"
-        "font-size:16px!important;font-weight:700!important;"
+        "font-size:18px!important;font-weight:400!important;"
         "line-height:1.6;color:#000000!important;margin:0 0 16px;"
         "}"
         "</style>",

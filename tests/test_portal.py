@@ -77,7 +77,7 @@ def test_brand_assets_are_packaged_with_the_repository():
     assert 'variant="login"' in login_src
     assert "max-width:50rem" in login_src
     assert 'class="login-domain-hint"' in login_src
-    assert "font-size:16px!important;font-weight:700!important" in login_src
+    assert "font-size:18px!important;font-weight:400!important" in login_src
     assert "color:#000000!important" in login_src
 
 
