@@ -409,8 +409,8 @@ def render_login():
         "background-size:contain;background-repeat:no-repeat;background-position:center;"
         "}"
         ".login-domain-hint{"
-        "font-size:14px!important;font-weight:700!important;"
-        "line-height:1.6;color:var(--mpc-brand-dark)!important;margin:0 0 16px;"
+        "font-size:16px!important;font-weight:700!important;"
+        "line-height:1.6;color:#000000!important;margin:0 0 16px;"
         "}"
         "</style>",
         unsafe_allow_html=True,
