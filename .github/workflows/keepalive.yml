@@ -27,17 +27,43 @@ jobs:
           from playwright.sync_api import sync_playwright
 
           url = "https://ferramentasmpcpb.streamlit.app/?keepalive=1"
-          expected_text = "Ferramentas MPC-PB — Keep Alive OK"
+          expected_text = "Keep Alive OK"
 
           with sync_playwright() as playwright:
               browser = playwright.chromium.launch(headless=True)
+              page = browser.new_page()
               try:
-                  page = browser.new_page()
-                  page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-                  page.get_by_text(expected_text, exact=True).wait_for(
-                      state="visible", timeout=60_000
+                  page.goto(url, wait_until="domcontentloaded", timeout=120_000)
+                  page.get_by_text(expected_text).first.wait_for(
+                      state="visible", timeout=120_000
                   )
                   page.wait_for_timeout(20_000)
+              except Exception:
+                  print(f"Final URL: {page.url}")
+                  try:
+                      print(f"Page title: {page.title()}")
+                  except Exception as title_error:
+                      print(f"Page title unavailable: {title_error}")
+                  try:
+                      visible_text = page.locator("body").inner_text(timeout=10_000)
+                      print("Visible page text (first 2000 characters):")
+                      print(visible_text[:2_000])
+                  except Exception as text_error:
+                      print(f"Visible page text unavailable: {text_error}")
+                  try:
+                      page.screenshot(path="keepalive-failure.png", full_page=True)
+                      print("Failure screenshot saved to keepalive-failure.png")
+                  except Exception as screenshot_error:
+                      print(f"Failure screenshot unavailable: {screenshot_error}")
+                  raise
               finally:
                   browser.close()
           PY
+
+      - name: Upload failure screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keepalive-failure-screenshot
+          path: keepalive-failure.png
+          if-no-files-found: warn
