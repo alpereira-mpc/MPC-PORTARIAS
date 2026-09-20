@@ -408,6 +408,9 @@ def render_login():
         "background-image:url('data:image/png;base64," + icon + "');"
         "background-size:contain;background-repeat:no-repeat;background-position:center;"
         "}"
+        "div.st-key-login_access_caption [data-testid='stCaption'] p{"
+        "font-size:14px;font-weight:700;color:var(--mpc-brand-dark);"
+        "}"
         "</style>",
         unsafe_allow_html=True,
     )
@@ -419,7 +422,8 @@ def render_login():
             st.error(
                 "Não foi possível iniciar o login com Google. Confira a configuração OIDC nos Secrets."
             )
-    st.caption("Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br.")
+    with st.container(key="login_access_caption"):
+        st.caption("Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br.")
 
 
 def _logout():

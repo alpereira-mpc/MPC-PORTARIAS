@@ -77,8 +77,11 @@ def test_brand_assets_are_packaged_with_the_repository():
     assert "2.375rem" in styles
     from portal import render_login
 
-    assert 'variant="login"' in getsource(render_login)
-    assert "max-width:50rem" in getsource(render_login)
+    login_src = getsource(render_login)
+    assert 'variant="login"' in login_src
+    assert "max-width:50rem" in login_src
+    assert "st-key-login_access_caption" in login_src
+    assert "font-size:14px;font-weight:700;color:var(--mpc-brand-dark)" in login_src
 
 
 def test_home_uses_page_title_not_generic_banner(store, monkeypatch):
