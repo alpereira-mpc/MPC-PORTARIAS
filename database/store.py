@@ -65,6 +65,9 @@ def ensure_addon_schemas(store):
     from database.tramita_reports import TramitaReportsStore
 
     TramitaReportsStore(store)
+    from database.representacoes import RepresentacoesStore
+
+    RepresentacoesStore(store)
 
 
 class Store:

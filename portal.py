@@ -145,6 +145,14 @@ MODULES = (
         MODULE_ICONS["relatorios"],
         True,
     ),
+    Module(
+        "representacoes",
+        "Representações",
+        "Representações",
+        "Acompanhamento interno das Representações do MPC-PB, da elaboração ao encerramento processual.",
+        MODULE_ICONS["representacoes"],
+        True,
+    ),
 )
 
 ADMIN_MODULE = Module(
@@ -282,6 +290,10 @@ def open_relatorios():
     queue_portal_navigation("Relatórios e Indicadores")
 
 
+def open_representacoes():
+    queue_portal_navigation("Representações")
+
+
 def card(module):
     with st.container(border=True):
         institutional_card_mark()
@@ -303,6 +315,7 @@ def card(module):
                     "admin": open_admin,
                     "tarefas": open_tarefas,
                     "relatorios": open_relatorios,
+                    "representacoes": open_representacoes,
                 }[module.key],
             )
         else:
@@ -671,6 +684,8 @@ def render_portal(sidebar_context=None):
         options.append("Tarefas")
     if has_permission(principal, "relatorios"):
         options.append("Relatórios e Indicadores")
+    if has_permission(principal, "representacoes"):
+        options.append("Representações")
     if has_permission(principal, "admin"):
         options.append("Administração")
     apply_portal_navigation(options)
@@ -778,6 +793,12 @@ def render_portal(sidebar_context=None):
         if selected == "Relatórios e Indicadores":
             require_permission(principal, "relatorios")
             from services.relatorios_ui import render
+
+            render(store, principal)
+            st.stop()
+        if selected == "Representações":
+            require_permission(principal, "representacoes")
+            from services.representacoes_ui import render
 
             render(store, principal)
             st.stop()

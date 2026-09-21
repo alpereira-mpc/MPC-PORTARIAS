@@ -31,6 +31,9 @@ def isolate_database_secrets(monkeypatch):
     import database.access_requests as access_requests
 
     access_requests._READY.clear()
+    import database.representacoes as representacoes
+
+    representacoes._READY.clear()
     import services.pending as pending
 
     pending._TABLES.clear()

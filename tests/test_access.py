@@ -97,6 +97,26 @@ def test_relatorios_permission_is_independent_and_revocable(store):
         require_permission(revoked, "relatorios")
 
 
+def test_representacoes_permission_is_independent_and_revocable(store):
+    access = AccessStore(store)
+    identifier = access.save_user(
+        {
+            "nome": "Representações",
+            "email": "representacoes@test.local",
+            "perfil": "USUARIO",
+            "pode_representacoes": True,
+        }
+    )
+    principal = resolve_principal(store, {"email": "representacoes@test.local"})
+    assert has_permission(principal, "representacoes")
+    assert not has_permission(principal, "admin")
+    access.save_user({**access.get(identifier), "pode_representacoes": False}, identifier)
+    revoked = resolve_principal(store, {"email": "representacoes@test.local"})
+    assert not has_permission(revoked, "representacoes")
+    with pytest.raises(ValueError, match="módulo"):
+        require_permission(revoked, "representacoes")
+
+
 def test_oficios_without_flag_has_no_offices(store):
     seed_access(
         store,

@@ -294,6 +294,7 @@ def render(store, principal):
                 "Ofícios": "Sim" if u["pode_oficios"] else "Não",
                 "Memorandos": "Sim" if u["pode_memorandos"] else "Não",
                 "Relatórios": "Sim" if u["pode_relatorios"] else "Não",
+                "Representações": "Sim" if u["pode_representacoes"] else "Não",
                 "Admin": "Sim" if u["pode_admin"] else "Não",
                 "Gabinetes": ", ".join(u["gabinetes"]) or "—",
             }
@@ -322,6 +323,7 @@ def render(store, principal):
         pode_oficios=False,
         pode_memorandos=False,
         pode_relatorios=False,
+        pode_representacoes=False,
         pode_admin=False,
         gabinetes=[],
     )
@@ -377,6 +379,11 @@ def render(store, principal):
             value=current["pode_relatorios"],
             key=prefix + "relatorios",
         )
+        representacoes = st.checkbox(
+            "Representações",
+            value=current["pode_representacoes"],
+            key=prefix + "representacoes",
+        )
         admin = st.checkbox(
             "Administração",
             value=current["pode_admin"],
@@ -412,6 +419,7 @@ def render(store, principal):
                     "pode_oficios": oficios,
                     "pode_memorandos": memorandos,
                     "pode_relatorios": relatorios,
+                    "pode_representacoes": representacoes,
                     "pode_admin": admin,
                     "gabinetes": gabinetes,
                 },

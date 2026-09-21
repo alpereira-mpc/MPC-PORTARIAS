@@ -1,0 +1,475 @@
+"""Business rules for Representações. No Streamlit and no BLOB listing."""
+
+from datetime import date
+import re
+
+from database.memorandos import MemorandosStore
+from database.representacoes import RepresentacoesStore
+from services.oficios import validate_upload
+
+ORIGENS = {
+    "DE_OFICIO": "De ofício",
+    "PROVOCACAO_EXTERNA": "Provocação externa",
+    "PROVOCACAO_INTERNA": "Provocação interna",
+}
+PRIORIDADES = {
+    "BAIXA": "Baixa",
+    "NORMAL": "Normal",
+    "ALTA": "Alta",
+    "URGENTE": "Urgente",
+}
+SITUACOES = {
+    "IDEIA": "Ideia / avaliação inicial",
+    "PESQUISA": "Em pesquisa",
+    "ELABORACAO": "Em elaboração",
+    "MINUTA_REVISAO": "Minuta em revisão",
+    "APROVADA": "Aprovada para assinatura",
+    "AGUARDANDO_PROTOCOLO": "Aguardando protocolo",
+    "PROTOCOLADA": "Protocolada",
+    "EM_TRAMITACAO": "Em tramitação",
+    "JULGADA": "Julgada",
+    "ENCERRADA": "Encerrada",
+    "ARQUIVADA": "Arquivada sem protocolo",
+    "SUSPENSA": "Suspensa",
+    "CANCELADA": "Cancelada",
+}
+FASES = {
+    "INSTRUCAO": "Instrução inicial",
+    "AGUARDANDO_DEFESA": "Aguardando defesa",
+    "DEFESA_APRESENTADA": "Defesa apresentada",
+    "ANALISE_DEFESA": "Análise de defesa",
+    "MPC": "MPC",
+    "PAUTA": "Pauta",
+    "JULGAMENTO": "Julgamento",
+    "POS_JULGAMENTO": "Pós-julgamento",
+}
+PAPEIS = {
+    "PROCURADOR_RESPONSAVEL": "Procurador responsável",
+    "PROCURADOR_SIGNATARIO": "Procurador signatário",
+    "ASSESSOR": "Assessor",
+}
+ANDAMENTOS = {
+    "CRIADA": "Projeto de Representação criado",
+    "PESQUISA_ATRIBUIDA": "Pesquisa atribuída",
+    "MINUTA_PREPARADA": "Minuta preparada",
+    "MINUTA_REVISADA": "Minuta revisada",
+    "APROVADA": "Aprovada",
+    "PROTOCOLADA": "Representação protocolada",
+    "DEFESA_APRESENTADA": "Defesa apresentada",
+    "RELATORIO_ANALISE_DEFESA": "Relatório de análise de defesa",
+    "ENCAMINHAMENTO_MPC": "Encaminhamento ao MPC",
+    "PARECER_EMITIDO": "Parecer emitido",
+    "INCLUIDO_PAUTA": "Incluído em pauta",
+    "JULGADO": "Julgado",
+    "ACORDAO_PUBLICADO": "Acórdão publicado",
+    "ENCERRADO": "Encerrado",
+    "SITUACAO": "Situação atualizada",
+    "LIVRE": "Andamento livre",
+}
+DOCUMENTOS = {
+    "PROVOCACAO": "Provocação",
+    "PESQUISA": "Pesquisa",
+    "NOTA_TECNICA": "Nota técnica",
+    "MINUTA": "Minuta",
+    "REPRESENTACAO_FINAL": "Representação final",
+    "DEFESA": "Defesa",
+    "DOCUMENTOS_DEFESA": "Documentos de defesa",
+    "RELATORIO_ANALISE_DEFESA": "Relatório de análise de defesa",
+    "DESPACHO": "Despacho",
+    "PARECER": "Parecer",
+    "COTA": "Cota",
+    "MANIFESTACAO": "Manifestação complementar",
+    "VOTO": "Voto",
+    "DECISAO": "Decisão",
+    "ACORDAO": "Acórdão",
+    "CERTIDAO": "Certidão",
+    "OUTROS": "Outros documentos relevantes",
+}
+PREPARATION = (
+    "IDEIA",
+    "PESQUISA",
+    "ELABORACAO",
+    "MINUTA_REVISAO",
+    "APROVADA",
+    "AGUARDANDO_PROTOCOLO",
+    "ARQUIVADA",
+    "SUSPENSA",
+    "CANCELADA",
+)
+PROTOCOLLED = ("PROTOCOLADA", "EM_TRAMITACAO", "JULGADA", "ENCERRADA")
+KIND_PROJECT = "Projeto de Representação"
+KIND_REPRESENTATION = "Representação"
+RELATORES_TITULARES = (
+    "Alanna Camilla Santos Galdino Vieira",
+    "André Carlo Torres Pontes",
+    "Antônio Gomes Vieira Filho",
+    "Arnóbio Alves Viana",
+    "Deusdete Queiroga Filho",
+    "Fábio Túlio Filgueiras Nogueira",
+    "Taciano Luis Barbosa Diniz",
+)
+RELATORES_SUBSTITUTOS = (
+    "Marcus Vinícius Carvalho Farias",
+    "Renato Sérgio Santiago Melo",
+)
+RELATORES = RELATORES_TITULARES + RELATORES_SUBSTITUTOS
+# Lotação institucional em servidores.setor (códigos da planilha/cadastro).
+LOTACOES_ASSESSORES = frozenset(
+    {"PROGE", "ESPO", "BTLC", "LAF", "MTFF", "SBBQ", "MASN"}
+)
+_SETOR_TOKEN = re.compile(r"[A-Za-z]+")
+
+
+def label(mapping, key, fallback="—"):
+    if not key:
+        return fallback
+    return mapping.get(key, key)
+
+
+def actor_of(principal):
+    return getattr(principal, "email", None) or str(principal)
+
+
+def is_protocolled(record):
+    return bool((record or {}).get("numero_processo"))
+
+
+def kind_label(record):
+    return KIND_REPRESENTATION if is_protocolled(record) else KIND_PROJECT
+
+
+def kind_saved_message(record):
+    if is_protocolled(record):
+        return "Representação salva."
+    return "Projeto de Representação salvo."
+
+
+def relator_label(name):
+    if name in RELATORES_SUBSTITUTOS:
+        return name + " — Conselheiro Substituto"
+    return name or ""
+
+
+def andamento_display(item):
+    heading = label(ANDAMENTOS, item.get("tipo"), item.get("tipo") or "")
+    descricao = (item.get("descricao") or "").strip()
+    if item.get("tipo") == "CRIADA" or not descricao:
+        return heading, ""
+    if descricao.rstrip(".") == heading.rstrip("."):
+        return heading, ""
+    return heading, descricao
+
+
+def open_store(store):
+    return RepresentacoesStore(store)
+
+
+def procuradores(store):
+    return [row for row in store.catalog("procuradores") if row.get("ativo")]
+
+
+def setor_elegivel(value):
+    tokens = {token.upper() for token in _SETOR_TOKEN.findall(value or "")}
+    return bool(tokens & LOTACOES_ASSESSORES)
+
+
+def assessores(store):
+    return [
+        row
+        for row in MemorandosStore(store).servers()
+        if setor_elegivel(row.get("setor"))
+    ]
+
+
+def signatory_options(procurador_ids, responsible_id):
+    return [identifier for identifier in procurador_ids if identifier != responsible_id]
+
+
+def reconcile_signatories(selected, allowed):
+    allowed_set = set(allowed)
+    return [identifier for identifier in (selected or []) if identifier in allowed_set]
+
+
+def people_index(store):
+    procuradores_map = {row["id"]: row["nome"] for row in store.catalog("procuradores")}
+    assessores_map = {row["id"]: row["nome"] for row in MemorandosStore(store).all_servers(include_inactive=True)}
+    return procuradores_map, assessores_map
+
+
+def member_name(member, procuradores_map, assessores_map):
+    source = procuradores_map if member["membro_tipo"] == "PROCURADOR" else assessores_map
+    return source.get(member["membro_id"]) or "—"
+
+
+def grouped_members(record, procuradores_map, assessores_map):
+    groups = {papel: [] for papel in PAPEIS}
+    for member in record.get("integrantes") or []:
+        groups.setdefault(member["papel"], []).append(
+            member_name(member, procuradores_map, assessores_map)
+        )
+    return groups
+
+
+def can_delete(record):
+    return not record.get("numero_processo") and record.get("situacao") not in PROTOCOLLED
+
+
+def _members(payload):
+    responsible = payload.get("procurador_responsavel")
+    if not responsible:
+        raise ValueError("Informe o Procurador responsável.")
+    members = [
+        {
+            "membro_tipo": "PROCURADOR",
+            "membro_id": int(responsible),
+            "papel": "PROCURADOR_RESPONSAVEL",
+        }
+    ]
+    seen_signatories = set()
+    responsible_id = int(responsible)
+    for identifier in payload.get("procuradores_signatarios") or []:
+        identifier = int(identifier)
+        if identifier == responsible_id or identifier in seen_signatories:
+            continue
+        seen_signatories.add(identifier)
+        members.append(
+            {
+                "membro_tipo": "PROCURADOR",
+                "membro_id": identifier,
+                "papel": "PROCURADOR_SIGNATARIO",
+            }
+        )
+    seen_assessors = set()
+    for identifier in payload.get("assessores") or []:
+        identifier = int(identifier)
+        if identifier in seen_assessors:
+            continue
+        seen_assessors.add(identifier)
+        members.append(
+            {
+                "membro_tipo": "SERVIDOR",
+                "membro_id": identifier,
+                "papel": "ASSESSOR",
+            }
+        )
+    return members
+
+
+def _validate_people(store, members):
+    active_procuradores = {row["id"] for row in procuradores(store)}
+    active_assessores = {row["id"] for row in assessores(store)}
+    for member in members:
+        if member["papel"] == "ASSESSOR":
+            if member["membro_id"] not in active_assessores:
+                raise ValueError("Assessor inválido ou inativo.")
+        elif member["membro_id"] not in active_procuradores:
+            raise ValueError("Procurador inválido ou inativo.")
+
+
+def _payload(values, *, creating=False):
+    title = (values.get("titulo") or "").strip()
+    if not title:
+        raise ValueError("Informe o título.")
+    origem = values.get("origem") or "DE_OFICIO"
+    if origem not in ORIGENS:
+        raise ValueError("Origem inválida.")
+    prioridade = values.get("prioridade") or "NORMAL"
+    if prioridade not in PRIORIDADES:
+        raise ValueError("Prioridade inválida.")
+    opening = values.get("data_abertura") or date.today().isoformat()
+    situacao = values.get("situacao") or ("IDEIA" if creating else None)
+    if situacao and situacao not in SITUACOES:
+        raise ValueError("Situação inválida.")
+    fase = values.get("fase_processual") or None
+    if fase and fase not in FASES:
+        raise ValueError("Fase processual inválida.")
+    record = {
+        "titulo": title,
+        "objeto": (values.get("objeto") or "").strip(),
+        "origem": origem,
+        "data_abertura": opening,
+        "representado": (values.get("representado") or "").strip(),
+        "tema": (values.get("tema") or "").strip(),
+        "prioridade": prioridade,
+        "observacoes": (values.get("observacoes") or "").strip(),
+    }
+    if situacao:
+        record["situacao"] = situacao
+    if fase:
+        record["fase_processual"] = fase
+    return record
+
+
+def create(store, values, principal):
+    record = _payload(values, creating=True)
+    members = _members(values)
+    _validate_people(store, members)
+    return open_store(store).create(record, members, actor_of(principal))
+
+
+def update(store, identifier, values, principal):
+    current = get(store, identifier)
+    if current is None:
+        raise ValueError("Representação não encontrada.")
+    record = _payload(values)
+    members = _members(values)
+    _validate_people(store, members)
+    return open_store(store).update(identifier, record, members, actor_of(principal))
+
+
+def get(store, identifier):
+    return open_store(store).get(identifier)
+
+
+def list_records(store, filters=None, limit=50, offset=0):
+    return open_store(store).list(filters, limit=limit, offset=offset)
+
+
+def overview(store):
+    return open_store(store).overview()
+
+
+def progress(store, identifier):
+    return open_store(store).progress(identifier)
+
+
+def documents(store, identifier):
+    return open_store(store).documents(identifier)
+
+
+def download(store, file_id):
+    return open_store(store).download(file_id)
+
+
+def add_progress(store, identifier, values, principal):
+    if get(store, identifier) is None:
+        raise ValueError("Representação não encontrada.")
+    tipo = values.get("tipo") or "LIVRE"
+    if tipo not in ANDAMENTOS:
+        raise ValueError("Tipo de andamento inválido.")
+    descricao = (values.get("descricao") or "").strip()
+    if tipo == "LIVRE" and not descricao:
+        raise ValueError("Descreva o andamento.")
+    if not descricao:
+        descricao = ANDAMENTOS[tipo] + "."
+    day = values.get("data") or date.today().isoformat()
+    return open_store(store).add_progress(
+        identifier, day, tipo, descricao, actor_of(principal)
+    )
+
+
+def add_document(store, identifier, values, name, content, principal):
+    if get(store, identifier) is None:
+        raise ValueError("Representação não encontrada.")
+    tipo = values.get("tipo_documento") or "OUTROS"
+    if tipo not in DOCUMENTOS:
+        raise ValueError("Tipo de documento inválido.")
+    safe, mime = validate_upload(name, content)
+    return open_store(store).add_document(
+        identifier,
+        {
+            "andamento_id": values.get("andamento_id"),
+            "tipo_documento": tipo,
+            "descricao": (values.get("descricao") or "").strip(),
+            "data_documento": values.get("data_documento") or date.today().isoformat(),
+            "nome_arquivo": safe,
+            "mime_type": mime,
+        },
+        content,
+        actor_of(principal),
+    )
+
+
+def register_protocol(store, identifier, values, principal, upload=None):
+    current = get(store, identifier)
+    if current is None:
+        raise ValueError("Representação não encontrada.")
+    if current.get("numero_processo"):
+        raise ValueError("Esta representação já possui protocolo.")
+    number = (values.get("numero_processo") or "").strip()
+    relator = (values.get("relator") or "").strip()
+    if not number:
+        raise ValueError("Informe o número do processo atribuído pelo TRAMITA.")
+    if relator not in RELATORES:
+        raise ValueError("Informe o Relator atribuído pelo TRAMITA.")
+    day = values.get("data_protocolo") or date.today().isoformat()
+    fase = values.get("fase_processual") or "INSTRUCAO"
+    if fase not in FASES:
+        raise ValueError("Fase processual inválida.")
+    cautelar = bool(values.get("possui_medida_cautelar"))
+    file_tuple = None
+    if upload:
+        name, content = upload
+        safe, mime = validate_upload(name, content)
+        if mime != "application/pdf":
+            raise ValueError("O documento final da Representação deve ser PDF.")
+        file_tuple = (safe, mime, content)
+    return open_store(store).register_protocol(
+        identifier,
+        {
+            "numero_processo": number,
+            "data_protocolo": day,
+            "relator": relator,
+            "fase_processual": fase,
+            "observacao": (values.get("observacoes") or "").strip(),
+            "possui_medida_cautelar": cautelar,
+        },
+        actor_of(principal),
+        file_tuple,
+    )
+
+
+def set_status(store, identifier, situacao, principal, fase=None, note=""):
+    current = get(store, identifier)
+    if current is None:
+        raise ValueError("Representação não encontrada.")
+    if situacao not in SITUACOES:
+        raise ValueError("Situação inválida.")
+    if fase is None:
+        fase = current.get("fase_processual")
+    if fase and fase not in FASES:
+        raise ValueError("Fase processual inválida.")
+    if current.get("numero_processo") and situacao in (
+        "IDEIA",
+        "PESQUISA",
+        "ELABORACAO",
+        "MINUTA_REVISAO",
+        "APROVADA",
+        "AGUARDANDO_PROTOCOLO",
+        "ARQUIVADA",
+    ):
+        raise ValueError("Após o protocolo, utilize a situação processual correspondente.")
+    text = note or ("Situação alterada para " + SITUACOES[situacao] + ".")
+    return open_store(store).set_status(
+        identifier, situacao, fase, actor_of(principal), text
+    )
+
+
+def set_phase(store, identifier, fase, principal):
+    current = get(store, identifier)
+    if current is None:
+        raise ValueError("Representação não encontrada.")
+    if not current.get("numero_processo"):
+        raise ValueError("A fase processual só se aplica após o protocolo.")
+    if fase not in FASES:
+        raise ValueError("Fase processual inválida.")
+    situacao = current["situacao"]
+    if fase in ("JULGAMENTO", "POS_JULGAMENTO") and situacao == "PROTOCOLADA":
+        situacao = "EM_TRAMITACAO"
+    if fase == "JULGAMENTO":
+        situacao = "EM_TRAMITACAO"
+    note = "Fase processual: " + FASES[fase] + "."
+    return open_store(store).set_status(
+        identifier, situacao, fase, actor_of(principal), note
+    )
+
+
+def delete(store, identifier):
+    current = get(store, identifier)
+    if current is None:
+        raise ValueError("Representação não encontrada.")
+    if not can_delete(current):
+        raise ValueError(
+            "Representação protocolada não pode ser excluída. Utilize encerramento, cancelamento ou arquivamento."
+        )
+    return open_store(store).delete(identifier)

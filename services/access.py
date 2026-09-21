@@ -5,7 +5,7 @@ import time
 from database.access import AccessStore, normalize_email
 from services.oficios import GABINETES
 
-MODULES = ("portarias", "agenda", "oficios", "memorandos", "tarefas", "relatorios", "admin")
+MODULES = ("portarias", "agenda", "oficios", "memorandos", "tarefas", "relatorios", "representacoes", "admin")
 CACHE_SECONDS = 20
 
 
@@ -23,6 +23,7 @@ class Principal:
     gabinetes: tuple
     pode_memorandos: bool = False
     pode_relatorios: bool = False
+    pode_representacoes: bool = False
 
     @property
     def administrator(self):
@@ -84,6 +85,7 @@ def principal_from_record(record):
             pode_oficios=True,
             pode_memorandos=True,
             pode_relatorios=True,
+            pode_representacoes=True,
             pode_admin=True,
             gabinetes=tuple(GABINETES),
         )
@@ -103,6 +105,7 @@ def principal_from_record(record):
         pode_oficios=bool(record["pode_oficios"]),
         pode_memorandos=bool(record.get("pode_memorandos", False)),
         pode_relatorios=bool(record.get("pode_relatorios", False)),
+        pode_representacoes=bool(record.get("pode_representacoes", False)),
         pode_admin=bool(record["pode_admin"]),
         gabinetes=gabinetes,
     )
@@ -180,9 +183,15 @@ def has_permission(principal, module):
         return True
     if module == "relatorios":
         return principal.administrator or principal.pode_relatorios
+    if module == "representacoes":
+        return principal.pode_representacoes
     if module == "admin":
         return principal.pode_admin
     return False
+
+
+def can_access_representacoes(principal):
+    return has_permission(principal, "representacoes")
 
 
 def allowed_gabinetes(principal):

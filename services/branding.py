@@ -27,6 +27,7 @@ MODULE_ICONS = {
     "agenda": "calendar_month",
     "tarefas": "check_circle",
     "relatorios": "bar_chart",
+    "representacoes": "gavel",
     "admin": "manage_accounts",
 }
 
