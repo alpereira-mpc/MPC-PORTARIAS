@@ -55,11 +55,21 @@ def _gabinete_display(row):
     return gabinete
 
 
+def _invalidate_alerts():
+    try:
+        from services.alerts import invalidate_alert_summary
+
+        invalidate_alert_summary()
+    except Exception:
+        pass
+
+
 def _render_access_requests(store, principal):
     from services.access_requests import (
         ADMIN_FILTERS,
         FILTER_PENDING,
         approve_access_request,
+        delete_access_request,
         list_access_requests_by_filter,
         reject_access_request,
     )
@@ -97,53 +107,80 @@ def _render_access_requests(store, principal):
     )
     actor = getattr(principal, "email", "")
     pending = [row for row in rows if row["status"] == STATUS_PENDING]
-    if not pending:
-        return
-    st.caption("Aprovar ou recusar não cria usuário nem altera permissões.")
-    for row in pending:
+    if pending:
+        st.caption("Aprovar ou recusar não cria usuário nem altera permissões.")
+    for row in rows:
         identifier = row["id"]
         with st.expander(row["nome"] + " · " + row["email"]):
-            confirm_approve = st.checkbox(
-                "Confirmo a aprovação",
-                key="access_req_confirm_approve_" + str(identifier),
+            if row["status"] == STATUS_PENDING:
+                confirm_approve = st.checkbox(
+                    "Confirmo a aprovação",
+                    key="access_req_confirm_approve_" + str(identifier),
+                )
+                if st.button(
+                    "Aprovar",
+                    key="access_req_approve_" + str(identifier),
+                    disabled=not confirm_approve,
+                ):
+                    try:
+                        approve_access_request(store, identifier, actor)
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    except Exception:
+                        LOGGER.exception("Falha ao aprovar solicitação de acesso")
+                        st.error("Não foi possível aprovar a solicitação.")
+                    else:
+                        _invalidate_alerts()
+                        st.session_state["access_request_admin_message"] = (
+                            "Solicitação marcada como aprovada."
+                        )
+                        st.rerun()
+                confirm_reject = st.checkbox(
+                    "Confirmo a recusa",
+                    key="access_req_confirm_reject_" + str(identifier),
+                )
+                if st.button(
+                    "Recusar",
+                    key="access_req_reject_" + str(identifier),
+                    disabled=not confirm_reject,
+                ):
+                    try:
+                        reject_access_request(store, identifier, actor)
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    except Exception:
+                        LOGGER.exception("Falha ao recusar solicitação de acesso")
+                        st.error("Não foi possível recusar a solicitação.")
+                    else:
+                        _invalidate_alerts()
+                        st.session_state["access_request_admin_message"] = (
+                            "Solicitação marcada como recusada."
+                        )
+                        st.rerun()
+            confirm_delete = st.checkbox(
+                "Confirmo a exclusão definitiva",
+                key="access_req_confirm_delete_" + str(identifier),
             )
             if st.button(
-                "Aprovar",
-                key="access_req_approve_" + str(identifier),
-                disabled=not confirm_approve,
+                "Excluir",
+                key="access_req_delete_" + str(identifier),
+                disabled=not confirm_delete,
             ):
                 try:
-                    approve_access_request(store, identifier, actor)
-                except ValueError as exc:
-                    st.error(str(exc))
+                    deleted = delete_access_request(store, identifier)
                 except Exception:
-                    LOGGER.exception("Falha ao aprovar solicitação de acesso")
-                    st.error("Não foi possível aprovar a solicitação.")
+                    LOGGER.exception("Falha ao excluir solicitação de acesso")
+                    st.error("Não foi possível excluir a solicitação.")
                 else:
-                    st.session_state["access_request_admin_message"] = (
-                        "Solicitação marcada como aprovada."
-                    )
-                    st.rerun()
-            confirm_reject = st.checkbox(
-                "Confirmo a recusa",
-                key="access_req_confirm_reject_" + str(identifier),
-            )
-            if st.button(
-                "Recusar",
-                key="access_req_reject_" + str(identifier),
-                disabled=not confirm_reject,
-            ):
-                try:
-                    reject_access_request(store, identifier, actor)
-                except ValueError as exc:
-                    st.error(str(exc))
-                except Exception:
-                    LOGGER.exception("Falha ao recusar solicitação de acesso")
-                    st.error("Não foi possível recusar a solicitação.")
-                else:
-                    st.session_state["access_request_admin_message"] = (
-                        "Solicitação marcada como recusada."
-                    )
+                    _invalidate_alerts()
+                    if deleted:
+                        st.session_state["access_request_admin_message"] = (
+                            "Solicitação excluída."
+                        )
+                    else:
+                        st.session_state["access_request_admin_message"] = (
+                            "Esta solicitação já havia sido excluída."
+                        )
                     st.rerun()
 
 

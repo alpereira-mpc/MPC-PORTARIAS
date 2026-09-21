@@ -30,6 +30,7 @@ MODULE_OPTIONS = (
     ("memorandos", "Memorandos"),
     ("tarefas", "Tarefas"),
     ("sistema", "Sistema"),
+    ("access_requests", "Solicitações"),
 )
 
 
@@ -70,6 +71,7 @@ def _open_label(item):
         "memorandos": "Ver em Memorandos",
         "tarefas": "Ver em Tarefas",
         "sistema": "Ver Saúde do Sistema",
+        "access_requests": "Ver Solicitações",
     }.get(item.source_module, "Ver origem")
 
 

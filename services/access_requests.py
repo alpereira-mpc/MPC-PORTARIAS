@@ -147,3 +147,7 @@ def reject_access_request(store, identifier, processed_by):
     return AccessRequestStore(store).mark_processed(
         identifier, STATUS_REJECTED, _actor_email(processed_by)
     )
+
+
+def delete_access_request(store, identifier):
+    return AccessRequestStore(store).delete(identifier) > 0

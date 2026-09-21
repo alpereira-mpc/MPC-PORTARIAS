@@ -189,6 +189,21 @@ class AccessRequestStore:
             raise ValueError("Solicitação não encontrada.")
         return record
 
+    def delete(self, identifier):
+        try:
+            identifier = int(identifier)
+        except (TypeError, ValueError):
+            return 0
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            result = c.execute(
+                "DELETE FROM access_requests WHERE id=?", (identifier,)
+            )
+            rowcount = getattr(result, "rowcount", None)
+            if rowcount is None:
+                rowcount = result.cursor.rowcount
+        return int(rowcount or 0)
+
 
 def ensure_schema(store):
     AccessRequestStore(store)

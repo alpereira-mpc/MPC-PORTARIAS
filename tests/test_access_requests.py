@@ -279,3 +279,155 @@ def test_common_user_does_not_see_admin_requests(store, monkeypatch):
     assert "Administração" not in portal.options
     assert not any(r.key == "admin_secao" for r in app.radio)
     assert not any(r.key == "access_request_admin_filter" for r in app.radio)
+
+
+def _admin_principal(store):
+    from services.access import resolve_principal
+    from tests.access_testing import TEST_IDENTITY
+
+    return resolve_principal(store, {"email": TEST_IDENTITY["email"]})
+
+
+def test_bell_shows_derived_pending_access_request_alert(store, monkeypatch):
+    from inspect import getsource
+
+    from services.alerts import (
+        access_request_alerts,
+        collect_alerts,
+        get_alert_summary,
+    )
+
+    principal = _admin_principal(store)
+    assert access_request_alerts(store, principal) == []
+    first = submit_access_request(store, **_payload()).record
+    items, _, _ = collect_alerts(store, principal, cached_health={})
+    pending_alerts = [i for i in items if i.category == "acesso_pendente"]
+    assert len(pending_alerts) == 1
+    assert pending_alerts[0].title == "Há 1 solicitação de acesso pendente."
+    assert pending_alerts[0].source_id == "pending"
+    assert pending_alerts[0].metadata.get("secao") == "Solicitações"
+    submit_access_request(
+        store, "Ana Souza", "ana.souza@tce.pb.gov.br", GABINETE_OPTIONS[1]
+    )
+    items, _, _ = collect_alerts(store, principal, cached_health={})
+    pending_alerts = [i for i in items if i.category == "acesso_pendente"]
+    assert len(pending_alerts) == 1
+    assert pending_alerts[0].title == "Há 2 solicitações de acesso pendentes."
+    summary = get_alert_summary(store, principal, cached_health={})
+    assert sum(1 for i in summary["top"] if i.category == "acesso_pendente") == 1
+    from services.access_requests import approve_access_request, reject_access_request
+
+    approve_access_request(store, first["id"], "admin@test.local")
+    remaining = [
+        i
+        for i in collect_alerts(store, principal, cached_health={})[0]
+        if i.category == "acesso_pendente"
+    ]
+    assert remaining[0].title == "Há 1 solicitação de acesso pendente."
+    second = AccessRequestStore(store).get_pending_by_email("ana.souza@tce.pb.gov.br")
+    reject_access_request(store, second["id"], "admin@test.local")
+    assert access_request_alerts(store, principal) == []
+    assert "count_pending_access_requests" in getsource(access_request_alerts)
+
+
+def test_non_admin_does_not_receive_access_request_alert(store, monkeypatch):
+    from services.access import resolve_principal
+    from services.alerts import collect_alerts
+    from tests.access_testing import seed_access
+
+    submit_access_request(store, **_payload())
+    seed_access(
+        store,
+        email="comum.alerta@test.local",
+        perfil="USUARIO",
+        pode_admin=False,
+        pode_agenda=True,
+    )
+    called = []
+
+    def boom(store):
+        called.append(True)
+        return 99
+
+    monkeypatch.setattr(
+        "services.access_requests.count_pending_access_requests", boom
+    )
+    principal = resolve_principal(store, {"email": "comum.alerta@test.local"})
+    items, _, _ = collect_alerts(store, principal, cached_health={})
+    assert called == []
+    assert all(i.category != "acesso_pendente" for i in items)
+    assert all(i.source_module != "access_requests" for i in items)
+
+
+def test_delete_access_request_is_physical_and_safe(store):
+    from inspect import getsource
+
+    from services.access_requests import (
+        approve_access_request,
+        count_pending_access_requests,
+        delete_access_request,
+        list_access_requests_by_filter,
+        reject_access_request,
+        FILTER_ALL,
+        FILTER_APPROVED,
+        FILTER_PENDING,
+        FILTER_REJECTED,
+    )
+    from services.alerts import access_request_alerts
+
+    first = submit_access_request(store, **_payload()).record
+    second = submit_access_request(
+        store, "Ana Souza", "ana.souza@tce.pb.gov.br", GABINETE_OPTIONS[1]
+    ).record
+    third = submit_access_request(
+        store, "Paulo Lima", "paulo.lima@tce.pb.gov.br", GABINETE_OPTIONS[2]
+    ).record
+    approve_access_request(store, second["id"], "admin@test.local")
+    reject_access_request(store, third["id"], "admin@test.local")
+    assert count_pending_access_requests(store) == 1
+    assert delete_access_request(store, first["id"]) is True
+    assert AccessRequestStore(store).get(first["id"]) is None
+    assert count_pending_access_requests(store) == 0
+    assert access_request_alerts(store, _admin_principal(store)) == []
+    assert delete_access_request(store, second["id"]) is True
+    assert delete_access_request(store, third["id"]) is True
+    assert list_access_requests_by_filter(store, FILTER_ALL) == []
+    assert list_access_requests_by_filter(store, FILTER_PENDING) == []
+    assert list_access_requests_by_filter(store, FILTER_APPROVED) == []
+    assert list_access_requests_by_filter(store, FILTER_REJECTED) == []
+    assert delete_access_request(store, first["id"]) is False
+    assert delete_access_request(store, "x") is False
+    source = getsource(AccessRequestStore.delete)
+    assert "DELETE FROM access_requests WHERE id=?" in source
+    assert "excluído" not in source
+    assert "deleted_at" not in source
+
+
+def test_admin_delete_requires_confirmation(store, monkeypatch):
+    from inspect import getsource
+
+    from services import access_ui
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    record = submit_access_request(store, **_payload()).record
+    source = getsource(access_ui._render_access_requests)
+    assert "Confirmo a exclusão definitiva" in source
+    assert "access_req_confirm_delete_" in source
+    assert "access_req_delete_" in source
+    assert "disabled=not confirm_delete" in source
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_admin").click().run()
+    app.radio(key="admin_secao").set_value("Solicitações").run()
+    key = "access_req_delete_" + str(record["id"])
+    button = next(b for b in app.button if getattr(b, "key", None) == key)
+    assert button.disabled
+    app.checkbox(key="access_req_confirm_delete_" + str(record["id"])).set_value(
+        True
+    ).run()
+    app.button(key=key).click().run()
+    assert not app.exception
+    assert AccessRequestStore(store).get(record["id"]) is None
+    captions = "\n".join(str(c.value) for c in app.caption)
+    assert "Solicitações pendentes: 0" in captions

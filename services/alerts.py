@@ -452,6 +452,41 @@ def system_alerts(store, *, cached=None, principal=None):
     return items[:SOURCE_CAP]
 
 
+def access_request_alerts(store, principal):
+    """One derived alert from pending access-request COUNT. Admin only."""
+    if not has_permission(principal, "admin"):
+        return []
+    try:
+        from services.access_requests import count_pending_access_requests
+
+        count = count_pending_access_requests(store)
+    except Exception:
+        LOGGER.exception("Falha ao carregar alertas de solicitações de acesso")
+        return []
+    if count <= 0:
+        return []
+    if count == 1:
+        title = "Há 1 solicitação de acesso pendente."
+    else:
+        title = f"Há {count} solicitações de acesso pendentes."
+    return [
+        AlertItem(
+            source_module="access_requests",
+            source_id="pending",
+            gabinete="—",
+            severity=ATENCAO,
+            category="acesso_pendente",
+            title=title,
+            description="Administração → Solicitações",
+            date=today_recife(),
+            datetime=None,
+            source_status="pendente",
+            navigation_target="Administração",
+            metadata={"secao": "Solicitações"},
+        )
+    ]
+
+
 def collect_alerts(
     store,
     principal,
@@ -528,15 +563,28 @@ def collect_alerts(
             errors["sistema"] = "sistema"
     elif not has_permission(principal, "admin"):
         errors.pop("sistema", None)
+    if has_permission(principal, "admin") and (
+        wanted is None or "access_requests" in wanted
+    ) and not gabinete:
+        try:
+            collected.extend(access_request_alerts(store, principal))
+        except Exception:
+            LOGGER.exception("Falha ao carregar alertas de solicitações de acesso")
     filtered = []
     for item in collected:
-        if item.source_module == "sistema" and not has_permission(principal, "admin"):
+        if item.source_module in ("sistema", "access_requests") and not has_permission(
+            principal, "admin"
+        ):
             continue
         if severity and item.severity != severity:
             continue
         if wanted and item.source_module not in wanted:
             continue
-        if gabinete and item.source_module != "sistema" and item.gabinete != gabinete:
+        if (
+            gabinete
+            and item.source_module not in ("sistema", "access_requests")
+            and item.gabinete != gabinete
+        ):
             continue
         if not _in_period(item, period, today):
             continue

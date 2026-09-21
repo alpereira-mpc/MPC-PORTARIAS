@@ -91,6 +91,12 @@ def open_origin(item):
                 "aba": metadata.get("aba") or "Saúde",
             },
         )
+        return
+    if module == "access_requests":
+        request_portal_navigation(
+            "Administração",
+            pending_open_admin={"secao": metadata.get("secao") or "Solicitações"},
+        )
 
 
 def _open(item):
