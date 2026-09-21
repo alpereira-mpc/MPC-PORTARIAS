@@ -1,16 +1,10 @@
 """Public access-request rules. Authorization remains manual."""
 
 from dataclasses import dataclass
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
 from database.access import EMAIL_RE, AccessStore, normalize_email
 from database.access_requests import AccessRequestStore
-from services.mail import MailError, send_mail
 
 INSTITUTIONAL_DOMAIN = "tce.pb.gov.br"
-INSTITUTIONAL_TZ = ZoneInfo("America/Recife")
-ADMIN_INBOX = "mpc@tce.pb.gov.br"
 MIN_NAME_LENGTH = 3
 MIN_UNIT_LENGTH = 3
 OTHER_UNIT = "Outra unidade do MPC-PB"
@@ -30,16 +24,12 @@ ALREADY_REGISTERED = (
 DUPLICATE_PENDING = (
     "Já existe uma solicitação de acesso pendente para este e-mail."
 )
-SUCCESS_TITLE = "Solicitação enviada com sucesso"
+SUCCESS_TITLE = "Solicitação registrada com sucesso"
 SUCCESS_BODY = (
-    "Sua solicitação de acesso foi encaminhada à administração do MPC-PB. "
+    "Sua solicitação de acesso foi encaminhada à administração do MPC-PB.\n\n"
     "Após a análise e liberação do cadastro, você poderá acessar o portal "
     "utilizando sua conta institucional @tce.pb.gov.br."
 )
-NOTIFY_FAILED = (
-    "Sua solicitação foi registrada, mas houve um problema na notificação administrativa."
-)
-MAIL_SUBJECT = "[Ferramentas MPC-PB] Nova solicitação de acesso"
 
 
 @dataclass(frozen=True)
@@ -83,38 +73,6 @@ def validate_access_request(nome, email, gabinete, unidade_outro=None):
     }
 
 
-def _mail_body(record):
-    created = record.get("created_at") or ""
-    try:
-        moment = datetime.fromisoformat(created)
-        if moment.tzinfo is None:
-            moment = moment.replace(tzinfo=INSTITUTIONAL_TZ)
-        stamped = moment.astimezone(INSTITUTIONAL_TZ).strftime("%d/%m/%Y %H:%M")
-    except ValueError:
-        stamped = created
-    lines = [
-        "Nova solicitação de acesso ao Ferramentas MPC-PB.",
-        "",
-        f"Nome: {record['nome']}",
-        f"E-mail: {record['email']}",
-        f"Gabinete / Unidade: {record['gabinete']}",
-    ]
-    if record.get("unidade_outro"):
-        lines.append(f"Unidade informada: {record['unidade_outro']}")
-    lines.extend(
-        [
-            f"Data da solicitação: {stamped}",
-            "",
-            "O cadastro e as permissões deverão ser realizados manualmente pelo administrador.",
-        ]
-    )
-    return "\n".join(lines)
-
-
-def notify_access_request(record):
-    send_mail(MAIL_SUBJECT, _mail_body(record), ADMIN_INBOX)
-
-
 def submit_access_request(store, nome, email, gabinete, unidade_outro=None):
     try:
         payload = validate_access_request(nome, email, gabinete, unidade_outro)
@@ -134,14 +92,24 @@ def submit_access_request(store, nome, email, gabinete, unidade_outro=None):
         )
     except ValueError as exc:
         return AccessRequestOutcome(False, "duplicate_pending", str(exc))
-    try:
-        notify_access_request(record)
-    except MailError:
-        return AccessRequestOutcome(
-            True,
-            "created_notify_failed",
-            NOTIFY_FAILED,
-            SUCCESS_TITLE,
-            record,
-        )
     return AccessRequestOutcome(True, "created", SUCCESS_BODY, SUCCESS_TITLE, record)
+
+
+def count_new_access_requests(store):
+    return AccessRequestStore(store).count_new()
+
+
+def list_access_requests(store, status=None):
+    return AccessRequestStore(store).list(status)
+
+
+def mark_access_request_viewed(store, identifier):
+    return AccessRequestStore(store).mark_viewed(identifier)
+
+
+def approve_access_request(store, identifier, administrator):
+    return AccessRequestStore(store).process(identifier, "aprovado", administrator)
+
+
+def reject_access_request(store, identifier, administrator):
+    return AccessRequestStore(store).process(identifier, "recusado", administrator)

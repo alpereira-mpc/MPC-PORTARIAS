@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS access_requests (
     status TEXT NOT NULL DEFAULT 'pendente'
         CHECK(status IN ('pendente','aprovado','recusado')),
     created_at TEXT NOT NULL,
+    viewed_at TEXT,
     processed_at TEXT,
     processed_by TEXT
 );

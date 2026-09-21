@@ -399,17 +399,15 @@ def home(principal, store=None):
 
 
 ACCESS_REQUEST_VIEW = "_access_request_view"
-ACCESS_REQUEST_NOTIFY_FAILED = "_access_request_notify_failed"
+ACCESS_REQUEST_ALERTED = "_access_request_alerted"
 
 
 def _clear_access_request_state():
     st.session_state.pop(ACCESS_REQUEST_VIEW, None)
-    st.session_state.pop(ACCESS_REQUEST_NOTIFY_FAILED, None)
 
 
 def _open_access_request_form():
     st.session_state[ACCESS_REQUEST_VIEW] = "form"
-    st.session_state.pop(ACCESS_REQUEST_NOTIFY_FAILED, None)
 
 
 def render_login():
@@ -473,10 +471,6 @@ def _render_access_request():
 
         st.success(SUCCESS_TITLE)
         st.write(SUCCESS_BODY)
-        if _session_get(ACCESS_REQUEST_NOTIFY_FAILED):
-            st.warning(
-                "Sua solicitação foi registrada, mas houve um problema na notificação administrativa."
-            )
         if st.button("Voltar para o login", key="access_request_back"):
             _clear_access_request_state()
             st.rerun()
@@ -529,10 +523,6 @@ def _render_access_request():
         st.error(outcome.message)
         return
     st.session_state[ACCESS_REQUEST_VIEW] = "done"
-    if outcome.code == "created_notify_failed":
-        st.session_state[ACCESS_REQUEST_NOTIFY_FAILED] = True
-    else:
-        st.session_state.pop(ACCESS_REQUEST_NOTIFY_FAILED, None)
     st.rerun()
 
 
@@ -570,6 +560,7 @@ def _logout():
         "_alerts_bell_cache",
         "_reports_read_cache",
         "_tramita_previews",
+        ACCESS_REQUEST_ALERTED,
     ):
         st.session_state.pop(key, None)
     st.logout()
@@ -684,6 +675,17 @@ def render_portal(sidebar_context=None):
         options.append("Relatórios e Indicadores")
     if has_permission(principal, "admin"):
         options.append("Administração")
+        from services.access_requests import count_new_access_requests
+
+        new_access_requests = count_new_access_requests(store)
+        if new_access_requests and not _session_get(ACCESS_REQUEST_ALERTED):
+            noun = "solicitação" if new_access_requests == 1 else "solicitações"
+            st.session_state[ACCESS_REQUEST_ALERTED] = True
+            st.info(
+                f"Há {new_access_requests} novas {noun} de acesso aguardando análise."
+            )
+    else:
+        new_access_requests = 0
     apply_portal_navigation(options)
     if _session_get("portal_module") not in options:
         st.session_state["portal_module"] = "Início"
@@ -708,7 +710,10 @@ def render_portal(sidebar_context=None):
             options,
             key="portal_module",
             format_func=lambda option: (
-                "Agenda e Afastamentos" if option == "Agenda" else option
+                "Agenda e Afastamentos" if option == "Agenda"
+                else f"Administração ({new_access_requests})"
+                if option == "Administração" and new_access_requests
+                else option
             ),
         )
         if (

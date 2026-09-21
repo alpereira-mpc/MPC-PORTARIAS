@@ -4,14 +4,14 @@ import sqlite3
 
 from database.store import now, schema_key_of, unwrap_store
 
-MARKER = "acesso_solicitacoes_schema_v1"
+MARKER = "acesso_solicitacoes_schema_v2"
 STATUS_PENDING = "pendente"
 STATUS_APPROVED = "aprovado"
 STATUS_REJECTED = "recusado"
 STATUSES = (STATUS_PENDING, STATUS_APPROVED, STATUS_REJECTED)
 _READY = set()
 COLUMNS = (
-    "id,nome,email,gabinete,unidade_outro,status,created_at,processed_at,processed_by"
+    "id,nome,email,gabinete,unidade_outro,status,created_at,viewed_at,processed_at,processed_by"
 )
 INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS access_requests_email_idx ON access_requests(email)",
@@ -35,11 +35,18 @@ class AccessRequestStore:
                 "SELECT valor FROM configuracoes WHERE chave=?", (MARKER,)
             ).fetchone()
             exists = self._table_exists(c)
-        if marker and exists:
+        if exists:
             with self.store.connection() as c:
                 c.execute("BEGIN IMMEDIATE")
+                if not self._column_exists(c, "viewed_at"):
+                    c.execute("ALTER TABLE access_requests ADD COLUMN viewed_at TEXT")
                 for statement in INDEX_SQL:
                     c.execute(statement)
+                if not marker:
+                    c.execute(
+                        "INSERT INTO configuracoes VALUES(?,?) ON CONFLICT DO NOTHING",
+                        (MARKER, "1"),
+                    )
             _READY.add(key)
             return
         identity = (
@@ -59,6 +66,7 @@ class AccessRequestStore:
                 "status TEXT NOT NULL DEFAULT 'pendente' "
                 "CHECK(status IN ('pendente','aprovado','recusado')),"
                 "created_at TEXT NOT NULL,"
+                "viewed_at TEXT,"
                 "processed_at TEXT,"
                 "processed_by TEXT)"
             )
@@ -81,6 +89,17 @@ class AccessRequestStore:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='access_requests'"
         ).fetchone()
         return bool(row)
+
+    def _column_exists(self, c, name):
+        if self.store.backend == "postgresql":
+            row = c.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema=current_schema() AND table_name='access_requests' "
+                "AND column_name=?",
+                (name,),
+            ).fetchone()
+            return bool(row)
+        return any(row[1] == name for row in c.execute("PRAGMA table_info(access_requests)"))
 
     def get_pending_by_email(self, email):
         email = (email or "").strip().lower()
@@ -133,6 +152,7 @@ class AccessRequestStore:
             "unidade_outro": extra,
             "status": STATUS_PENDING,
             "created_at": stamp,
+            "viewed_at": None,
             "processed_at": None,
             "processed_by": None,
         }
@@ -144,6 +164,56 @@ class AccessRequestStore:
                 (identifier,),
             ).fetchone()
             return dict(row) if row else None
+
+    def count_new(self):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT COUNT(*) FROM access_requests "
+                "WHERE status=? AND viewed_at IS NULL",
+                (STATUS_PENDING,),
+            ).fetchone()
+            return int(row[0])
+
+    def list(self, status=None):
+        params = ()
+        where = ""
+        if status in STATUSES:
+            where = " WHERE status=?"
+            params = (status,)
+        with self.store.connection(read_only=True) as c:
+            rows = c.execute(
+                f"SELECT {COLUMNS} FROM access_requests{where} "
+                "ORDER BY created_at DESC, id DESC",
+                params,
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def mark_viewed(self, identifier):
+        stamp = now()
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            result = c.execute(
+                "UPDATE access_requests SET viewed_at=? "
+                "WHERE id=? AND viewed_at IS NULL",
+                (stamp, identifier),
+            )
+        return bool(result.rowcount)
+
+    def process(self, identifier, status, processed_by):
+        if status not in (STATUS_APPROVED, STATUS_REJECTED):
+            raise ValueError("Status de processamento inválido.")
+        actor = (processed_by or "").strip()
+        if not actor:
+            raise ValueError("Administrador não identificado.")
+        stamp = now()
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            result = c.execute(
+                "UPDATE access_requests SET status=?, viewed_at=COALESCE(viewed_at,?), "
+                "processed_at=?, processed_by=? WHERE id=? AND status=?",
+                (status, stamp, stamp, actor, identifier, STATUS_PENDING),
+            )
+        return bool(result.rowcount)
 
 
 def ensure_schema(store):
