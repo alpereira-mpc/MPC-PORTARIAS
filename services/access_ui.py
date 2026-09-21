@@ -1,6 +1,6 @@
 """Administrative UI for authorized users. Isolated from Portarias/Agenda/Ofícios."""
 
-from datetime import date, datetime
+from datetime import date
 import streamlit as st
 from database.access import AccessStore
 from services.access import require_permission
@@ -9,13 +9,7 @@ from services.oficios import GABINETES
 from services.branding import module_title
 from services.ui_theme import form_mark, render_html, section_label
 
-ADMIN_SECTIONS = (
-    "Usuários",
-    "Solicitações",
-    "Funções Institucionais",
-    "Acessos e Auditoria",
-    "Sistema",
-)
+ADMIN_SECTIONS = ("Usuários", "Acessos e Auditoria", "Sistema")
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
 AUDIT_TABS = ("Visão Geral", "Acessos", "Auditoria")
 ADMIN_NAV_REQUEST = "pending_open_admin"
@@ -94,140 +88,18 @@ def consume_pending_open_admin():
     return pending
 
 
-def _request_date(value):
-    try:
-        return datetime.fromisoformat(value).strftime("%d/%m/%Y %H:%M")
-    except (TypeError, ValueError):
-        return value or "—"
-
-
-def _render_access_requests(store, principal):
-    from services.access_requests import (
-        approve_access_request,
-        list_access_requests,
-        mark_access_request_viewed,
-        reject_access_request,
-    )
-
-    labels = {
-        "Pendentes": "pendente",
-        "Aprovadas": "aprovado",
-        "Recusadas": "recusado",
-        "Todas": None,
-    }
-    choice = st.radio(
-        "Filtro",
-        list(labels),
-        horizontal=True,
-        key="access_requests_filter",
-    )
-    requests = list_access_requests(store, labels[choice])
-    if not requests:
-        st.info("Nenhuma solicitação encontrada neste filtro.")
-        return
-    selected_id = st.session_state.get("access_request_admin_open")
-    selected = next((item for item in requests if item["id"] == selected_id), None)
-    if selected:
-        if selected.get("viewed_at") is None:
-            mark_access_request_viewed(store, selected["id"])
-            selected["viewed_at"] = "visualizada"
-        unit = selected.get("unidade_outro") or selected["gabinete"]
-        with st.container(border=True):
-            st.markdown(f"### {selected['nome']}")
-            st.write(f"**E-mail institucional:** {selected['email']}")
-            st.write(f"**Gabinete / Unidade:** {unit}")
-            st.write(f"**Data da solicitação:** {_request_date(selected['created_at'])}")
-            st.write(f"**Status:** {selected['status'].capitalize()}")
-            if selected["status"] == "pendente":
-                action = st.session_state.get("access_request_admin_confirm")
-                if action in ("aprovar", "recusar"):
-                    verb = "aprovação" if action == "aprovar" else "recusa"
-                    confirmed = st.checkbox(
-                        f"Confirmo a {verb} desta solicitação.",
-                        key=f"access_request_confirm_{action}_{selected['id']}",
-                    )
-                    cancel, execute = st.columns(2)
-                    if cancel.button("Cancelar", key=f"access_request_cancel_{selected['id']}"):
-                        st.session_state.pop("access_request_admin_confirm", None)
-                        st.rerun()
-                    label = "Confirmar aprovação" if action == "aprovar" else "Confirmar recusa"
-                    if execute.button(
-                        label,
-                        type="primary",
-                        disabled=not confirmed,
-                        key=f"access_request_execute_{action}_{selected['id']}",
-                    ):
-                        actor = principal.email
-                        changed = (
-                            approve_access_request(store, selected["id"], actor)
-                            if action == "aprovar"
-                            else reject_access_request(store, selected["id"], actor)
-                        )
-                        st.session_state.pop("access_request_admin_confirm", None)
-                        st.session_state["access_request_admin_message"] = (
-                            "Solicitação atualizada."
-                            if changed
-                            else "A solicitação já havia sido processada."
-                        )
-                        st.rerun()
-                else:
-                    approve, reject = st.columns(2)
-                    if approve.button(
-                        "Marcar como aprovada",
-                        key=f"access_request_approve_{selected['id']}",
-                    ):
-                        st.session_state["access_request_admin_confirm"] = "aprovar"
-                        st.rerun()
-                    if reject.button(
-                        "Recusar", key=f"access_request_reject_{selected['id']}"
-                    ):
-                        st.session_state["access_request_admin_confirm"] = "recusar"
-                        st.rerun()
-            if st.button("Fechar", key=f"access_request_close_{selected['id']}"):
-                st.session_state.pop("access_request_admin_open", None)
-                st.session_state.pop("access_request_admin_confirm", None)
-                st.rerun()
-        return
-    if message := st.session_state.pop("access_request_admin_message", None):
-        st.success(message)
-    for item in requests:
-        unit = item.get("unidade_outro") or item["gabinete"]
-        with st.container(border=True):
-            title = item["nome"]
-            if item["status"] == "pendente" and item.get("viewed_at") is None:
-                title += " · NOVA"
-            st.markdown(f"**{title}**")
-            st.caption(
-                f"{item['email']} · {unit} · {_request_date(item['created_at'])} · "
-                f"{item['status'].capitalize()}"
-            )
-            if st.button("Abrir solicitação", key=f"access_request_open_{item['id']}"):
-                st.session_state["access_request_admin_open"] = item["id"]
-                st.session_state.pop("access_request_admin_confirm", None)
-                st.rerun()
-
-
 def render(store, principal):
     require_permission(principal, "admin")
     consume_pending_open_admin()
     st.subheader(module_title("admin", "ADMINISTRAÇÃO — Usuários e Acessos"))
     area = st.radio(
         "Seção",
-        [
-            "Usuários",
-            "Solicitações",
-            "Funções Institucionais",
-            "Acessos e Auditoria",
-            "Sistema",
-        ],
+        ["Usuários", "Funções Institucionais", "Acessos e Auditoria", "Sistema"],
         horizontal=True,
         key="admin_secao",
     )
     if area == "Funções Institucionais":
         institutional_functions(store, principal)
-        return
-    if area == "Solicitações":
-        _render_access_requests(store, principal)
         return
     if area == "Acessos e Auditoria":
         from services.audit_ui import render as render_audit

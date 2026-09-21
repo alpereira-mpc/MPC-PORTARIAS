@@ -87,11 +87,14 @@ Confirme Redirect URI e Secrets. Repita os cenários G. Depois: usuário só com
 
 A tela de login oferece **Solicitar acesso**. A solicitação é gravada em `access_requests` com status `pendente` e **não concede permissão**. O cadastro continua manual na Administração.
 
-Após gravar, a solicitação fica disponível em **Administração > Solicitações**.
-Esse fluxo não depende de SMTP: a análise, o cadastro do usuário e a concessão de
-permissões são realizados manualmente pelos administradores do portal.
+Após gravar, o sistema envia e-mail para `mpc@tce.pb.gov.br`. Configure SMTP nos Secrets ou no ambiente:
 
-Schema aditivo: `database/access_requests.sql`, marcador `acesso_solicitacoes_schema_v2`. Em bancos PostgreSQL já na versão 1, a migração `database/migrations/20260921_access_requests_viewed_at.sql` adiciona `viewed_at` sem alterar os registros existentes.
+- `[smtp] host`, `port`, `username`, `password`, `from_address`
+- ou `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`
+
+Sem SMTP, a solicitação permanece no banco e a interface informa falha na notificação administrativa.
+
+Schema aditivo: `database/access_requests.sql`, marcador `acesso_solicitacoes_schema_v1`. Em bancos PostgreSQL já na versão 1, a tabela é criada na inicialização do schema de acesso.
 
 ## Tabelas
 
@@ -99,7 +102,7 @@ Migration aditiva, idempotente, marcador `acesso_schema_v1` em `configuracoes`:
 
 - `usuarios_acesso`
 - `usuario_gabinetes` (PK `usuario_id` + `gabinete`)
-- `access_requests` (solicitações públicas; marcador `acesso_solicitacoes_schema_v2`)
+- `access_requests` (solicitações públicas; marcador `acesso_solicitacoes_schema_v1`)
 
 E-mail é gravado em minúsculas e é único. Não há senha, token Google nem sessão OAuth no banco.
 

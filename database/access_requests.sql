@@ -11,7 +11,6 @@ CREATE TABLE IF NOT EXISTS access_requests (
     status TEXT NOT NULL DEFAULT 'pendente'
         CHECK(status IN ('pendente','aprovado','recusado')),
     created_at TEXT NOT NULL,
-    viewed_at TEXT,
     processed_at TEXT,
     processed_by TEXT
 );
@@ -21,5 +20,5 @@ CREATE INDEX IF NOT EXISTS access_requests_email_idx ON access_requests(email);
 CREATE UNIQUE INDEX IF NOT EXISTS access_requests_email_pendente_idx
     ON access_requests(email) WHERE status = 'pendente';
 
-INSERT INTO configuracoes VALUES('acesso_solicitacoes_schema_v2','1')
+INSERT INTO configuracoes VALUES('acesso_solicitacoes_schema_v1','1')
 ON CONFLICT DO NOTHING;
