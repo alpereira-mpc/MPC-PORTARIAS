@@ -344,9 +344,16 @@ class OficiosStore:
         )
 
     def finalize(
-        self, identifier, generator=None, *, expected_record=None, expected_series=None
+        self,
+        identifier,
+        generator=None,
+        *,
+        expected_record=None,
+        expected_series=None,
+        attached_files=None,
     ):
         from document_generator.oficios import official_documents
+        from services.oficios import safe_name
 
         generator = generator or official_documents
         with self.store.connection() as c:
@@ -358,7 +365,7 @@ class OficiosStore:
                 return record
             if record["status"] != "Rascunho":
                 raise ValueError("Rascunho inválido.")
-            validate(record, official=True)
+            validate(record, official=True, attached=bool(attached_files))
             member = c.execute(
                 "SELECT nome,cargo_base,ativo FROM procuradores WHERE id=?",
                 (record["membro_id"],),
@@ -368,7 +375,11 @@ class OficiosStore:
             series = c.execute(
                 "SELECT * FROM oficio_series WHERE membro_id=?", (record["membro_id"],)
             ).fetchone()
-            if not series or not series["modelo"] or not series["cabecalho"]:
+            if not series:
+                raise ValueError("Configure a série e o modelo institucional.")
+            if attached_files is None and (
+                not series["modelo"] or not series["cabecalho"]
+            ):
                 raise ValueError("Configure a série e o modelo institucional.")
             series = dict(series)
             record.update(signatario=member["nome"], cargo_base=member["cargo_base"])
@@ -398,9 +409,30 @@ class OficiosStore:
                 (series["sigla"], record["ano"]),
             ).fetchone()[0]
             number = released or seq["proximo"]
-            files = generator(record, series, number)
-            if {x[0] for x in files} != {"docx", "pdf"} or any(not x[2] for x in files):
-                raise ValueError("A geração deve produzir DOCX e PDF.")
+            if attached_files is not None:
+                if len(attached_files) != 1:
+                    raise ValueError("Anexe um único arquivo PDF ou DOCX.")
+                ext, name, content = attached_files[0]
+                if ext not in ("pdf", "docx") or not content:
+                    raise ValueError("Aceitos apenas PDF e DOCX.")
+                validate_upload(
+                    name
+                    if str(name).lower().endswith("." + ext)
+                    else "oficio." + ext,
+                    content,
+                )
+                stamped = safe_name(
+                    f"{series['sigla']}-{str(number).zfill(int(series['digitos'] or 1))}-{record['ano']}.{ext}"
+                )
+                files = [(ext, stamped, content)]
+                note = "Arquivo anexado persistido"
+            else:
+                files = generator(record, series, number)
+                if {x[0] for x in files} != {"docx", "pdf"} or any(
+                    not x[2] for x in files
+                ):
+                    raise ValueError("A geração deve produzir DOCX e PDF.")
+                note = "DOCX e PDF persistidos"
             for ext, name, content in files:
                 self._file(
                     c,
@@ -426,9 +458,7 @@ class OficiosStore:
                     "DELETE FROM oficio_numeros_liberados WHERE serie=? AND ano=? AND numero=?",
                     (series["sigla"], record["ano"], number),
                 )
-            self._movement(
-                c, identifier, "Rascunho", "Gerado", "DOCX e PDF persistidos"
-            )
+            self._movement(c, identifier, "Rascunho", "Gerado", note)
             return self._get(c, identifier)
 
     def update_status(self, identifier, status, note="", due=None, sent=None):

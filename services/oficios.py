@@ -155,7 +155,14 @@ def validate_upload(name, content):
     return safe_name(name), mime
 
 
-def validate(record, official=False):
+def official_attached_files(name, content):
+    """Validate a user-supplied official file. Bytes are not altered."""
+    safe, mime = validate_upload(name, content)
+    ext = "pdf" if mime == "application/pdf" else "docx"
+    return [(ext, safe, content)]
+
+
+def validate(record, official=False, attached=False):
     if record.get("direcao") not in ("ENVIADO", "RECEBIDO"):
         raise ValueError("Direção inválida.")
     if date.fromisoformat(record["data"]).year < 1000:
@@ -174,14 +181,13 @@ def validate(record, official=False):
         if not record.get("membros"):
             raise ValueError("Selecione o destinatário interno.")
     elif official:
-        if (
-            not record.get("membro_id")
-            or not record.get("corpo", "").strip()
-            or not any(
-                record.get(k, "").strip()
-                for k in ("destinatario", "instituicao", "unidade")
-            )
-        ):
+        has_destination = any(
+            record.get(k, "").strip()
+            for k in ("destinatario", "instituicao", "unidade")
+        )
+        if not record.get("membro_id") or not has_destination:
+            raise ValueError("Preencha signatário, destinatário e corpo.")
+        if not attached and not record.get("corpo", "").strip():
             raise ValueError("Preencha signatário, destinatário e corpo.")
     for value in record.values():
         if isinstance(value, str) and (

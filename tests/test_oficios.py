@@ -568,3 +568,121 @@ def test_editor_save_reopen_finalize_ui(store, monkeypatch):
     next(x for x in app.button if x.label == "Finalizar e gerar ofício").click().run()
     assert not app.exception and not app.error
     assert s.get(identifier)["numero"] == 8
+
+
+def _blank_pdf():
+    from pypdf import PdfWriter
+
+    buffer = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(72, 72)
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _blank_docx():
+    buffer = BytesIO()
+    document = Document()
+    document.add_paragraph("Ofício pronto de teste.")
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def attached_sample(service, member=None):
+    member = member or next(
+        s["membro_id"] for s in service.series() if s["sigla"] == "PROGE"
+    )
+    return dict(
+        direcao="ENVIADO",
+        membro_id=member,
+        data="2026-09-10",
+        assunto="Ofício anexo de teste",
+        destinatario="DESTINATÁRIO ANEXO",
+        unidade="TCE-PB",
+    )
+
+
+def test_attached_pdf_and_docx_use_existing_numbering(store):
+    from services.oficios import official_attached_files, validate
+
+    s = ready(store)
+    pdf = _blank_pdf()
+    validate(attached_sample(s), official=True, attached=True)
+    with pytest.raises(ValueError, match="corpo"):
+        validate(attached_sample(s), official=True)
+    identifier = s.save(attached_sample(s))
+    assert s.sequence("PROGE", 2026)["proximo"] == 8
+    assert s.get(identifier)["numero"] is None
+    result = s.finalize(
+        identifier, attached_files=official_attached_files("pronto.pdf", pdf)
+    )
+    assert result["numero"] == 8
+    assert result["serie"] == "PROGE"
+    assert result["status"] == "Gerado"
+    stored = s.files(identifier)
+    assert len(stored) == 1
+    assert stored[0]["tipo"] == "application/pdf"
+    assert stored[0]["nome"].endswith(".pdf")
+    assert ".." not in stored[0]["nome"]
+    assert s.download(stored[0]["id"]) == pdf
+    listed = s.list(direction="ENVIADO", status="Gerado")
+    assert any(row["id"] == identifier for row in listed)
+    docx = _blank_docx()
+    second = s.save(attached_sample(s))
+    other = s.finalize(
+        second, attached_files=official_attached_files("pronto.docx", docx)
+    )
+    assert other["numero"] == 9
+    files = s.files(second)
+    assert len(files) == 1
+    assert files[0]["tipo"].endswith("wordprocessingml.document")
+    assert s.download(files[0]["id"]) == docx
+
+
+def test_attached_rejects_invalid_files_without_consuming_number(store):
+    from services.oficios import MAX_FILE, official_attached_files
+
+    s = ready(store)
+    identifier = s.save(attached_sample(s))
+    with pytest.raises(ValueError):
+        official_attached_files("file.exe", b"a")
+    with pytest.raises(ValueError):
+        official_attached_files("a.pdf", b"bad")
+    with pytest.raises(ValueError):
+        official_attached_files("a.docx", b"PKbad")
+    with pytest.raises(ValueError):
+        official_attached_files("a.pdf", b"%PDF-" + b"x" * MAX_FILE)
+    with pytest.raises(ValueError):
+        s.finalize(identifier, attached_files=[("pdf", "a.pdf", b"bad")])
+    assert s.get(identifier)["status"] == "Rascunho"
+    assert s.get(identifier)["numero"] is None
+    assert s.sequence("PROGE", 2026)["proximo"] == 8
+    assert not s.files(identifier)
+
+
+def test_new_oficio_defaults_to_system_creation(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from database.store import ROOT
+    from tests.access_testing import enable_login
+    from services.oficios_ui import PREP_ATTACH, PREP_CREATE
+
+    ready(store)
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_oficios").click().run()
+    app.button(key="gabinete_PROGE").click().run()
+    app.radio(key="oficio_page").set_value("Novo Ofício").run()
+    mode = next(r for r in app.radio if r.key == "oficio_prep_mode")
+    assert mode.value == PREP_CREATE
+    assert any(i.label == "Nome do destinatário" for i in app.text_input)
+    assert any(a.label.startswith("Corpo do ofício") for a in app.text_area)
+    app.radio(key="oficio_prep_mode").set_value(PREP_ATTACH).run()
+    assert not any(a.label.startswith("Corpo do ofício") for a in app.text_area)
+    assert any(i.label == "Arquivo do ofício" for i in app.get("file_uploader"))
+    finalize = next(b for b in app.button if b.key == "oficio_attach_finalize")
+    assert finalize.disabled
+    assert any(
+        c.label.startswith("Confirmo que este documento será registrado")
+        for c in app.checkbox
+    )

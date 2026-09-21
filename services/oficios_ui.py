@@ -14,6 +14,7 @@ from services.oficios import (
     SERIES,
     fingerprint,
     normalized,
+    official_attached_files,
     validate_upload,
 )
 from services.ui_store import display_store
@@ -34,6 +35,8 @@ from services.ui_theme import (
     status_tone,
 )
 
+PREP_CREATE = "Criar ofício no sistema"
+PREP_ATTACH = "Anexar ofício pronto"
 _RECEBIDOS_HISTORICO_COLUMNS = ("instante", "anterior", "novo", "observacao")
 
 
@@ -209,6 +212,7 @@ def reset_editor():
         if (
             key.startswith("oficio_input_")
             or key.startswith("oficio_received_")
+            or key.startswith("oficio_attach_")
             or key
             in (
                 "oficio_edit",
@@ -218,6 +222,7 @@ def reset_editor():
                 "oficio_open_ids",
                 "oficio_day",
                 "oficio_member",
+                "oficio_prep_mode",
             )
         ):
             st.session_state.pop(key, None)
@@ -252,6 +257,78 @@ def consume_pending_open_oficio(offices):
     return pending
 
 
+def _attached_editor(service, people, member, series):
+    day = st.date_input(
+        "Data do ofício",
+        date.today(),
+        format="DD/MM/YYYY",
+        key="oficio_attach_day",
+    )
+    seq = service.sequence(series["sigla"], day.year)
+    predicted = f"{str(seq['proximo']).zfill(series['digitos'])}/{day.year}"
+    st.caption(
+        f"Próximo número previsto: {predicted}"
+        + ("" if seq["confirmada"] else " · confirmação administrativa pendente")
+    )
+    destinatario = st.text_input(
+        "Nome do destinatário", key="oficio_attach_destinatario"
+    )
+    unidade = st.text_input("Órgão/Unidade", key="oficio_attach_unidade")
+    assunto = st.text_input("Assunto", key="oficio_attach_assunto")
+    uploaded = st.file_uploader(
+        "Arquivo do ofício",
+        type=["pdf", "docx"],
+        accept_multiple_files=False,
+        key="oficio_attach_file",
+    )
+    if uploaded is not None:
+        st.caption(
+            f"{uploaded.name} · {uploaded.type or 'arquivo'} · {uploaded.size:,} bytes"
+        )
+    st.info(
+        "O número administrativo será o previsto pelo sistema. "
+        "O conteúdo do arquivo não é lido nem convertido."
+    )
+    confirmed = st.checkbox(
+        f"Confirmo que este documento será registrado como Ofício {series['sigla']} nº {predicted}.",
+        key="oficio_attach_confirm",
+    )
+    if st.button(
+        "Finalizar ofício anexado",
+        type="primary",
+        key="oficio_attach_finalize",
+        disabled=uploaded is None or not confirmed,
+    ):
+        record = {
+            "direcao": "ENVIADO",
+            "membro_id": member,
+            "data": day.isoformat(),
+            "destinatario": destinatario,
+            "unidade": unidade,
+            "assunto": assunto,
+        }
+        from services.oficios import validate
+
+        content = uploaded.getvalue()
+        attached = official_attached_files(uploaded.name, content)
+        validate(record, official=True, attached=True)
+        identifier = service.save(record)
+        try:
+            final = service.finalize(identifier, attached_files=attached)
+        except Exception:
+            try:
+                service.delete_draft(identifier, True)
+            except Exception:
+                pass
+            raise
+        audit_oficio("OFICIO_FINALIZADO", "FINALIZAR", final)
+        st.session_state["oficio_final"] = final
+        from services.alerts import invalidate_alert_summary
+
+        invalidate_alert_summary()
+        st.rerun()
+
+
 def editor(service, people):
     identifier = st.session_state.get("oficio_edit")
     member = st.session_state["oficio_gabinete_member"]
@@ -284,6 +361,18 @@ def editor(service, people):
         )
     st.write(f"NOVO OFÍCIO — {series['sigla']}")
     st.caption(people[member]["nome"])
+    if identifier:
+        mode = PREP_CREATE
+    else:
+        mode = st.radio(
+            "Forma de preparação",
+            (PREP_CREATE, PREP_ATTACH),
+            key="oficio_prep_mode",
+            horizontal=True,
+        )
+    if mode == PREP_ATTACH:
+        _attached_editor(service, people, member, series)
+        return
     day = st.date_input(
         "Data do ofício",
         date.fromisoformat(seed["data"]) if seed else date.today(),
