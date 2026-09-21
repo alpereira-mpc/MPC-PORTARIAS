@@ -3,7 +3,7 @@
 from datetime import date
 import streamlit as st
 
-from services.access import require_permission
+from services.access import has_permission, require_permission
 from services.branding import module_title
 from services.representacoes import (
     ANDAMENTOS,
@@ -20,6 +20,7 @@ from services.representacoes import (
     can_delete,
     create,
     delete,
+    delete_blocked_reason,
     documents,
     download,
     get,
@@ -46,7 +47,6 @@ from services.ui_theme import (
     badges,
     card_container,
     definition_block,
-    detail_mark,
     empty_state,
     filter_mark,
     form_mark,
@@ -56,6 +56,64 @@ from services.ui_theme import (
     section_label,
     status_tone,
 )
+
+
+_FILTER_ALL = "__todas__"
+
+
+def _detail_chrome(prefix):
+    st.markdown(
+        "<style>"
+        f'div[class*="st-key-{prefix}_detail"]{{'
+        "background:transparent!important;"
+        "background-color:transparent!important;"
+        "border:none!important;"
+        "box-shadow:none!important;"
+        "}"
+        f'div[class*="st-key-{prefix}_toolbar"] [data-testid="stHorizontalBlock"]{{'
+        "justify-content:flex-start;align-items:center;gap:.45rem;flex-wrap:wrap;"
+        "}"
+        f'div[class*="st-key-{prefix}_toolbar"] [data-testid="stHorizontalBlock"]>div{{'
+        "flex:0 1 auto!important;width:auto!important;min-width:0;"
+        "}"
+        f'div[class*="st-key-{prefix}_note"]{{'
+        "background:var(--mpc-info-soft)!important;"
+        "background-color:var(--mpc-info-soft)!important;"
+        "border-left:3px solid var(--mpc-info)!important;"
+        "}"
+        "@media (max-width:768px){"
+        f'div[class*="st-key-{prefix}_toolbar"] [data-testid="stHorizontalBlock"]{{'
+        "flex-wrap:wrap;"
+        "}"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+
+def _filter_select(label, mapping, empty, key):
+    chosen = st.selectbox(
+        label,
+        [_FILTER_ALL, *mapping],
+        format_func=lambda x, names=mapping, blank=empty: blank if x == _FILTER_ALL else names.get(x, str(x)),
+        placeholder=empty,
+        key=key,
+    )
+    return None if chosen == _FILTER_ALL else chosen
+
+
+def _toolbar(prefix, items):
+    shown = [item for item in items if item]
+    if not shown:
+        return None
+    with st.container(key=prefix):
+        actions_mark()
+        columns = st.columns(len(shown))
+        pressed = None
+        for column, (title, key, kind) in zip(columns, shown):
+            if column.button(title, key=key, type=kind or "secondary"):
+                pressed = key
+        return pressed
 
 
 def _done(message):
@@ -213,19 +271,13 @@ def _kpis(counts):
 def _filters():
     filter_mark()
     a, b, c, d = st.columns(4)
-    situacao = a.selectbox(
-        "Situação",
-        [None, *SITUACOES],
-        format_func=lambda x: "Todas" if x is None else SITUACOES[x],
-        key="rep_f_sit",
-    )
-    fase = b.selectbox(
-        "Fase processual",
-        [None, *FASES],
-        format_func=lambda x: "Todas" if x is None else FASES[x],
-        key="rep_f_fase",
-    )
-    year = c.number_input("Ano", min_value=0, max_value=2100, value=0, step=1, key="rep_f_ano")
+    with a:
+        situacao = _filter_select("Situação", SITUACOES, "Todas", "rep_f_sit")
+    with b:
+        fase = _filter_select("Fase processual", FASES, "Todas", "rep_f_fase")
+    year_options = {year: str(year) for year in range(date.today().year, 2023, -1)}
+    with c:
+        year = _filter_select("Ano", year_options, "Todos", "rep_f_year")
     pesquisa = d.text_input("Pesquisa", key="rep_f_q")
     e, f, g, h = st.columns(4)
     representado = e.text_input("Representado", key="rep_f_rep")
@@ -234,18 +286,10 @@ def _filters():
     processo = h.text_input("Nº do processo", key="rep_f_proc")
     people, servers = st.session_state.get("_rep_people") or ({}, {})
     i, j = st.columns(2)
-    procurador = i.selectbox(
-        "Procurador responsável",
-        [None, *people],
-        format_func=lambda x: "Todos" if x is None else people.get(x, str(x)),
-        key="rep_f_procud",
-    )
-    assessor = j.selectbox(
-        "Assessor",
-        [None, *servers],
-        format_func=lambda x: "Todos" if x is None else servers.get(x, str(x)),
-        key="rep_f_ass",
-    )
+    with i:
+        procurador = _filter_select("Procurador responsável", people, "Todos", "rep_f_procud")
+    with j:
+        assessor = _filter_select("Assessor", servers, "Todos", "rep_f_ass")
     filters = {
         "situacao": situacao,
         "fase_processual": fase,
@@ -254,7 +298,7 @@ def _filters():
         "relator": relator,
         "numero_processo": processo,
         "pesquisa": pesquisa,
-        "ano": year or None,
+        "ano": year,
     }
     filters["procurador_id"] = procurador
     filters["assessor_id"] = assessor
@@ -395,12 +439,13 @@ def _protocol_form(store, principal, identifier):
     day = st.date_input("Data do protocolo", date.today(), format="DD/MM/YYYY", key=prefix + "data")
     relator = st.selectbox(
         "Relator *",
-        [None, *RELATORES],
+        [_FILTER_ALL, *RELATORES],
         format_func=lambda name: (
             "Selecione o Relator atribuído no TRAMITA"
-            if name is None
+            if name == _FILTER_ALL
             else relator_label(name)
         ),
+        placeholder="Selecione o Relator atribuído no TRAMITA",
         key=prefix + "rel",
     )
     fase = st.selectbox(
@@ -430,7 +475,7 @@ def _protocol_form(store, principal, identifier):
                 {
                     "numero_processo": number,
                     "data_protocolo": day.isoformat(),
-                    "relator": relator,
+                    "relator": None if relator == _FILTER_ALL else relator,
                     "fase_processual": fase,
                     "observacoes": observacoes,
                     "possui_medida_cautelar": cautelar,
@@ -449,7 +494,12 @@ def _protocol_form(store, principal, identifier):
 
 
 def _detail(store, principal, record):
-    detail_mark()
+    _detail_chrome("rep")
+    with st.container(key="rep_detail"):
+        _detail_body(store, principal, record)
+
+
+def _detail_body(store, principal, record):
     procuradores_map, assessores_map = people_index(store)
     groups = grouped_members(record, procuradores_map, assessores_map)
     st.subheader(kind_label(record))
@@ -470,6 +520,25 @@ def _detail(store, principal, record):
             ("Observações", record.get("observacoes")),
         ),
     )
+    if record.get("origem") == "OUVIDORIA":
+        linked = None
+        if has_permission(principal, "ouvidoria"):
+            from services.ouvidoria import by_representation
+
+            linked = by_representation(store, record["id"])
+        if linked:
+            definition_block(
+                "Notícia de fato da Ouvidoria",
+                (("Notícia de fato", linked["numero_interno"]),),
+            )
+            if st.button("Abrir notícia de fato", key="rep_open_ouvi"):
+                from portal import request_portal_navigation
+
+                request_portal_navigation("Ouvidoria", ouvidoria_open_id=linked["id"])
+        else:
+            st.caption(
+                "Origem institucional: Ouvidoria. Os dados internos da notícia de fato não estão disponíveis nesta conta."
+            )
     definition_block(
         "Equipe",
         (
@@ -524,24 +593,29 @@ def _detail(store, principal, record):
         elif cols[3].button("Preparar download", key="rep_prep_" + item["id"]):
             st.session_state["representacoes_download"] = item["id"]
             st.rerun()
-    actions_mark()
-    a, b, c, d, e = st.columns(5)
-    if not record.get("numero_processo") and a.button("Registrar protocolo", key="rep_dt_prot"):
+    protocolled = is_protocolled(record)
+    flow = _toolbar(
+        "rep_toolbar_flow",
+        [
+            ("Registrar protocolo", "rep_dt_prot", "primary") if not protocolled else None,
+            ("Andamento", "rep_dt_prg", "secondary"),
+            ("Anexar documento", "rep_dt_doc", "secondary"),
+            ("Editar", "rep_dt_ed", "secondary"),
+        ],
+    )
+    if flow == "rep_dt_prot":
         st.session_state["representacoes_protocol"] = record["id"]
         st.rerun()
-    if b.button("Andamento", key="rep_dt_prg"):
+    elif flow == "rep_dt_prg":
         st.session_state["representacoes_progress"] = record["id"]
         st.rerun()
-    if c.button("Anexar documento", key="rep_dt_doc"):
+    elif flow == "rep_dt_doc":
         st.session_state["representacoes_file"] = record["id"]
         st.rerun()
-    if d.button("Editar", key="rep_dt_ed"):
+    elif flow == "rep_dt_ed":
         st.session_state["representacoes_edit"] = record["id"]
         st.rerun()
-    if e.button("Voltar", key="rep_dt_back"):
-        st.session_state.pop("representacoes_view", None)
-        st.rerun()
-    if record.get("numero_processo"):
+    if protocolled:
         section_label("Fase processual")
         fase_keys = list(FASES)
         chosen = st.selectbox(
@@ -551,44 +625,80 @@ def _detail(store, principal, record):
             format_func=FASES.get,
             key="rep_dt_fase",
         )
-        if st.button("Salvar fase", key="rep_dt_fase_ok"):
-            try:
-                set_phase(store, record["id"], chosen, principal)
-            except ValueError as exc:
-                st.error(str(exc))
-            else:
-                _done("Fase processual atualizada.")
         inst = st.selectbox(
             "Situação institucional",
             ["EM_TRAMITACAO", "JULGADA", "ENCERRADA", "SUSPENSA", "CANCELADA"],
             format_func=SITUACOES.get,
             key="rep_dt_sit",
         )
-        if st.button("Atualizar situação", key="rep_dt_sit_ok"):
+        state = _toolbar(
+            "rep_toolbar_state",
+            [
+                ("Salvar fase", "rep_dt_fase_ok", "secondary"),
+                ("Atualizar situação", "rep_dt_sit_ok", "secondary"),
+            ],
+        )
+        if state == "rep_dt_fase_ok":
+            try:
+                set_phase(store, record["id"], chosen, principal)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                _done("Fase processual atualizada.")
+        elif state == "rep_dt_sit_ok":
             try:
                 set_status(store, record["id"], inst, principal)
             except ValueError as exc:
                 st.error(str(exc))
             else:
                 _done("Situação atualizada.")
-    elif can_delete(record):
-        if st.session_state.get("representacoes_confirm_delete") == record["id"]:
-            st.warning("Excluir este projeto de Representação e os registros vinculados?")
-            x, y = st.columns(2)
-            if x.button("Confirmar exclusão", type="primary", key="rep_del_yes"):
-                try:
-                    delete(store, record["id"])
-                except ValueError as exc:
-                    st.error(str(exc))
-                else:
-                    _clear_forms()
-                    _done("Projeto de Representação excluído.")
-            if y.button("Cancelar", key="rep_del_no"):
-                st.session_state.pop("representacoes_confirm_delete", None)
-                st.rerun()
-        elif st.button("Excluir", key="rep_del"):
-            st.session_state["representacoes_confirm_delete"] = record["id"]
+    reason = delete_blocked_reason(record)
+    if reason:
+        with st.container(key="rep_note"):
+            st.caption(reason)
+    elif st.session_state.get("representacoes_confirm_delete") == record["id"]:
+        warning = (
+            "Tem certeza de que deseja excluir definitivamente este Projeto de Representação? "
+            "Esta ação não poderá ser desfeita."
+        )
+        if record.get("origem") == "OUVIDORIA":
+            warning += (
+                " O vínculo com a Notícia de Fato será removido, mas a Notícia de Fato permanecerá cadastrada."
+            )
+        st.warning(warning)
+        confirm = _toolbar(
+            "rep_toolbar_confirm",
+            [
+                ("Excluir definitivamente", "rep_del_yes", "primary"),
+                ("Cancelar", "rep_del_no", "secondary"),
+            ],
+        )
+        if confirm == "rep_del_yes":
+            try:
+                delete(store, record["id"], principal)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                _clear_forms()
+                _done("Projeto de Representação excluído.")
+        elif confirm == "rep_del_no":
+            st.session_state.pop("representacoes_confirm_delete", None)
             st.rerun()
+    extra = _toolbar(
+        "rep_toolbar_more",
+        [
+            None
+            if reason or st.session_state.get("representacoes_confirm_delete") == record["id"]
+            else ("Excluir definitivamente", "rep_del", "secondary"),
+            ("Voltar", "rep_dt_back", "secondary"),
+        ],
+    )
+    if extra == "rep_del":
+        st.session_state["representacoes_confirm_delete"] = record["id"]
+        st.rerun()
+    elif extra == "rep_dt_back":
+        st.session_state.pop("representacoes_view", None)
+        st.rerun()
 
 
 def render(store, principal):

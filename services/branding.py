@@ -28,6 +28,7 @@ MODULE_ICONS = {
     "tarefas": "check_circle",
     "relatorios": "bar_chart",
     "representacoes": "gavel",
+    "ouvidoria": "forum",
     "admin": "manage_accounts",
 }
 

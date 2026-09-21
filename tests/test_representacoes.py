@@ -1,4 +1,5 @@
 from io import BytesIO
+import inspect
 
 import pytest
 from pypdf import PdfWriter
@@ -22,8 +23,10 @@ from services.representacoes import (
     add_progress,
     andamento_display,
     assessores,
+    can_delete,
     create,
     delete,
+    delete_blocked_reason,
     documents,
     download,
     get,
@@ -454,3 +457,55 @@ def test_relatores_and_medida_cautelar(store):
     assert heading == "Projeto de Representação criado"
     assert extra == ""
     assert "Representação criada" not in extra
+
+
+def test_project_can_be_deleted_but_protocolled_cannot(store):
+    principal = _principal(store, email="del-rep@test.local")
+    payload, *_ = _payload(store)
+    record = create(store, payload, principal)
+    identifier = record["id"]
+    assert can_delete(record)
+    assert delete_blocked_reason(record) is None
+    delete(store, identifier)
+    assert get(store, identifier) is None
+    with store.connection(read_only=True) as c:
+        assert c.execute(
+            "SELECT COUNT(*) FROM representacao_integrantes WHERE representacao_id=?",
+            (identifier,),
+        ).fetchone()[0] == 0
+    again = create(store, payload, principal)
+    protocolled = register_protocol(
+        store,
+        again["id"],
+        {
+            "numero_processo": "TC 099999/26",
+            "data_protocolo": "2026-09-21",
+            "relator": RELATORES[0],
+            "fase_processual": "INSTRUCAO",
+        },
+        principal,
+    )
+    assert not can_delete(protocolled)
+    assert "protocolada" in delete_blocked_reason(protocolled)
+    with pytest.raises(ValueError, match="não pode ser excluída"):
+        delete(store, again["id"])
+    from services.representacoes_ui import _detail_body, _detail_chrome, _filters
+
+    source = inspect.getsource(_detail_body)
+    assert "Excluir definitivamente" in source
+    assert "rep_dt_prg" in source
+    assert "rep_toolbar_flow" in source
+    assert "Notícia de Fato permanecerá cadastrada" in source
+    chrome = inspect.getsource(_detail_chrome)
+    assert "--mpc-info-soft" in chrome
+    assert "--mpc-page" not in chrome or "transparent" in chrome
+    assert "mpc-danger-zone" not in chrome
+    assert "max-width:768px" in chrome
+    filters = inspect.getsource(_filters)
+    assert "Choose an option" not in filters
+    assert "[None," not in filters
+    assert "number_input" not in filters
+    from services.representacoes_ui import _filter_select
+
+    assert "placeholder=empty" in inspect.getsource(_filter_select)
+    assert "value=0" not in filters

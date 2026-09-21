@@ -336,7 +336,8 @@ class RepresentacoesStore:
             )
         return file_id
 
-    def delete(self, identifier):
+    def delete(self, identifier, actor=""):
+        stamp = now()
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             row = c.execute(
@@ -354,8 +355,49 @@ class RepresentacoesStore:
                 raise ValueError(
                     "Representação protocolada não pode ser excluída. Utilize encerramento, cancelamento ou arquivamento."
                 )
+            self._unlink_ouvidoria(c, identifier, stamp, actor or "")
             c.execute("DELETE FROM representacoes WHERE id=?", (identifier,))
         return True
+
+    def _ouvidoria_table_exists(self, connection):
+        if self.store.backend == "postgresql":
+            found = connection.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema=current_schema() AND table_name='ouvidoria_manifestacoes'"
+            ).fetchone()
+        else:
+            found = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ouvidoria_manifestacoes'"
+            ).fetchone()
+        return bool(found)
+
+    def _unlink_ouvidoria(self, connection, identifier, stamp, actor):
+        if not self._ouvidoria_table_exists(connection):
+            return
+        linked = connection.execute(
+            "SELECT id, resultado FROM ouvidoria_manifestacoes WHERE representacao_id=?",
+            (identifier,),
+        ).fetchall()
+        for item in linked:
+            connection.execute(
+                "UPDATE ouvidoria_manifestacoes SET representacao_id=NULL,"
+                "resultado=CASE WHEN resultado='PROJETO_REPRESENTACAO' THEN NULL ELSE resultado END,"
+                "atualizado_em=?,atualizado_por=? WHERE id=?",
+                (stamp, actor, item["id"]),
+            )
+            connection.execute(
+                "INSERT INTO ouvidoria_andamentos("
+                "manifestacao_id,data,tipo,descricao,criado_em,criado_por) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    item["id"],
+                    stamp[:10],
+                    "PROJETO_REPRESENTACAO_EXCLUIDO",
+                    "Projeto de Representação excluído.",
+                    stamp,
+                    actor,
+                ),
+            )
 
     def get(self, identifier):
         with self.store.connection(read_only=True) as c:

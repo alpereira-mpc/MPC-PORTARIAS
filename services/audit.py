@@ -55,6 +55,7 @@ MODULE_LABELS = {
     "tarefas": "Tarefas",
     "relatorios": "Relatórios e Indicadores",
     "representacoes": "Representações",
+    "ouvidoria": "Ouvidoria",
 }
 MODULE_KEYS = {
     "Portarias": "portarias",
@@ -67,6 +68,7 @@ MODULE_KEYS = {
     "Tarefas": "tarefas",
     "Relatórios e Indicadores": "relatorios",
     "Representações": "representacoes",
+    "Ouvidoria": "ouvidoria",
 }
 
 
@@ -443,6 +445,7 @@ def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
             "pode_memorandos",
             "pode_admin",
             "pode_representacoes",
+            "pode_ouvidoria",
         )
         changed = [
             key

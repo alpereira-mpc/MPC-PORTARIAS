@@ -38,6 +38,8 @@ PORTAL_NAV_STATE_KEYS = frozenset(
         "pending_open_memorando",
         "pending_open_admin",
         "tarefas_open_id",
+        "representacoes_view",
+        "ouvidoria_open_id",
     }
 )
 
@@ -151,6 +153,14 @@ MODULES = (
         "Representações",
         "Acompanhamento interno das Representações do MPC-PB, da elaboração ao encerramento processual.",
         MODULE_ICONS["representacoes"],
+        True,
+    ),
+    Module(
+        "ouvidoria",
+        "Ouvidoria",
+        "Ouvidoria",
+        "Registro interno de notícias de fato da Ouvidoria do MPC-PB, da triagem às providências.",
+        MODULE_ICONS["ouvidoria"],
         True,
     ),
 )
@@ -294,6 +304,10 @@ def open_representacoes():
     queue_portal_navigation("Representações")
 
 
+def open_ouvidoria():
+    queue_portal_navigation("Ouvidoria")
+
+
 def card(module):
     with st.container(border=True):
         institutional_card_mark()
@@ -316,6 +330,7 @@ def card(module):
                     "tarefas": open_tarefas,
                     "relatorios": open_relatorios,
                     "representacoes": open_representacoes,
+                    "ouvidoria": open_ouvidoria,
                 }[module.key],
             )
         else:
@@ -686,6 +701,8 @@ def render_portal(sidebar_context=None):
         options.append("Relatórios e Indicadores")
     if has_permission(principal, "representacoes"):
         options.append("Representações")
+    if has_permission(principal, "ouvidoria"):
+        options.append("Ouvidoria")
     if has_permission(principal, "admin"):
         options.append("Administração")
     apply_portal_navigation(options)
@@ -799,6 +816,12 @@ def render_portal(sidebar_context=None):
         if selected == "Representações":
             require_permission(principal, "representacoes")
             from services.representacoes_ui import render
+
+            render(store, principal)
+            st.stop()
+        if selected == "Ouvidoria":
+            require_permission(principal, "ouvidoria")
+            from services.ouvidoria_ui import render
 
             render(store, principal)
             st.stop()

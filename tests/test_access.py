@@ -117,6 +117,27 @@ def test_representacoes_permission_is_independent_and_revocable(store):
         require_permission(revoked, "representacoes")
 
 
+def test_ouvidoria_permission_is_independent_and_revocable(store):
+    access = AccessStore(store)
+    identifier = access.save_user(
+        {
+            "nome": "Ouvidoria",
+            "email": "ouvidoria@test.local",
+            "perfil": "USUARIO",
+            "pode_ouvidoria": True,
+        }
+    )
+    principal = resolve_principal(store, {"email": "ouvidoria@test.local"})
+    assert has_permission(principal, "ouvidoria")
+    assert not has_permission(principal, "representacoes")
+    assert not has_permission(principal, "admin")
+    access.save_user({**access.get(identifier), "pode_ouvidoria": False}, identifier)
+    revoked = resolve_principal(store, {"email": "ouvidoria@test.local"})
+    assert not has_permission(revoked, "ouvidoria")
+    with pytest.raises(ValueError, match="módulo"):
+        require_permission(revoked, "ouvidoria")
+
+
 def test_oficios_without_flag_has_no_offices(store):
     seed_access(
         store,

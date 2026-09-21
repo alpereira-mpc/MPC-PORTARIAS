@@ -301,9 +301,10 @@ def test_future_modules_have_no_routes_or_side_effects():
         "tarefas",
         "relatorios",
         "representacoes",
+        "ouvidoria",
     ]
     assert [module.key for module in MODULES if not module.active] == []
-    assert len({module.key for module in MODULES}) == 7
+    assert len({module.key for module in MODULES}) == 8
 
 
 def test_home_card_icons_are_complete_material_names():
@@ -320,6 +321,7 @@ def test_home_card_icons_are_complete_material_names():
         "check_circle",
         "manage_accounts",
         "gavel",
+        "forum",
     }
     assert {module.icon for module in MODULES} | {ADMIN_MODULE.icon} <= known
     source = inspect.getsource(visible_modules) + inspect.getsource(home)
@@ -344,6 +346,7 @@ def _principal(**flags):
         pode_memorandos=flags.get("memorandos", False),
         pode_relatorios=flags.get("relatorios", False),
         pode_representacoes=flags.get("representacoes", False),
+        pode_ouvidoria=flags.get("ouvidoria", False),
     )
 
 
@@ -427,6 +430,7 @@ def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
         "TAREFAS",
         "RELATÓRIOS",
         "REPRESENTAÇÕES",
+        "OUVIDORIA",
         "ADMINISTRAÇÃO",
     ]
     indexes = [captions.index(label) for label in labels]
@@ -436,7 +440,9 @@ def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
     assert keys.index("open_memorandos") < keys.index("open_oficios")
     assert keys.index("open_oficios") < keys.index("open_agenda")
     assert "open_representacoes" in keys
-    assert keys.index("open_representacoes") < keys.index("open_admin")
+    assert "open_ouvidoria" in keys
+    assert keys.index("open_representacoes") < keys.index("open_ouvidoria")
+    assert keys.index("open_ouvidoria") < keys.index("open_admin")
 
 
 

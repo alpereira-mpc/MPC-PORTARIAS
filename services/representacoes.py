@@ -11,6 +11,7 @@ ORIGENS = {
     "DE_OFICIO": "De ofício",
     "PROVOCACAO_EXTERNA": "Provocação externa",
     "PROVOCACAO_INTERNA": "Provocação interna",
+    "OUVIDORIA": "Ouvidoria",
 }
 PRIORIDADES = {
     "BAIXA": "Baixa",
@@ -211,7 +212,21 @@ def grouped_members(record, procuradores_map, assessores_map):
 
 
 def can_delete(record):
-    return not record.get("numero_processo") and record.get("situacao") not in PROTOCOLLED
+    return delete_blocked_reason(record) is None
+
+
+def delete_blocked_reason(record):
+    if is_protocolled(record) or record.get("numero_processo"):
+        return (
+            "Esta Representação não pode ser excluída definitivamente porque já foi "
+            "protocolada. Utilize encerramento, cancelamento ou arquivamento."
+        )
+    if record.get("situacao") in PROTOCOLLED:
+        return (
+            "Esta Representação não pode ser excluída definitivamente porque já se "
+            "encontra em tramitação. Utilize encerramento, cancelamento ou arquivamento."
+        )
+    return None
 
 
 def _members(payload):
@@ -464,7 +479,7 @@ def set_phase(store, identifier, fase, principal):
     )
 
 
-def delete(store, identifier):
+def delete(store, identifier, principal=None):
     current = get(store, identifier)
     if current is None:
         raise ValueError("Representação não encontrada.")
@@ -472,4 +487,4 @@ def delete(store, identifier):
         raise ValueError(
             "Representação protocolada não pode ser excluída. Utilize encerramento, cancelamento ou arquivamento."
         )
-    return open_store(store).delete(identifier)
+    return open_store(store).delete(identifier, actor_of(principal) if principal else "")

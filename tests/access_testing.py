@@ -24,6 +24,7 @@ def seed_access(
     pode_memorandos=None,
     pode_relatorios=None,
     pode_representacoes=None,
+    pode_ouvidoria=None,
     gabinetes=None,
 ):
     access = AccessStore(store)
@@ -40,6 +41,7 @@ def seed_access(
         "pode_memorandos": perfil == "ADMINISTRADOR" if pode_memorandos is None else pode_memorandos,
         "pode_relatorios": perfil == "ADMINISTRADOR" if pode_relatorios is None else pode_relatorios,
         "pode_representacoes": perfil == "ADMINISTRADOR" if pode_representacoes is None else pode_representacoes,
+        "pode_ouvidoria": perfil == "ADMINISTRADOR" if pode_ouvidoria is None else pode_ouvidoria,
         "gabinetes": list(GABINETES) if gabinetes is None else gabinetes,
     }
     return access.save_user(payload, existing["id"] if existing else None)

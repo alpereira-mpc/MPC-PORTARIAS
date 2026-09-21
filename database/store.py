@@ -68,6 +68,9 @@ def ensure_addon_schemas(store):
     from database.representacoes import RepresentacoesStore
 
     RepresentacoesStore(store)
+    from database.ouvidoria import OuvidoriaStore
+
+    OuvidoriaStore(store)
 
 
 class Store:

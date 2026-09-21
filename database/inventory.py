@@ -54,6 +54,15 @@ REPRESENTACOES_TABLES = (
     "representacao_documentos",
 )
 
+OUVIDORIA_TABLES = (
+    "ouvidoria_sequencias",
+    "ouvidoria_manifestacoes",
+    "ouvidoria_integrantes",
+    "ouvidoria_andamentos",
+    "ouvidoria_providencias",
+    "ouvidoria_documentos",
+)
+
 AUDIT_TABLES = ("auditoria_eventos",)
 
 POSTGRES_ONLY_TABLES = ("schema_migrations", "backup_snapshots")
@@ -65,6 +74,7 @@ APPLICATION_TABLES = (
     + AGENDA_TABLES
     + OFICIOS_TABLES
     + REPRESENTACOES_TABLES
+    + OUVIDORIA_TABLES
     + AUDIT_TABLES
     + POSTGRES_ONLY_TABLES
 )
@@ -76,6 +86,7 @@ ESSENTIAL_TABLES = (
     + AGENDA_TABLES
     + OFICIOS_TABLES
     + REPRESENTACOES_TABLES
+    + OUVIDORIA_TABLES
     + AUDIT_TABLES
 )
 
@@ -87,10 +98,12 @@ SCHEMA_MARKERS = (
     "oficios_schema_v1",
     "oficios_schema_v2",
     "representacoes_schema_v1",
+    "ouvidoria_schema_v1",
 )
 
 ESSENTIAL_COLUMNS = {
-    "usuarios_acesso": ("email", "perfil", "pode_admin", "pode_memorandos", "pode_representacoes", "protegido", "tema"),
+    "usuarios_acesso": ("email", "perfil", "pode_admin", "pode_memorandos", "pode_representacoes", "pode_ouvidoria", "protegido", "tema"),
+    "ouvidoria_manifestacoes": ("numero_interno", "situacao", "classificacao_acesso", "representacao_id"),
     "usuario_gabinetes": ("usuario_id", "gabinete"),
     "access_requests": ("nome", "email", "gabinete", "status", "created_at"),
     "auditoria_eventos": ("evento", "modulo", "resultado", "criado_em"),
@@ -109,6 +122,7 @@ BLOB_COLUMNS = {
     "memorandos_arquivos": ("conteudo",),
     "oficio_arquivos": ("conteudo",),
     "representacao_documentos": ("arquivo",),
+    "ouvidoria_documentos": ("arquivo",),
     "oficio_quarentena": ("arquivos",),
     "backup_snapshots": ("conteudo",),
 }
