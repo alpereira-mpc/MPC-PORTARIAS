@@ -37,7 +37,13 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     assert not any(getattr(t, "value", "") == "FERRAMENTAS MPC-PB" for t in app.title)
     assert any(b.label == "Entrar com Gmail" for b in app.button)
     assert any(getattr(b, "key", None) == "oidc_gmail_login" for b in app.button)
+    assert any(b.label == "Solicitar acesso" for b in app.button)
+    assert "Ainda não possui acesso?" in visible
+    assert "Cadastre-se" not in visible
     assert "Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br." in visible
+    app.button(key="access_request_open").click().run()
+    assert not app.exception and not app.error
+    assert any(i.label == "Nome completo" for i in app.text_input)
     assert not any(getattr(b, "key", None) == "open_portarias" for b in app.button)
 
 

@@ -398,6 +398,20 @@ def home(principal, store=None):
                 card(module)
 
 
+ACCESS_REQUEST_VIEW = "_access_request_view"
+ACCESS_REQUEST_NOTIFY_FAILED = "_access_request_notify_failed"
+
+
+def _clear_access_request_state():
+    st.session_state.pop(ACCESS_REQUEST_VIEW, None)
+    st.session_state.pop(ACCESS_REQUEST_NOTIFY_FAILED, None)
+
+
+def _open_access_request_form():
+    st.session_state[ACCESS_REQUEST_VIEW] = "form"
+    st.session_state.pop(ACCESS_REQUEST_NOTIFY_FAILED, None)
+
+
 def render_login():
     icon = base64.standard_b64encode(asset(ROOT / "assets/gmail.png")).decode("ascii")
     st.markdown(
@@ -423,6 +437,15 @@ def render_login():
         "font-size:18px!important;font-weight:400!important;"
         "line-height:1.6;color:#000000!important;margin:0 0 16px;"
         "}"
+        ".login-access-prompt{"
+        "margin:1.35rem 0 .45rem 0;font-size:1.05rem;line-height:1.5;"
+        "color:inherit;"
+        "}"
+        "section[data-testid='stMain'] div.st-key-access_request_open,"
+        "section[data-testid='stMain'] div.st-key-access_request_submit,"
+        "section[data-testid='stMain'] div.st-key-access_request_back{"
+        "width:fit-content;max-width:100%;margin:.15rem 0 .75rem 0;"
+        "}"
         "</style>",
         unsafe_allow_html=True,
     )
@@ -440,6 +463,77 @@ def render_login():
         "</div>",
         unsafe_allow_html=True,
     )
+    _render_access_request()
+
+
+def _render_access_request():
+    view = _session_get(ACCESS_REQUEST_VIEW)
+    if view == "done":
+        from services.access_requests import SUCCESS_BODY, SUCCESS_TITLE
+
+        st.success(SUCCESS_TITLE)
+        st.write(SUCCESS_BODY)
+        if _session_get(ACCESS_REQUEST_NOTIFY_FAILED):
+            st.warning(
+                "Sua solicitação foi registrada, mas houve um problema na notificação administrativa."
+            )
+        if st.button("Voltar para o login", key="access_request_back"):
+            _clear_access_request_state()
+            st.rerun()
+        return
+    st.markdown(
+        '<div class="login-access-prompt">Ainda não possui acesso?</div>',
+        unsafe_allow_html=True,
+    )
+    if view != "form":
+        if st.button("Solicitar acesso", key="access_request_open"):
+            _open_access_request_form()
+            st.rerun()
+        return
+    from services.access_requests import (
+        GABINETE_OPTIONS,
+        OTHER_UNIT,
+        submit_access_request,
+    )
+
+    nome = st.text_input("Nome completo", key="access_request_nome")
+    email = st.text_input("E-mail institucional", key="access_request_email")
+    gabinete = st.selectbox(
+        "Gabinete / Unidade",
+        GABINETE_OPTIONS,
+        index=None,
+        placeholder="Selecione",
+        key="access_request_gabinete",
+    )
+    unidade_outro = None
+    if gabinete == OTHER_UNIT:
+        unidade_outro = st.text_input(
+            "Informe a unidade", key="access_request_unidade_outro"
+        )
+    submitted = st.button(
+        "Enviar solicitação", type="primary", key="access_request_submit"
+    )
+    if st.button("Voltar para o login", key="access_request_back"):
+        _clear_access_request_state()
+        st.rerun()
+    if not submitted:
+        return
+    try:
+        store = _application_store()
+        outcome = submit_access_request(store, nome, email, gabinete, unidade_outro)
+    except Exception:
+        LOGGER.exception("Falha ao registrar solicitação de acesso")
+        st.error("Não foi possível registrar a solicitação. Tente novamente.")
+        return
+    if not outcome.ok:
+        st.error(outcome.message)
+        return
+    st.session_state[ACCESS_REQUEST_VIEW] = "done"
+    if outcome.code == "created_notify_failed":
+        st.session_state[ACCESS_REQUEST_NOTIFY_FAILED] = True
+    else:
+        st.session_state.pop(ACCESS_REQUEST_NOTIFY_FAILED, None)
+    st.rerun()
 
 
 def _logout():

@@ -28,6 +28,9 @@ def isolate_database_secrets(monkeypatch):
 
     memorandos._READY.clear()
     audit._READY.clear()
+    import database.access_requests as access_requests
+
+    access_requests._READY.clear()
     import services.pending as pending
 
     pending._TABLES.clear()

@@ -23,7 +23,7 @@ PORTARIAS_TABLES = (
     "audit_arquivos",
 )
 
-ACCESS_TABLES = ("usuarios_acesso", "usuario_gabinetes")
+ACCESS_TABLES = ("usuarios_acesso", "usuario_gabinetes", "access_requests")
 
 MEMORANDOS_TABLES = (
     "servidores",
@@ -72,6 +72,7 @@ ESSENTIAL_TABLES = (
 
 SCHEMA_MARKERS = (
     "acesso_schema_v1",
+    "acesso_solicitacoes_schema_v1",
     "memorandos_schema_v1",
     "auditoria_schema_v1",
     "oficios_schema_v1",
@@ -81,6 +82,7 @@ SCHEMA_MARKERS = (
 ESSENTIAL_COLUMNS = {
     "usuarios_acesso": ("email", "perfil", "pode_admin", "pode_memorandos", "protegido", "tema"),
     "usuario_gabinetes": ("usuario_id", "gabinete"),
+    "access_requests": ("nome", "email", "gabinete", "status", "created_at"),
     "auditoria_eventos": ("evento", "modulo", "resultado", "criado_em"),
     "portarias": ("numero", "ano", "status", "payload", "docx", "pdf"),
     "memorandos": ("status", "payload", "numero_oficial"),
