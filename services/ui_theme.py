@@ -1002,6 +1002,28 @@ gap:.55rem;
 @media (max-width:768px){{
 .mpc-record-head{{flex-direction:column;gap:.35rem;}}
 .mpc-record-badges{{justify-content:flex-start;}}
+/* Let operational cards follow their content after Streamlit stacks columns on mobile. */
+section[data-testid="stMain"] [class*="st-key-mpc_card_"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] > div,
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stVerticalBlockBorderWrapper"],
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stVerticalBlock"]{{
+height:auto !important;
+min-height:0 !important;
+flex-grow:0 !important;
+justify-content:flex-start !important;
+}}
+section[data-testid="stMain"] [class*="st-key-mpc_card_"] [data-testid="stHorizontalBlock"]{{
+height:auto !important;
+min-height:0 !important;
+align-items:flex-start;
+}}
+section[data-testid="stMain"] .mpc-stack,
+section[data-testid="stMain"] .mpc-stack .mpc-record{{
+height:auto !important;
+min-height:0 !important;
+justify-content:flex-start;
+max-width:100%;
+}}
 /* Keep the bell panel inside the visible mobile viewport, including iOS safe areas. */
 section[data-testid="stSidebar"] [data-testid="stPopover"] [data-baseweb="popover"]:has(.mpc-bell-alert),
 [data-baseweb="popover"]:has(.mpc-bell-alert){{

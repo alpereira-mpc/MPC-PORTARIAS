@@ -135,6 +135,12 @@ def test_stripe_and_header_helpers_are_available():
     assert "st-key-mpc_card_" in css
     assert BRAND_RED in css
     assert '[class*="st-key-mpc_card_"]button' in compact
+    mobile = compact[compact.index("@media(max-width:768px)") :]
+    assert '[class*="st-key-mpc_card_"][data-testid="stVerticalBlock"]' in mobile
+    assert "height:auto!important" in mobile
+    assert "min-height:0!important" in mobile
+    assert "justify-content:flex-start!important" in mobile
+    assert ".mpc-stack.mpc-record" in mobile
     assert EXPANDER_BG == "#F5F2F1"
     assert EXPANDER_BORDER == "#D9D1CE"
     assert EXPANDER_HOVER == "#EEE8E6"

@@ -355,6 +355,17 @@ def _home_layout_style():
         "section[data-testid='stMain'] [data-testid='stHorizontalBlock']>div{"
         "width:100%;flex:1 1 auto;"
         "}"
+        "section[data-testid='stMain'] [data-testid='stHorizontalBlock'] "
+        "[data-testid='stVerticalBlockBorderWrapper']{"
+        "height:auto;min-height:0;flex-grow:0;"
+        "}"
+        "section[data-testid='stMain'] [data-testid='stHorizontalBlock'] "
+        "[data-testid='stVerticalBlockBorderWrapper']>div{"
+        "height:auto;min-height:0;justify-content:flex-start;"
+        "}"
+        "section[data-testid='stMain'] .mpc-home-soon-slot{"
+        "min-height:0;flex:0 0 auto;"
+        "}"
         "}"
         "</style>",
         unsafe_allow_html=True,

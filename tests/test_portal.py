@@ -395,7 +395,11 @@ def test_home_grid_uses_two_columns_from_first_row():
     assert "st.columns(2)" in source
     assert "card(visible[0])" not in source
     assert "mpc-home-soon-slot" in inspect.getsource(card)
-    assert "min-height:19.5rem" in inspect.getsource(_home_layout_style)
+    layout = inspect.getsource(_home_layout_style).replace(" ", "")
+    assert "min-height:19.5rem" in layout
+    mobile = layout[layout.index("@media(max-width:768px)") :]
+    assert "height:auto;min-height:0;flex-grow:0" in mobile
+    assert "height:auto;min-height:0;justify-content:flex-start" in mobile
 
 
 def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
