@@ -145,6 +145,50 @@ class AccessRequestStore:
             ).fetchone()
             return dict(row) if row else None
 
+    def list_requests(self, status=None):
+        with self.store.connection(read_only=True) as c:
+            if status is None:
+                rows = c.execute(
+                    f"SELECT {COLUMNS} FROM access_requests "
+                    "ORDER BY created_at DESC, id DESC"
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    f"SELECT {COLUMNS} FROM access_requests "
+                    "WHERE status=? ORDER BY created_at DESC, id DESC",
+                    (status,),
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+    def count_pending(self):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT COUNT(*) FROM access_requests WHERE status=?",
+                (STATUS_PENDING,),
+            ).fetchone()
+            return int(row[0])
+
+    def mark_processed(self, identifier, status, processed_by):
+        if status not in (STATUS_APPROVED, STATUS_REJECTED):
+            raise ValueError("Status de solicitação inválido.")
+        stamp = now()
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            result = c.execute(
+                "UPDATE access_requests SET status=?, processed_at=?, processed_by=? "
+                "WHERE id=? AND status=?",
+                (status, stamp, processed_by, identifier, STATUS_PENDING),
+            )
+            rowcount = getattr(result, "rowcount", None)
+            if rowcount is None:
+                rowcount = result.cursor.rowcount
+            if not rowcount:
+                raise ValueError("Esta solicitação já foi processada.")
+        record = self.get(identifier)
+        if record is None:
+            raise ValueError("Solicitação não encontrada.")
+        return record
+
 
 def ensure_schema(store):
     AccessRequestStore(store)

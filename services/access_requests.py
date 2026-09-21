@@ -1,16 +1,17 @@
 """Public access-request rules. Authorization remains manual."""
 
 from dataclasses import dataclass
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from database.access import EMAIL_RE, AccessStore, normalize_email
-from database.access_requests import AccessRequestStore
-from services.mail import MailError, send_mail
+from database.access_requests import (
+    STATUS_APPROVED,
+    STATUS_PENDING,
+    STATUS_REJECTED,
+    STATUSES,
+    AccessRequestStore,
+)
 
 INSTITUTIONAL_DOMAIN = "tce.pb.gov.br"
-INSTITUTIONAL_TZ = ZoneInfo("America/Recife")
-ADMIN_INBOX = "mpc@tce.pb.gov.br"
 MIN_NAME_LENGTH = 3
 MIN_UNIT_LENGTH = 3
 OTHER_UNIT = "Outra unidade do MPC-PB"
@@ -30,16 +31,24 @@ ALREADY_REGISTERED = (
 DUPLICATE_PENDING = (
     "Já existe uma solicitação de acesso pendente para este e-mail."
 )
-SUCCESS_TITLE = "Solicitação enviada com sucesso"
+SUCCESS_TITLE = "Solicitação registrada com sucesso"
 SUCCESS_BODY = (
     "Sua solicitação de acesso foi encaminhada à administração do MPC-PB. "
     "Após a análise e liberação do cadastro, você poderá acessar o portal "
     "utilizando sua conta institucional @tce.pb.gov.br."
 )
-NOTIFY_FAILED = (
-    "Sua solicitação foi registrada, mas houve um problema na notificação administrativa."
-)
-MAIL_SUBJECT = "[Ferramentas MPC-PB] Nova solicitação de acesso"
+MISSING_ADMIN = "Administrador não identificado."
+FILTER_PENDING = "Pendentes"
+FILTER_APPROVED = "Aprovadas"
+FILTER_REJECTED = "Recusadas"
+FILTER_ALL = "Todas"
+ADMIN_FILTERS = (FILTER_PENDING, FILTER_APPROVED, FILTER_REJECTED, FILTER_ALL)
+_FILTER_STATUS = {
+    FILTER_PENDING: STATUS_PENDING,
+    FILTER_APPROVED: STATUS_APPROVED,
+    FILTER_REJECTED: STATUS_REJECTED,
+    FILTER_ALL: None,
+}
 
 
 @dataclass(frozen=True)
@@ -83,38 +92,6 @@ def validate_access_request(nome, email, gabinete, unidade_outro=None):
     }
 
 
-def _mail_body(record):
-    created = record.get("created_at") or ""
-    try:
-        moment = datetime.fromisoformat(created)
-        if moment.tzinfo is None:
-            moment = moment.replace(tzinfo=INSTITUTIONAL_TZ)
-        stamped = moment.astimezone(INSTITUTIONAL_TZ).strftime("%d/%m/%Y %H:%M")
-    except ValueError:
-        stamped = created
-    lines = [
-        "Nova solicitação de acesso ao Ferramentas MPC-PB.",
-        "",
-        f"Nome: {record['nome']}",
-        f"E-mail: {record['email']}",
-        f"Gabinete / Unidade: {record['gabinete']}",
-    ]
-    if record.get("unidade_outro"):
-        lines.append(f"Unidade informada: {record['unidade_outro']}")
-    lines.extend(
-        [
-            f"Data da solicitação: {stamped}",
-            "",
-            "O cadastro e as permissões deverão ser realizados manualmente pelo administrador.",
-        ]
-    )
-    return "\n".join(lines)
-
-
-def notify_access_request(record):
-    send_mail(MAIL_SUBJECT, _mail_body(record), ADMIN_INBOX)
-
-
 def submit_access_request(store, nome, email, gabinete, unidade_outro=None):
     try:
         payload = validate_access_request(nome, email, gabinete, unidade_outro)
@@ -134,14 +111,39 @@ def submit_access_request(store, nome, email, gabinete, unidade_outro=None):
         )
     except ValueError as exc:
         return AccessRequestOutcome(False, "duplicate_pending", str(exc))
-    try:
-        notify_access_request(record)
-    except MailError:
-        return AccessRequestOutcome(
-            True,
-            "created_notify_failed",
-            NOTIFY_FAILED,
-            SUCCESS_TITLE,
-            record,
-        )
     return AccessRequestOutcome(True, "created", SUCCESS_BODY, SUCCESS_TITLE, record)
+
+
+def _actor_email(processed_by):
+    email = normalize_email(processed_by)
+    if not email:
+        raise ValueError(MISSING_ADMIN)
+    return email
+
+
+def list_access_requests(store, status=None):
+    if status is not None and status not in STATUSES:
+        raise ValueError("Status de solicitação inválido.")
+    return AccessRequestStore(store).list_requests(status)
+
+
+def list_access_requests_by_filter(store, filtro=FILTER_PENDING):
+    if filtro not in ADMIN_FILTERS:
+        raise ValueError("Filtro de solicitações inválido.")
+    return list_access_requests(store, _FILTER_STATUS[filtro])
+
+
+def count_pending_access_requests(store):
+    return AccessRequestStore(store).count_pending()
+
+
+def approve_access_request(store, identifier, processed_by):
+    return AccessRequestStore(store).mark_processed(
+        identifier, STATUS_APPROVED, _actor_email(processed_by)
+    )
+
+
+def reject_access_request(store, identifier, processed_by):
+    return AccessRequestStore(store).mark_processed(
+        identifier, STATUS_REJECTED, _actor_email(processed_by)
+    )

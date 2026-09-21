@@ -8,11 +8,11 @@ from services.access_requests import (
     DUPLICATE_PENDING,
     GABINETE_OPTIONS,
     OTHER_UNIT,
+    SUCCESS_TITLE,
     normalize_request_email,
     submit_access_request,
     validate_access_request,
 )
-from services.mail import MailError
 from tests.access_testing import seed_access
 
 
@@ -65,32 +65,20 @@ def test_gabinete_options_are_closed_and_include_other_unit():
 
 def test_authorized_email_does_not_create_request(store):
     seed_access(store, email="ja.tem@tce.pb.gov.br", perfil="USUARIO")
-    mailed = []
-    import services.access_requests as module
-
-    original = module.notify_access_request
-    module.notify_access_request = lambda record: mailed.append(record)
-    try:
-        outcome = submit_access_request(
-            store,
-            "Já Cadastrada",
-            "JA.TEM@tce.pb.gov.br",
-            GABINETE_OPTIONS[0],
-        )
-    finally:
-        module.notify_access_request = original
+    outcome = submit_access_request(
+        store,
+        "Já Cadastrada",
+        "JA.TEM@tce.pb.gov.br",
+        GABINETE_OPTIONS[0],
+    )
     assert outcome.code == "already_registered"
     assert outcome.message == ALREADY_REGISTERED
     assert AccessRequestStore(store).get_pending_by_email("ja.tem@tce.pb.gov.br") is None
-    assert mailed == []
     with store.connection(read_only=True) as c:
         assert c.execute("SELECT COUNT(*) FROM access_requests").fetchone()[0] == 0
 
 
-def test_pending_duplicate_is_blocked(store, monkeypatch):
-    monkeypatch.setattr(
-        "services.access_requests.notify_access_request", lambda record: None
-    )
+def test_pending_duplicate_is_blocked(store):
     first = submit_access_request(store, **_payload())
     assert first.ok
     assert first.record["status"] == "pendente"
@@ -101,14 +89,15 @@ def test_pending_duplicate_is_blocked(store, monkeypatch):
         assert c.execute("SELECT COUNT(*) FROM access_requests").fetchone()[0] == 1
 
 
-def test_new_request_is_pending_and_mail_failure_keeps_row(store, monkeypatch):
-    def boom(record):
-        raise MailError("falha")
+def test_new_request_is_pending_without_smtp(store, monkeypatch):
+    def boom(*args, **kwargs):
+        raise AssertionError("SMTP não deve ser chamado")
 
-    monkeypatch.setattr("services.access_requests.notify_access_request", boom)
+    monkeypatch.setattr("services.mail.send_mail", boom)
     outcome = submit_access_request(store, **_payload())
     assert outcome.ok
-    assert outcome.code == "created_notify_failed"
+    assert outcome.code == "created"
+    assert outcome.title == SUCCESS_TITLE
     stored = AccessRequestStore(store).get(outcome.record["id"])
     assert stored["status"] == "pendente"
     assert stored["email"] == "maria.silva@tce.pb.gov.br"
@@ -116,13 +105,13 @@ def test_new_request_is_pending_and_mail_failure_keeps_row(store, monkeypatch):
     assert stored["processed_by"] is None
 
 
-def test_created_request_notifies_admin_inbox(store, monkeypatch):
+def test_created_request_does_not_send_mail(store, monkeypatch):
     sent = []
 
-    def fake_send(subject, body, to_address):
-        sent.append((subject, body, to_address))
+    def fake_send(*args, **kwargs):
+        sent.append(args)
 
-    monkeypatch.setattr("services.access_requests.send_mail", fake_send)
+    monkeypatch.setattr("services.mail.send_mail", fake_send)
     outcome = submit_access_request(
         store,
         "Maria Silva",
@@ -132,10 +121,57 @@ def test_created_request_notifies_admin_inbox(store, monkeypatch):
     )
     assert outcome.ok
     assert outcome.code == "created"
-    assert sent[0][0] == "[Ferramentas MPC-PB] Nova solicitação de acesso"
-    assert sent[0][2] == "mpc@tce.pb.gov.br"
-    assert "Núcleo de Apoio" in sent[0][1]
-    assert "maria.silva@tce.pb.gov.br" in sent[0][1]
+    assert outcome.title == SUCCESS_TITLE
+    assert sent == []
+    stored = AccessRequestStore(store).get(outcome.record["id"])
+    assert stored["gabinete"] == OTHER_UNIT
+    assert stored["unidade_outro"] == "Núcleo de Apoio"
+
+
+def test_admin_service_lists_filters_and_counts(store):
+    from database.access import AccessStore
+    from services.access_requests import (
+        FILTER_ALL,
+        FILTER_APPROVED,
+        FILTER_PENDING,
+        FILTER_REJECTED,
+        approve_access_request,
+        count_pending_access_requests,
+        list_access_requests_by_filter,
+        reject_access_request,
+    )
+
+    first = submit_access_request(store, **_payload()).record
+    second = submit_access_request(
+        store,
+        "Ana Souza",
+        "ana.souza@tce.pb.gov.br",
+        GABINETE_OPTIONS[1],
+    ).record
+    assert count_pending_access_requests(store) == 2
+    pending = list_access_requests_by_filter(store, FILTER_PENDING)
+    assert [row["id"] for row in pending] == [second["id"], first["id"]]
+    approved = approve_access_request(store, first["id"], "  Admin@test.local ")
+    assert approved["status"] == "aprovado"
+    assert approved["processed_by"] == "admin@test.local"
+    assert approved["processed_at"]
+    rejected = reject_access_request(store, second["id"], "admin@test.local")
+    assert rejected["status"] == "recusado"
+    assert rejected["processed_by"] == "admin@test.local"
+    assert count_pending_access_requests(store) == 0
+    assert list_access_requests_by_filter(store, FILTER_APPROVED)[0]["id"] == first["id"]
+    assert list_access_requests_by_filter(store, FILTER_REJECTED)[0]["id"] == second["id"]
+    assert len(list_access_requests_by_filter(store, FILTER_ALL)) == 2
+    with pytest.raises(ValueError, match="processada"):
+        approve_access_request(store, first["id"], "admin@test.local")
+    with pytest.raises(ValueError, match="processada"):
+        reject_access_request(store, first["id"], "admin@test.local")
+    with pytest.raises(ValueError, match="processada"):
+        reject_access_request(store, second["id"], "admin@test.local")
+    with pytest.raises(ValueError, match="Administrador"):
+        approve_access_request(store, first["id"], "  ")
+    assert AccessStore(store).get_by_email("maria.silva@tce.pb.gov.br") is None
+    assert AccessStore(store).get_by_email("ana.souza@tce.pb.gov.br") is None
 
 
 def test_login_still_offers_gmail_and_request_access(monkeypatch):
@@ -158,3 +194,88 @@ def test_login_still_offers_gmail_and_request_access(monkeypatch):
     assert any(b.label == "Solicitar acesso" for b in app.button)
     app.button(key="oidc_gmail_login").click().run()
     assert started == [True]
+
+
+def test_admin_requests_section_filters_and_processes(store, monkeypatch):
+    from database.access import AccessStore
+    from tests.access_testing import TEST_IDENTITY, enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    first = submit_access_request(store, **_payload()).record
+    second = submit_access_request(
+        store,
+        "Ana Souza",
+        "ana.souza@tce.pb.gov.br",
+        GABINETE_OPTIONS[1],
+    ).record
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_admin").click().run()
+    assert not app.exception
+    options = next(r for r in app.radio if r.key == "admin_secao").options
+    assert "Solicitações" in options
+    captions = "\n".join(str(c.value) for c in app.caption)
+    assert "Solicitações pendentes: 2" in captions
+    app.radio(key="admin_secao").set_value("Solicitações").run()
+    assert not app.exception and not app.error
+    assert any(r.key == "access_request_admin_filter" for r in app.radio)
+    assert app.radio(key="access_request_admin_filter").value == "Pendentes"
+    assert any(
+        getattr(b, "key", None) == "access_req_approve_" + str(first["id"])
+        for b in app.button
+    )
+    app.checkbox(key="access_req_confirm_approve_" + str(first["id"])).set_value(True).run()
+    app.button(key="access_req_approve_" + str(first["id"])).click().run()
+    assert not app.exception
+    stored = AccessRequestStore(store).get(first["id"])
+    assert stored["status"] == "aprovado"
+    assert stored["processed_by"] == TEST_IDENTITY["email"]
+    assert stored["processed_at"]
+    assert AccessStore(store).get_by_email("maria.silva@tce.pb.gov.br") is None
+    captions = "\n".join(str(c.value) for c in app.caption)
+    assert "Solicitações pendentes: 1" in captions
+    assert not any(
+        getattr(b, "key", None) == "access_req_approve_" + str(first["id"])
+        for b in app.button
+    )
+    app.checkbox(key="access_req_confirm_reject_" + str(second["id"])).set_value(True).run()
+    app.button(key="access_req_reject_" + str(second["id"])).click().run()
+    rejected = AccessRequestStore(store).get(second["id"])
+    assert rejected["status"] == "recusado"
+    assert rejected["processed_by"] == TEST_IDENTITY["email"]
+    app.radio(key="access_request_admin_filter").set_value("Aprovadas").run()
+    assert not any(
+        getattr(b, "key", None) == "access_req_reject_" + str(first["id"])
+        for b in app.button
+    )
+    app.radio(key="access_request_admin_filter").set_value("Recusadas").run()
+    app.radio(key="access_request_admin_filter").set_value("Todas").run()
+    captions = "\n".join(str(c.value) for c in app.caption)
+    assert "Solicitações pendentes: 0" in captions
+
+
+def test_common_user_does_not_see_admin_requests(store, monkeypatch):
+    from tests.access_testing import seed_access
+
+    seed_access(
+        store,
+        email="comum.solic@test.local",
+        perfil="USUARIO",
+        pode_admin=False,
+        pode_agenda=True,
+    )
+    monkeypatch.setattr(
+        "services.access.oidc_identity",
+        lambda: {
+            "email": "comum.solic@test.local",
+            "name": "Comum",
+            "email_verified": True,
+        },
+    )
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert not app.exception
+    portal = next(r for r in app.sidebar.radio if r.key == "portal_module")
+    assert "Administração" not in portal.options
+    assert not any(r.key == "admin_secao" for r in app.radio)
+    assert not any(r.key == "access_request_admin_filter" for r in app.radio)

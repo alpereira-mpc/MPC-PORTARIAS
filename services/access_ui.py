@@ -1,6 +1,7 @@
 """Administrative UI for authorized users. Isolated from Portarias/Agenda/Ofícios."""
 
 from datetime import date
+import logging
 import streamlit as st
 from database.access import AccessStore
 from services.access import require_permission
@@ -9,7 +10,14 @@ from services.oficios import GABINETES
 from services.branding import module_title
 from services.ui_theme import form_mark, render_html, section_label
 
-ADMIN_SECTIONS = ("Usuários", "Acessos e Auditoria", "Sistema")
+LOGGER = logging.getLogger(__name__)
+ADMIN_SECTIONS = (
+    "Usuários",
+    "Solicitações",
+    "Funções Institucionais",
+    "Acessos e Auditoria",
+    "Sistema",
+)
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
 AUDIT_TABS = ("Visão Geral", "Acessos", "Auditoria")
 ADMIN_NAV_REQUEST = "pending_open_admin"
@@ -37,6 +45,106 @@ def institutional_functions(store, principal):
             st.rerun()
     with st.expander("Histórico das funções"):
         st.dataframe([{"Função": FUNCTIONS[row["funcao"]], "Procurador": row["nome"], "Início": row["data_inicio"], "Fim": row["data_fim"] or "—"} for row in functions.history()], hide_index=True, use_container_width=True)
+
+
+def _gabinete_display(row):
+    extra = (row.get("unidade_outro") or "").strip()
+    gabinete = row.get("gabinete") or ""
+    if extra:
+        return gabinete + " — " + extra
+    return gabinete
+
+
+def _render_access_requests(store, principal):
+    from services.access_requests import (
+        ADMIN_FILTERS,
+        FILTER_PENDING,
+        approve_access_request,
+        list_access_requests_by_filter,
+        reject_access_request,
+    )
+    from database.access_requests import STATUS_PENDING
+
+    section_label("Solicitações")
+    message = st.session_state.pop("access_request_admin_message", None)
+    if message:
+        st.success(message)
+    filtro = st.radio(
+        "Filtro",
+        ADMIN_FILTERS,
+        horizontal=True,
+        key="access_request_admin_filter",
+    )
+    if filtro not in ADMIN_FILTERS:
+        filtro = FILTER_PENDING
+    rows = list_access_requests_by_filter(store, filtro)
+    if not rows:
+        st.caption("Nenhuma solicitação neste filtro.")
+        return
+    st.dataframe(
+        [
+            {
+                "Nome": row["nome"],
+                "E-mail institucional": row["email"],
+                "Gabinete / Unidade": _gabinete_display(row),
+                "Data da solicitação": row["created_at"],
+                "Status": row["status"],
+            }
+            for row in rows
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+    actor = getattr(principal, "email", "")
+    pending = [row for row in rows if row["status"] == STATUS_PENDING]
+    if not pending:
+        return
+    st.caption("Aprovar ou recusar não cria usuário nem altera permissões.")
+    for row in pending:
+        identifier = row["id"]
+        with st.expander(row["nome"] + " · " + row["email"]):
+            confirm_approve = st.checkbox(
+                "Confirmo a aprovação",
+                key="access_req_confirm_approve_" + str(identifier),
+            )
+            if st.button(
+                "Aprovar",
+                key="access_req_approve_" + str(identifier),
+                disabled=not confirm_approve,
+            ):
+                try:
+                    approve_access_request(store, identifier, actor)
+                except ValueError as exc:
+                    st.error(str(exc))
+                except Exception:
+                    LOGGER.exception("Falha ao aprovar solicitação de acesso")
+                    st.error("Não foi possível aprovar a solicitação.")
+                else:
+                    st.session_state["access_request_admin_message"] = (
+                        "Solicitação marcada como aprovada."
+                    )
+                    st.rerun()
+            confirm_reject = st.checkbox(
+                "Confirmo a recusa",
+                key="access_req_confirm_reject_" + str(identifier),
+            )
+            if st.button(
+                "Recusar",
+                key="access_req_reject_" + str(identifier),
+                disabled=not confirm_reject,
+            ):
+                try:
+                    reject_access_request(store, identifier, actor)
+                except ValueError as exc:
+                    st.error(str(exc))
+                except Exception:
+                    LOGGER.exception("Falha ao recusar solicitação de acesso")
+                    st.error("Não foi possível recusar a solicitação.")
+                else:
+                    st.session_state["access_request_admin_message"] = (
+                        "Solicitação marcada como recusada."
+                    )
+                    st.rerun()
 
 
 def queue_admin_navigation(secao=None, aba=None, audit_tab=None):
@@ -92,12 +200,31 @@ def render(store, principal):
     require_permission(principal, "admin")
     consume_pending_open_admin()
     st.subheader(module_title("admin", "ADMINISTRAÇÃO — Usuários e Acessos"))
+    pending_count = None
+    try:
+        from services.access_requests import count_pending_access_requests
+
+        pending_count = count_pending_access_requests(store)
+    except Exception:
+        LOGGER.exception("Falha ao contar solicitações de acesso pendentes")
     area = st.radio(
         "Seção",
-        ["Usuários", "Funções Institucionais", "Acessos e Auditoria", "Sistema"],
+        list(ADMIN_SECTIONS),
         horizontal=True,
         key="admin_secao",
     )
+    if pending_count is not None:
+        st.caption("Solicitações pendentes: " + str(pending_count))
+    if area == "Solicitações":
+        try:
+            _render_access_requests(store, principal)
+        except Exception:
+            LOGGER.exception("Falha ao carregar solicitações de acesso")
+            st.error(
+                "Não foi possível carregar as solicitações. "
+                "Os demais recursos administrativos permanecem disponíveis."
+            )
+        return
     if area == "Funções Institucionais":
         institutional_functions(store, principal)
         return

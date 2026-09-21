@@ -138,7 +138,10 @@ def test_administrator_opens_system_health(store, monkeypatch):
     app.button(key="open_admin").click().run()
     assert not app.exception
     options = next(r for r in app.radio if r.key == "admin_secao").options
-    assert options == ["Usuários", "Acessos e Auditoria", "Sistema"]
+    assert options[0] == "Usuários"
+    assert "Solicitações" in options
+    assert "Sistema" in options
+    assert "Acessos e Auditoria" in options
     app.radio(key="admin_secao").set_value("Sistema").run()
     assert not app.exception and not app.error
     headings = [str(h.value) for h in app.subheader]

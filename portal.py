@@ -399,17 +399,14 @@ def home(principal, store=None):
 
 
 ACCESS_REQUEST_VIEW = "_access_request_view"
-ACCESS_REQUEST_NOTIFY_FAILED = "_access_request_notify_failed"
 
 
 def _clear_access_request_state():
     st.session_state.pop(ACCESS_REQUEST_VIEW, None)
-    st.session_state.pop(ACCESS_REQUEST_NOTIFY_FAILED, None)
 
 
 def _open_access_request_form():
     st.session_state[ACCESS_REQUEST_VIEW] = "form"
-    st.session_state.pop(ACCESS_REQUEST_NOTIFY_FAILED, None)
 
 
 def render_login():
@@ -473,10 +470,6 @@ def _render_access_request():
 
         st.success(SUCCESS_TITLE)
         st.write(SUCCESS_BODY)
-        if _session_get(ACCESS_REQUEST_NOTIFY_FAILED):
-            st.warning(
-                "Sua solicitação foi registrada, mas houve um problema na notificação administrativa."
-            )
         if st.button("Voltar para o login", key="access_request_back"):
             _clear_access_request_state()
             st.rerun()
@@ -529,10 +522,6 @@ def _render_access_request():
         st.error(outcome.message)
         return
     st.session_state[ACCESS_REQUEST_VIEW] = "done"
-    if outcome.code == "created_notify_failed":
-        st.session_state[ACCESS_REQUEST_NOTIFY_FAILED] = True
-    else:
-        st.session_state.pop(ACCESS_REQUEST_NOTIFY_FAILED, None)
     st.rerun()
 
 
