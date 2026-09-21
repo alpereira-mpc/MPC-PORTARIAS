@@ -1001,6 +1001,7 @@ gap:.55rem;
 }}
 @media (max-width:768px){{
 .mpc-record-head{{flex-direction:column;gap:.35rem;}}
+.mpc-record-title{{flex:none;}}
 .mpc-record-badges{{justify-content:flex-start;}}
 /* Let operational cards follow their content after Streamlit stacks columns on mobile. */
 section[data-testid="stMain"] [class*="st-key-mpc_card_"],

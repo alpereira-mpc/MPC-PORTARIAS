@@ -132,10 +132,14 @@ def test_stripe_and_header_helpers_are_available():
 
     css = _css()
     compact = css.replace(" ", "")
+    dense = "".join(css.split())
     assert "st-key-mpc_card_" in css
     assert BRAND_RED in css
     assert '[class*="st-key-mpc_card_"]button' in compact
-    mobile = compact[compact.index("@media(max-width:768px)") :]
+    title_mobile = dense.index(".mpc-record-title{flex:none;}")
+    media_start = dense.rfind("@media(max-width:768px)", 0, title_mobile)
+    assert media_start >= 0
+    mobile = dense[media_start:]
     assert '[class*="st-key-mpc_card_"][data-testid="stVerticalBlock"]' in mobile
     assert "height:auto!important" in mobile
     assert "min-height:0!important" in mobile
