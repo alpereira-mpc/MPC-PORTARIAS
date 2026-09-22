@@ -30,6 +30,7 @@ REMINDER_TIMES = tuple(
     for hour in range(6, 23)
     for minute in (0, 30)
 ) + ("23:00",)
+ACTIVE_PAGE_SIZE = 20
 
 
 def _done(message, *, clear_edit=True):
@@ -199,28 +200,11 @@ def _history_card(repo, store, principal, row, index=0):
                     if repo.delete(row["id"],principal.id): _audit(store,principal,"TAREFA_EXCLUIDA","EXCLUIR",row["id"]); _done("Tarefa excluída.")
 
 
-def render(store, principal):
-    repo=TarefasStore(store)
-    st.title(module_title("tarefas", "TAREFAS")); st.caption("Organização pessoal de demandas, prazos e prioridades")
-    if st.session_state.pop("tarefas_message",None): st.success("Alteração realizada.")
-    if st.button("+ Nova tarefa", type="primary", key="tarefas_new"):
-        st.session_state["tarefas_edit"] = {}
-        st.rerun()
-    if st.session_state.get("tarefas_open_id"):
-        found = repo.get(st.session_state.pop("tarefas_open_id"), principal.id)
-        if found:
-            st.session_state["tarefas_edit"] = found
-        else:
-            empty_state("Tarefa não encontrada.")
-    if "tarefas_edit" in st.session_state:
-        _editor(repo, store, principal)
-    counts=repo.situation_counts(principal.id)
-    with st.container(key="tarefas_kpis"):
-        cols=st.columns(5)
-        for col,key,label,tone in zip(cols,counts,("Atrasadas","Hoje","Próximas","Em andamento","Aguardando"),("danger","warning","info","brand","warning")):
-            with col:
-                kpi_mark(tone)
-                st.metric(label,counts[key])
+def _move_page(key, delta):
+    st.session_state[key] = max(0, st.session_state.get(key, 0) + delta)
+
+
+def _active_tasks(repo, store, principal):
     section_label("Filtros")
     with st.container(border=True, key="tarefas_filters"):
         filter_mark()
@@ -244,16 +228,57 @@ def render(store, principal):
             key="tarefas_deadline",
         )
 
-    section_label("Tarefas ativas")
+    filters = {"pesquisa": q, "prioridade": priority, "prazo": deadline}
+    signature = (q, priority, deadline)
+    if st.session_state.get("tarefas_active_filters") != signature:
+        st.session_state["tarefas_active_filters"] = signature
+        st.session_state["tarefas_active_page"] = 0
+    page = int(st.session_state.get("tarefas_active_page", 0))
     rows = repo.list_active(
         principal.id,
-        {"pesquisa": q, "prioridade": priority, "prazo": deadline},
+        filters,
+        limit=ACTIVE_PAGE_SIZE + 1,
+        offset=page * ACTIVE_PAGE_SIZE,
     )
+    if page and not rows:
+        page = 0
+        st.session_state["tarefas_active_page"] = 0
+        rows = repo.list_active(
+            principal.id,
+            filters,
+            limit=ACTIVE_PAGE_SIZE + 1,
+            offset=0,
+        )
+    has_next = len(rows) > ACTIVE_PAGE_SIZE
+    rows = rows[:ACTIVE_PAGE_SIZE]
+
+    section_label("Tarefas ativas")
     for index, row in enumerate(rows):
         _card(repo, store, principal, row, index)
     if not rows:
         empty_state("Nenhuma tarefa ativa.")
+    if page or has_next:
+        previous, page_label, following = st.columns([1, 2, 1])
+        previous.button(
+            "Anterior",
+            disabled=page == 0,
+            key="tarefas_active_previous",
+            on_click=_move_page,
+            args=("tarefas_active_page", -1),
+        )
+        page_label.caption(
+            f"Página {page + 1} · até {ACTIVE_PAGE_SIZE} tarefas por página"
+        )
+        following.button(
+            "Próxima",
+            disabled=not has_next,
+            key="tarefas_active_next",
+            on_click=_move_page,
+            args=("tarefas_active_page", 1),
+        )
 
+
+def _task_history(repo, store, principal):
     history_filters = {
         "pesquisa": st.session_state.get("tarefas_history_q", ""),
         "prioridade": st.session_state.get("tarefas_history_priority"),
@@ -284,3 +309,30 @@ def render(store, principal):
             _history_card(repo, store, principal, row, index)
         if not history_rows:
             empty_state("Nenhuma tarefa concluída ou cancelada.")
+
+
+@st.fragment
+def render(store, principal):
+    repo=TarefasStore(store)
+    st.title(module_title("tarefas", "TAREFAS")); st.caption("Organização pessoal de demandas, prazos e prioridades")
+    if st.session_state.pop("tarefas_message",None): st.success("Alteração realizada.")
+    if st.button("+ Nova tarefa", type="primary", key="tarefas_new"):
+        st.session_state["tarefas_edit"] = {}
+        st.rerun()
+    if st.session_state.get("tarefas_open_id"):
+        found = repo.get(st.session_state.pop("tarefas_open_id"), principal.id)
+        if found:
+            st.session_state["tarefas_edit"] = found
+        else:
+            empty_state("Tarefa não encontrada.")
+    if "tarefas_edit" in st.session_state:
+        _editor(repo, store, principal)
+    counts=repo.situation_counts(principal.id)
+    with st.container(key="tarefas_kpis"):
+        cols=st.columns(5)
+        for col,key,label,tone in zip(cols,counts,("Atrasadas","Hoje","Próximas","Em andamento","Aguardando"),("danger","warning","info","brand","warning")):
+            with col:
+                kpi_mark(tone)
+                st.metric(label,counts[key])
+    _active_tasks(repo, store, principal)
+    _task_history(repo, store, principal)

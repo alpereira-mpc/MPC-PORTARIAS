@@ -50,6 +50,12 @@ def _session_get(key, default=None):
     return state[key] if key in state else default
 
 
+@st.fragment
+def _render_module_fragment(renderer, store, principal):
+    """Keep the portal shell stable during interactions inside one module."""
+    renderer(store, principal)
+
+
 def _active_theme(identity):
     if identity is None:
         return "dourado"
@@ -194,7 +200,9 @@ def request_portal_navigation(module, **state):
     Never pass this function to on_click/on_change.
     """
     queue_portal_navigation(module, **state)
-    st.rerun()
+    # Cross-module requests must re-enter render_portal so the shell can
+    # consume PORTAL_NAV_REQUEST even when this helper runs inside a fragment.
+    st.rerun(scope="app")
 
 
 def apply_portal_navigation(allowed):
@@ -232,7 +240,7 @@ def queue_alerts_view():
 def request_alerts_view():
     """Enqueue the alerts overlay and rerun. Use only outside callbacks."""
     queue_alerts_view()
-    st.rerun()
+    st.rerun(scope="app")
 
 
 def apply_alerts_view_request():
@@ -254,7 +262,7 @@ def close_alerts_view():
     current = _session_get("portal_module")
     if target != current:
         queue_portal_navigation(target)
-    st.rerun()
+    st.rerun(scope="app")
 
 
 def alerts_overlay_active(selected):
@@ -775,7 +783,7 @@ def render_portal(sidebar_context=None):
             st.error(str(exc))
             st.stop()
         registrar_modulo(store, principal, "Alertas")
-        render_alerts(store, principal)
+        _render_module_fragment(render_alerts, store, principal)
         st.stop()
     if selected == "Início":
         st.session_state["audit_modulo_atual"] = None
@@ -788,55 +796,57 @@ def render_portal(sidebar_context=None):
             require_permission(principal, "pendencias")
             from services.pending_ui import render
 
-            render(store, principal)
+            _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Agenda":
             require_permission(principal, "agenda")
             from services.agenda_ui import render
 
-            render(store, principal)
+            _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Ofícios":
             require_permission(principal, "oficios")
             from services.oficios_ui import render
 
-            render(store, principal)
+            _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Memorandos":
             require_permission(principal, "memorandos")
             from services.memorandos_ui import render
 
-            render(store, principal)
+            _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Tarefas":
             require_permission(principal, "tarefas")
             from services.tarefas_ui import render
 
+            # Tarefas owns its fragment and paginated listing. Keeping it out of
+            # the generic wrapper avoids nested state after write actions.
             render(store, principal)
             st.stop()
         if selected == "Relatórios e Indicadores":
             require_permission(principal, "relatorios")
             from services.relatorios_ui import render
 
-            render(store, principal)
+            _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Representações":
             require_permission(principal, "representacoes")
             from services.representacoes_ui import render
 
-            render(store, principal)
+            _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Ouvidoria":
             require_permission(principal, "ouvidoria")
             from services.ouvidoria_ui import render
 
-            render(store, principal)
+            _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Administração":
             require_permission(principal, "admin")
             from services.access_ui import render
 
-            render(store, principal)
+            _render_module_fragment(render, store, principal)
             st.stop()
         require_permission(principal, "portarias")
     except ValueError as exc:

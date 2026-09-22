@@ -226,9 +226,10 @@ def test_stripe_and_header_helpers_are_available():
     assert "mpc-bell-alert" not in getsource(alerts_ui.render)
     page = getsource(tarefas_ui.render)
     editor_at = page.index("_editor(repo, store, principal)")
-    listing_at = page.index("list_active")
+    listing_at = page.index("_active_tasks(repo, store, principal)")
     assert editor_at < listing_at
     assert "return" not in page[editor_at:listing_at]
+    assert "list_active" in getsource(tarefas_ui._active_tasks)
     assert 'st-key-mpc_card_a"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_b"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_operational"][data-testid="stExpander"]' not in compact

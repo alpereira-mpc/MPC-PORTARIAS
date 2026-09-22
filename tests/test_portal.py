@@ -556,12 +556,12 @@ def test_queue_portal_navigation_does_not_rerun(monkeypatch):
 
     reruns = []
     monkeypatch.setattr(portal.st, "session_state", {})
-    monkeypatch.setattr(portal.st, "rerun", lambda: reruns.append(True))
+    monkeypatch.setattr(portal.st, "rerun", lambda **kwargs: reruns.append(kwargs))
     portal.queue_portal_navigation("Memorandos", memorandos_nav="Visão Geral")
     assert not reruns
     assert portal.PORTAL_NAV_REQUEST in portal.st.session_state
     portal.request_portal_navigation("Agenda")
-    assert reruns == [True]
+    assert reruns == [{"scope": "app"}]
 
 
 def test_home_card_callbacks_only_queue_navigation():
@@ -585,10 +585,13 @@ def test_home_card_callbacks_only_queue_navigation():
     assert "on_click=" in card_source
     assert "open_memorandos" in card_source
     assert inspect.getsource(portal.open_pendencias).count("request_portal_navigation")
-    assert "st.rerun()" in inspect.getsource(portal.request_portal_navigation)
+    assert 'st.rerun(scope="app")' in inspect.getsource(
+        portal.request_portal_navigation
+    )
     assert "st.rerun()" not in inspect.getsource(portal.queue_portal_navigation)
     assert "st.rerun()" not in inspect.getsource(portal.queue_alerts_view)
-    assert "st.rerun()" in inspect.getsource(portal.request_alerts_view)
+    assert 'st.rerun(scope="app")' in inspect.getsource(portal.request_alerts_view)
+    assert 'st.rerun(scope="app")' in inspect.getsource(portal.close_alerts_view)
 
 
 def test_sidebar_logo_queues_the_same_home_navigation(store, monkeypatch):

@@ -33,6 +33,7 @@ OPEN_LABELS = {
 }
 
 HOME_SEARCH_ACTIVE = "_global_search_home_active"
+HOME_SEARCH_INPUT_VERSION = "_global_search_input_version"
 HOME_SEARCH_STATE_KEYS = (
     "global_search_q",
     "global_search_run",
@@ -62,14 +63,23 @@ def _prepare_home_search():
     """Discard search state left by an earlier visit before rendering Home."""
     if st.session_state.get(HOME_SEARCH_ACTIVE):
         return
-    _clear_home_search()
+    _discard_home_search_state()
     st.session_state[HOME_SEARCH_ACTIVE] = True
 
 
-def _clear_home_search():
-    """Clear input, submitted term, results and transient search state."""
+def _discard_home_search_state():
     for key in HOME_SEARCH_STATE_KEYS:
         st.session_state.pop(key, None)
+    for key in list(st.session_state):
+        if key.startswith("global_search_q_"):
+            st.session_state.pop(key, None)
+
+
+def _clear_home_search():
+    """Clear state and force a fresh browser input on the ensuing full rerun."""
+    version = int(st.session_state.get(HOME_SEARCH_INPUT_VERSION, 0)) + 1
+    _discard_home_search_state()
+    st.session_state[HOME_SEARCH_INPUT_VERSION] = version
 
 
 def _persistent_errors(term, errors):
@@ -100,6 +110,12 @@ def render_home_search(store, principal):
         "Localize Ofícios, Portarias, Agenda, Representações, Notícias de Fato "
         "e outros registros permitidos."
     )
+    input_version = int(st.session_state.get(HOME_SEARCH_INPUT_VERSION, 0))
+    input_key = (
+        "global_search_q"
+        if input_version == 0
+        else f"global_search_q_{input_version}"
+    )
     search_active = any(
         st.session_state.get(key)
         for key in HOME_SEARCH_STATE_KEYS
@@ -108,7 +124,7 @@ def render_home_search(store, principal):
     with st.form("global_search_form", border=False):
         query = st.text_input(
             "Busca",
-            key="global_search_q",
+            key=input_key,
             label_visibility="collapsed",
             placeholder="Pesquisar no Ferramentas MPC-PB...",
         )

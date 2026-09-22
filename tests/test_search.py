@@ -294,7 +294,7 @@ def test_home_search_clear_resets_results_input_and_errors(store, monkeypatch):
     app.button(key=clear_key).click().run()
 
     assert not app.exception and not app.error
-    assert app.text_input(key="global_search_q").value == ""
+    assert next(item for item in app.text_input if item.label == "Busca").value == ""
     assert "global_search_run" not in app.session_state
     assert "global_search_error" not in app.session_state
     reset_text = " ".join(str(c.value) for c in app.caption)

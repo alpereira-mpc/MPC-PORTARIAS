@@ -323,7 +323,9 @@ def test_views_only_show_registered_appointments(store, monkeypatch, view, with_
         assert text not in displayed
     if with_record:
         assert "Compromisso cadastrado pelo usuário" in displayed
-        assert len(app.expander) == 2  # Sidebar tools and the actual appointment.
+        assert [expander.label for expander in app.expander] == [
+            "Detalhes e ações"
+        ]
     else:
         assert "Nenhum compromisso no período selecionado." in displayed
         assert not any(b.label == "Editar" for b in app.button)

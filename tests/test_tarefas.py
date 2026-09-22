@@ -334,3 +334,35 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
     assert not any(
         button.key == f"task_finish_{second['id']}" for button in app.button
     )
+
+
+def test_active_task_cards_are_paginated(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    from database.access import AccessStore
+    from database.store import ROOT
+    from tests.access_testing import TEST_IDENTITY, enable_login
+
+    enable_login(monkeypatch, store)
+    owner = AccessStore(store).get_by_email(TEST_IDENTITY["email"])
+    repo = TarefasStore(store)
+    for index in range(25):
+        repo.create(owner["id"], {"titulo": f"Tarefa {index:02d}"})
+    monkeypatch.setattr("database.store.Store", lambda: store)
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio(key="portal_module").set_value("Tarefas").run()
+
+    assert not app.exception
+    assert len(
+        [button for button in app.button if str(button.key).startswith("task_finish_")]
+    ) == 20
+    assert app.button(key="tarefas_active_next")
+
+    app.button(key="tarefas_active_next").click().run()
+
+    assert not app.exception
+    assert len(
+        [button for button in app.button if str(button.key).startswith("task_finish_")]
+    ) == 5
+    assert app.button(key="tarefas_active_previous")

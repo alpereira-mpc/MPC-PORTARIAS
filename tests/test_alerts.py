@@ -696,7 +696,7 @@ def test_navigation_helpers_are_safe():
     from portal import queue_alerts_view
 
     assert "st.rerun()" not in getsource(queue_alerts_view)
-    assert "st.rerun()" in getsource(request_alerts_view)
+    assert 'st.rerun(scope="app")' in getsource(request_alerts_view)
     assert "pending_open_admin" in getsource(open_origin)
     assert "admin_secao" in getsource(consume_pending_open_admin)
     assert 'st.session_state["portal_module"]' not in getsource(render)
