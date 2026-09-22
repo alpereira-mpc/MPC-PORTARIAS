@@ -741,13 +741,18 @@ def global_search(store, principal, term, *, limit_per_module=PER_MODULE):
                 errors[key] = None
             except Exception as exc:
                 LOGGER.exception("Falha na busca global de %s", key)
-                registrar_erro(
-                    store,
-                    modulo="busca",
-                    acao="CONSULTAR",
-                    erro=exc,
-                    principal=principal,
-                )
+                try:
+                    registrar_erro(
+                        store,
+                        modulo="busca",
+                        acao="CONSULTAR",
+                        erro=exc,
+                        principal=principal,
+                    )
+                except Exception:
+                    LOGGER.exception(
+                        "Falha ao registrar erro da busca global de %s", key
+                    )
                 errors[key] = key
     collected.sort(key=lambda item: (-item.score, item.source_module, item.title))
     if len(collected) > TOTAL_CAP:

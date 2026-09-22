@@ -32,6 +32,17 @@ OPEN_LABELS = {
     "admin": "Ver em Administração",
 }
 
+HOME_SEARCH_ACTIVE = "_global_search_home_active"
+HOME_SEARCH_STATE_KEYS = (
+    "global_search_q",
+    "global_search_run",
+    "global_search_error_state",
+    "global_search_error",
+    "global_search_errors",
+    "global_search_results",
+    "global_search_status",
+)
+
 
 def _date_text(value):
     if not value:
@@ -47,7 +58,38 @@ def _open(item):
     open_origin(item)
 
 
+def _prepare_home_search():
+    """Discard search state left by an earlier visit before rendering Home."""
+    if st.session_state.get(HOME_SEARCH_ACTIVE):
+        return
+    for key in HOME_SEARCH_STATE_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state[HOME_SEARCH_ACTIVE] = True
+
+
+def _persistent_errors(term, errors):
+    """Confirm a source failure on two consecutive renders before showing it."""
+    failed = tuple(sorted(key for key, value in errors.items() if value))
+    state_key = "global_search_error_state"
+    if not failed:
+        st.session_state.pop(state_key, None)
+        return ()
+    previous = st.session_state.get(state_key) or {}
+    occurrences = (
+        int(previous.get("occurrences", 0)) + 1
+        if previous.get("term") == term and tuple(previous.get("sources", ())) == failed
+        else 1
+    )
+    st.session_state[state_key] = {
+        "term": term,
+        "sources": failed,
+        "occurrences": occurrences,
+    }
+    return failed if occurrences >= 2 else ()
+
+
 def render_home_search(store, principal):
+    _prepare_home_search()
     section_label("Busca global")
     st.caption(
         "Localize Ofícios, Portarias, Agenda, Representações, Notícias de Fato "
@@ -75,16 +117,16 @@ def render_home_search(store, principal):
     if status == "short":
         empty_state(f"Informe ao menos {MIN_CHARS} caracteres.")
         return
-    if any(errors.values()) and not hits:
+    persistent_errors = _persistent_errors(term, errors)
+    if persistent_errors and not hits:
         st.error("Não foi possível concluir a busca agora.")
         return
-    for key, failed in errors.items():
-        if failed:
-            st.warning(
-                "Não foi possível buscar em "
-                + MODULE_LABELS.get(key, key)
-                + "."
-            )
+    for key in persistent_errors:
+        st.warning(
+            "Não foi possível buscar em "
+            + MODULE_LABELS.get(key, key)
+            + "."
+        )
     st.caption(f"Resultados para: “{meta.get('term') or term}”")
     if not hits:
         empty_state("Nenhum resultado encontrado para os filtros e permissões atuais.")

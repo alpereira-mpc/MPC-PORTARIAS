@@ -218,6 +218,20 @@ def test_source_error_is_isolated(store, monkeypatch):
     assert all(item.source_module != "oficios" for item in hits)
 
 
+def test_source_error_remains_isolated_if_audit_logging_fails(store, monkeypatch):
+    from services import search as search_mod
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("indisponível")
+
+    monkeypatch.setitem(search_mod.LOADERS, "portarias", boom)
+    monkeypatch.setattr(search_mod, "registrar_erro", boom)
+    hits, errors, meta = global_search(store, _admin(store), "Sheyla")
+    assert meta["status"] == "ok"
+    assert errors.get("portarias") == "portarias"
+    assert all(item.source_module != "portarias" for item in hits)
+
+
 def test_home_search_form(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
@@ -240,3 +254,61 @@ def test_home_search_form(store, monkeypatch):
         str(c.value) for c in app.caption
     )
     assert "ao menos" in blob or "3 caracteres" in blob
+
+
+def test_home_search_clears_residual_state_on_reentry(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from database.store import ROOT
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.session_state["global_search_q"] = "residual"
+    app.session_state["global_search_run"] = "residual"
+    app.sidebar.radio(key="portal_module").set_value("Portarias").run()
+    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    assert not app.exception
+    assert app.text_input(key="global_search_q").value == ""
+    assert "global_search_run" not in app.session_state
+    captions = " ".join(str(c.value) for c in app.caption)
+    assert "Digite pelo menos" in captions
+
+
+def test_home_search_only_shows_persistent_source_error(store, monkeypatch):
+    from services import search_ui
+
+    monkeypatch.setattr(
+        search_ui,
+        "global_search",
+        lambda *args, **kwargs: (
+            [],
+            {"oficios": "oficios"},
+            {"status": "ok", "term": "falha", "total": 0},
+        ),
+    )
+    monkeypatch.setattr(search_ui.st, "session_state", {"global_search_run": "falha"})
+    errors = []
+    warnings = []
+    monkeypatch.setattr(search_ui.st, "error", errors.append)
+    monkeypatch.setattr(search_ui.st, "warning", warnings.append)
+    monkeypatch.setattr(search_ui.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(search_ui, "section_label", lambda *args, **kwargs: None)
+    monkeypatch.setattr(search_ui, "empty_state", lambda *args, **kwargs: None)
+
+    class Form:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(search_ui.st, "form", lambda *args, **kwargs: Form())
+    monkeypatch.setattr(search_ui.st, "text_input", lambda *args, **kwargs: "falha")
+    monkeypatch.setattr(search_ui.st, "form_submit_button", lambda *args, **kwargs: False)
+    search_ui.st.session_state[search_ui.HOME_SEARCH_ACTIVE] = True
+
+    search_ui.render_home_search(store, _admin(store))
+    assert errors == [] and warnings == []
+    search_ui.render_home_search(store, _admin(store))
+    assert errors == ["Não foi possível concluir a busca agora."]

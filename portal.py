@@ -764,6 +764,7 @@ def render_portal(sidebar_context=None):
             st.session_state.pop("_tramita_previews", None)
     render_institutional_header(home=selected == "Início")
     if alerts_overlay_active(selected):
+        st.session_state.pop("_global_search_home_active", None)
         from services.alerts_ui import render as render_alerts
 
         try:
@@ -780,6 +781,7 @@ def render_portal(sidebar_context=None):
         st.session_state["audit_modulo_atual"] = None
         home(principal, store)
         st.stop()
+    st.session_state.pop("_global_search_home_active", None)
     registrar_modulo(store, principal, selected)
     try:
         if selected == "Pendências":
