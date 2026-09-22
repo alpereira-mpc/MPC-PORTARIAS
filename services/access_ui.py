@@ -1,6 +1,6 @@
 """Administrative UI for authorized users. Isolated from Portarias/Agenda/Ofícios."""
 
-from datetime import date
+from datetime import date, datetime
 import logging
 import streamlit as st
 from database.access import AccessStore
@@ -32,7 +32,12 @@ def institutional_functions(store, principal):
     names = {p["id"]: p["nome"] for p in people}
     st.caption("A alteração passa a afetar regras institucionais do sistema a partir da nova vigência.")
     current = functions.current_all()
-    st.dataframe([{"Função": FUNCTIONS[code], "Titular atual": row["nome"] if row else "—", "Desde": row["data_inicio"] if row else "—"} for code, row in current.items()], hide_index=True, use_container_width=True)
+    st.dataframe(
+        [{"Função": FUNCTIONS[code], "Titular atual": row["nome"] if row else "—", "Desde": date.fromisoformat(row["data_inicio"]) if row else None} for code, row in current.items()],
+        column_config={"Desde": st.column_config.DateColumn("Desde", format="DD/MM/YYYY")},
+        hide_index=True,
+        use_container_width=True,
+    )
     code = st.selectbox("Função institucional", list(FUNCTIONS), format_func=FUNCTIONS.get)
     with st.expander("Alterar titular"):
         holder = st.selectbox("Novo titular", list(names), format_func=names.get, key="funcao_institucional_holder")
@@ -44,7 +49,15 @@ def institutional_functions(store, principal):
             st.success("Titular alterado; a vigência anterior foi preservada no histórico.")
             st.rerun()
     with st.expander("Histórico das funções"):
-        st.dataframe([{"Função": FUNCTIONS[row["funcao"]], "Procurador": row["nome"], "Início": row["data_inicio"], "Fim": row["data_fim"] or "—"} for row in functions.history()], hide_index=True, use_container_width=True)
+        st.dataframe(
+            [{"Função": FUNCTIONS[row["funcao"]], "Procurador": row["nome"], "Início": date.fromisoformat(row["data_inicio"]), "Fim": date.fromisoformat(row["data_fim"]) if row["data_fim"] else None} for row in functions.history()],
+            column_config={
+                "Início": st.column_config.DateColumn("Início", format="DD/MM/YYYY"),
+                "Fim": st.column_config.DateColumn("Fim", format="DD/MM/YYYY"),
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
 
 
 def _gabinete_display(row):
@@ -97,11 +110,16 @@ def _render_access_requests(store, principal):
                 "Nome": row["nome"],
                 "E-mail institucional": row["email"],
                 "Gabinete / Unidade": _gabinete_display(row),
-                "Data da solicitação": row["created_at"],
+                "Data da solicitação": datetime.fromisoformat(row["created_at"]),
                 "Status": row["status"],
             }
             for row in rows
         ],
+        column_config={
+            "Data da solicitação": st.column_config.DatetimeColumn(
+                "Data da solicitação", format="DD/MM/YYYY HH:mm"
+            )
+        },
         hide_index=True,
         use_container_width=True,
     )

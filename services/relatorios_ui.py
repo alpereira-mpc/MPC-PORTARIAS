@@ -8,6 +8,7 @@ import streamlit as st
 from database.tramita_reports import TramitaReportsStore
 from services.access import require_permission
 from services.audit import registrar_evento
+from services.date_format import format_date_br
 from services.tramita_reports import file_hash, parse_movements, parse_stock
 from services.ui_theme import empty_state, filter_mark, kpi_mark, section_label
 
@@ -20,9 +21,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _format_date(value):
-    if not value:
-        return "—"
-    return datetime.fromisoformat(value).strftime("%d/%m/%Y")
+    return format_date_br(value)
 
 
 def _cached_report(store, principal, key, load):

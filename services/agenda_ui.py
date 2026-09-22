@@ -18,6 +18,7 @@ from services.agenda import (
 )
 from services.afastamentos import MOTIVOS, eligible_substitutes, substitution_pending
 from services.ui_store import display_store
+from services.date_format import format_date_br, format_datetime_br
 from services.branding import module_title
 from services.ui_theme import (
     badges,
@@ -33,9 +34,7 @@ from services.ui_theme import (
 
 def display_datetime(value, date_only=False):
     """Brazilian presentation only; stored values remain ISO."""
-    return datetime.fromisoformat(value).strftime(
-        "%d/%m/%Y" if date_only else "%d/%m/%Y às %H:%M"
-    )
+    return format_date_br(value) if date_only else format_datetime_br(value)
 
 
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
@@ -578,7 +577,7 @@ def render(store=None, principal=None):
                             ("Afastamento", "neutral"),
                             (row["status"], status_tone(row["status"])),
                         ),
-                        secondary=f"{row['motivo']} · {row['data_inicio']} a {row['data_fim']}",
+                        secondary=f"{row['motivo']} · {format_date_br(row['data_inicio'])} a {format_date_br(row['data_fim'])}",
                         meta=("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"]))) if row.get("substituto_id") else (row.get("observacao") or ""),
                         accent="muted",
                     )

@@ -11,7 +11,7 @@ from tests.test_agenda_upcoming import FixedDatetime
 
 
 def test_date_presentation():
-    assert display_datetime("2026-09-30T14:30:00") == "30/09/2026 às 14:30"
+    assert display_datetime("2026-09-30T14:30:00") == "30/09/2026 14:30"
     assert display_datetime("2026-10-03T00:00:00", True) == "03/10/2026"
 
 
@@ -62,8 +62,8 @@ def test_view_dates_and_details(store, monkeypatch, view):
     assert all(widget.proto.format == "DD/MM/YYYY" for widget in app.date_input)
     assert any(h.value == "10/09/2026" for h in app.subheader)
     text = "\n".join(m.value for m in app.markdown)
-    assert "10/09/2026 às 10:00" in text
-    assert "10/09/2026 às 11:00" in text
+    assert "10/09/2026 10:00" in text
+    assert "10/09/2026 11:00" in text
     assert "2026-09-10" not in text and "2026/09/10" not in text
     assert not app.exception
 
@@ -82,6 +82,6 @@ def test_conflict_date_display(store, monkeypatch):
     app.session_state["agenda_edit"] = record
     app.run()
     assert any("CONFLITO DE HORÁRIO" in w.value for w in app.warning)
-    assert any("30/09/2026 às 10:00" in m.value for m in app.markdown)
+    assert any("30/09/2026 10:00" in m.value for m in app.markdown)
     assert next(b for b in app.button if b.label == "Salvar compromisso").disabled
     assert not app.exception

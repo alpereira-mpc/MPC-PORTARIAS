@@ -5,6 +5,7 @@ import streamlit as st
 
 from services.access import has_permission, require_permission
 from services.branding import module_title
+from services.date_format import format_date_br
 from services.representacoes import (
     ANDAMENTOS,
     DOCUMENTOS,
@@ -332,7 +333,7 @@ def _card(record, index, procuradores_map, assessores_map):
             '<p class="mpc-record-meta">'
             + html_text(label(ANDAMENTOS, last.get("tipo"), last.get("tipo")))
             + " — "
-            + html_text(last.get("data") or "")
+            + html_text(format_date_br(last.get("data"), empty=""))
             + "</p>"
         )
     with card_container(index, "rep_" + str(record["id"])):
@@ -513,7 +514,7 @@ def _detail_body(store, principal, record):
         (
             ("Objeto", record.get("objeto")),
             ("Origem", label(ORIGENS, record["origem"])),
-            ("Abertura", record.get("data_abertura")),
+            ("Abertura", format_date_br(record.get("data_abertura"))),
             ("Representado", record.get("representado")),
             ("Tema/área", record.get("tema")),
             ("Prioridade", label(PRIORIDADES, record["prioridade"])),
@@ -552,7 +553,7 @@ def _detail_body(store, principal, record):
             "Processo",
             (
                 ("Número", record.get("numero_processo")),
-                ("Protocolo", record.get("data_protocolo")),
+                ("Protocolo", format_date_br(record.get("data_protocolo"))),
                 ("Relator", relator_label(record.get("relator")) if record.get("relator") else None),
                 ("Pedido de medida cautelar", "Sim" if record.get("possui_medida_cautelar") else "Não"),
                 ("Situação", label(SITUACOES, record["situacao"])),
@@ -567,7 +568,7 @@ def _detail_body(store, principal, record):
         empty_state("Nenhum andamento registrado.")
     for item in timeline:
         heading, descricao = andamento_display(item)
-        line = f"**{item['data']}** · {heading}"
+        line = f"**{format_date_br(item['data'])}** · {heading}"
         if descricao:
             line += f"  \n{descricao}"
         st.markdown(line)
@@ -580,7 +581,7 @@ def _detail_body(store, principal, record):
         cols = st.columns([3, 2, 2, 2])
         cols[0].write(label(DOCUMENTOS, item["tipo_documento"]))
         cols[1].caption(item.get("descricao") or item["nome_arquivo"])
-        cols[2].caption(item.get("data_documento") or "")
+        cols[2].caption(format_date_br(item.get("data_documento"), empty=""))
         if pending == item["id"]:
             file = download(store, item["id"])
             cols[3].download_button(

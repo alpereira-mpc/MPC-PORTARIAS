@@ -290,7 +290,7 @@ def format_local_short(value):
         return str(value)
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(INSTITUTIONAL_TZ).strftime("%d/%m/%Y · %H:%M")
+    return moment.astimezone(INSTITUTIONAL_TZ).strftime("%d/%m/%Y %H:%M")
 
 
 def module_label(code):

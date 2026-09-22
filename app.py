@@ -33,6 +33,7 @@ from services.wording import reason_text, normalized_payload
 from services.placeholders import assert_docx_clean
 from services.deletion import REASONS
 from services.branding import module_title
+from services.date_format import format_date_br
 from services.ui_theme import badges, empty_state, form_mark, operational_card_mark, render_html, render_record, section_label, status_tone
 
 VERSION = "1.1.0"
@@ -442,13 +443,18 @@ def exclusion_register():
             st.dataframe(
                 [
                     {
-                        "Data/Hora": r["data_hora"],
+                        "Data/Hora": datetime.fromisoformat(r["data_hora"]),
                         "Portaria": f"{r['numero'] or 'Rascunho'}/{r['ano']}",
                         "Status anterior": r["status_anterior"],
                         "Motivo da exclusão": r["motivo"],
                     }
                     for r in entries
                 ],
+                column_config={
+                    "Data/Hora": st.column_config.DatetimeColumn(
+                        "Data/Hora", format="DD/MM/YYYY HH:mm:ss"
+                    )
+                },
                 hide_index=True,
                 width="stretch",
             )
@@ -538,7 +544,12 @@ def delete_controls(r):
             "Esta operação excluirá definitivamente esta Portaria do cadastro ativo do sistema. Utilize-a apenas para testes, lançamentos incorretos ou atos que não chegaram a ser oficialmente emitidos."
         )
         st.markdown(f"**PORTARIA – PROGE N.º {r['numero']}/{r['ano']}**")
-        st.write("Data:", r["payload"]["data"], "— Status:", r["status"])
+        st.write(
+            "Data:",
+            format_date_br(r["payload"]["data"]),
+            "— Status:",
+            r["status"],
+        )
         for sub in r["payload"]["substituicoes"]:
             st.write("Titular:", (sub.get("titular") or {}).get("nome", ""))
             st.write("Substituto:", (sub.get("substituto") or {}).get("nome", ""))
@@ -659,21 +670,34 @@ def history():
                     ),
                     "Ano": r["ano"],
                     "Status": r["status"],
-                    "Data": p["data"],
+                    "Data": parsed(p["data"]),
                     "Titular": (s.get("titular") or {}).get("nome", ""),
                     "Função": role(
                         s["funcao"], (s.get("titular") or {}).get("genero", "masculino")
                     ),
                     "Assento": s["assento"],
                     "Substituto": (s.get("substituto") or {}).get("nome", ""),
-                    "Período": s["inicio"] + " a " + s["fim"],
+                    "Período": format_date_br(s["inicio"]) + " a " + format_date_br(s["fim"]),
                     "Motivo": reason_text(s),
                     "Signatário": (p.get("signatario") or {}).get("nome", ""),
                     "Status": r["status"],
-                    "Criação": r["criada"],
+                    "Criação": datetime.fromisoformat(r["criada"]),
+                    "_id": r["id"],
                 }
             )
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    history_columns = {
+        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+        "Criação": st.column_config.DatetimeColumn(
+            "Criação", format="DD/MM/YYYY HH:mm"
+        ),
+        "_id": None,
+    }
+    st.dataframe(
+        rows,
+        column_config=history_columns,
+        use_container_width=True,
+        hide_index=True,
+    )
     if not filtered:
         return
     rm = {r["id"]: r for r in filtered}
@@ -695,7 +719,8 @@ def history():
             accent=status_tone(r["status"]),
         )
     st.dataframe(
-        [row for row in rows if row["Criação"] == r["criada"]],
+        [row for row in rows if row["_id"] == r["id"]],
+        column_config=history_columns,
         hide_index=True,
         width="stretch",
     )
@@ -812,7 +837,7 @@ def substitution_fields(
         )
         if same_period:
             start, end = previous["inicio"], previous["fim"]
-            st.caption(start + " a " + end)
+            st.caption(format_date_br(start) + " a " + format_date_br(end))
         else:
             c1, c2 = st.columns(2)
             with c1:

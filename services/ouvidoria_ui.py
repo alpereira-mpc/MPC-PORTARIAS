@@ -5,6 +5,7 @@ import streamlit as st
 
 from services.access import has_permission, require_permission
 from services.branding import module_title
+from services.date_format import format_date_br
 from services.ouvidoria import (
     ANDAMENTOS,
     CLASSIFICACOES,
@@ -319,7 +320,7 @@ def _card(record, index, people, servers):
     last = record.get("ultimo_andamento") or {}
     names = lambda items: ", ".join(people.get(m["membro_id"], "—") for m in items) or "—"
     natureza = tipo_visivel(record.get("tipo"))
-    received = "Recebida em: " + (record.get("data_recebimento") or "—")
+    received = "Recebida em: " + format_date_br(record.get("data_recebimento"))
     if natureza:
         received = natureza + " · " + received
     with card_container(index, "ouvi_" + str(record["id"])):
@@ -336,7 +337,7 @@ def _card(record, index, people, servers):
                 '<p class="mpc-record-meta">'
                 + html_text(
                     (andamento_display(last)[0] if last else "")
-                    + (" — " + last.get("data") if last else "")
+                    + (" — " + format_date_br(last.get("data")) if last else "")
                 )
                 + "</p>"
             ),
@@ -374,7 +375,7 @@ def _detail(store, principal, record):
                 ("Número", record.get("numero_interno")),
                 ("Tipo", tipo_visivel(record.get("tipo"))),
                 ("Recebimento", label(FORMAS, record.get("forma_recebimento"))),
-                ("Data", record.get("data_recebimento")),
+                ("Data", format_date_br(record.get("data_recebimento"))),
                 ("Classificação", label(CLASSIFICACOES, record.get("classificacao_acesso"))),
                 ("Prioridade", label(PRIORIDADES, record.get("prioridade"))),
                 ("Situação", label(SITUACOES, record.get("situacao"))),
@@ -438,7 +439,7 @@ def _detail(store, principal, record):
             empty_state("Nenhuma providência registrada.")
         for item in rows:
             st.markdown(
-                f"**{item['data']}** · {label(PROVIDENCIAS, item['tipo'])}  \n{item.get('descricao') or ''}"
+                f"**{format_date_br(item['data'])}** · {label(PROVIDENCIAS, item['tipo'])}  \n{item.get('descricao') or ''}"
             )
             if st.button("Editar providência", key="ouvi_ed_act_" + str(item["id"])):
                 st.session_state["ouvidoria_action_edit"] = (record["id"], item["id"])
@@ -447,7 +448,7 @@ def _detail(store, principal, record):
         timeline = progress(store, record["id"])
         for item in timeline:
             heading, descricao = andamento_display(item)
-            line = f"**{item['data']}** · {heading}"
+            line = f"**{format_date_br(item['data'])}** · {heading}"
             if descricao:
                 line += f"  \n{descricao}"
             st.markdown(line)
@@ -460,7 +461,7 @@ def _detail(store, principal, record):
             cols = st.columns([3, 2, 2, 2])
             cols[0].write(label(DOCUMENTOS, item["tipo_documento"]))
             cols[1].caption(item.get("descricao") or item["nome_arquivo"])
-            cols[2].caption(item.get("data_documento") or "")
+            cols[2].caption(format_date_br(item.get("data_documento"), empty=""))
             if pending == item["id"]:
                 file = download(store, item["id"], principal)
                 cols[3].download_button("Baixar", file["conteudo"], file["nome"], file["tipo"], key="ouvi_dl_" + item["id"])

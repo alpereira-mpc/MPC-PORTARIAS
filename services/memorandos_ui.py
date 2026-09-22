@@ -4,6 +4,7 @@ import hashlib
 import streamlit as st
 from services.access import require_permission
 from services.branding import module_title
+from services.date_format import format_date_br, format_datetime_br
 from services.ui_theme import badges, card_container, empty_state, filter_mark, render_record, status_tone
 from services.memorandos import (
     MIME_DOCX,
@@ -320,10 +321,10 @@ def _editor(service, store, principal):
 
 
 def _details(service,row,principal):
-    r=service.get(row["id"]); st.write("Cadeia: "+row["cadeia"]); st.write(f"Período: {r['data_inicio']} a {r['data_fim']} · {r['situacao']}")
+    r=service.get(row["id"]); st.write("Cadeia: "+row["cadeia"]); st.write(f"Período: {format_date_br(r['data_inicio'])} a {format_date_br(r['data_fim'])} · {r['situacao']}")
     st.write("Gabinete: "+r["gabinete_snapshot"]); st.write("Signatário: "+r["signatario_nome"]+" — "+r["signatario_cargo"])
     for index,step in enumerate(r["etapas"],1): st.caption(f"Etapa {index}: {step['substituido']['nome']} ({step['substituido']['cargo']}, {step['substituido'].get('lotacao','')}) → {step['substituto']['nome']} ({step['substituto']['cargo']}, {step['substituto'].get('lotacao','')})")
-    st.caption(f"Criado por {r['criado_por']} em {r['criado_em']}. Finalizado: {r.get('finalizado_em') or '—'}")
+    st.caption(f"Criado por {r['criado_por']} em {format_datetime_br(r['criado_em'])}. Finalizado: {format_datetime_br(r.get('finalizado_em'))}")
     file=service.file(row["id"])
     source=service.file(row["id"], MIME_DOCX)
     if source: st.download_button("Baixar DOCX",source[1],source[0],MIME_DOCX,key="memo_docx_"+row["id"])
@@ -386,7 +387,7 @@ def _hard_delete_controls(service, row, principal, record):
         )
     st.write(f"Servidor afastado: {away}")
     st.write(f"Substituto: {replacement}")
-    st.write(f"Período: {record.get('data_inicio')} a {record.get('data_fim')}")
+    st.write(f"Período: {format_date_br(record.get('data_inicio'))} a {format_date_br(record.get('data_fim'))}")
     st.write(f"Gabinete: {record.get('gabinete_snapshot') or '—'}")
     st.write(f"Status: {record.get('situacao') or record.get('status')}")
     official = (record.get("numero_oficial") or "").strip()
@@ -491,7 +492,7 @@ def _listing(service, principal):
                     (focused.get("status") or focused["situacao"], status_tone(focused.get("status") or focused["situacao"])),
                     (focused["situacao"], status_tone(focused["situacao"])),
                 ),
-                secondary=f"{focused['data_inicio']} a {focused['data_fim']} · {focused['gabinete_snapshot']} · {focused['motivo']}",
+                secondary=f"{format_date_br(focused['data_inicio'])} a {format_date_br(focused['data_fim'])} · {focused['gabinete_snapshot']} · {focused['motivo']}",
                 meta=("Número oficial: " + focused["numero_oficial"]) if focused.get("numero_oficial") else "",
                 accent=status_tone(focused.get("status") or focused["situacao"]),
             )
@@ -510,7 +511,7 @@ def _listing(service, principal):
                         (row.get("status"), status_tone(row.get("status"))) if row.get("status") else None,
                         (row["situacao"], status_tone(row["situacao"])),
                     ),
-                    secondary=f"{row['data_inicio']} a {row['data_fim']} · {row['gabinete_snapshot']} · {row['motivo']}",
+                    secondary=f"{format_date_br(row['data_inicio'])} a {format_date_br(row['data_fim'])} · {row['gabinete_snapshot']} · {row['motivo']}",
                     meta=("Número oficial: " + row["numero_oficial"]) if row.get("numero_oficial") else "",
                     accent=accent,
                 )

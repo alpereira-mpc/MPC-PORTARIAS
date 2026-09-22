@@ -1,7 +1,7 @@
 """Lazy native Streamlit correspondence UI."""
 
 from contextlib import nullcontext
-from datetime import date
+from datetime import date, datetime
 import hashlib
 import streamlit as st
 from services.oficios import (
@@ -19,6 +19,7 @@ from services.oficios import (
 )
 from services.ui_store import display_store
 from services.branding import module_title
+from services.date_format import format_datetime_br
 from services.ui_theme import (
     badges,
     card_container,
@@ -70,7 +71,7 @@ def _render_recebidos_historico(rows):
     body = []
     for row in rows or ():
         cells = "".join(
-            f"<td>{html_text(row.get(column))}</td>"
+            f"<td>{html_text(format_datetime_br(row.get(column), seconds=True) if column == 'instante' else row.get(column))}</td>"
             for column in _RECEBIDOS_HISTORICO_COLUMNS
         )
         body.append(f"<tr>{cells}</tr>")
@@ -871,8 +872,18 @@ def details(service, r):
             _render_recebidos_historico(service.movements(r["id"]))
         else:
             st.write("Histórico")
+            movements = service.movements(r["id"])
+            for movement in movements:
+                movement["instante"] = datetime.fromisoformat(movement["instante"])
             st.dataframe(
-                service.movements(r["id"]), hide_index=True, use_container_width=True
+                movements,
+                column_config={
+                    "instante": st.column_config.DatetimeColumn(
+                        "instante", format="DD/MM/YYYY HH:mm:ss"
+                    )
+                },
+                hide_index=True,
+                use_container_width=True,
             )
 
 
