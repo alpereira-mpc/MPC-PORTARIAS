@@ -863,6 +863,52 @@ def test_central_ui_summary_is_independent_of_listing_period(store, monkeypatch)
     assert metrics.get("Total de pendências ativas")
 
 
+def test_summary_cards_apply_period_without_writing_widget_after_instantiation(
+    store, monkeypatch
+):
+    from streamlit.testing.v1 import AppTest
+
+    from database.store import ROOT
+    from services.pending_ui import _set_period, render
+
+    source = getsource(render)
+    card_block = source[
+        source.index("for column, (field, label, tone, code)") : source.index(
+            "for key, label in MODULE_OPTIONS"
+        )
+    ]
+    assert 'key="pending_period"' in source
+    assert "on_click=_set_period" in card_block
+    assert "if st.button(" not in card_block
+    assert "st.rerun()" not in getsource(_set_period)
+
+    oficios, _, _ = _prepare(store)
+    proge = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "PROGE")
+    _received(oficios, proge, "2026-09-13")
+    _received(oficios, proge, "2026-09-16")
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    monkeypatch.setattr("services.pending.today_recife", lambda now=None: TODAY)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
+    assert not app.exception
+    assert app.radio(key="pending_period").value == "hoje"
+
+    expected = {
+        "pending_card_3d": ("3d", "Próximos 3 dias"),
+        "pending_card_7d": ("7d", "Próximos 7 dias"),
+        "pending_card_vencidas": ("vencidas", "Vencidas"),
+        "pending_card_todas": ("todas", "Todas ativas"),
+        "pending_card_hoje": ("hoje", "Hoje"),
+    }
+    for key, (code, caption) in expected.items():
+        app.button(key=key).click().run()
+        assert not app.exception, key
+        assert app.radio(key="pending_period").value == code
+        captions = [str(c.value) for c in app.caption]
+        assert any(f"Exibindo pendências: {caption}" in c for c in captions)
+
+
 def test_postgres_pending_contract(pg_store):
     _prepare(pg_store)
     oficios = OficiosStore(pg_store)

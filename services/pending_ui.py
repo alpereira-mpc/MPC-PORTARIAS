@@ -154,9 +154,9 @@ def _open(item):
 
 
 def _set_period(code):
+    """Apply a listing period from a card. Safe as on_click (before widgets)."""
     st.session_state["pending_period"] = code
     st.session_state["pending_page"] = 1
-    st.rerun()
 
 
 def render(store, principal):
@@ -219,13 +219,14 @@ def render(store, principal):
         with column:
             kpi_mark(tone if selected else "muted")
             st.metric(label, counts[field])
-            if st.button(
+            st.button(
                 "Selecionado" if selected else "Ver",
                 key="pending_card_" + code,
                 disabled=selected,
                 type="primary" if selected else "secondary",
-            ):
-                _set_period(code)
+                on_click=_set_period,
+                args=(code,),
+            )
     for key, label in MODULE_OPTIONS:
         err_key = "admin" if key == "access_requests" else key
         if errors.get(err_key) or errors.get(key):
