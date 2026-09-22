@@ -37,6 +37,22 @@ def test_empty_and_short_terms_do_not_query(store):
     assert run
 
 
+def test_global_search_reuses_cabinet_map(store, monkeypatch):
+    from services import search
+
+    calls = 0
+    original = search._cabinet_map
+
+    def counted(connection):
+        nonlocal calls
+        calls += 1
+        return original(connection)
+
+    monkeypatch.setattr(search, "_cabinet_map", counted)
+    global_search(store, _admin(store), "consulta")
+    assert calls == 1
+
+
 def test_search_oficios_portarias_agenda(store):
     oficios, agenda, _ = _prepare(store)
     proge = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "PROGE")

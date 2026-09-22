@@ -97,7 +97,8 @@ def _render_kpis(store, principal):
 
 
 def _render_overview(store, principal):
-    data = overview(store, principal)
+    # The page-level KPI strip already loaded today's dashboard.
+    data = overview(store, principal, include_dashboard=False)
     st.caption("Indicadores calculados no fuso institucional America/Recife. Logs em UTC.")
     section_label("Indicadores")
     today, week, month = st.columns(3)
@@ -127,7 +128,12 @@ def _render_overview(store, principal):
     c.write(format_local(latest["criado_em"]) if latest else "—")
     d.write("**Módulo mais utilizado (30 dias)**")
     d.write(module_label(used["modulo"]) if used else "—")
-    rows = user_overview(store, principal, {"inicio": period_bounds("30d")[0]})
+    rows = user_overview(
+        store,
+        principal,
+        {"inicio": period_bounds("30d")[0]},
+        users=data["usuarios"],
+    )
     st.subheader("Usuários")
     st.dataframe(
         [

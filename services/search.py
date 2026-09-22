@@ -213,7 +213,9 @@ def search_portarias(connection, store, principal, term, *, limit):
     return items
 
 
-def search_oficios(connection, store, principal, term, *, limit):
+def search_oficios(
+    connection, store, principal, term, *, limit, cabinet_map=None
+):
     if not has_permission(principal, "oficios"):
         return []
     if not _has_table(store, "oficios", connection):
@@ -273,7 +275,7 @@ def search_oficios(connection, store, principal, term, *, limit):
         + " ORDER BY o.atualizada DESC, o.id DESC LIMIT ?",
         (*params, limit),
     ).fetchall()
-    mapping = _cabinet_map(connection)
+    mapping = cabinet_map if cabinet_map is not None else _cabinet_map(connection)
     items = []
     for row in rows:
         gabinete = (
@@ -321,12 +323,14 @@ def search_oficios(connection, store, principal, term, *, limit):
     return items
 
 
-def search_agenda(connection, store, principal, term, *, limit):
+def search_agenda(
+    connection, store, principal, term, *, limit, cabinet_map=None
+):
     if not has_permission(principal, "agenda"):
         return []
     items = []
     like = like_value(term)
-    mapping = _cabinet_map(connection)
+    mapping = cabinet_map if cabinet_map is not None else _cabinet_map(connection)
     restrict = bool(visible_cabinets(principal)) or principal.administrator
     allowed = _scope_cabinets(principal, None) if restrict else []
     if restrict and not allowed:
@@ -425,7 +429,9 @@ def search_agenda(connection, store, principal, term, *, limit):
     return items[:limit]
 
 
-def search_memorandos(connection, store, principal, term, *, limit):
+def search_memorandos(
+    connection, store, principal, term, *, limit, cabinet_map=None
+):
     if not has_permission(principal, "memorandos"):
         return []
     if not _has_table(store, "memorandos", connection):
@@ -435,7 +441,7 @@ def search_memorandos(connection, store, principal, term, *, limit):
     if restrict and not allowed:
         return []
     like = like_value(term)
-    mapping = _cabinet_map(connection)
+    mapping = cabinet_map if cabinet_map is not None else _cabinet_map(connection)
     rows = connection.execute(
         "SELECT m.id,m.status,m.numero_oficial,m.atualizado_em,s.data_inicio,s.motivo,"
         "s.motivo_texto,s.gabinete_procurador_id,s.gabinete_snapshot "
@@ -730,13 +736,26 @@ def global_search(store, principal, term, *, limit_per_module=PER_MODULE):
     collected = []
     limit = max(1, min(int(limit_per_module or PER_MODULE), PER_MODULE))
     with store.connection(read_only=True) as connection:
+        cabinet_map = None
         for key in SOURCES:
             loader = LOADERS[key]
             if not has_permission(principal, key):
                 continue
             try:
+                kwargs = {}
+                if key in ("oficios", "agenda", "memorandos"):
+                    if cabinet_map is None:
+                        cabinet_map = _cabinet_map(connection)
+                    kwargs["cabinet_map"] = cabinet_map
                 collected.extend(
-                    loader(connection, store, principal, cleaned, limit=limit)
+                    loader(
+                        connection,
+                        store,
+                        principal,
+                        cleaned,
+                        limit=limit,
+                        **kwargs,
+                    )
                 )
                 errors[key] = None
             except Exception as exc:

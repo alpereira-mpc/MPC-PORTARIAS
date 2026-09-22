@@ -222,6 +222,23 @@ def people_index(store):
     return procuradores_map, assessores_map
 
 
+def people_context(store):
+    """Load active filter options and historical display names in two reads."""
+    people = store.catalog("procuradores")
+    server_rows = MemorandosStore(store).all_servers(include_inactive=True)
+    active_servers = [row for row in server_rows if row.get("ativo")][:500]
+    return (
+        {row["id"]: row["nome"] for row in people if row.get("ativo")},
+        {
+            row["id"]: row["nome"]
+            for row in active_servers
+            if setor_elegivel(row.get("setor"))
+        },
+        {row["id"]: row["nome"] for row in people},
+        {row["id"]: row["nome"] for row in server_rows},
+    )
+
+
 def member_name(member, procuradores_map, assessores_map):
     source = procuradores_map if member["membro_tipo"] == "PROCURADOR" else assessores_map
     return source.get(member["membro_id"]) or "—"

@@ -919,7 +919,7 @@ def _require_audit_reader(principal):
     require_permission(principal, "admin")
 
 
-def overview(store, principal):
+def overview(store, principal, *, include_dashboard=True):
     _require_audit_reader(principal)
     audit = AuditStore(store)
     today = period_bounds("hoje")
@@ -929,7 +929,7 @@ def overview(store, principal):
 
     users = AccessStore(store).list_users()
     ativos = sum(1 for u in users if u["ativo"])
-    painel = audit.dashboard(*today)
+    painel = audit.dashboard(*today) if include_dashboard else None
     return {
         "hoje": audit.period_summary(*today),
         "semana": audit.period_summary(*week),
@@ -965,11 +965,12 @@ def dashboard_hoje(store, principal):
     return data
 
 
-def user_overview(store, principal, filters=None):
+def user_overview(store, principal, filters=None, *, users=None):
     _require_audit_reader(principal)
     from database.access import AccessStore
 
-    listed = {u["email"]: u for u in AccessStore(store).list_users()}
+    source = AccessStore(store).list_users() if users is None else users
+    listed = {u["email"]: u for u in source}
     rows = []
     for row in AuditStore(store).user_rows(filters):
         cadastro = listed.get(row["usuario_email"], {})

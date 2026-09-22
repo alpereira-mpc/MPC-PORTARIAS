@@ -32,6 +32,7 @@ from services.representacoes import (
     label,
     list_records,
     overview,
+    people_context,
     people_index,
     procuradores,
     progress,
@@ -722,8 +723,6 @@ def render(store, principal):
     )
     if message := st.session_state.pop("representacoes_message", None):
         st.success(message)
-    people, servers = _people_options(store)
-    st.session_state["_rep_people"] = (people, servers)
     counts = overview(store)
     _kpis(counts)
     if st.button("+ Novo projeto de Representação", type="primary", key="rep_new"):
@@ -776,11 +775,12 @@ def render(store, principal):
         else:
             _detail(store, principal, record)
             return
+    people, servers, procuradores_map, assessores_map = people_context(store)
+    st.session_state["_rep_people"] = (people, servers)
     filters = _filters()
     rows = list_records(store, filters)
     if not rows:
         empty_state("Nenhum projeto de Representação encontrado.")
         return
-    procuradores_map, assessores_map = people_index(store)
     for index, record in enumerate(rows):
         _card(record, index, procuradores_map, assessores_map)

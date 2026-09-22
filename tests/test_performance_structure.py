@@ -49,6 +49,56 @@ def test_collect_pending_reuses_one_read_connection(store):
     assert sql.count(True) <= 2
 
 
+def test_representacoes_people_context_uses_two_reads(store, monkeypatch):
+    from contextlib import contextmanager
+
+    from services.representacoes import people_context
+
+    calls = 0
+    original = store.connection
+
+    @contextmanager
+    def counted(**kwargs):
+        nonlocal calls
+        calls += 1
+        with original(**kwargs) as connection:
+            yield connection
+
+    monkeypatch.setattr(store, "connection", counted)
+    active_people, active_servers, all_people, all_servers = people_context(store)
+    assert calls == 2
+    assert active_people
+    assert set(active_people) <= set(all_people)
+    assert set(active_servers) <= set(all_servers)
+
+
+def test_audit_overview_reuses_users_and_skips_duplicate_dashboard(store, monkeypatch):
+    from database.access import AccessStore
+    from database.audit import AuditStore
+    from services.audit import overview, user_overview
+
+    principal = _admin(store)
+    monkeypatch.setattr(
+        AuditStore,
+        "dashboard",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("dashboard duplicado")
+        ),
+    )
+    data = overview(store, principal, include_dashboard=False)
+    assert data["painel"] is None
+
+    monkeypatch.setattr(
+        AccessStore,
+        "list_users",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("usuários recarregados")
+        ),
+    )
+    rows = user_overview(store, principal, users=data["usuarios"])
+    assert isinstance(rows, list)
+
+
 def test_second_pending_collect_skips_schema_lookup(store):
     _prepare(store)
     collect_pending(store, _admin(store), today=TODAY)

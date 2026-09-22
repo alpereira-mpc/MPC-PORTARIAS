@@ -189,7 +189,12 @@ def _seed_volume(store, today: date):
                     (start + timedelta(hours=1)).isoformat(),
                     "Agendado",
                     json.dumps(
-                        {"titulo": f"Reunião {i}", "reuniao_com": "Conselheiro", "local": "Gabinete"},
+                        {
+                            "titulo": f"Reunião {i}",
+                            "reuniao_com": "Conselheiro",
+                            "local": "Gabinete",
+                            "sem_hora": False,
+                        },
                         ensure_ascii=False,
                     ),
                     stamp,
@@ -399,6 +404,22 @@ def main():
 
             reports = TramitaReportsStore(store)
             tasks = TarefasStore(store)
+            from services.ouvidoria import list_records as list_ouvidoria
+            from services.ouvidoria import overview as overview_ouvidoria
+            from services.representacoes import (
+                list_records as list_representacoes,
+                overview as overview_representacoes,
+                people_context,
+            )
+            from services.search import global_search
+
+            def representacoes_list_reads():
+                context = people_context(store)
+                return overview_representacoes(store), list_representacoes(store), context
+
+            def ouvidoria_list_reads():
+                return overview_ouvidoria(store), list_ouvidoria(store)
+
             extra_flows = {
                 "agenda_historico31": lambda: agenda.history(),
                 "tarefas_ativas": lambda: tasks.list_active(1),
@@ -408,6 +429,9 @@ def main():
                 "relatorios_pagina": lambda: reports.movement_page("2026-09", {}),
                 "relatorios_estoque": lambda: reports.stock_summary(today.isoformat()),
                 "relatorios_estoque_pagina": lambda: reports.stock_details(today.isoformat(), {}),
+                "representacoes_lista": representacoes_list_reads,
+                "ouvidoria_lista": ouvidoria_list_reads,
+                "busca_global": lambda: global_search(store, principal, "Assunto"),
             }
             for name, operation in extra_flows.items():
                 report["flows"][name], _ = _measure(probe, name, operation)
@@ -466,7 +490,9 @@ def main():
                 if app is not None:
 
                     def rerun_home():
-                        return app.run()
+                        with patch("services.access.oidc_identity", lambda: identity):
+                            with patch("database.store.Store", lambda *a, **k: store):
+                                return app.run()
 
                     report["flows"]["B_home_rerun"], _ = _measure(
                         probe, "rerun", rerun_home, repeats=1
@@ -484,7 +510,9 @@ def main():
                                 radio = radios[0] if radios else None
                             if radio is None:
                                 raise RuntimeError("radio portal_module ausente")
-                            radio.set_value(name).run()
+                            with patch("services.access.oidc_identity", lambda: identity):
+                                with patch("database.store.Store", lambda *a, **k: store):
+                                    radio.set_value(name).run()
                             return app
 
                         return inner
@@ -492,23 +520,32 @@ def main():
                     report["flows"]["C_home_agenda"], _ = _measure(
                         probe, "nav", go("Agenda"), repeats=1
                     )
-                    app.sidebar.radio(key="portal_module").set_value("Início").run()
+                    rerun = go("Início")
+                    rerun()
                     report["flows"]["D_home_oficios"], _ = _measure(
                         probe, "nav", go("Ofícios"), repeats=1
                     )
-                    app.sidebar.radio(key="portal_module").set_value("Início").run()
+                    rerun()
                     report["flows"]["E_home_memorandos"], _ = _measure(
                         probe, "nav", go("Memorandos"), repeats=1
                     )
-                    app.sidebar.radio(key="portal_module").set_value("Início").run()
+                    rerun()
                     report["flows"]["F_home_portarias"], _ = _measure(
                         probe, "nav", go("Portarias"), repeats=1
                     )
-                    app.sidebar.radio(key="portal_module").set_value("Início").run()
+                    rerun()
                     report["flows"]["G_home_pendencias"], _ = _measure(
                         probe, "nav", go("Pendências"), repeats=1
                     )
-                    app.sidebar.radio(key="portal_module").set_value("Início").run()
+                    rerun()
+                    report["flows"]["H_home_representacoes"], _ = _measure(
+                        probe, "nav", go("Representações"), repeats=1
+                    )
+                    rerun()
+                    report["flows"]["H_home_ouvidoria"], _ = _measure(
+                        probe, "nav", go("Ouvidoria"), repeats=1
+                    )
+                    rerun()
                     report["flows"]["I_home_admin"], _ = _measure(
                         probe,
                         "nav",
