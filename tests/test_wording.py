@@ -6,7 +6,7 @@ from lxml import etree
 import pytest
 from services.wording import compose, period, validate, preview_text, long_date
 from services.validation import warnings_for
-from document_generator.docx import generate
+from document_generator.docx import ROOT, generate
 from tests.cases import sample
 
 
@@ -211,3 +211,49 @@ def test_three_substitutions_and_footnote(store):
         ]
         assert sum(p.startswith("R E S O L V E") for p in paragraphs) == 3
         assert len(xml.xpath("//w:footnoteReference", namespaces=ns)) == 1
+
+
+@pytest.mark.parametrize("number", [5, 6, 8])
+def test_generated_document_ends_at_signature_table(store, number):
+    data = generate(sample(store, number), number)
+    with ZipFile(BytesIO(data)) as z:
+        xml = etree.fromstring(z.read("word/document.xml"))
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    body = xml.find("w:body", ns)
+    signature = body.find("w:tbl", ns)
+    assert signature is not None
+    following = signature.getnext()
+    assert following is not None
+    assert etree.QName(following).localname == "sectPr"
+
+
+@pytest.mark.parametrize(
+    ("number", "template"), [(5, "com_nota"), (6, "multipla"), (8, "simples")]
+)
+def test_generated_document_reclaims_one_blank_line_before_preamble(
+    store, number, template
+):
+    def blank_lines_before_preamble(xml):
+        intro = next(
+            p
+            for p in xml.xpath("/w:document/w:body/w:p", namespaces=ns)
+            if "no uso de suas atribuições" in "".join(
+                p.xpath(".//w:t/text()", namespaces=ns)
+            )
+        )
+        count = 0
+        previous = intro.getprevious()
+        while previous is not None and etree.QName(previous).localname == "p":
+            value = "".join(previous.xpath(".//w:t/text()", namespaces=ns)).strip()
+            if value:
+                break
+            count += 1
+            previous = previous.getprevious()
+        return count
+
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with ZipFile(ROOT / "templates" / f"{template}.docx") as z:
+        source = etree.fromstring(z.read("word/document.xml"))
+    with ZipFile(BytesIO(generate(sample(store, number), number))) as z:
+        generated = etree.fromstring(z.read("word/document.xml"))
+    assert blank_lines_before_preamble(generated) == blank_lines_before_preamble(source) - 1

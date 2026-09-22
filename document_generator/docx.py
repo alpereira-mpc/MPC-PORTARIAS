@@ -72,6 +72,15 @@ def xml_bytes(root):
     return E.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def _remove_empty_paragraph(paragraph):
+    if paragraph is None or paragraph.tag != tag("p") or text(paragraph).strip():
+        return False
+    if paragraph.xpath(".//w:drawing | .//w:br | .//w:sectPr", namespaces=NS):
+        return False
+    paragraph.getparent().remove(paragraph)
+    return True
+
+
 def generate(payload, number=None):
     validate(payload)
     content = compose(payload)
@@ -93,6 +102,9 @@ def generate(payload, number=None):
     intro = next(p for p in paragraphs if "no uso de suas atribuições" in text(p))
     intro_lead = content["intro"].split(" do Ministério", 1)[0]
     replace(intro, content["intro"], [intro_lead])
+    # The source packages use several blank lines for vertical positioning.
+    # Reclaim one line before the preamble without changing typography or margins.
+    _remove_empty_paragraph(intro.getprevious())
     # Real Word footnotes, including separator and proper relationships.
     if content["notes"]:
         if "word/footnotes.xml" not in parts:
@@ -200,6 +212,12 @@ def generate(payload, number=None):
             indent.set(tag(attr), "0")
     for h in document.xpath("//w:trHeight", namespaces=NS):
         h.set(tag("hRule"), "atLeast")
+    # A trailing empty paragraph after the signature table can be pushed alone
+    # onto a second page when the body grows, producing an apparently blank page.
+    signature_table = nonempty[0].xpath("ancestor::w:tbl[1]", namespaces=NS)[0]
+    following = signature_table.getnext()
+    while _remove_empty_paragraph(following):
+        following = signature_table.getnext()
     parts["word/document.xml"] = xml_bytes(document)
     # Source author metadata is not the author of generated official acts.
     if "docProps/core.xml" in parts:
