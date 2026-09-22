@@ -256,6 +256,37 @@ def test_home_search_form(store, monkeypatch):
     assert "ao menos" in blob or "3 caracteres" in blob
 
 
+def test_home_search_clear_resets_results_input_and_errors(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from database.store import ROOT
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    store.save_draft(sample(store))
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+
+    app.text_input(key="global_search_q").set_value("Sheyla").run()
+    app.button(key="FormSubmitter:global_search_form-Buscar").click().run()
+    assert not app.exception and not app.error
+    result_text = " ".join(str(c.value) for c in app.caption)
+    assert "Resultados para" in result_text
+    clear_key = "FormSubmitter:global_search_form-Limpar busca"
+    assert any(button.key == clear_key for button in app.button)
+
+    app.session_state["global_search_error"] = "estado residual"
+    app.button(key=clear_key).click().run()
+
+    assert not app.exception and not app.error
+    assert app.text_input(key="global_search_q").value == ""
+    assert "global_search_run" not in app.session_state
+    assert "global_search_error" not in app.session_state
+    reset_text = " ".join(str(c.value) for c in app.caption)
+    assert "Digite pelo menos" in reset_text
+    assert "Resultados para" not in reset_text
+    assert not any(button.key == clear_key for button in app.button)
+
+
 def test_home_search_clears_residual_state_on_reentry(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT

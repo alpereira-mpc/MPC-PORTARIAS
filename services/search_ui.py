@@ -62,9 +62,14 @@ def _prepare_home_search():
     """Discard search state left by an earlier visit before rendering Home."""
     if st.session_state.get(HOME_SEARCH_ACTIVE):
         return
+    _clear_home_search()
+    st.session_state[HOME_SEARCH_ACTIVE] = True
+
+
+def _clear_home_search():
+    """Clear input, submitted term, results and transient search state."""
     for key in HOME_SEARCH_STATE_KEYS:
         st.session_state.pop(key, None)
-    st.session_state[HOME_SEARCH_ACTIVE] = True
 
 
 def _persistent_errors(term, errors):
@@ -95,6 +100,11 @@ def render_home_search(store, principal):
         "Localize Ofícios, Portarias, Agenda, Representações, Notícias de Fato "
         "e outros registros permitidos."
     )
+    search_active = any(
+        st.session_state.get(key)
+        for key in HOME_SEARCH_STATE_KEYS
+        if key != "global_search_q"
+    )
     with st.form("global_search_form", border=False):
         query = st.text_input(
             "Busca",
@@ -102,7 +112,15 @@ def render_home_search(store, principal):
             label_visibility="collapsed",
             placeholder="Pesquisar no Ferramentas MPC-PB...",
         )
-        submitted = st.form_submit_button("Buscar", type="primary")
+        search_column, clear_column = st.columns(2)
+        with search_column:
+            submitted = st.form_submit_button("Buscar", type="primary")
+        with clear_column:
+            if search_active or (submitted and normalize_term(query)):
+                st.form_submit_button(
+                    "Limpar busca",
+                    on_click=_clear_home_search,
+                )
     if submitted:
         st.session_state["global_search_run"] = normalize_term(query)
     term = st.session_state.get("global_search_run")
