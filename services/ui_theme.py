@@ -545,6 +545,27 @@ flex:0 1 auto !important;
 width:auto !important;
 min-width:0;
 }}
+section[data-testid="stMain"] [class*="st-key-task_actions_"] [data-testid="stHorizontalBlock"],
+section[data-testid="stMain"] [class*="st-key-history_actions_"] [data-testid="stHorizontalBlock"]{{
+justify-content:flex-start;
+gap:.45rem;
+flex-wrap:wrap;
+}}
+section[data-testid="stMain"] [class*="st-key-task_actions_"] [data-testid="stHorizontalBlock"]>div,
+section[data-testid="stMain"] [class*="st-key-history_actions_"] [data-testid="stHorizontalBlock"]>div{{
+flex:0 1 auto !important;
+width:auto !important;
+min-width:0;
+}}
+section[data-testid="stMain"] .st-key-tarefas_kpis [data-testid="stHorizontalBlock"]{{
+display:grid;
+grid-template-columns:repeat(5,minmax(0,1fr));
+gap:.8rem;
+}}
+section[data-testid="stMain"] .st-key-tarefas_kpis [data-testid="stHorizontalBlock"]>div{{
+width:auto !important;
+min-width:0;
+}}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-form-mark),
 section[data-testid="stMain"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .mpc-form-mark){{
 background:var(--mpc-card-b) !important;
@@ -1003,6 +1024,10 @@ gap:.55rem;
 .mpc-record-head{{flex-direction:column;gap:.35rem;}}
 .mpc-record-title{{flex:none;}}
 .mpc-record-badges{{justify-content:flex-start;}}
+section[data-testid="stMain"] .st-key-tarefas_kpis [data-testid="stHorizontalBlock"]{{
+grid-template-columns:repeat(2,minmax(0,1fr));
+gap:.6rem;
+}}
 /* Let operational cards follow their content after Streamlit stacks columns on mobile. */
 section[data-testid="stMain"] [class*="st-key-mpc_card_"],
 section[data-testid="stMain"] [class*="st-key-mpc_card_"] > div,

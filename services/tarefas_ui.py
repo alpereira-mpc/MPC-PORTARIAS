@@ -141,22 +141,62 @@ def _card(repo, store, principal, row, index=0):
         marks += badge("Atrasada", "danger")
     with card_container(index, f"task_{row['id']}", critical=overdue):
         render_record(row["titulo"], badges_html=marks, meta=due_label, accent=accent)
-        actions_mark()
-        controls=st.columns(5)
-        if row["status"] == "A_FAZER" and controls[0].button("Iniciar", key=f"task_start_{row['id']}"):
-            repo.change_status(row["id"],principal.id,"EM_ANDAMENTO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","INICIAR",row["id"]); _done("Tarefa iniciada.")
-        elif row["status"] == "EM_ANDAMENTO" and controls[0].button("Aguardando", key=f"task_wait_{row['id']}"):
-            repo.change_status(row["id"],principal.id,"AGUARDANDO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","AGUARDAR",row["id"]); _done("Tarefa aguardando.")
-        elif row["status"] == "AGUARDANDO" and controls[0].button("Retomar", key=f"task_resume_{row['id']}"):
-            repo.change_status(row["id"],principal.id,"EM_ANDAMENTO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","RETOMAR",row["id"]); _done("Tarefa retomada.")
-        if row["status"] in ACTIVE and controls[1].button("Concluir", key=f"task_finish_{row['id']}"):
-            repo.change_status(row["id"],principal.id,"CONCLUIDA"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","CONCLUIR",row["id"]); _done("Tarefa concluída.")
-        if controls[2].button("Editar", key=f"task_edit_{row['id']}"):
-            st.session_state["tarefas_edit"]=row; st.rerun()
-        if row["status"] in ACTIVE and controls[3].button("Cancelar",key=f"task_cancel_{row['id']}"):
-            repo.change_status(row["id"],principal.id,"CANCELADA"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","CANCELAR",row["id"]); _done("Tarefa cancelada.")
-        if st.checkbox("Confirmo a exclusão definitiva",key=f"task_confirm_{row['id']}") and controls[4].button("Excluir",key=f"task_delete_{row['id']}"):
-            if repo.delete(row["id"],principal.id): _audit(store,principal,"TAREFA_EXCLUIDA","EXCLUIR",row["id"]); _done("Tarefa excluída.")
+        with st.container(key=f"task_actions_{row['id']}"):
+            actions_mark()
+            controls=st.columns(5)
+            if row["status"] == "A_FAZER" and controls[0].button("Iniciar", key=f"task_start_{row['id']}"):
+                repo.change_status(row["id"],principal.id,"EM_ANDAMENTO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","INICIAR",row["id"]); _done("Tarefa iniciada.")
+            elif row["status"] == "EM_ANDAMENTO" and controls[0].button("Aguardando", key=f"task_wait_{row['id']}"):
+                repo.change_status(row["id"],principal.id,"AGUARDANDO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","AGUARDAR",row["id"]); _done("Tarefa aguardando.")
+            elif row["status"] == "AGUARDANDO" and controls[0].button("Retomar", key=f"task_resume_{row['id']}"):
+                repo.change_status(row["id"],principal.id,"EM_ANDAMENTO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","RETOMAR",row["id"]); _done("Tarefa retomada.")
+            if row["status"] in ACTIVE and controls[1].button("Concluir", key=f"task_finish_{row['id']}"):
+                repo.change_status(row["id"],principal.id,"CONCLUIDA"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","CONCLUIR",row["id"]); _done("Tarefa concluída.")
+            if controls[2].button("Editar", key=f"task_edit_{row['id']}"):
+                st.session_state["tarefas_edit"]=row; st.rerun()
+            if row["status"] in ACTIVE and controls[3].button("Cancelar",key=f"task_cancel_{row['id']}"):
+                repo.change_status(row["id"],principal.id,"CANCELADA"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","CANCELAR",row["id"]); _done("Tarefa cancelada.")
+            with controls[4].popover("Excluir"):
+                confirmed = st.checkbox(
+                    "Confirmo a exclusão definitiva",
+                    key=f"task_confirm_{row['id']}",
+                )
+                if st.button(
+                    "Excluir tarefa",
+                    key=f"task_delete_{row['id']}",
+                    disabled=not confirmed,
+                ):
+                    if repo.delete(row["id"],principal.id): _audit(store,principal,"TAREFA_EXCLUIDA","EXCLUIR",row["id"]); _done("Tarefa excluída.")
+
+
+def _history_card(repo, store, principal, row, index=0):
+    with card_container(index, f"thist_{row['id']}"):
+        render_record(
+            row["titulo"],
+            badges_html=badges(
+                (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
+                (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"])),
+            ),
+            accent="muted" if row["status"] == "CANCELADA" else "success",
+        )
+        with st.container(key=f"history_actions_{row['id']}"):
+            actions_mark()
+            controls = st.columns(2)
+            if row["status"] == "CONCLUIDA" and controls[0].button(
+                "Reabrir", key=f"task_reopen_{row['id']}"
+            ):
+                repo.change_status(row["id"],principal.id,"A_FAZER"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","REABRIR",row["id"]); _done("Tarefa reaberta.")
+            with controls[1].popover("Excluir"):
+                confirmed = st.checkbox(
+                    "Confirmo a exclusão definitiva",
+                    key=f"history_confirm_{row['id']}",
+                )
+                if st.button(
+                    "Excluir tarefa",
+                    key=f"history_delete_{row['id']}",
+                    disabled=not confirmed,
+                ):
+                    if repo.delete(row["id"],principal.id): _audit(store,principal,"TAREFA_EXCLUIDA","EXCLUIR",row["id"]); _done("Tarefa excluída.")
 
 
 def render(store, principal):
@@ -170,42 +210,77 @@ def render(store, principal):
         found = repo.get(st.session_state.pop("tarefas_open_id"), principal.id)
         if found:
             st.session_state["tarefas_edit"] = found
-            st.session_state["tarefas_section"] = "Tarefas"
         else:
             empty_state("Tarefa não encontrada.")
     if "tarefas_edit" in st.session_state:
         _editor(repo, store, principal)
-    counts=repo.situation_counts(principal.id); cols=st.columns(5)
-    for col,key,label,tone in zip(cols,counts,("Atrasadas","Hoje","Próximas","Em andamento","Aguardando"),("danger","warning","info","brand","warning")):
-        with col:
-            kpi_mark(tone)
-            st.metric(label,counts[key])
-    section = st.radio("Seção", ["Tarefas", "Histórico"], horizontal=True, key="tarefas_section")
-    if section == "Tarefas":
-        with st.expander("Filtros",expanded=False):
+    counts=repo.situation_counts(principal.id)
+    with st.container(key="tarefas_kpis"):
+        cols=st.columns(5)
+        for col,key,label,tone in zip(cols,counts,("Atrasadas","Hoje","Próximas","Em andamento","Aguardando"),("danger","warning","info","brand","warning")):
+            with col:
+                kpi_mark(tone)
+                st.metric(label,counts[key])
+    section_label("Filtros")
+    with st.container(border=True, key="tarefas_filters"):
+        filter_mark()
+        search_column, priority_column, deadline_column = st.columns([2.4, 1, 1])
+        q = search_column.text_input("Pesquisa", key="tarefas_q")
+        priority = priority_column.selectbox(
+            "Prioridade",
+            [None, *PRIORITIES],
+            format_func=lambda value: PRIORITY_LABELS.get(value, "Todas"),
+            key="tarefas_priority",
+        )
+        deadline = deadline_column.selectbox(
+            "Prazo",
+            [None, "atrasadas", "hoje", "sem_prazo"],
+            format_func=lambda value: {
+                None: "Todos",
+                "atrasadas": "Atrasadas",
+                "hoje": "Hoje",
+                "sem_prazo": "Sem prazo",
+            }[value],
+            key="tarefas_deadline",
+        )
+
+    section_label("Tarefas ativas")
+    rows = repo.list_active(
+        principal.id,
+        {"pesquisa": q, "prioridade": priority, "prazo": deadline},
+    )
+    for index, row in enumerate(rows):
+        _card(repo, store, principal, row, index)
+    if not rows:
+        empty_state("Nenhuma tarefa ativa.")
+
+    history_filters = {
+        "pesquisa": st.session_state.get("tarefas_history_q", ""),
+        "prioridade": st.session_state.get("tarefas_history_priority"),
+        "status": st.session_state.get("tarefas_history_status"),
+    }
+    history_rows = repo.list_history(principal.id, history_filters, limit=30)
+    with st.expander(
+        f"Tarefas concluídas e canceladas ({len(history_rows)})",
+        expanded=False,
+    ):
+        with st.container(border=True, key="tarefas_history_filters"):
             filter_mark()
-            q=st.text_input("Pesquisa",key="tarefas_q"); priority=st.selectbox("Prioridade",[None,*PRIORITIES],format_func=lambda x: PRIORITY_LABELS.get(x,"Todas"),key="tarefas_priority"); deadline=st.selectbox("Prazo",[None,"atrasadas","hoje","sem_prazo"],format_func=lambda x:{None:"Todos","atrasadas":"Atrasadas","hoje":"Hoje","sem_prazo":"Sem prazo"}[x],key="tarefas_deadline")
-        rows=repo.list_active(principal.id,{"pesquisa":q,"prioridade":priority,"prazo":deadline})
-        for index, row in enumerate(rows): _card(repo,store,principal,row,index)
-        if not rows: empty_state("Nenhuma tarefa ativa.")
-    else:
-        with st.expander("Filtros", expanded=False):
-            filter_mark()
-            history_q=st.text_input("Pesquisa",key="tarefas_history_q")
-            history_priority=st.selectbox("Prioridade",[None,*PRIORITIES],format_func=lambda x: PRIORITY_LABELS.get(x,"Todas"),key="tarefas_history_priority")
-            history_status=st.selectbox("Situação",[None,*HISTORY],format_func=lambda x: STATUS_LABELS.get(x,"Todas"),key="tarefas_history_status")
-        rows=repo.list_history(principal.id,{"pesquisa":history_q,"prioridade":history_priority,"status":history_status},limit=30)
-        for index, row in enumerate(rows):
-            with card_container(index, f"thist_{row['id']}"):
-                render_record(
-                    row["titulo"],
-                    badges_html=badges(
-                        (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
-                        (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"])),
-                    ),
-                    accent="muted" if row["status"] == "CANCELADA" else "success",
-                )
-                if row["status"]=="CONCLUIDA" and st.button("Reabrir",key=f"task_reopen_{row['id']}"):
-                    repo.change_status(row["id"],principal.id,"A_FAZER"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","REABRIR",row["id"]); _done("Tarefa reaberta.")
-                if st.checkbox("Confirmo a exclusão definitiva",key=f"history_confirm_{row['id']}") and st.button("Excluir",key=f"history_delete_{row['id']}"):
-                    if repo.delete(row["id"],principal.id): _audit(store,principal,"TAREFA_EXCLUIDA","EXCLUIR",row["id"]); _done("Tarefa excluída.")
+            search_column, priority_column, status_column = st.columns([2.4, 1, 1])
+            search_column.text_input("Pesquisa", key="tarefas_history_q")
+            priority_column.selectbox(
+                "Prioridade",
+                [None, *PRIORITIES],
+                format_func=lambda value: PRIORITY_LABELS.get(value, "Todas"),
+                key="tarefas_history_priority",
+            )
+            status_column.selectbox(
+                "Situação",
+                [None, *HISTORY],
+                format_func=lambda value: STATUS_LABELS.get(value, "Todas"),
+                key="tarefas_history_status",
+            )
+        for index, row in enumerate(history_rows):
+            _history_card(repo, store, principal, row, index)
+        if not history_rows:
+            empty_state("Nenhuma tarefa concluída ou cancelada.")

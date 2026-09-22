@@ -215,7 +215,7 @@ def test_alert_order_accepts_mixed_modules_with_same_severity():
     assert ordered[0].source_id == "t"
 
 
-def test_task_sections_do_not_query_hidden_lists(monkeypatch):
+def test_task_page_loads_active_and_collapsed_history(monkeypatch):
     from services import tarefas_ui as ui
     from streamlit.testing.v1 import AppTest
 
@@ -231,10 +231,8 @@ def test_task_sections_do_not_query_hidden_lists(monkeypatch):
         "from tests.test_tarefas import _principal\n"
         "render(None, _principal(1))\n"
     ).run()
-    assert not app.exception and calls == ["active"]
-    calls.clear()
-    app.radio(key="tarefas_section").set_value("Histórico").run()
-    assert not app.exception and calls == ["history"]
+    assert not app.exception and calls == ["active", "history"]
+    assert app.expander[0].label == "Tarefas concluídas e canceladas (0)"
 
 
 def test_postgres_batch_commits_revisions_and_rolls_back(pg_store):

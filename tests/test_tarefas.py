@@ -270,3 +270,67 @@ def test_new_task_form_keeps_existing_listing(store, monkeypatch):
     assert not any("Nova tarefa" in str(item.value) for item in app.subheader)
     titles = " ".join(str(item.value) for item in app.markdown)
     assert "Tarefa visível no módulo" in titles
+
+
+def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
+    store, monkeypatch
+):
+    from streamlit.testing.v1 import AppTest
+
+    from database.access import AccessStore
+    from database.store import ROOT
+    from tests.access_testing import TEST_IDENTITY, enable_login
+
+    enable_login(monkeypatch, store)
+    owner = AccessStore(store).get_by_email(TEST_IDENTITY["email"])
+    repo = TarefasStore(store)
+    first = repo.create(owner["id"], {"titulo": "Ativa alfa"})
+    second = repo.create(owner["id"], {"titulo": "Ativa beta"})
+    completed = repo.create(owner["id"], {"titulo": "Concluída recente"})
+    cancelled = repo.create(owner["id"], {"titulo": "Cancelada recente"})
+    repo.change_status(completed["id"], owner["id"], "CONCLUIDA")
+    repo.change_status(cancelled["id"], owner["id"], "CANCELADA")
+    monkeypatch.setattr("database.store.Store", lambda: store)
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio(key="portal_module").set_value("Tarefas").run()
+
+    assert not app.exception
+    assert [metric.label for metric in app.metric] == [
+        "Atrasadas",
+        "Hoje",
+        "Próximas",
+        "Em andamento",
+        "Aguardando",
+    ]
+    assert app.expander[0].label == "Tarefas concluídas e canceladas (2)"
+    assert app.expander[0].proto.expanded is False
+    assert app.button(key=f"task_finish_{first['id']}")
+    assert app.button(key=f"task_finish_{second['id']}")
+
+    app.button(key=f"task_finish_{first['id']}").click().run()
+
+    assert not app.exception
+    assert repo.get(first["id"], owner["id"])["status"] == "CONCLUIDA"
+    assert app.expander[0].label == "Tarefas concluídas e canceladas (3)"
+    assert not any(
+        button.key == f"task_finish_{first['id']}" for button in app.button
+    )
+    assert app.button(key=f"task_reopen_{first['id']}")
+
+    app.text_input(key="tarefas_q").set_value("beta").run()
+
+    assert not app.exception
+    assert app.button(key=f"task_finish_{second['id']}")
+    assert not any(
+        button.key == f"task_finish_{first['id']}" for button in app.button
+    )
+
+    app.checkbox(key=f"task_confirm_{second['id']}").check().run()
+    app.button(key=f"task_delete_{second['id']}").click().run()
+
+    assert not app.exception
+    assert repo.get(second["id"], owner["id"]) is None
+    assert not any(
+        button.key == f"task_finish_{second['id']}" for button in app.button
+    )
