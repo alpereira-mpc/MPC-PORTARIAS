@@ -47,21 +47,11 @@ def _open(item):
     open_origin(item)
 
 
-def _clear_home_search():
-    """Restore the home search to its initial, unsubmitted state."""
-    for key in ("global_search_q", "global_search_run"):
-        st.session_state.pop(key, None)
-
-
 def render_home_search(store, principal):
     section_label("Busca global")
     st.caption(
         "Localize Ofícios, Portarias, Agenda, Representações, Notícias de Fato "
         "e outros registros permitidos."
-    )
-    has_active_search = bool(
-        st.session_state.get("global_search_q")
-        or st.session_state.get("global_search_run")
     )
     with st.form("global_search_form", border=False):
         query = st.text_input(
@@ -70,18 +60,7 @@ def render_home_search(store, principal):
             label_visibility="collapsed",
             placeholder="Pesquisar no Ferramentas MPC-PB...",
         )
-        buttons, clear_action = st.columns([1, 1])
-        with buttons:
-            submitted = st.form_submit_button("Buscar", type="primary")
-        with clear_action:
-            cleared = False
-            if has_active_search:
-                cleared = st.form_submit_button(
-                    "Limpar busca",
-                    on_click=_clear_home_search,
-                )
-    if cleared:
-        return
+        submitted = st.form_submit_button("Buscar", type="primary")
     if submitted:
         st.session_state["global_search_run"] = normalize_term(query)
     term = st.session_state.get("global_search_run")
