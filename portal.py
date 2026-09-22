@@ -40,6 +40,7 @@ PORTAL_NAV_STATE_KEYS = frozenset(
         "tarefas_open_id",
         "representacoes_view",
         "ouvidoria_open_id",
+        "portaria_open_id",
     }
 )
 
@@ -413,6 +414,10 @@ def home(principal, store=None):
         variant="home",
         prompt="Selecione uma ferramenta para iniciar.",
     )
+    if store is not None:
+        from services.search_ui import render_home_search
+
+        render_home_search(store, principal)
     # Future modules remain registered, but only active tools occupy the Home grid.
     visible = [module for module in visible_modules(principal) if module.active]
     if not visible:

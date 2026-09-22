@@ -574,6 +574,28 @@ def history():
         notice.success(st.session_state.pop("history_message"))
     if "history_error" in st.session_state:
         notice.error(st.session_state.pop("history_error"))
+    focus = st.session_state.pop("portaria_open_id", None)
+    if focus:
+        try:
+            with store.connection(read_only=True) as c:
+                row = c.execute(
+                    "SELECT id,numero,ano,status FROM portarias WHERE id=?",
+                    (focus,),
+                ).fetchone()
+            if row:
+                st.info(
+                    "Registro localizado na busca: Portaria "
+                    + (
+                        f"nº {row['numero']}/{row['ano']}"
+                        if row["numero"]
+                        else "em rascunho"
+                    )
+                    + f" ({row['status']})."
+                )
+            else:
+                st.warning("A Portaria indicada na busca não foi encontrada.")
+        except Exception:
+            st.warning("Não foi possível destacar a Portaria indicada na busca.")
     exclusion_register()
     paged = store.backend == "postgresql"
     records = [] if paged else store.history()

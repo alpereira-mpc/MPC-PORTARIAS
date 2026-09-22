@@ -86,6 +86,9 @@ def open_origin(item):
     source_id = getattr(item, "source_id", None)
     gabinete = getattr(item, "gabinete", None)
     metadata = getattr(item, "metadata", None) or {}
+    if module == "portarias":
+        request_portal_navigation("Portarias", nav="Histórico", portaria_open_id=source_id)
+        return
     if module == "oficios":
         code = gabinete if gabinete and gabinete != "—" else None
         page = (
@@ -131,6 +134,12 @@ def open_origin(item):
                 "secao": metadata.get("secao") or "Sistema",
                 "aba": metadata.get("aba") or "Saúde",
             },
+        )
+        return
+    if module == "admin":
+        request_portal_navigation(
+            "Administração",
+            pending_open_admin={"secao": metadata.get("secao") or "Acessos e Auditoria"},
         )
         return
     if module == "access_requests":

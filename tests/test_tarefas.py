@@ -3,13 +3,38 @@ from services.audit import INSTITUTIONAL_TZ
 import pytest
 
 from database.tarefas import TarefasStore, effective_deadline
-from services.access import Principal
-from services.alerts import collect_alerts, task_alerts
+from services.access import Principal, has_permission
+from services.alerts import can_view_alertas, collect_alerts, task_alerts
 from services.tarefas_ui import REMINDER_TIMES, _parse_hour
 
 
-def _principal(identifier, admin=False):
-    return Principal(identifier, f"Usuário {identifier}", f"u{identifier}@test.local", "ADMINISTRADOR" if admin else "USUARIO", True, False, False, False, admin, (), False)
+def _principal(
+    identifier,
+    admin=False,
+    *,
+    pode_portarias=False,
+    pode_agenda=False,
+    pode_oficios=False,
+    pode_memorandos=False,
+):
+    return Principal(
+        identifier,
+        f"Usuário {identifier}",
+        f"u{identifier}@test.local",
+        "ADMINISTRADOR" if admin else "USUARIO",
+        True,
+        pode_portarias,
+        pode_agenda,
+        pode_oficios,
+        admin,
+        (),
+        pode_memorandos,
+    )
+
+
+def _alerts_principal(identifier):
+    """May open Alertas (Ofícios); task rows stay scoped by owner_user_id."""
+    return _principal(identifier, pode_oficios=True)
 
 
 def test_tarefas_are_private_through_every_repository_operation(store):
@@ -25,6 +50,15 @@ def test_tarefas_are_private_through_every_repository_operation(store):
     assert repo.get(task["id"], 99) is None  # administrador não recebe bypass
 
 
+def test_tarefas_only_does_not_grant_alertas():
+    only_tasks = _principal(1)
+    assert has_permission(only_tasks, "tarefas")
+    assert not has_permission(only_tasks, "alertas")
+    assert not can_view_alertas(only_tasks)
+    with pytest.raises(ValueError, match="módulo"):
+        collect_alerts(None, only_tasks)
+
+
 def test_status_and_alerts_are_owner_scoped(store):
     repo = TarefasStore(store)
     yesterday = (date.today().fromordinal(date.today().toordinal() - 1)).isoformat()
@@ -33,8 +67,8 @@ def test_status_and_alerts_are_owner_scoped(store):
     assert repo.list_active(1) == []
     assert repo.list_history(1)[0]["status"] == "CONCLUIDA"
     assert repo.change_status(task["id"], 1, "A_FAZER")["concluido_em"] is None
-    own, _, _ = collect_alerts(store, _principal(1), now=datetime.now().astimezone())
-    other, _, _ = collect_alerts(store, _principal(2), now=datetime.now().astimezone())
+    own, _, _ = collect_alerts(store, _alerts_principal(1), now=datetime.now().astimezone())
+    other, _, _ = collect_alerts(store, _alerts_principal(2), now=datetime.now().astimezone())
     assert any(alert.source_module == "tarefas" and alert.source_id == str(task["id"]) for alert in own)
     assert not any(alert.source_module == "tarefas" for alert in other)
 
@@ -74,10 +108,18 @@ def test_due_time_and_multiple_expired_reminders_produce_one_alert(store):
     ]
     task = repo.create(1, {"titulo": "Um alerta", "prazo_data": today.isoformat(), "prazo_hora": "12:00", "lembretes": reminders})
     assert repo.get(task["id"], 1)["prazo_hora"] == "12:00"
-    alerts, _, _ = collect_alerts(store, _principal(1), now=datetime.combine(today, datetime.min.time(), INSTITUTIONAL_TZ).replace(hour=10))
+    alerts, _, _ = collect_alerts(
+        store,
+        _alerts_principal(1),
+        now=datetime.combine(today, datetime.min.time(), INSTITUTIONAL_TZ).replace(hour=10),
+    )
     assert len([alert for alert in alerts if alert.source_module == "tarefas" and alert.source_id == str(task["id"])]) == 1
     repo.change_status(task["id"], 1, "CONCLUIDA")
-    alerts, _, _ = collect_alerts(store, _principal(1), now=datetime.combine(today, datetime.min.time(), INSTITUTIONAL_TZ).replace(hour=10))
+    alerts, _, _ = collect_alerts(
+        store,
+        _alerts_principal(1),
+        now=datetime.combine(today, datetime.min.time(), INSTITUTIONAL_TZ).replace(hour=10),
+    )
     assert not any(alert.source_module == "tarefas" for alert in alerts)
 
 
@@ -153,7 +195,7 @@ def test_task_alert_window_covers_seven_days_and_prioritizes_relevant_reason(sto
     seven_days = repo.create(1, {"titulo": "Sete dias", "prioridade": "BAIXA", "prazo_data": (today + timedelta(days=7)).isoformat()})
     hidden = repo.create(1, {"titulo": "Oito dias", "prazo_data": (today + timedelta(days=8)).isoformat()})
     far_reminder = repo.create(1, {"titulo": "Lembrete distante", "prazo_data": (today + timedelta(days=9)).isoformat(), "lembretes": [(now - timedelta(minutes=1)).isoformat()]})
-    items, _, _ = collect_alerts(store, _principal(1), now=now)
+    items, _, _ = collect_alerts(store, _alerts_principal(1), now=now)
     tasks = [item for item in items if item.source_module == "tarefas"]
     identifiers = [item.source_id for item in tasks]
     assert str(hidden["id"]) not in identifiers
@@ -172,7 +214,7 @@ def test_same_task_has_only_one_alert_and_priority_then_deadline_breaks_ties(sto
     second = repo.create(1, {"titulo": "Depois", "prioridade": "ALTA", "prazo_data": (today + timedelta(days=3)).isoformat()})
     urgent = repo.create(1, {"titulo": "Prioridade", "prioridade": "URGENTE", "prazo_data": (today + timedelta(days=5)).isoformat()})
     duplicate = repo.create(1, {"titulo": "Uma só", "prioridade": "URGENTE", "prazo_data": today.isoformat(), "prazo_hora": "20:00", "lembretes": [(now - timedelta(minutes=1)).isoformat()]})
-    items, _, _ = collect_alerts(store, _principal(1), now=now)
+    items, _, _ = collect_alerts(store, _alerts_principal(1), now=now)
     tasks = [item for item in items if item.source_module == "tarefas"]
     ids = [item.source_id for item in tasks]
     assert ids.count(str(duplicate["id"])) == 1

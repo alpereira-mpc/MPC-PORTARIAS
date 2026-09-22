@@ -114,7 +114,7 @@ def test_history_participants_are_batched_and_page_limited(store, monkeypatch):
 def test_trip_collector_not_called_without_agenda_permission(store, monkeypatch):
     from services import alerts
 
-    principal = replace(_principal(1), pode_agenda=False)
+    principal = replace(_principal(1), pode_oficios=True, pode_agenda=False)
     monkeypatch.setattr(alerts, "trip_alerts", lambda *args: pytest.fail("Coleta não autorizada"))
     items, _, _ = alerts.collect_alerts(store, principal, modules=("agenda",))
     assert items == []

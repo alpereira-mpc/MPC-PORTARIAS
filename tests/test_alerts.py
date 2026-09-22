@@ -399,6 +399,21 @@ def test_permissions_and_cabinet_filter(store):
         collect_alerts(store, portarias_only, now=NOW)
     assert has_permission(portarias_only, "tarefas")
     assert not has_permission(portarias_only, "pendencias")
+    tarefas_only = _user(
+        store,
+        "tarefas.alerts@test.local",
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_memorandos=False,
+        pode_portarias=False,
+        pode_admin=False,
+        gabinetes=[],
+    )
+    assert has_permission(tarefas_only, "tarefas")
+    assert not has_permission(tarefas_only, "alertas")
+    assert not can_view_alertas(tarefas_only)
+    with pytest.raises(ValueError, match="módulo"):
+        collect_alerts(store, tarefas_only, now=NOW)
 
 
 def test_system_alerts_remain_visible_on_hoje_period(store):
