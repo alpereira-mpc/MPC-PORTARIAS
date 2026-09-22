@@ -105,13 +105,16 @@ def test_stripe_and_header_helpers_are_available():
     from services import agenda_ui
     agenda_page = getsource(agenda_ui.render)
     opening = agenda_page[
-        agenda_page.index('if "agenda_edit" in st.session_state:') : agenda_page.index(
+        agenda_page.index('agenda_edit = st.session_state.get("agenda_edit")') : agenda_page.index(
             "section = st.radio"
         )
     ]
     assert "editor(agenda, people, principal)" in opening
     assert "leave_editor(agenda, people, principal)" in opening
+    assert 'not agenda_edit.get("id")' in opening
+    assert 'not agenda_leave_edit.get("id")' in opening
     assert "return" not in opening
+    assert 'editing.get("id") == row["id"]' in agenda_page
     assert "AGENDA E AFASTAMENTOS DOS PROCURADORES" in agenda_page
     assert "AGENDA DOS PROCURADORES" not in agenda_page
     assert 'key="agenda_new"' in agenda_page

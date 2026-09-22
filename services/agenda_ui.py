@@ -75,6 +75,16 @@ def move_page(key, delta):
     st.session_state[key] = max(0, st.session_state.get(key, 0) + delta)
 
 
+def start_appointment_edit(record):
+    st.session_state.pop("agenda_leave_edit", None)
+    st.session_state["agenda_edit"] = record
+
+
+def start_leave_edit(agenda, identifier):
+    st.session_state.pop("agenda_edit", None)
+    st.session_state["agenda_leave_edit"] = agenda.get_leave(identifier)
+
+
 def audit_agenda(evento, acao, identifier=None, extra=None, entity_type="compromisso"):
     from services.audit import registrar_evento
 
@@ -533,9 +543,11 @@ def render(store=None, principal=None):
     if message := st.session_state.pop("agenda_message", None):
         st.success(message)
     consume_pending_open_agenda(agenda)
-    if "agenda_edit" in st.session_state:
+    agenda_edit = st.session_state.get("agenda_edit")
+    if agenda_edit is not None and not agenda_edit.get("id"):
         editor(agenda, people, principal)
-    if "agenda_leave_edit" in st.session_state:
+    agenda_leave_edit = st.session_state.get("agenda_leave_edit")
+    if agenda_leave_edit is not None and not agenda_leave_edit.get("id"):
         leave_editor(agenda, people, principal)
     section = st.radio(
         "Seção", ["Agenda", "Histórico"], horizontal=True, key="agenda_section"
@@ -582,7 +594,12 @@ def render(store=None, principal=None):
                         accent="muted",
                     )
                     if row.get("observacao") and row.get("substituto_id"): st.write(row["observacao"])
-                    if st.button("Abrir detalhes do afastamento", key="agenda_history_leave_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
+                    st.button(
+                        "Abrir detalhes do afastamento",
+                        key="agenda_history_leave_" + row["id"],
+                        on_click=start_leave_edit,
+                        args=(agenda, row["id"]),
+                    )
                 else:
                     hour = "Dia inteiro" if row.get("sem_hora") else row["inicio"][11:16]
                     title = row.get("titulo") or row.get("processo") or "Compromisso"
@@ -606,7 +623,20 @@ def render(store=None, principal=None):
                         st.markdown("✈️ **Logística de viagem**")
                         st.write(names.get(procurador_id, str(procurador_id)))
                         render_trip_details(trip, names.get(procurador_id, ""), key=f"agenda_history_trip_message_{row['id']}_{procurador_id}", compromisso=row.get("titulo") or row.get("processo"))
-                    if st.button("Abrir detalhes", key="agenda_history_edit_" + row["id"]): st.session_state["agenda_edit"] = row; st.rerun()
+                    st.button(
+                        "Abrir detalhes",
+                        key="agenda_history_edit_" + row["id"],
+                        on_click=start_appointment_edit,
+                        args=(row,),
+                    )
+            if row.get("afastamento"):
+                editing = st.session_state.get("agenda_leave_edit")
+                if editing and editing.get("id") == row["id"]:
+                    leave_editor(agenda, people, principal)
+            else:
+                editing = st.session_state.get("agenda_edit")
+                if editing and editing.get("id") == row["id"]:
+                    editor(agenda, people, principal)
         previous, following = st.columns(2)
         previous.button("Anterior", disabled=offset == 0, key="agenda_history_previous", on_click=move_page, args=("agenda_history_offset", -30))
         following.button("Próxima", disabled=not has_next, key="agenda_history_next", on_click=move_page, args=("agenda_history_offset", 30))
@@ -752,9 +782,17 @@ def render(store=None, principal=None):
                 )
                 if not row.get("substituto_id") and substitution_pending(row, people):
                     st.warning("⚠ Substituto ainda não definido")
-                if st.button("Editar afastamento", key="agenda_leave_edit_" + row["id"]): st.session_state["agenda_leave_edit"] = agenda.get_leave(row["id"]); st.rerun()
+                st.button(
+                    "Editar afastamento",
+                    key="agenda_leave_edit_" + row["id"],
+                    on_click=start_leave_edit,
+                    args=(agenda, row["id"]),
+                )
                 if row["status"] != "CANCELADO" and st.button("Cancelar afastamento", key="agenda_leave_cancel_" + row["id"]):
                     agenda.cancel_leave(row["id"]); audit_agenda("AFASTAMENTO_CANCELADO", "CANCELAR", row["id"], entity_type="afastamento"); done("Afastamento cancelado; registro preservado.")
+            editing = st.session_state.get("agenda_leave_edit")
+            if editing and editing.get("id") == row["id"]:
+                leave_editor(agenda, people, principal)
             continue
         # From here down, every record is a compromisso and has its own fields.
         hour = "Dia inteiro" if row["sem_hora"] else row["inicio"][11:16]
@@ -796,9 +834,12 @@ def render(store=None, principal=None):
                     st.markdown("✈️ **Logística de viagem**")
                     st.write(names.get(procurador_id, str(procurador_id)))
                     render_trip_details(trip, names.get(procurador_id, ""), key=f"agenda_trip_message_{row['id']}_{procurador_id}", compromisso=title)
-                if st.button("Editar", key="agenda_edit_" + row["id"]):
-                    st.session_state["agenda_edit"] = row
-                    st.rerun()
+                st.button(
+                    "Editar",
+                    key="agenda_edit_" + row["id"],
+                    on_click=start_appointment_edit,
+                    args=(row,),
+                )
                 if row["situacao"] != "Cancelado" and st.button(
                     "Cancelar compromisso", key="agenda_cancel_" + row["id"]
                 ):
@@ -815,3 +856,6 @@ def render(store=None, principal=None):
                     agenda.delete(row["id"], confirmed=confirmed)
                     audit_agenda("COMPROMISSO_EXCLUIDO", "EXCLUIR", row["id"])
                     done("Compromisso excluído.")
+        editing = st.session_state.get("agenda_edit")
+        if editing and editing.get("id") == row["id"]:
+            editor(agenda, people, principal)

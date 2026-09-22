@@ -476,3 +476,98 @@ def test_create_forms_keep_existing_agenda_and_leave_records(store, monkeypatch)
     assert "Compromisso visível" in displayed
     assert "AFASTAMENTO" in displayed
 
+
+def test_edit_forms_render_after_the_selected_card_in_mixed_list(store, monkeypatch):
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    agenda = AgendaStore(store)
+
+    for index, hour in enumerate((9, 10, 11)):
+        record = draft("EVENTO", members=[1], day=today.isoformat())
+        record.update(
+            inicio=f"{today.isoformat()}T{hour:02d}:00:00",
+            fim=f"{today.isoformat()}T{hour:02d}:30:00",
+            titulo=f"Compromisso {index + 1}",
+        )
+        agenda.save(record, conflict_confirmed=True)
+
+    people = [person for person in store.catalog("procuradores") if person["ativo"]]
+    for index, person in enumerate(people[:3]):
+        agenda.save_leave(
+            {
+                "procurador_id": person["id"],
+                "motivo": "Férias",
+                "data_inicio": today.isoformat(),
+                "data_fim": today.isoformat(),
+                "observacao": f"Afastamento {index + 1}",
+            }
+        )
+
+    future = draft("EVENTO", members=[1], day=(today + timedelta(days=1)).isoformat())
+    future["titulo"] = "Compromisso em outra data"
+    future_id = agenda.save(future, conflict_confirmed=True)
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_agenda").click().run()
+    assert not app.exception and not app.error
+
+    commitment_keys = [
+        button.key
+        for button in app.button
+        if button.key and button.key.startswith("agenda_edit_")
+    ]
+    leave_keys = [
+        button.key
+        for button in app.button
+        if button.key and button.key.startswith("agenda_leave_edit_")
+    ]
+    assert len(commitment_keys) == len(leave_keys) == 3
+
+    def assert_form_between_selected_and_next(keys, index, save_label):
+        app.button(key=keys[index]).click().run()
+        assert not app.exception and not app.error
+        buttons = list(app.button)
+        selected_position = next(i for i, button in enumerate(buttons) if button.key == keys[index])
+        saves = [(i, button) for i, button in enumerate(buttons) if button.label == save_label]
+        assert len(saves) == 1
+        save_position = saves[0][0]
+        assert selected_position < save_position
+        if index + 1 < len(keys):
+            next_position = next(i for i, button in enumerate(buttons) if button.key == keys[index + 1])
+            assert save_position < next_position
+
+    for index in range(3):
+        assert_form_between_selected_and_next(
+            commitment_keys, index, "Salvar compromisso"
+        )
+    for index in range(3):
+        assert_form_between_selected_and_next(leave_keys, index, "Salvar afastamento")
+        assert "agenda_edit" not in app.session_state
+        assert not any(button.label == "Salvar compromisso" for button in app.button)
+
+    next(button for button in app.button if button.label == "Voltar à agenda").click().run()
+    assert "agenda_leave_edit" not in app.session_state
+    app.radio(key="agenda_view").set_value("Semana").run()
+    future_key = f"agenda_edit_{future_id}"
+    app.button(key=future_key).click().run()
+    assert not app.exception and not app.error
+    buttons = list(app.button)
+    assert next(i for i, button in enumerate(buttons) if button.key == future_key) < next(
+        i for i, button in enumerate(buttons) if button.label == "Salvar compromisso"
+    )
+    next(widget for widget in app.text_input if widget.label == "Nome do evento *").set_value(
+        "Compromisso editado"
+    ).run()
+    next(
+        button for button in app.button if button.label == "Salvar compromisso"
+    ).click().run()
+    assert not app.exception and not app.error
+    assert "agenda_edit" not in app.session_state
+    assert AgendaStore(store).get(future_id)["titulo"] == "Compromisso editado"
+
