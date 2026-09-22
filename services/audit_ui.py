@@ -6,22 +6,48 @@ from database.access import AccessStore
 from database.audit import PAGE_SIZE, EXPORT_LIMIT, AuditStore
 from services.access import require_permission
 from services.audit import (
+    ACTION_TYPE_OPTIONS,
     MODULE_LABELS,
+    apply_action_type,
+    dashboard_hoje,
     details_dict,
+    entity_label,
+    event_label,
+    action_label,
     export_csv,
     format_local,
+    format_local_short,
+    module_label,
+    objeto_humano,
     overview,
     period_bounds,
+    result_label,
+    resumo_humano,
     user_overview,
 )
-from services.ui_theme import empty_state, section_label
+from services.ui_theme import (
+    badges,
+    card_container,
+    definition_block,
+    empty_state,
+    filter_mark,
+    kpi_mark,
+    render_record,
+    section_label,
+)
 
 
 PERIODS = (
+    ("7d", "Últimos 7 dias"),
+    ("30d", "Últimos 30 dias"),
     ("hoje", "Hoje"),
-    ("7d", "7 dias"),
-    ("30d", "30 dias"),
     ("personalizado", "Personalizado"),
+)
+RESULT_OPTIONS = (
+    ("", "Todos"),
+    ("OK", "Sucesso"),
+    ("ERRO", "Falha"),
+    ("NEGADO", "Recusado"),
 )
 
 
@@ -46,8 +72,28 @@ def _period_filter(prefix):
     return {"inicio": inicio, "fim": fim}
 
 
-def _module_label(code):
-    return MODULE_LABELS.get(code, code or "—")
+def _result_tone(code):
+    if code in ("ERRO", "FALHA"):
+        return "danger"
+    if code == "NEGADO":
+        return "warning"
+    return "success"
+
+
+def _render_kpis(store, principal):
+    data = dashboard_hoje(store, principal)
+    items = (
+        ("Atividades hoje", data["atividades"], "brand"),
+        ("Usuários ativos", data["usuarios_ativos"], "info"),
+        ("Alterações administrativas", data["admin"], "warning"),
+        ("Downloads de documentos", data["downloads"], "success"),
+        ("Falhas/erros registrados", data["falhas"], "danger" if data["falhas"] else "muted"),
+    )
+    columns = st.columns(len(items))
+    for column, (title, value, tone) in zip(columns, items):
+        with column:
+            kpi_mark(tone)
+            st.metric(title, value)
 
 
 def _render_overview(store, principal):
@@ -80,7 +126,7 @@ def _render_overview(store, principal):
     c.write("**Último acesso ao sistema**")
     c.write(format_local(latest["criado_em"]) if latest else "—")
     d.write("**Módulo mais utilizado (30 dias)**")
-    d.write(_module_label(used["modulo"]) if used else "—")
+    d.write(module_label(used["modulo"]) if used else "—")
     rows = user_overview(store, principal, {"inicio": period_bounds("30d")[0]})
     st.subheader("Usuários")
     st.dataframe(
@@ -118,7 +164,7 @@ def _render_accesses(store, principal):
     modulo = c.selectbox(
         "Módulo",
         [None, *MODULE_LABELS],
-        format_func=lambda m: _module_label(m) if m else "Todos",
+        format_func=lambda m: module_label(m) if m else "Todos",
         key="acc_modulo",
     )
     if picked:
@@ -143,7 +189,7 @@ def _render_accesses(store, principal):
                 "Sessões": r.get("sessoes") or 0,
                 "Dias distintos": r.get("dias_distintos") or 0,
                 "Última atividade": format_local(r.get("ultima_atividade")),
-                "Módulos": ", ".join(_module_label(m) for m in r.get("modulos") or []) or "—",
+                "Módulos": ", ".join(module_label(m) for m in r.get("modulos") or []) or "—",
             }
             for r in rows
         ],
@@ -159,124 +205,168 @@ def _render_accesses(store, principal):
     )
     if selected:
         events = AuditStore(store).user_timeline(selected)
-        st.dataframe(
-            [
-                {
-                    "Data/hora": format_local(e["criado_em"]),
-                    "Módulo": _module_label(e["modulo"]),
-                    "Evento": e["evento"],
-                    "Ação": e["acao"],
-                    "Resultado": e["resultado"],
-                    "Entidade": " ".join(
-                        p for p in (e.get("entidade_tipo"), e.get("entidade_id")) if p
-                    )
-                    or "—",
-                }
-                for e in events
-            ],
-            hide_index=True,
-            use_container_width=True,
-        )
+        for index, event in enumerate(events):
+            with card_container(index, f"acc_tl_{event['id']}"):
+                render_record(
+                    format_local_short(event["criado_em"]),
+                    badges_html=badges(
+                        (result_label(event.get("resultado")), _result_tone(event.get("resultado"))),
+                        (action_label(event.get("acao") or event.get("evento")), "brand"),
+                    ),
+                    secondary=(event.get("usuario_nome") or "—")
+                    + " · "
+                    + resumo_humano(event),
+                    meta=module_label(event.get("modulo"))
+                    + " · "
+                    + objeto_humano(event),
+                )
+
+
+def _event_details(record):
+    details = details_dict(record)
+    rows = [
+        ("Data/hora", format_local(record.get("criado_em"))),
+        ("Usuário", record.get("usuario_nome") or "—"),
+        ("E-mail", record.get("usuario_email") or "—"),
+        ("Função", details.get("perfil_ator") or "—"),
+        (
+            "Gabinete",
+            ", ".join(details.get("gabinetes_ator") or []) or "—",
+        ),
+        ("Módulo", module_label(record.get("modulo"))),
+        ("Ação", action_label(record.get("acao") or record.get("evento"))),
+        ("Descrição", event_label(record.get("evento"))),
+        ("Entidade", entity_label(record.get("entidade_tipo")) if record.get("entidade_tipo") else "—"),
+        ("Identificador", record.get("entidade_id") or "—"),
+        ("Resultado", result_label(record.get("resultado"))),
+        ("Resumo", details.get("resumo") or resumo_humano(record)),
+    ]
+    changes = details.get("alteracoes")
+    if isinstance(changes, list) and changes:
+        rows.append(("Alterações", "; ".join(str(item) for item in changes)))
+    technical = [
+        ("Código interno", record.get("evento") or "—"),
+        ("Sessão", record.get("sessao_id") or "—"),
+        ("ID do evento", record.get("id")),
+    ]
+    for key, value in details.items():
+        if key in (
+            "resumo",
+            "alteracoes",
+            "perfil_ator",
+            "gabinetes_ator",
+            "titulo",
+            "arquivo",
+            "formato",
+        ):
+            continue
+        if key in ("mensagem", "motivo", "tipo"):
+            rows.append((key.replace("_", " ").capitalize(), value))
+    definition_block("Detalhes", rows)
+    definition_block("Informações técnicas", technical)
 
 
 def _render_log(store, principal):
     audit = AuditStore(store)
+    users = AccessStore(store).list_users()
+    emails = {u["email"]: u["nome"] + " · " + u["email"] for u in users}
+    filter_mark()
     filters = _period_filter("log_") or {}
     a, b, c = st.columns(3)
-    users = audit.distinct_values("usuario_email")
-    eventos = audit.distinct_values("evento")
-    resultados = audit.distinct_values("resultado")
     picked = a.selectbox(
         "Usuário",
-        [None, *users],
-        format_func=lambda e: e or "Todos",
+        [None, *sorted(emails)],
+        format_func=lambda e: emails.get(e, "Todos"),
         key="log_user",
     )
     modulo = b.selectbox(
         "Módulo",
         [None, *MODULE_LABELS],
-        format_func=lambda m: _module_label(m) if m else "Todos",
+        format_func=lambda m: module_label(m) if m else "Todos",
         key="log_modulo",
     )
-    evento = c.selectbox(
-        "Evento",
-        [None, *eventos],
-        format_func=lambda e: e or "Todos",
-        key="log_evento",
+    tipo = c.selectbox(
+        "Tipo de ação",
+        [item[0] for item in ACTION_TYPE_OPTIONS],
+        format_func=lambda k: dict(ACTION_TYPE_OPTIONS)[k],
+        key="log_tipo",
     )
     d, e, f = st.columns(3)
     resultado = d.selectbox(
         "Resultado",
-        [None, *resultados],
-        format_func=lambda r: r or "Todos",
+        [item[0] for item in RESULT_OPTIONS],
+        format_func=lambda k: dict(RESULT_OPTIONS)[k],
         key="log_resultado",
     )
     admin_only = e.checkbox("Somente ações administrativas", key="log_admin")
-    page = int(
-        f.number_input("Página", min_value=1, value=1, step=1, key="log_page")
-    )
+    query = f.text_input("Busca", key="log_q", placeholder="Nome, e-mail, documento…")
     if picked:
         filters["usuario_email"] = picked
     if modulo:
         filters["modulo"] = modulo
-    if evento:
-        filters["evento"] = evento
     if resultado:
         filters["resultado"] = resultado
     if admin_only:
         filters["somente_admin"] = True
+    if query:
+        filters["q"] = query.strip()[:80]
+    if tipo:
+        filters = apply_action_type(filters, tipo)
+    signature = (
+        filters.get("inicio"),
+        filters.get("fim"),
+        picked,
+        modulo,
+        tipo,
+        resultado,
+        admin_only,
+        query,
+    )
+    if st.session_state.get("audit_log_sig") != signature:
+        st.session_state["audit_log_sig"] = signature
+        st.session_state["log_page"] = 1
+    page = int(st.session_state.get("log_page") or 1)
     total = audit.count(filters)
     pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     if page > pages:
         page = pages
+        st.session_state["log_page"] = page
     offset = (page - 1) * PAGE_SIZE
     rows = audit.list_events(filters, limit=PAGE_SIZE, offset=offset)
-    st.caption(f"{total} registro(s) · página {page} de {pages} · {PAGE_SIZE} por página")
-    st.dataframe(
-        [
-            {
-                "Data/hora": format_local(r["criado_em"]),
-                "Usuário": (r.get("usuario_nome") or "—")
-                + ((" · " + r["usuario_email"]) if r.get("usuario_email") else ""),
-                "Módulo": _module_label(r["modulo"]),
-                "Ação": r.get("acao") or r.get("evento"),
-                "Resultado": r.get("resultado") or "—",
-                "Entidade": " ".join(
-                    p for p in (r.get("entidade_tipo"), r.get("entidade_id")) if p
-                )
-                or "—",
-            }
-            for r in rows
-        ],
-        hide_index=True,
-        use_container_width=True,
+    st.caption(
+        f"{total} registro(s) · página {page} de {pages} · {PAGE_SIZE} por página"
     )
-    if rows:
-        choices = {r["id"]: format_local(r["criado_em"]) + " · " + r["evento"] for r in rows}
-        opened = st.selectbox(
-            "Abrir registro",
-            [None, *choices],
-            format_func=lambda i: choices.get(i, "Selecione"),
-            key="log_open",
-        )
-        if opened:
-            record = audit.get(opened)
-            if record:
-                st.json(
-                    {
-                        "data_hora": format_local(record["criado_em"]),
-                        "usuario": record.get("usuario_email"),
-                        "nome": record.get("usuario_nome"),
-                        "sessao": record.get("sessao_id"),
-                        "evento": record.get("evento"),
-                        "modulo": record.get("modulo"),
-                        "acao": record.get("acao"),
-                        "resultado": record.get("resultado"),
-                        "entidade_tipo": record.get("entidade_tipo"),
-                        "entidade_id": record.get("entidade_id"),
-                        "detalhes": details_dict(record),
-                    }
-                )
+    if not rows:
+        empty_state("Nenhum evento no período filtrado.")
+    for index, row in enumerate(rows):
+        with card_container(index, f"audit_{row['id']}"):
+            render_record(
+                format_local_short(row["criado_em"]),
+                badges_html=badges(
+                    (result_label(row.get("resultado")), _result_tone(row.get("resultado"))),
+                    (action_label(row.get("acao") or row.get("evento")), "brand"),
+                ),
+                secondary=(row.get("usuario_nome") or "—") + " · " + resumo_humano(row),
+                meta=" · ".join(
+                    part
+                    for part in (
+                        module_label(row.get("modulo")),
+                        objeto_humano(row),
+                    )
+                    if part and part != "—"
+                ),
+                accent=_result_tone(row.get("resultado")),
+            )
+            with st.expander("Detalhes"):
+                _event_details(row)
+    nav_a, nav_b, nav_c = st.columns([1, 2, 1])
+    if nav_a.button("Anterior", disabled=page <= 1, key="audit_prev"):
+        st.session_state["log_page"] = page - 1
+        st.rerun()
+    nav_b.caption(f"Página {page} de {pages}")
+    if nav_c.button("Próxima", disabled=page >= pages, key="audit_next"):
+        st.session_state["log_page"] = page + 1
+        st.rerun()
     csv_text, exported, truncated = export_csv(store, principal, filters)
     if truncated:
         st.warning(
@@ -296,6 +386,7 @@ def _render_log(store, principal):
 def render(store, principal):
     require_permission(principal, "admin")
     st.subheader("Acessos e Auditoria")
+    _render_kpis(store, principal)
     tab = st.radio(
         "Visão",
         ["Visão Geral", "Acessos", "Auditoria"],

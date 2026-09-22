@@ -135,6 +135,31 @@ def actor_of(principal):
     return getattr(principal, "email", None) or str(principal)
 
 
+def _audit(store, principal, evento, acao, record=None, extra=None, entidade_id=None):
+    from services.audit import registrar_evento
+
+    detalhes = dict(extra or {})
+    identifier = entidade_id
+    if record:
+        identifier = record.get("id") if identifier is None else identifier
+        if record.get("numero_interno"):
+            detalhes.setdefault("titulo", record["numero_interno"])
+        elif record.get("titulo"):
+            detalhes.setdefault("titulo", str(record["titulo"])[:80])
+        if record.get("situacao"):
+            detalhes.setdefault("situacao", record["situacao"])
+    registrar_evento(
+        store,
+        evento=evento,
+        modulo="ouvidoria",
+        acao=acao,
+        principal=principal,
+        entidade_tipo="noticia_fato",
+        entidade_id=identifier,
+        detalhes=detalhes or None,
+    )
+
+
 def open_store(store):
     return OuvidoriaStore(store)
 
@@ -319,7 +344,9 @@ def create(store, values, principal, uploads=None):
         tipo=values.get("documento_tipo") or "DOCUMENTO_RECEBIDO",
         data_documento=record["data_recebimento"],
     )
-    return open_store(store).create(record, members, actor_of(principal), files)
+    created = open_store(store).create(record, members, actor_of(principal), files)
+    _audit(store, principal, "NOTICIA_FATO_CRIADA", "CRIAR", created)
+    return created
 
 
 def update(store, identifier, values, principal):
@@ -344,7 +371,30 @@ def update(store, identifier, values, principal):
             + (names.get(int(new)) or "—")
             + "."
         )
-    return open_store(store).update(identifier, record, members, actor_of(principal), note)
+    updated = open_store(store).update(identifier, record, members, actor_of(principal), note)
+    from services.audit import format_changes
+
+    changes = format_changes(
+        current,
+        updated,
+        {
+            "titulo": "Título",
+            "situacao": "Situação",
+            "prioridade": "Prioridade",
+            "classificacao_acesso": "Classificação",
+            "procurador_responsavel_id": "Responsável",
+            "resultado": "Resultado",
+        },
+    )
+    _audit(
+        store,
+        principal,
+        "NOTICIA_FATO_ALTERADA",
+        "EDITAR",
+        updated,
+        {"alteracoes": changes} if changes else None,
+    )
+    return updated
 
 
 def get(store, identifier):
@@ -446,7 +496,7 @@ def add_document(store, identifier, values, name, content, principal):
     if tipo not in DOCUMENTOS:
         raise ValueError("Tipo de documento inválido.")
     safe, mime = validate_upload(name, content)
-    return open_store(store).add_document(
+    saved = open_store(store).add_document(
         identifier,
         {
             "providencia_id": values.get("providencia_id"),
@@ -460,6 +510,15 @@ def add_document(store, identifier, values, name, content, principal):
         content,
         actor_of(principal),
     )
+    _audit(
+        store,
+        principal,
+        "DOCUMENTO_ANEXADO",
+        "IMPORTAR",
+        get(store, identifier),
+        {"arquivo": safe, "formato": mime},
+    )
+    return saved
 
 
 def close(store, identifier, situacao, principal, resultado=None, conclusao=""):
@@ -503,6 +562,21 @@ def close(store, identifier, situacao, principal, resultado=None, conclusao=""):
     updated = update(store, identifier, values, principal)
     tipo = "ARQUIVADA" if situacao == "ARQUIVADA" else "ENCERRADA"
     add_progress(store, identifier, {"tipo": tipo, "data": date.today().isoformat()}, principal)
+    _audit(
+        store,
+        principal,
+        "NOTICIA_FATO_ARQUIVADA" if situacao == "ARQUIVADA" else "NOTICIA_FATO_ENCERRADA",
+        "FINALIZAR",
+        updated,
+        {
+            "alteracoes": [
+                "Situação: "
+                + label(SITUACOES, current.get("situacao"))
+                + " → "
+                + label(SITUACOES, situacao)
+            ]
+        },
+    )
     return updated
 
 
@@ -540,16 +614,33 @@ def create_projeto_representacao(store, identifier, principal, overrides=None):
         },
         principal,
     )
-    return open_store(store).link_representation(
+    linked = open_store(store).link_representation(
         identifier, created["id"], actor_of(principal)
     )
+    _audit(
+        store,
+        principal,
+        "NOTICIA_VINCULADA_REPRESENTACAO",
+        "ALTERAR",
+        get(store, identifier),
+        {"representacao_id": created["id"]},
+    )
+    return linked
 
 
-def delete(store, identifier):
+def delete(store, identifier, principal=None):
     current = get(store, identifier)
     if current is None:
         raise ValueError("Notícia de fato não encontrada.")
-    return open_store(store).delete(identifier)
+    removed = open_store(store).delete(identifier)
+    _audit(
+        store,
+        principal,
+        "NOTICIA_FATO_EXCLUIDA",
+        "EXCLUIR",
+        current,
+    )
+    return removed
 
 
 def can_delete(record, *, providencias=(), documentos=(), andamentos=()):

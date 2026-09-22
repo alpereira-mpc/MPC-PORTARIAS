@@ -167,7 +167,7 @@ def _render_access_requests(store, principal):
                 disabled=not confirm_delete,
             ):
                 try:
-                    deleted = delete_access_request(store, identifier)
+                    deleted = delete_access_request(store, identifier, actor)
                 except Exception:
                     LOGGER.exception("Falha ao excluir solicitação de acesso")
                     st.error("Não foi possível excluir a solicitação.")

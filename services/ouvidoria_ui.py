@@ -465,6 +465,18 @@ def _detail(store, principal, record):
                 file = download(store, item["id"], principal)
                 cols[3].download_button("Baixar", file["conteudo"], file["nome"], file["tipo"], key="ouvi_dl_" + item["id"])
             elif cols[3].button("Preparar download", key="ouvi_prep_" + item["id"]):
+                from services.audit import registrar_download
+
+                registrar_download(
+                    store,
+                    modulo="ouvidoria",
+                    entidade_tipo="noticia_fato",
+                    entidade_id=record["id"],
+                    arquivo=item.get("nome_arquivo"),
+                    formato=item.get("mime_type"),
+                    rotulo=record.get("numero_interno") or record.get("titulo"),
+                    principal=principal,
+                )
                 st.session_state["ouvidoria_download"] = item["id"]
                 st.rerun()
         flow = _toolbar(

@@ -41,9 +41,20 @@ FORBIDDEN_KEYS = {
     "texto_extraido",
     "assunto",
     "observacoes",
+    "conclusao",
+    "conclusao_analise",
+    "stack",
+    "traceback",
+    "trace",
+    "exception",
+    "manifestante_nome",
+    "manifestante_email",
+    "manifestante_telefone",
 }
 MAX_STRING = 200
 MAX_KEYS = 24
+MAX_SEARCH = 80
+DASHBOARD_CACHE_SECONDS = 20
 MODULE_LABELS = {
     "portarias": "Portarias",
     "agenda": "Agenda e Afastamentos",
@@ -70,6 +81,192 @@ MODULE_KEYS = {
     "Representações": "representacoes",
     "Ouvidoria": "ouvidoria",
 }
+ACTION_LABELS = {
+    "ACESSO": "Login",
+    "AUTORIZACAO": "Autorização",
+    "ENTRAR": "Acesso ao módulo",
+    "SAIR": "Logout",
+    "CRIAR": "Criação",
+    "CADASTRAR": "Cadastro",
+    "EDITAR": "Alteração",
+    "ALTERAR": "Alteração",
+    "EXCLUIR": "Exclusão",
+    "REMOVER": "Remoção",
+    "CANCELAR": "Cancelamento",
+    "FINALIZAR": "Finalização",
+    "EXPORTAR": "Download",
+    "IMPORTAR": "Importação",
+    "BACKUP": "Backup",
+    "PERMISSOES": "Alteração de permissão",
+    "GABINETES": "Alteração de gabinete",
+    "ATIVAR": "Reativação",
+    "DESATIVAR": "Desativação",
+    "PROMOVER": "Alteração de perfil",
+    "REBAIXAR": "Alteração de perfil",
+    "BLOQUEADO": "Operação recusada",
+    "PREVIA": "Geração",
+    "MOVIMENTAR": "Alteração de status",
+    "ACESSAR": "Acesso",
+    "REGISTRAR": "Registro",
+    "CORRIGIR": "Alteração",
+    "REABRIR": "Reabertura",
+}
+EVENT_LABELS = {
+    "SESSAO_INICIADA": "Início de sessão",
+    "ACESSO_AUTORIZADO": "Acesso autorizado",
+    "ACESSO_NEGADO": "Acesso recusado",
+    "USUARIO_INATIVO": "Acesso recusado (usuário inativo)",
+    "LOGOUT": "Logout",
+    "MODULO_ACESSADO": "Acesso ao módulo",
+    "CENTRAL_PENDENCIAS_ACESSADA": "Acesso às Pendências",
+    "ALERTAS_ACESSADOS": "Acesso aos Alertas",
+    "PERMISSAO_NEGADA": "Permissão recusada",
+    "USUARIO_CRIADO": "Usuário criado",
+    "USUARIO_EDITADO": "Usuário alterado",
+    "USUARIO_ATIVADO": "Usuário reativado",
+    "USUARIO_DESATIVADO": "Usuário desativado",
+    "USUARIO_PROMOVIDO": "Perfil alterado",
+    "ADMINISTRADOR_REBAIXADO": "Perfil alterado",
+    "PERMISSOES_ALTERADAS": "Permissões alteradas",
+    "GABINETES_ALTERADOS": "Gabinetes alterados",
+    "USUARIO_EXCLUIDO": "Usuário excluído",
+    "ADMIN_PROTEGIDO_BLOQUEADO": "Alteração bloqueada (administrador protegido)",
+    "ULTIMO_ADMIN_BLOQUEADO": "Alteração bloqueada (último administrador)",
+    "FUNCAO_INSTITUCIONAL_ALTERADA": "Função institucional alterada",
+    "SOLICITACAO_APROVADA": "Solicitação de acesso aprovada",
+    "SOLICITACAO_RECUSADA": "Solicitação de acesso recusada",
+    "SOLICITACAO_EXCLUIDA": "Solicitação de acesso excluída",
+    "BACKUP_GERADO": "Backup gerado",
+    "BACKUP_DISPONIBILIZADO": "Backup disponibilizado para download",
+    "DOCUMENTO_BAIXADO": "Download de documento",
+    "DOCUMENTO_ANEXADO": "Documento anexado",
+    "ERRO_OPERACIONAL": "Falha operacional",
+    "PORTARIA_FINALIZADA": "Portaria finalizada",
+    "PORTARIA_CANCELADA": "Portaria cancelada",
+    "PORTARIA_EXCLUIDA": "Portaria excluída",
+    "RASCUNHO_EXCLUIDO": "Rascunho excluído",
+    "PREVIA_GERADA": "Prévia gerada",
+    "OFICIO_FINALIZADO": "Ofício finalizado",
+    "OFICIO_RECEBIDO": "Ofício recebido cadastrado",
+    "OFICIO_EXCLUIDO": "Ofício excluído",
+    "NUMERO_LIBERADO": "Exclusão definitiva com número liberado",
+    "MEMORANDO_FINALIZADO": "Memorando finalizado",
+    "MEMORANDO_EXCLUIDO_DEFINITIVAMENTE": "Memorando excluído definitivamente",
+    "REPRESENTACAO_CRIADA": "Representação criada",
+    "REPRESENTACAO_ALTERADA": "Representação alterada",
+    "REPRESENTACAO_EXCLUIDA": "Representação excluída",
+    "REPRESENTACAO_PROTOCOLADA": "Representação protocolada",
+    "REPRESENTACAO_STATUS_ALTERADO": "Situação da representação alterada",
+    "REPRESENTACAO_FASE_ALTERADA": "Fase processual alterada",
+    "NOTICIA_FATO_CRIADA": "Notícia de fato criada",
+    "NOTICIA_FATO_ALTERADA": "Notícia de fato alterada",
+    "NOTICIA_FATO_EXCLUIDA": "Notícia de fato excluída",
+    "NOTICIA_FATO_ENCERRADA": "Notícia de fato encerrada",
+    "NOTICIA_FATO_ARQUIVADA": "Notícia de fato arquivada",
+    "NOTICIA_VINCULADA_REPRESENTACAO": "Projeto de Representação vinculado",
+    "COMPROMISSO_CRIADO": "Compromisso criado",
+    "COMPROMISSO_ALTERADO": "Compromisso alterado",
+    "COMPROMISSO_CANCELADO": "Compromisso cancelado",
+    "COMPROMISSO_EXCLUIDO": "Compromisso excluído",
+    "AFASTAMENTO_CRIADO": "Afastamento criado",
+    "AFASTAMENTO_EDITADO": "Afastamento alterado",
+    "AFASTAMENTO_CANCELADO": "Afastamento cancelado",
+}
+ENTITY_LABELS = {
+    "portaria": "Portaria",
+    "oficio": "Ofício",
+    "memorando": "Memorando",
+    "usuario": "Usuário",
+    "backup": "Backup",
+    "representacao": "Representação",
+    "noticia_fato": "Notícia de fato",
+    "compromisso": "Compromisso",
+    "afastamento": "Afastamento",
+    "tarefa": "Tarefa",
+    "funcao_institucional": "Função institucional",
+    "solicitacao_acesso": "Solicitação de acesso",
+    "documento": "Documento",
+}
+RESULT_LABELS = {
+    "OK": "Sucesso",
+    "ERRO": "Falha",
+    "NEGADO": "Recusado",
+    "FALHA": "Falha",
+}
+ACTION_TYPE_OPTIONS = (
+    ("", "Todas"),
+    ("login", "Login"),
+    ("criacao", "Criação"),
+    ("alteracao", "Alteração"),
+    ("exclusao", "Exclusão"),
+    ("finalizacao", "Finalização"),
+    ("download", "Download"),
+    ("upload", "Upload"),
+    ("geracao", "Geração"),
+    ("permissao", "Alteração de permissão"),
+    ("backup", "Backup"),
+    ("falha", "Falha"),
+)
+ACTION_TYPE_FILTERS = {
+    "login": {
+        "eventos": [
+            "SESSAO_INICIADA",
+            "ACESSO_AUTORIZADO",
+            "ACESSO_NEGADO",
+            "USUARIO_INATIVO",
+            "LOGOUT",
+        ]
+    },
+    "criacao": {"acoes": ["CRIAR", "CADASTRAR"]},
+    "alteracao": {
+        "acoes": [
+            "ALTERAR",
+            "EDITAR",
+            "MOVIMENTAR",
+            "PERMISSOES",
+            "GABINETES",
+            "ATIVAR",
+            "DESATIVAR",
+            "PROMOVER",
+            "REBAIXAR",
+            "CORRIGIR",
+            "REGISTRAR",
+            "REABRIR",
+        ]
+    },
+    "exclusao": {"acoes": ["EXCLUIR", "REMOVER"]},
+    "finalizacao": {"acoes": ["FINALIZAR"]},
+    "download": {
+        "eventos": ["DOCUMENTO_BAIXADO", "BACKUP_DISPONIBILIZADO"],
+        "acoes": ["EXPORTAR"],
+    },
+    "upload": {"acoes": ["IMPORTAR"], "eventos": ["DOCUMENTO_ANEXADO"]},
+    "geracao": {"acoes": ["PREVIA", "GERAR"], "eventos": ["PREVIA_GERADA", "BACKUP_GERADO"]},
+    "permissao": {
+        "eventos": [
+            "PERMISSOES_ALTERADAS",
+            "USUARIO_PROMOVIDO",
+            "ADMINISTRADOR_REBAIXADO",
+            "GABINETES_ALTERADOS",
+            "FUNCAO_INSTITUCIONAL_ALTERADA",
+        ]
+    },
+    "backup": {"acoes": ["BACKUP"], "eventos": ["BACKUP_GERADO", "BACKUP_DISPONIBILIZADO"]},
+    "falha": {"resultados": ["ERRO", "NEGADO", "FALHA"]},
+}
+USER_FIELD_LABELS = {
+    "ativo": "Situação",
+    "perfil": "Perfil",
+    "nome": "Nome",
+    "pode_portarias": "Portarias",
+    "pode_agenda": "Agenda",
+    "pode_oficios": "Ofícios",
+    "pode_memorandos": "Memorandos",
+    "pode_admin": "Administração",
+    "pode_representacoes": "Representações",
+    "pode_ouvidoria": "Ouvidoria",
+    "pode_relatorios": "Relatórios",
+}
 
 
 def format_local(value):
@@ -82,6 +279,68 @@ def format_local(value):
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return moment.astimezone(INSTITUTIONAL_TZ).strftime("%d/%m/%Y %H:%M:%S")
+
+
+def format_local_short(value):
+    if not value:
+        return "—"
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return str(value)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(INSTITUTIONAL_TZ).strftime("%d/%m/%Y · %H:%M")
+
+
+def module_label(code):
+    return MODULE_LABELS.get(code, code or "—")
+
+
+def action_label(code):
+    return ACTION_LABELS.get(code, EVENT_LABELS.get(code, code or "—"))
+
+
+def event_label(code):
+    return EVENT_LABELS.get(code, action_label(code) if code else "—")
+
+
+def result_label(code):
+    return RESULT_LABELS.get(code, code or "—")
+
+
+def entity_label(code):
+    return ENTITY_LABELS.get(code, code or "—")
+
+
+def _display_value(value):
+    if value is True:
+        return "Sim"
+    if value is False:
+        return "Não"
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(item) for item in value) or "—"
+    return str(value)
+
+
+def format_changes(before, after, fields):
+    lines = []
+    before = before or {}
+    after = after or {}
+    for key, label in fields.items():
+        old, new = before.get(key), after.get(key)
+        if old != new:
+            lines.append(f"{label}: {_display_value(old)} → {_display_value(new)}")
+    return lines
+
+
+def apply_action_type(filters, tipo):
+    data = dict(filters or {})
+    extra = ACTION_TYPE_FILTERS.get(tipo) or {}
+    data.update(extra)
+    return data
 
 
 def period_bounds(kind, start=None, end=None):
@@ -119,7 +378,18 @@ def sanitize_details(value):
     for key, item in list(value.items())[:MAX_KEYS]:
         name = str(key)
         lowered = name.casefold()
-        if lowered in FORBIDDEN_KEYS or any(part in lowered for part in ("token", "secret", "senha", "password", "cookie")):
+        if lowered in FORBIDDEN_KEYS or any(
+            part in lowered
+            for part in (
+                "token",
+                "secret",
+                "senha",
+                "password",
+                "cookie",
+                "manifestante",
+                "traceback",
+            )
+        ):
             continue
         if item is None or isinstance(item, bool):
             clean[name] = item
@@ -183,13 +453,40 @@ def _identity_fields(principal=None, identity=None, state=None):
             "usuario_id": getattr(principal, "id", None),
             "usuario_email": getattr(principal, "email", "") or "",
             "usuario_nome": getattr(principal, "nome", "") or "",
+            "perfil_ator": getattr(principal, "perfil", None),
+            "gabinetes_ator": list(getattr(principal, "gabinetes", ()) or ())[:12],
         }
     identity = identity or {}
     return {
         "usuario_id": None,
         "usuario_email": (identity.get("email") or "").strip().lower(),
         "usuario_nome": identity.get("name") or identity.get("email") or "",
+        "perfil_ator": None,
+        "gabinetes_ator": [],
     }
+
+
+def _default_summary(evento, acao, modulo, entidade_tipo, entidade_id, details):
+    details = details or {}
+    if details.get("resumo"):
+        return details["resumo"]
+    title = details.get("titulo") or details.get("numero") or details.get("arquivo")
+    target = details.get("usuario_alvo") or details.get("nome_alvo")
+    entity = entity_label(entidade_tipo) if entidade_tipo else module_label(modulo)
+    action = event_label(evento) or action_label(acao)
+    if evento == "DOCUMENTO_BAIXADO":
+        who = entity if entity and entity != "—" else "documento"
+        name = title or ""
+        return f"Baixou {who}" + (f" {name}" if name else "")
+    if evento == "BACKUP_GERADO":
+        return "Gerou backup administrativo"
+    if evento == "BACKUP_DISPONIBILIZADO":
+        return "Disponibilizou backup administrativo para download"
+    if target:
+        return f"{action}: {target}"
+    if title:
+        return f"{action}: {title}"
+    return action
 
 
 def registrar_evento(
@@ -214,7 +511,16 @@ def registrar_evento(
         state = state if state is not None else _session_map()
         fields = _identity_fields(principal, identity, state)
         stamp = utc_now()
-        payload = sanitize_details(detalhes)
+        payload = dict(sanitize_details(detalhes) or {})
+        if fields.get("perfil_ator") and "perfil_ator" not in payload:
+            payload["perfil_ator"] = fields["perfil_ator"]
+        gabinetes = fields.get("gabinetes_ator")
+        if gabinetes and "gabinetes_ator" not in payload:
+            payload["gabinetes_ator"] = gabinetes
+        if "resumo" not in payload:
+            built = _default_summary(evento, acao, modulo, entidade_tipo, entidade_id, payload)
+            if built:
+                payload["resumo"] = built[:MAX_STRING]
         row = {
             **fields,
             "sessao_id": sessao_id if sessao_id is not None else session_id(state),
@@ -414,10 +720,29 @@ def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
             {
                 "perfil": depois.get("perfil"),
                 "ativo": depois.get("ativo"),
+                "resumo": f"Criou o usuário {alvo or nome or identifier}",
             },
         )
         return
-    emit("USUARIO_EDITADO", "EDITAR")
+    changes = format_changes(
+        antes,
+        depois,
+        {
+            "nome": "Nome",
+            "ativo": "Situação",
+            "perfil": "Perfil",
+            "pode_portarias": "Portarias",
+            "pode_agenda": "Agenda",
+            "pode_oficios": "Ofícios",
+            "pode_memorandos": "Memorandos",
+            "pode_admin": "Administração",
+            "pode_representacoes": "Representações",
+            "pode_ouvidoria": "Ouvidoria",
+            "pode_relatorios": "Relatórios",
+        },
+    )
+    extra_edit = {"alteracoes": changes} if changes else None
+    emit("USUARIO_EDITADO", "EDITAR", extra_edit)
     if antes and depois:
         if bool(antes.get("ativo")) != bool(depois.get("ativo")):
             emit(
@@ -458,6 +783,12 @@ def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
                 "PERMISSOES",
                 {
                     "campos": changed,
+                    "alteracoes": [
+                        f"{USER_FIELD_LABELS.get(key, key)}: "
+                        f"{_display_value(bool(antes.get(key)))} → "
+                        f"{_display_value(bool(depois.get(key)))}"
+                        for key in changed
+                    ],
                     "de": {k: bool(antes.get(k)) for k in changed},
                     "para": {k: bool(depois.get(k)) for k in changed},
                 },
@@ -468,7 +799,16 @@ def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
             emit(
                 "GABINETES_ALTERADOS",
                 "GABINETES",
-                {"de": before_offices, "para": after_offices},
+                {
+                    "de": before_offices,
+                    "para": after_offices,
+                    "alteracoes": [
+                        "Gabinetes: "
+                        + _display_value(before_offices)
+                        + " → "
+                        + _display_value(after_offices)
+                    ],
+                },
             )
 
 
@@ -545,6 +885,34 @@ def aplicar_exclusao_usuario(store, principal, identifier):
     return snapshot
 
 
+def registrar_download(
+    store,
+    *,
+    modulo,
+    entidade_tipo,
+    entidade_id=None,
+    arquivo=None,
+    formato=None,
+    rotulo=None,
+    principal=None,
+):
+    return registrar_evento(
+        store,
+        evento="DOCUMENTO_BAIXADO",
+        modulo=modulo,
+        acao="EXPORTAR",
+        resultado="OK",
+        principal=principal,
+        entidade_tipo=entidade_tipo,
+        entidade_id=entidade_id,
+        detalhes={
+            "arquivo": (arquivo or "")[:80] or None,
+            "formato": formato,
+            "titulo": rotulo,
+        },
+    )
+
+
 def _require_audit_reader(principal):
     from services.access import require_permission
 
@@ -561,6 +929,7 @@ def overview(store, principal):
 
     users = AccessStore(store).list_users()
     ativos = sum(1 for u in users if u["ativo"])
+    painel = audit.dashboard(*today)
     return {
         "hoje": audit.period_summary(*today),
         "semana": audit.period_summary(*week),
@@ -569,7 +938,31 @@ def overview(store, principal):
         "modulo_mais_usado": audit.top_module(*month),
         "usuarios_ativos": ativos,
         "usuarios": users,
+        "painel": painel,
     }
+
+
+def dashboard_hoje(store, principal):
+    _require_audit_reader(principal)
+    state = _session_map()
+    now = datetime.now(timezone.utc).timestamp()
+    if state is not None:
+        try:
+            cached = state.get("_audit_dashboard")
+            if (
+                cached
+                and now - cached.get("t", 0) < DASHBOARD_CACHE_SECONDS
+            ):
+                return cached["data"]
+        except Exception:
+            pass
+    data = AuditStore(store).dashboard(*period_bounds("hoje"))
+    if state is not None:
+        try:
+            state["_audit_dashboard"] = {"t": now, "data": data}
+        except Exception:
+            pass
+    return data
 
 
 def user_overview(store, principal, filters=None):
@@ -620,11 +1013,13 @@ def export_csv(store, principal, filters=None):
                 format_local(row["criado_em"]),
                 row.get("usuario_nome") or "",
                 row.get("usuario_email") or "",
-                row.get("modulo") or "",
-                row.get("evento") or "",
-                row.get("acao") or "",
-                row.get("resultado") or "",
-                row.get("entidade_tipo") or "",
+                module_label(row.get("modulo")),
+                event_label(row.get("evento")),
+                action_label(row.get("acao") or row.get("evento")),
+                result_label(row.get("resultado")),
+                entity_label(row.get("entidade_tipo"))
+                if row.get("entidade_tipo")
+                else "",
                 row.get("entidade_id") or "",
                 row.get("detalhes_json") or "",
             ]
@@ -641,3 +1036,32 @@ def details_dict(row):
     except (TypeError, ValueError):
         return {}
     return sanitize_details(parsed) or {}
+
+
+def objeto_humano(row):
+    details = details_dict(row)
+    title = details.get("titulo") or details.get("numero") or details.get("arquivo")
+    if title:
+        return str(title)
+    if row.get("entidade_tipo"):
+        label = entity_label(row["entidade_tipo"])
+        identifier = row.get("entidade_id")
+        return label if not identifier else label
+    return "—"
+
+
+def resumo_humano(row):
+    details = details_dict(row)
+    if details.get("resumo"):
+        return details["resumo"]
+    changes = details.get("alteracoes")
+    if isinstance(changes, list) and changes:
+        return "; ".join(str(item) for item in changes[:4])
+    return _default_summary(
+        row.get("evento"),
+        row.get("acao"),
+        row.get("modulo"),
+        row.get("entidade_tipo"),
+        row.get("entidade_id"),
+        details,
+    )

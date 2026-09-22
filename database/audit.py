@@ -11,6 +11,18 @@ COLUMNS = (
     "entidade_tipo,entidade_id,resultado,detalhes_json,criado_em"
 )
 
+# Future retention is institutional policy; this store is append-only.
+RETENTION_POLICY = None
+LIKE_ESCAPE = "\\"
+ACCESS_NOISE = (
+    "SESSAO_INICIADA",
+    "ACESSO_AUTORIZADO",
+    "MODULO_ACESSADO",
+    "CENTRAL_PENDENCIAS_ACESSADA",
+    "ALERTAS_ACESSADOS",
+)
+DOWNLOAD_EVENTS = ("DOCUMENTO_BAIXADO", "BACKUP_DISPONIBILIZADO")
+FAILURE_RESULTS = ("ERRO", "NEGADO", "FALHA")
 INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS auditoria_eventos_criado_em_idx "
     "ON auditoria_eventos(criado_em DESC, id DESC)",
@@ -122,44 +134,96 @@ class AuditStore:
             )
             return inserted.lastrowid
 
+    def _in_clause(self, column, values):
+        items = [item for item in values or [] if item not in (None, "")]
+        if not items:
+            return None, []
+        placeholders = ",".join("?" * len(items))
+        return f"{column} IN ({placeholders})", items
+
     def _filters(self, filters):
         clauses = []
         args = []
-        start = (filters or {}).get("inicio")
-        end = (filters or {}).get("fim")
+        data = filters or {}
+        start = data.get("inicio")
+        end = data.get("fim")
         if start:
             clauses.append("criado_em>=?")
             args.append(start)
         if end:
             clauses.append("criado_em<=?")
             args.append(end)
-        email = (filters or {}).get("usuario_email")
+        email = data.get("usuario_email")
         if email:
             clauses.append("usuario_email=?")
             args.append(email)
-        usuario_id = (filters or {}).get("usuario_id")
+        usuario_id = data.get("usuario_id")
         if usuario_id:
             clauses.append("usuario_id=?")
             args.append(usuario_id)
-        modulo = (filters or {}).get("modulo")
+        modulo = data.get("modulo")
         if modulo:
             clauses.append("modulo=?")
             args.append(modulo)
-        evento = (filters or {}).get("evento")
+        evento = data.get("evento")
         if evento:
             clauses.append("evento=?")
             args.append(evento)
-        acao = (filters or {}).get("acao")
+        acao = data.get("acao")
         if acao:
             clauses.append("acao=?")
             args.append(acao)
-        resultado = (filters or {}).get("resultado")
+        resultado = data.get("resultado")
         if resultado:
             clauses.append("resultado=?")
             args.append(resultado)
-        if (filters or {}).get("somente_admin"):
+        resultados = data.get("resultados")
+        sql, items = self._in_clause("resultado", resultados)
+        if sql:
+            clauses.append(sql)
+            args.extend(items)
+        if data.get("somente_admin"):
             clauses.append("modulo=?")
             args.append("admin")
+        if data.get("somente_falhas"):
+            placeholders = ",".join("?" * len(FAILURE_RESULTS))
+            clauses.append(f"resultado IN ({placeholders})")
+            args.extend(FAILURE_RESULTS)
+        eventos = data.get("eventos")
+        acoes = data.get("acoes")
+        evento_sql, evento_items = self._in_clause("evento", eventos)
+        acao_sql, acao_items = self._in_clause("acao", acoes)
+        if evento_sql and acao_sql:
+            clauses.append(f"({evento_sql} OR {acao_sql})")
+            args.extend(evento_items)
+            args.extend(acao_items)
+        elif evento_sql:
+            clauses.append(evento_sql)
+            args.extend(evento_items)
+        elif acao_sql:
+            clauses.append(acao_sql)
+            args.extend(acao_items)
+        query = (data.get("q") or "").strip()
+        if len(query) >= 2:
+            pattern = (
+                "%"
+                + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                + "%"
+            )
+            like = "ILIKE" if self.store.backend == "postgresql" else "LIKE"
+            clauses.append(
+                "("
+                f"usuario_nome {like} ? ESCAPE '{LIKE_ESCAPE}' OR "
+                f"usuario_email {like} ? ESCAPE '{LIKE_ESCAPE}' OR "
+                f"evento {like} ? ESCAPE '{LIKE_ESCAPE}' OR "
+                f"acao {like} ? ESCAPE '{LIKE_ESCAPE}' OR "
+                f"modulo {like} ? ESCAPE '{LIKE_ESCAPE}' OR "
+                f"entidade_tipo {like} ? ESCAPE '{LIKE_ESCAPE}' OR "
+                f"entidade_id {like} ? ESCAPE '{LIKE_ESCAPE}' OR "
+                f"COALESCE(detalhes_json,'') {like} ? ESCAPE '{LIKE_ESCAPE}'"
+                ")"
+            )
+            args.extend([pattern] * 8)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         return where, args
 
@@ -207,6 +271,32 @@ class AuditStore:
             "usuarios": int(users),
             "sessoes": int(sessions),
             "acoes": int(actions),
+        }
+
+    def dashboard(self, start, end):
+        noise = ",".join("?" * len(ACCESS_NOISE))
+        downloads = ",".join("?" * len(DOWNLOAD_EVENTS))
+        failures = ",".join("?" * len(FAILURE_RESULTS))
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT "
+                "SUM(CASE WHEN evento NOT IN (" + noise + ") THEN 1 ELSE 0 END),"
+                "COUNT(DISTINCT CASE WHEN evento='SESSAO_INICIADA' AND usuario_id IS NOT NULL "
+                "THEN usuario_id END),"
+                "SUM(CASE WHEN modulo='admin' AND evento NOT IN (" + noise + ") "
+                "THEN 1 ELSE 0 END),"
+                "SUM(CASE WHEN acao='EXPORTAR' OR evento IN (" + downloads + ") "
+                "THEN 1 ELSE 0 END),"
+                "SUM(CASE WHEN resultado IN (" + failures + ") THEN 1 ELSE 0 END) "
+                "FROM auditoria_eventos WHERE criado_em>=? AND criado_em<=?",
+                (*ACCESS_NOISE, *ACCESS_NOISE, *DOWNLOAD_EVENTS, *FAILURE_RESULTS, start, end),
+            ).fetchone()
+        return {
+            "atividades": int(row[0] or 0),
+            "usuarios_ativos": int(row[1] or 0),
+            "admin": int(row[2] or 0),
+            "downloads": int(row[3] or 0),
+            "falhas": int(row[4] or 0),
         }
 
     def latest_access(self):

@@ -591,6 +591,18 @@ def _detail_body(store, principal, record):
                 key="rep_dl_" + item["id"],
             )
         elif cols[3].button("Preparar download", key="rep_prep_" + item["id"]):
+            from services.audit import registrar_download
+
+            registrar_download(
+                store,
+                modulo="representacoes",
+                entidade_tipo="representacao",
+                entidade_id=record["id"],
+                arquivo=item.get("nome_arquivo"),
+                formato=item.get("mime_type"),
+                rotulo=record.get("titulo"),
+                principal=principal,
+            )
             st.session_state["representacoes_download"] = item["id"]
             st.rerun()
     protocolled = is_protocolled(record)

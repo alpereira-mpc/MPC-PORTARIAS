@@ -131,6 +131,31 @@ def actor_of(principal):
     return getattr(principal, "email", None) or str(principal)
 
 
+def _audit(store, principal, evento, acao, record=None, extra=None, entidade_id=None):
+    from services.audit import registrar_evento
+
+    detalhes = dict(extra or {})
+    identifier = entidade_id
+    if record:
+        identifier = record.get("id") if identifier is None else identifier
+        if record.get("titulo"):
+            detalhes.setdefault("titulo", str(record["titulo"])[:80])
+        if record.get("numero_processo"):
+            detalhes.setdefault("numero_processo", record["numero_processo"])
+        if record.get("situacao"):
+            detalhes.setdefault("situacao", record["situacao"])
+    registrar_evento(
+        store,
+        evento=evento,
+        modulo="representacoes",
+        acao=acao,
+        principal=principal,
+        entidade_tipo="representacao",
+        entidade_id=identifier,
+        detalhes=detalhes or None,
+    )
+
+
 def is_protocolled(record):
     return bool((record or {}).get("numero_processo"))
 
@@ -319,7 +344,9 @@ def create(store, values, principal):
     record = _payload(values, creating=True)
     members = _members(values)
     _validate_people(store, members)
-    return open_store(store).create(record, members, actor_of(principal))
+    created = open_store(store).create(record, members, actor_of(principal))
+    _audit(store, principal, "REPRESENTACAO_CRIADA", "CRIAR", created)
+    return created
 
 
 def update(store, identifier, values, principal):
@@ -329,7 +356,32 @@ def update(store, identifier, values, principal):
     record = _payload(values)
     members = _members(values)
     _validate_people(store, members)
-    return open_store(store).update(identifier, record, members, actor_of(principal))
+    updated = open_store(store).update(identifier, record, members, actor_of(principal))
+    from services.audit import format_changes
+
+    changes = format_changes(
+        current,
+        updated,
+        {
+            "titulo": "Título",
+            "situacao": "Situação",
+            "prioridade": "Prioridade",
+            "fase_processual": "Fase",
+            "numero_processo": "Número do processo",
+            "origem": "Origem",
+            "representado": "Representado",
+            "tema": "Tema",
+        },
+    )
+    _audit(
+        store,
+        principal,
+        "REPRESENTACAO_ALTERADA",
+        "EDITAR",
+        updated,
+        {"alteracoes": changes} if changes else None,
+    )
+    return updated
 
 
 def get(store, identifier):
@@ -380,7 +432,7 @@ def add_document(store, identifier, values, name, content, principal):
     if tipo not in DOCUMENTOS:
         raise ValueError("Tipo de documento inválido.")
     safe, mime = validate_upload(name, content)
-    return open_store(store).add_document(
+    saved = open_store(store).add_document(
         identifier,
         {
             "andamento_id": values.get("andamento_id"),
@@ -393,6 +445,16 @@ def add_document(store, identifier, values, name, content, principal):
         content,
         actor_of(principal),
     )
+    record = get(store, identifier)
+    _audit(
+        store,
+        principal,
+        "DOCUMENTO_ANEXADO",
+        "IMPORTAR",
+        record,
+        {"arquivo": safe, "formato": mime},
+    )
+    return saved
 
 
 def register_protocol(store, identifier, values, principal, upload=None):
@@ -419,7 +481,7 @@ def register_protocol(store, identifier, values, principal, upload=None):
         if mime != "application/pdf":
             raise ValueError("O documento final da Representação deve ser PDF.")
         file_tuple = (safe, mime, content)
-    return open_store(store).register_protocol(
+    protocolled = open_store(store).register_protocol(
         identifier,
         {
             "numero_processo": number,
@@ -432,6 +494,23 @@ def register_protocol(store, identifier, values, principal, upload=None):
         actor_of(principal),
         file_tuple,
     )
+    _audit(
+        store,
+        principal,
+        "REPRESENTACAO_PROTOCOLADA",
+        "FINALIZAR",
+        protocolled,
+        {
+            "alteracoes": [
+                "Situação: "
+                + label(SITUACOES, current.get("situacao"))
+                + " → "
+                + label(SITUACOES, protocolled.get("situacao"))
+            ],
+            "numero_processo": number,
+        },
+    )
+    return protocolled
 
 
 def set_status(store, identifier, situacao, principal, fase=None, note=""):
@@ -455,9 +534,25 @@ def set_status(store, identifier, situacao, principal, fase=None, note=""):
     ):
         raise ValueError("Após o protocolo, utilize a situação processual correspondente.")
     text = note or ("Situação alterada para " + SITUACOES[situacao] + ".")
-    return open_store(store).set_status(
+    updated = open_store(store).set_status(
         identifier, situacao, fase, actor_of(principal), text
     )
+    _audit(
+        store,
+        principal,
+        "REPRESENTACAO_STATUS_ALTERADO",
+        "MOVIMENTAR",
+        updated,
+        {
+            "alteracoes": [
+                "Situação: "
+                + label(SITUACOES, current.get("situacao"))
+                + " → "
+                + label(SITUACOES, situacao)
+            ]
+        },
+    )
+    return updated
 
 
 def set_phase(store, identifier, fase, principal):
@@ -474,9 +569,25 @@ def set_phase(store, identifier, fase, principal):
     if fase == "JULGAMENTO":
         situacao = "EM_TRAMITACAO"
     note = "Fase processual: " + FASES[fase] + "."
-    return open_store(store).set_status(
+    updated = open_store(store).set_status(
         identifier, situacao, fase, actor_of(principal), note
     )
+    _audit(
+        store,
+        principal,
+        "REPRESENTACAO_FASE_ALTERADA",
+        "MOVIMENTAR",
+        updated,
+        {
+            "alteracoes": [
+                "Fase: "
+                + label(FASES, current.get("fase_processual"))
+                + " → "
+                + label(FASES, fase)
+            ]
+        },
+    )
+    return updated
 
 
 def delete(store, identifier, principal=None):
@@ -487,4 +598,13 @@ def delete(store, identifier, principal=None):
         raise ValueError(
             "Representação protocolada não pode ser excluída. Utilize encerramento, cancelamento ou arquivamento."
         )
-    return open_store(store).delete(identifier, actor_of(principal) if principal else "")
+    removed = open_store(store).delete(identifier, actor_of(principal) if principal else "")
+    _audit(
+        store,
+        principal,
+        "REPRESENTACAO_EXCLUIDA",
+        "EXCLUIR",
+        current,
+        {"titulo": (current.get("titulo") or "")[:80]},
+    )
+    return removed

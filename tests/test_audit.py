@@ -139,6 +139,10 @@ def test_document_and_admin_actions_are_recorded(store):
     assert "USUARIO_EDITADO" in events
     assert "PERMISSOES_ALTERADAS" in events
     assert "USUARIO_DESATIVADO" in events
+    permission = AuditStore(store).list_events({"evento": "PERMISSOES_ALTERADAS"})[0]
+    details = permission["detalhes_json"] or ""
+    assert "Portarias:" in details
+    assert "→" in details
 
 
 def test_protected_admin_block_is_recorded(store):
@@ -187,7 +191,7 @@ def test_ordinary_user_cannot_open_audit(store):
 
 
 def test_ordinary_user_cannot_query_audit_services(store):
-    from services.audit import export_csv, overview, user_overview
+    from services.audit import dashboard_hoje, export_csv, overview, user_overview
 
     seed_access(
         store,
@@ -203,6 +207,8 @@ def test_ordinary_user_cannot_query_audit_services(store):
         user_overview(store, principal)
     with pytest.raises(ValueError, match="módulo"):
         export_csv(store, principal)
+    with pytest.raises(ValueError, match="módulo"):
+        dashboard_hoje(store, principal)
 
 
 def test_administrator_opens_audit_ui(store, monkeypatch):
@@ -378,3 +384,161 @@ def test_last_admin_block_is_recorded(store):
             admin["id"],
         )
     assert _count(store, "ULTIMO_ADMIN_BLOQUEADO") == 1
+
+
+def test_sensitive_payloads_and_human_labels(store):
+    from services.audit import event_label, registrar_download, result_label
+
+    clean = sanitize_details(
+        {
+            "titulo": "Representação 12",
+            "traceback": "stack",
+            "manifestante_nome": "Segredo",
+            "senha_temporaria": "x",
+        }
+    )
+    assert "titulo" in clean
+    assert "traceback" not in clean
+    assert "manifestante_nome" not in clean
+    assert "senha_temporaria" not in clean
+    assert event_label("DOCUMENTO_BAIXADO") == "Download de documento"
+    assert result_label("OK") == "Sucesso"
+    principal = _principal(store)
+    registrar_download(
+        store,
+        modulo="representacoes",
+        entidade_tipo="representacao",
+        entidade_id="99",
+        arquivo="peca.pdf",
+        formato="application/pdf",
+        rotulo="Representação sobre licitação",
+        principal=principal,
+    )
+    row = AuditStore(store).list_events({"evento": "DOCUMENTO_BAIXADO"})[0]
+    assert row["acao"] == "EXPORTAR"
+    assert "peca.pdf" in (row["detalhes_json"] or "")
+    assert "Baixou" in (row["detalhes_json"] or "")
+
+
+def test_text_search_action_type_and_dashboard(store):
+    from services.audit import apply_action_type, dashboard_hoje
+
+    principal = _principal(store)
+    registrar_evento(
+        store,
+        evento="BACKUP_GERADO",
+        modulo="admin",
+        acao="BACKUP",
+        principal=principal,
+        entidade_tipo="backup",
+        entidade_id="mpc-backup.zip",
+        detalhes={"tabelas": 3},
+        state={},
+    )
+    registrar_evento(
+        store,
+        evento="DOCUMENTO_BAIXADO",
+        modulo="ouvidoria",
+        acao="EXPORTAR",
+        principal=principal,
+        entidade_tipo="noticia_fato",
+        entidade_id="7",
+        detalhes={"titulo": "OUVI-2026-001", "arquivo": "anexo.pdf"},
+        state={},
+    )
+    registrar_evento(
+        store,
+        evento="ERRO_OPERACIONAL",
+        modulo="admin",
+        acao="BACKUP",
+        resultado="ERRO",
+        principal=principal,
+        detalhes={"mensagem": "indisponível"},
+        state={},
+    )
+    audit = AuditStore(store)
+    found = audit.list_events({"q": "OUVI-2026"}, limit=50)
+    assert found and all("OUVI-2026" in (r["detalhes_json"] or "") for r in found)
+    downloads = audit.list_events(apply_action_type({}, "download"), limit=50)
+    assert downloads and all(
+        r["evento"] in ("DOCUMENTO_BAIXADO", "BACKUP_DISPONIBILIZADO")
+        or r["acao"] == "EXPORTAR"
+        for r in downloads
+    )
+    admin_rows = audit.list_events({"somente_admin": True}, limit=50)
+    assert admin_rows and all(r["modulo"] == "admin" for r in admin_rows)
+    painel = dashboard_hoje(store, principal)
+    assert painel["downloads"] >= 1
+    assert painel["admin"] >= 1
+    assert painel["falhas"] >= 1
+    page1 = audit.list_events({"modulo": "admin"}, limit=1, offset=0)
+    page2 = audit.list_events({"modulo": "admin"}, limit=1, offset=1)
+    assert page1 and page2
+    assert page1[0]["id"] != page2[0]["id"]
+
+
+def test_representacao_and_noticia_audit_cover_delete_and_create(store):
+    from services.ouvidoria import create as create_noticia
+    from services.ouvidoria import delete as delete_noticia
+    from services.ouvidoria import default_ouvidor_id
+    from services.representacoes import create as create_rep
+    from services.representacoes import delete as delete_rep
+    from tests.access_testing import seed_access
+
+    seed_access(
+        store,
+        email="audit.mod@test.local",
+        nome="Auditor Módulos",
+        perfil="USUARIO",
+        pode_representacoes=True,
+        pode_ouvidoria=True,
+    )
+    principal = resolve_principal(store, {"email": "audit.mod@test.local"})
+    member = next(p["id"] for p in store.catalog("procuradores") if p.get("ativo"))
+    created = create_rep(
+        store,
+        {
+            "titulo": "Representação auditada",
+            "objeto": "Objeto interno",
+            "origem": "DE_OFICIO",
+            "data_abertura": "2026-09-01",
+            "representado": "Município",
+            "tema": "Licitações",
+            "prioridade": "NORMAL",
+            "procurador_responsavel": member,
+            "procuradores_signatarios": [],
+            "assessores": [],
+        },
+        principal,
+    )
+    delete_rep(store, created["id"], principal)
+    people = [p for p in store.catalog("procuradores") if p.get("ativo")]
+    ouvidor = default_ouvidor_id(store) or people[0]["id"]
+    noticia = create_noticia(
+        store,
+        {
+            "titulo": "Notícia auditada",
+            "resumo": "Texto interno da notícia",
+            "tipo": "DENUNCIA",
+            "forma_recebimento": "EMAIL",
+            "data_recebimento": "2026-09-21",
+            "classificacao_acesso": "RESTRITA",
+            "prioridade": "NORMAL",
+            "situacao": "RECEBIDA",
+            "manifestante_identificado": False,
+            "ouvidor_id": ouvidor,
+            "procurador_responsavel_id": member,
+            "procuradores_participantes": [],
+            "assessores": [],
+        },
+        principal,
+    )
+    delete_noticia(store, noticia["id"], principal)
+    events = {r["evento"] for r in AuditStore(store).list_events(limit=50)}
+    assert "REPRESENTACAO_CRIADA" in events
+    assert "REPRESENTACAO_EXCLUIDA" in events
+    assert "NOTICIA_FATO_CRIADA" in events
+    assert "NOTICIA_FATO_EXCLUIDA" in events
+    created_row = AuditStore(store).list_events({"evento": "NOTICIA_FATO_CRIADA"})[0]
+    assert "Texto interno da notícia" not in (created_row["detalhes_json"] or "")
+

@@ -138,16 +138,76 @@ def count_pending_access_requests(store):
 
 
 def approve_access_request(store, identifier, processed_by):
-    return AccessRequestStore(store).mark_processed(
-        identifier, STATUS_APPROVED, _actor_email(processed_by)
+    email = _actor_email(processed_by)
+    record = AccessRequestStore(store).mark_processed(
+        identifier, STATUS_APPROVED, email
     )
+    from services.audit import registrar_evento
+
+    registrar_evento(
+        store,
+        evento="SOLICITACAO_APROVADA",
+        modulo="admin",
+        acao="ALTERAR",
+        identity={"email": email, "name": email},
+        entidade_tipo="solicitacao_acesso",
+        entidade_id=identifier,
+        detalhes={
+            "usuario_alvo": record.get("email"),
+            "nome_alvo": record.get("nome"),
+        },
+    )
+    return record
 
 
 def reject_access_request(store, identifier, processed_by):
-    return AccessRequestStore(store).mark_processed(
-        identifier, STATUS_REJECTED, _actor_email(processed_by)
+    email = _actor_email(processed_by)
+    record = AccessRequestStore(store).mark_processed(
+        identifier, STATUS_REJECTED, email
     )
+    from services.audit import registrar_evento
+
+    registrar_evento(
+        store,
+        evento="SOLICITACAO_RECUSADA",
+        modulo="admin",
+        acao="ALTERAR",
+        identity={"email": email, "name": email},
+        entidade_tipo="solicitacao_acesso",
+        entidade_id=identifier,
+        detalhes={
+            "usuario_alvo": record.get("email"),
+            "nome_alvo": record.get("nome"),
+        },
+    )
+    return record
 
 
-def delete_access_request(store, identifier):
-    return AccessRequestStore(store).delete(identifier) > 0
+def delete_access_request(store, identifier, processed_by=None):
+    requests = AccessRequestStore(store)
+    current = requests.get(identifier)
+    removed = requests.delete(identifier) > 0
+    if removed:
+        from services.audit import registrar_evento
+
+        identity = None
+        if processed_by:
+            try:
+                email = _actor_email(processed_by)
+                identity = {"email": email, "name": email}
+            except ValueError:
+                identity = None
+        registrar_evento(
+            store,
+            evento="SOLICITACAO_EXCLUIDA",
+            modulo="admin",
+            acao="EXCLUIR",
+            identity=identity,
+            entidade_tipo="solicitacao_acesso",
+            entidade_id=identifier,
+            detalhes={
+                "usuario_alvo": (current or {}).get("email"),
+                "nome_alvo": (current or {}).get("nome"),
+            },
+        )
+    return removed
