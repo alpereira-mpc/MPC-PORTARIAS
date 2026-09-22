@@ -19,7 +19,10 @@ from services.pending import (
     classify_deadline,
     classify_memorando,
     collect_pending,
+    item_in_period,
+    list_pending,
     parse_date,
+    summarize,
     today_recife,
 )
 from tests.access_testing import TEST_IDENTITY, enable_login, seed_access
@@ -342,7 +345,8 @@ def test_menu_and_central_ui(store, monkeypatch):
     assert not app.exception
     headings = [str(h.value) for h in app.subheader]
     assert any("PENDÊNCIAS" in h for h in headings)
-    assert any("Nenhuma pendência encontrada." in str(m.value) for m in app.markdown)
+    blob = " ".join(str(m.value) for m in app.markdown)
+    assert "Nenhuma pend" in blob
     app.sidebar.radio(key="portal_module").set_value("Início").run()
     assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
     assert not any(b.label == "Ver pendências" for b in app.button)
@@ -482,6 +486,21 @@ def test_pending_open_queues_transient_destination_state(monkeypatch):
         navigation="Memorandos",
     )
     _open(memo)
+    task = PendingItem(
+        source_module="tarefas",
+        source_id="12",
+        gabinete="—",
+        title="Tarefa",
+        subtitle="",
+        due_date=TODAY,
+        start_date=TODAY,
+        end_date=TODAY,
+        status_original="A fazer",
+        urgency=HOJE,
+        context="",
+        navigation="Tarefas",
+    )
+    _open(task)
     assert captured[0][0] == "Ofícios"
     assert captured[0][1]["pending_open_oficio"] == {
         "id": "of-1",
@@ -494,6 +513,7 @@ def test_pending_open_queues_transient_destination_state(monkeypatch):
         "id": "me-1",
         "page": "Histórico",
     }
+    assert captured[3] == ("Tarefas", {"tarefas_open_id": 12})
 
 
 def test_destination_consumes_pending_open_before_widgets(monkeypatch):
@@ -633,6 +653,214 @@ def test_pending_deep_links_open_origin_modules(store, monkeypatch):
     assert "pending_focus_memorando" not in app.session_state or app.session_state[
         "pending_focus_memorando"
     ] == memo_id
+
+
+def test_item_in_period_windows():
+    from services.pending import PendingItem
+
+    def item(due, urgency=HOJE, module="oficios"):
+        return PendingItem(
+            source_module=module,
+            source_id="1",
+            gabinete="PROGE",
+            title="Item",
+            subtitle="",
+            due_date=due,
+            start_date=due,
+            end_date=due,
+            status_original="Recebido",
+            urgency=urgency,
+            context="",
+            navigation="Ofícios",
+        )
+
+    overdue = item(TODAY - timedelta(days=1), VENCIDA)
+    today_item = item(TODAY, HOJE)
+    in_3 = item(TODAY + timedelta(days=2), URGENTE)
+    in_7 = item(TODAY + timedelta(days=5), PROXIMA)
+    later = item(TODAY + timedelta(days=10), FUTURA)
+    none = item(None, SEM_PRAZO)
+    assert item_in_period(overdue, "vencidas", TODAY)
+    assert not item_in_period(today_item, "vencidas", TODAY)
+    assert item_in_period(today_item, "hoje", TODAY)
+    assert not item_in_period(overdue, "hoje", TODAY)
+    assert not item_in_period(in_3, "hoje", TODAY)
+    assert item_in_period(in_3, "3d", TODAY)
+    assert not item_in_period(today_item, "3d", TODAY)
+    assert not item_in_period(in_7, "3d", TODAY)
+    assert item_in_period(in_7, "7d", TODAY)
+    assert item_in_period(in_3, "7d", TODAY)
+    assert not item_in_period(later, "7d", TODAY)
+    assert item_in_period(later, "30d", TODAY)
+    assert item_in_period(none, "todas", TODAY)
+    assert not item_in_period(none, "hoje", TODAY)
+
+
+def test_period_filters_and_summary_scope(store):
+    oficios, _, _ = _prepare(store)
+    proge = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "PROGE")
+    overdue = _received(oficios, proge, "2026-09-13")
+    today_id = _received(oficios, proge, "2026-09-14")
+    in_3 = _received(oficios, proge, "2026-09-16")
+    in_7 = _received(oficios, proge, "2026-09-19")
+    later = _received(oficios, proge, "2026-09-24")
+    all_items, _, today = collect_pending(
+        store, _admin(store), today=TODAY, modules=("oficios",), period="todas"
+    )
+    counts = summarize(all_items, today)
+    hoje = [i for i in all_items if item_in_period(i, "hoje", today)]
+    vencidas = [i for i in all_items if item_in_period(i, "vencidas", today)]
+    d3 = [i for i in all_items if item_in_period(i, "3d", today)]
+    d7 = [i for i in all_items if item_in_period(i, "7d", today)]
+    assert {i.source_id for i in hoje} == {today_id}
+    assert overdue in {i.source_id for i in vencidas}
+    assert today_id not in {i.source_id for i in vencidas}
+    assert {i.source_id for i in d3} == {in_3}
+    assert {in_3, in_7} <= {i.source_id for i in d7}
+    assert later not in {i.source_id for i in d7}
+    assert counts["hoje"] == len(hoje)
+    assert counts["vencidas"] == len(vencidas)
+    assert counts["proximos_3"] == len(d3)
+    assert counts["proximos_7"] == len(d7)
+    assert counts["total"] == len(all_items)
+    assert later in {i.source_id for i in all_items}
+
+
+def test_extended_modules_closed_and_permissions(store):
+    from database.access_requests import AccessRequestStore
+    from database.tarefas import TarefasStore
+    from services.ouvidoria import close as close_ouvidoria
+    from services.ouvidoria import create as create_ouvidoria
+    from services.representacoes import create as create_representacao
+    from services.representacoes import set_status
+    from tests.test_ouvidoria import _payload as ouvi_payload
+    from tests.test_representacoes import _payload as rep_payload
+
+    _prepare(store)
+    admin = _admin(store)
+    tasks = TarefasStore(store)
+    open_task = tasks.create(
+        admin.id, {"titulo": "Tarefa aberta", "prazo_data": "2026-09-14"}
+    )
+    done_task = tasks.create(
+        admin.id, {"titulo": "Tarefa concluída", "prazo_data": "2026-09-14"}
+    )
+    tasks.change_status(done_task["id"], admin.id, "CONCLUIDA")
+    other = tasks.create(99, {"titulo": "Tarefa alheia", "prazo_data": "2026-09-14"})
+    open_rep = create_representacao(store, rep_payload(store)[0], admin)
+    closed_rep = create_representacao(
+        store, rep_payload(store, titulo="Arquivada")[0], admin
+    )
+    set_status(store, closed_rep["id"], "ARQUIVADA", admin)
+    open_nf = create_ouvidoria(
+        store, ouvi_payload(store, situacao="TRIAGEM", titulo="NF triagem")[0], admin
+    )
+    closed_nf = create_ouvidoria(
+        store, ouvi_payload(store, titulo="NF encerrada")[0], admin
+    )
+    close_ouvidoria(
+        store,
+        closed_nf["id"],
+        "ARQUIVADA",
+        admin,
+        resultado="ARQUIVAMENTO",
+        conclusao="Encerrada nos testes.",
+    )
+    requests = AccessRequestStore(store)
+    pending_req = requests.create("Fulano", "fulano.pend@test.local", "PROGE")
+    done_req = requests.create("Beltrano", "beltrano.pend@test.local", "SBBQ")
+    requests.mark_processed(done_req["id"], "aprovado", admin.email)
+    items, errors, _ = collect_pending(store, admin, today=TODAY, period="todas")
+    assert not any(errors.values())
+    assert any(i.source_id == str(open_task["id"]) for i in items if i.source_module == "tarefas")
+    assert all(i.source_id != str(done_task["id"]) for i in items if i.source_module == "tarefas")
+    assert all(i.source_id != str(other["id"]) for i in items if i.source_module == "tarefas")
+    assert any(
+        i.source_id == str(open_rep["id"]) for i in items if i.source_module == "representacoes"
+    )
+    assert all(
+        i.source_id != str(closed_rep["id"]) for i in items if i.source_module == "representacoes"
+    )
+    assert any(i.source_id == str(open_nf["id"]) for i in items if i.source_module == "ouvidoria")
+    assert all(i.source_id != str(closed_nf["id"]) for i in items if i.source_module == "ouvidoria")
+    assert any(
+        i.source_id == str(pending_req["id"]) for i in items if i.source_module == "access_requests"
+    )
+    assert all(
+        i.source_id != str(done_req["id"]) for i in items if i.source_module == "access_requests"
+    )
+    denied = _user(
+        store,
+        "sem.extras@test.local",
+        pode_agenda=False,
+        pode_oficios=True,
+        pode_memorandos=False,
+        pode_portarias=False,
+        pode_admin=False,
+        pode_representacoes=False,
+        pode_ouvidoria=False,
+        gabinetes=["PROGE"],
+    )
+    scoped, _, _ = collect_pending(store, denied, today=TODAY, period="todas")
+    assert all(
+        i.source_module not in {"representacoes", "ouvidoria", "access_requests"}
+        for i in scoped
+    )
+    window, _, _ = collect_pending(
+        store,
+        admin,
+        today=TODAY,
+        alert_window=True,
+        now=datetime(2026, 9, 14, 9, 0, tzinfo=timezone.utc),
+    )
+    assert all(i.source_module in {"oficios", "agenda", "memorandos"} for i in window)
+
+
+def test_empty_period_and_pagination_uniqueness(store):
+    oficios, _, _ = _prepare(store)
+    items, _, _ = collect_pending(
+        store, _admin(store), today=TODAY, modules=("oficios",), period="hoje"
+    )
+    assert items == []
+    proge = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "PROGE")
+    created = [_received(oficios, proge, f"2026-09-{day}") for day in range(13, 20)]
+    first, total, _, _ = list_pending(
+        store, _admin(store), today=TODAY, modules=("oficios",), limit=3, offset=0
+    )
+    second, total_again, _, _ = list_pending(
+        store, _admin(store), today=TODAY, modules=("oficios",), limit=3, offset=3
+    )
+    assert total == total_again
+    assert total == len(created)
+    first_ids = [i.source_id for i in first]
+    second_ids = [i.source_id for i in second]
+    assert len(first_ids) == 3
+    assert set(first_ids).isdisjoint(second_ids)
+    assert len(set(first_ids + second_ids)) == len(first_ids + second_ids)
+
+
+def test_central_ui_summary_is_independent_of_listing_period(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from database.store import ROOT
+
+    oficios, _, _ = _prepare(store)
+    proge = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "PROGE")
+    _received(oficios, proge, "2026-09-13")
+    _received(oficios, proge, "2026-09-14")
+    _received(oficios, proge, "2026-09-16")
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    monkeypatch.setattr("services.pending.today_recife", lambda now=None: TODAY)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
+    assert not app.exception
+    captions = [str(c.value) for c in app.caption]
+    assert any("Os totais abaixo não mudam" in c for c in captions)
+    assert any("Exibindo pendências: Hoje" in c for c in captions)
+    metrics = {m.label: m.value for m in app.metric}
+    assert metrics.get("Hoje")
+    assert metrics.get("Próximos 3 dias")
+    assert metrics.get("Total de pendências ativas")
 
 
 def test_postgres_pending_contract(pg_store):

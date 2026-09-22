@@ -118,8 +118,15 @@ def test_get_alert_summary_matches_collect_alerts_top(store):
 def test_pending_sql_has_no_blob_columns():
     from services import pending
 
-    source = getsource(pending.fetch_oficios) + getsource(pending.fetch_agenda) + getsource(
-        pending.fetch_memorandos
+    source = (
+        getsource(pending.fetch_oficios)
+        + getsource(pending.fetch_agenda)
+        + getsource(pending.fetch_memorandos)
+        + getsource(pending.fetch_afastamentos)
+        + getsource(pending.fetch_tarefas)
+        + getsource(pending.fetch_representacoes)
+        + getsource(pending.fetch_ouvidoria)
+        + getsource(pending.fetch_access_requests)
     )
     assert "conteudo" not in source
     assert "docx" not in source.lower()

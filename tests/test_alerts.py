@@ -397,6 +397,24 @@ def test_permissions_and_cabinet_filter(store):
     assert not can_view_alertas(portarias_only)
     with pytest.raises(ValueError, match="módulo"):
         collect_alerts(store, portarias_only, now=NOW)
+    assert has_permission(portarias_only, "tarefas")
+    assert not has_permission(portarias_only, "pendencias")
+
+
+def test_system_alerts_remain_visible_on_hoje_period(store):
+    broken = {
+        **HEALTHY,
+        "database": {"status": ERROR, "summary": "ERRO — banco"},
+    }
+    items, _, _ = collect_alerts(
+        store,
+        _admin(store),
+        now=NOW,
+        modules=("sistema",),
+        period="hoje",
+        cached_health=broken,
+    )
+    assert any(i.source_module == "sistema" and i.category == "banco" for i in items)
 
 
 def test_system_alerts_admin_only(store):

@@ -373,7 +373,9 @@ def consume_pending_open_agenda(agenda):
         if record:
             # Set navigation before its widget is instantiated on this rerun.
             st.session_state["agenda_section"] = (
-                "Histórico" if record["situacao"] in ("Realizado", "Cancelado") else "Agenda"
+                "Histórico"
+                if record.get("situacao") in ("Realizado", "Cancelado")
+                else "Agenda"
             )
             st.session_state["agenda_edit"] = record
         else:

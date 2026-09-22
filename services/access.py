@@ -166,10 +166,19 @@ def has_permission(principal, module):
     if module == "pendencias":
         return any(
             has_permission(principal, name)
-            for name in ("oficios", "agenda", "memorandos")
+            for name in (
+                "oficios",
+                "agenda",
+                "memorandos",
+                "representacoes",
+                "ouvidoria",
+                "admin",
+            )
         )
     if module == "alertas":
-        return has_permission(principal, "tarefas") or principal.administrator or any(
+        # Tarefas is always allowed for active accounts and must not open Alertas
+        # by itself. Same rule as docs/ALERTAS_INTERNOS.md: Ofícios, Agenda or Memorandos.
+        return any(
             has_permission(principal, name)
             for name in ("oficios", "agenda", "memorandos")
         )

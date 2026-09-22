@@ -308,6 +308,8 @@ def _from_pending(item, severity, category, title, moment=None):
 def _in_period(item, period, today):
     if period in (None, "todos"):
         return True
+    if item.source_module in ("sistema", "access_requests"):
+        return True
     due = item.date
     if item.source_module == "memorandos" and item.source_status == "EM ANDAMENTO":
         due = today

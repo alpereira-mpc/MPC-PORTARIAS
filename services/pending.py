@@ -24,11 +24,40 @@ URGENCY_ORDER = (VENCIDA, HOJE, URGENTE, PROXIMA, FUTURA, SEM_PRAZO)
 OFICIO_CLOSED = tuple(CLOSED)
 PERIODS = (
     ("hoje", "Hoje"),
+    ("vencidas", "Vencidas"),
     ("3d", "Próximos 3 dias"),
     ("7d", "Próximos 7 dias"),
     ("30d", "Próximos 30 dias"),
-    ("todos", "Todos"),
+    ("todas", "Todas ativas"),
 )
+CORE_MODULES = ("oficios", "agenda", "memorandos")
+EXTENDED_MODULES = ("tarefas", "representacoes", "ouvidoria", "admin")
+REP_CLOSED = ("JULGADA", "ENCERRADA", "ARQUIVADA", "CANCELADA")
+OUVI_CLOSED = ("ENCERRADA", "ARQUIVADA")
+TASK_ACTIVE = ("A_FAZER", "EM_ANDAMENTO", "AGUARDANDO")
+TASK_STATUS_LABELS = {
+    "A_FAZER": "A fazer",
+    "EM_ANDAMENTO": "Em andamento",
+    "AGUARDANDO": "Aguardando",
+}
+REP_STATUS_LABELS = {
+    "IDEIA": "Ideia / avaliação inicial",
+    "PESQUISA": "Em pesquisa",
+    "ELABORACAO": "Em elaboração",
+    "MINUTA_REVISAO": "Minuta em revisão",
+    "APROVADA": "Aprovada para assinatura",
+    "AGUARDANDO_PROTOCOLO": "Aguardando protocolo",
+    "PROTOCOLADA": "Protocolada",
+    "EM_TRAMITACAO": "Em tramitação",
+    "SUSPENSA": "Suspensa",
+}
+OUVI_STATUS_LABELS = {
+    "RECEBIDA": "Recebida",
+    "TRIAGEM": "Em triagem",
+    "ANALISE": "Em análise",
+    "AGUARDANDO_PROVIDENCIA": "Aguardando providência",
+    "PROVIDENCIA_ANDAMENTO": "Providência em andamento",
+}
 
 
 @dataclass(frozen=True)
@@ -153,7 +182,7 @@ def classify_memorando(situacao, start, today):
 def can_view_pendencias(principal):
     return any(
         has_permission(principal, module)
-        for module in ("oficios", "agenda", "memorandos")
+        for module in (*CORE_MODULES, "representacoes", "ouvidoria", "admin")
     )
 
 
@@ -271,11 +300,12 @@ def fetch_oficios(
             "JOIN oficio_series s ON s.membro_id=d.membro_id GROUP BY d.oficio_id"
             ") dest ON dest.oficio_id=o.id WHERE o.status NOT IN ("
             + _sql_in(closed)
-            + ") AND o.status!='Rascunho' AND ("
+            + ") AND ("
+            "o.status='Rascunho' OR "
             "(o.direcao='RECEBIDO' AND (o.prazo IS NOT NULL OR o.status IN "
             "('Recebido','Em análise','Aguardando providência','Encaminhado')))"
             " OR (o.direcao='ENVIADO' AND o.status IN "
-            "('Gerado','Enviado','Aguardando resposta'))) "
+            "('Rascunho','Gerado','Enviado','Aguardando resposta'))) "
             "AND ("
             "o.serie IN (" + placeholders + ") "
             "OR o.membro_id IN (SELECT membro_id FROM oficio_series WHERE sigla IN ("
@@ -549,18 +579,368 @@ def fetch_memorandos(
             ctx.__exit__(None, None, None)
 
 
-def _in_period(item, period, today):
-    if period in (None, "todos"):
+def fetch_afastamentos(
+    store,
+    principal,
+    *,
+    today,
+    gabinete_filter=None,
+    connection=None,
+    mapping=None,
+    limit=SOURCE_CAP,
+):
+    if not _has_table(store, "agenda_afastamentos", connection):
+        return []
+    restrict = bool(visible_cabinets(principal)) or principal.administrator
+    if restrict:
+        allowed = _scope_cabinets(principal, gabinete_filter)
+        if not allowed:
+            return []
+    else:
+        allowed = []
+        if gabinete_filter:
+            return []
+    items = []
+    ctx = None
+    if connection is None:
+        ctx = store.connection(read_only=True)
+        connection = ctx.__enter__()
+    try:
+        mapping = mapping if mapping is not None else _cabinet_map(connection)
+        rows = connection.execute(
+            "SELECT id,procurador_id,motivo,data_inicio,data_fim "
+            "FROM agenda_afastamentos WHERE cancelado=0 AND data_fim>=? "
+            "ORDER BY data_inicio,id LIMIT ?",
+            (today.isoformat(), limit),
+        ).fetchall()
+        for row in rows:
+            start = parse_date(row["data_inicio"], today)
+            end = parse_date(row["data_fim"], today)
+            if end and end < today:
+                continue
+            situacao = "AGENDADA" if start and start > today else "EM ANDAMENTO"
+            urgency = classify_memorando(situacao, start, today)
+            if urgency is None:
+                continue
+            gabinete = mapping.get(int(row["procurador_id"] or 0), "")
+            if restrict and allowed:
+                if gabinete and gabinete not in allowed:
+                    continue
+                if gabinete_filter and gabinete != gabinete_filter:
+                    continue
+            elif gabinete_filter and gabinete != gabinete_filter:
+                continue
+            items.append(
+                PendingItem(
+                    source_module="agenda",
+                    source_id=str(row["id"]),
+                    gabinete=gabinete or "—",
+                    title="Afastamento",
+                    subtitle=(row["motivo"] or "")[:80],
+                    due_date=start if situacao == "AGENDADA" else today,
+                    start_date=start,
+                    end_date=end,
+                    status_original=situacao,
+                    urgency=urgency,
+                    context="afastamento",
+                    navigation="Agenda",
+                    metadata={"afastamento_id": str(row["id"])},
+                )
+            )
+        return items
+    except BaseException:
+        if ctx is not None:
+            ctx.__exit__(*__import__("sys").exc_info())
+        raise
+    else:
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
+
+
+def fetch_tarefas(
+    store,
+    principal,
+    *,
+    today,
+    gabinete_filter=None,
+    connection=None,
+    mapping=None,
+    limit=SOURCE_CAP,
+):
+    _ = mapping
+    if gabinete_filter:
+        return []
+    if not _has_table(store, "tarefas", connection):
+        return []
+    owner = getattr(principal, "id", None)
+    if owner is None:
+        return []
+    items = []
+    ctx = None
+    if connection is None:
+        ctx = store.connection(read_only=True)
+        connection = ctx.__enter__()
+    try:
+        placeholders = _sql_in(TASK_ACTIVE)
+        rows = connection.execute(
+            "SELECT id,titulo,prioridade,status,prazo_data,categoria "
+            "FROM tarefas WHERE owner_user_id=? AND status IN ("
+            + placeholders
+            + ") ORDER BY prazo_data,id LIMIT ?",
+            (owner, *TASK_ACTIVE, limit),
+        ).fetchall()
+        for row in rows:
+            due = parse_date(row["prazo_data"], today)
+            if due is None and row["prioridade"] == "URGENTE":
+                urgency = URGENTE
+                due = today
+            else:
+                urgency = classify_deadline(due, today)
+            items.append(
+                PendingItem(
+                    source_module="tarefas",
+                    source_id=str(row["id"]),
+                    gabinete="—",
+                    title=(row["titulo"] or "Tarefa")[:80],
+                    subtitle=(row["categoria"] or "")[:80],
+                    due_date=due,
+                    start_date=due,
+                    end_date=due,
+                    status_original=TASK_STATUS_LABELS.get(row["status"], row["status"]),
+                    urgency=urgency,
+                    context=row["prioridade"] or "",
+                    navigation="Tarefas",
+                    metadata={"prioridade": row["prioridade"]},
+                )
+            )
+        return items
+    except BaseException:
+        if ctx is not None:
+            ctx.__exit__(*__import__("sys").exc_info())
+        raise
+    else:
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
+
+
+def fetch_representacoes(
+    store,
+    principal,
+    *,
+    today,
+    gabinete_filter=None,
+    connection=None,
+    mapping=None,
+    limit=SOURCE_CAP,
+):
+    _ = mapping
+    if gabinete_filter:
+        return []
+    if not _has_table(store, "representacoes", connection):
+        return []
+    items = []
+    ctx = None
+    if connection is None:
+        ctx = store.connection(read_only=True)
+        connection = ctx.__enter__()
+    try:
+        closed = _sql_in(REP_CLOSED)
+        rows = connection.execute(
+            "SELECT id,titulo,situacao,data_abertura,numero_processo,prioridade "
+            "FROM representacoes WHERE situacao NOT IN ("
+            + closed
+            + ") ORDER BY data_abertura,id LIMIT ?",
+            (*REP_CLOSED, limit),
+        ).fetchall()
+        for row in rows:
+            waiting = row["situacao"] == "AGUARDANDO_PROTOCOLO"
+            due = today if waiting else None
+            urgency = URGENTE if waiting else SEM_PRAZO
+            if row["prioridade"] == "URGENTE" and urgency == SEM_PRAZO:
+                urgency = URGENTE
+                due = today
+            status = REP_STATUS_LABELS.get(row["situacao"], row["situacao"])
+            if waiting:
+                status = REP_STATUS_LABELS["AGUARDANDO_PROTOCOLO"]
+            elif not row["numero_processo"] and row["situacao"] in (
+                "IDEIA",
+                "PESQUISA",
+                "ELABORACAO",
+                "MINUTA_REVISAO",
+                "APROVADA",
+            ):
+                status = "Em preparação"
+            items.append(
+                PendingItem(
+                    source_module="representacoes",
+                    source_id=str(row["id"]),
+                    gabinete="—",
+                    title=(row["titulo"] or "Representação")[:80],
+                    subtitle=(row["numero_processo"] or "")[:80],
+                    due_date=due,
+                    start_date=parse_date(row["data_abertura"], today),
+                    end_date=due,
+                    status_original=status,
+                    urgency=urgency,
+                    context=row["situacao"],
+                    navigation="Representações",
+                    metadata={"situacao": row["situacao"]},
+                )
+            )
+        return items
+    except BaseException:
+        if ctx is not None:
+            ctx.__exit__(*__import__("sys").exc_info())
+        raise
+    else:
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
+
+
+def fetch_ouvidoria(
+    store,
+    principal,
+    *,
+    today,
+    gabinete_filter=None,
+    connection=None,
+    mapping=None,
+    limit=SOURCE_CAP,
+):
+    if not _has_table(store, "ouvidoria_manifestacoes", connection):
+        return []
+    restrict = bool(visible_cabinets(principal)) or principal.administrator
+    allowed = _scope_cabinets(principal, gabinete_filter) if restrict else []
+    if restrict and gabinete_filter and not allowed:
+        return []
+    items = []
+    ctx = None
+    if connection is None:
+        ctx = store.connection(read_only=True)
+        connection = ctx.__enter__()
+    try:
+        closed = _sql_in(OUVI_CLOSED)
+        mapping = mapping if mapping is not None else _cabinet_map(connection)
+        rows = connection.execute(
+            "SELECT id,numero_interno,titulo,situacao,data_recebimento,"
+            "prioridade,representacao_id,procurador_responsavel_id "
+            "FROM ouvidoria_manifestacoes WHERE situacao NOT IN ("
+            + closed
+            + ") ORDER BY data_recebimento,id LIMIT ?",
+            (*OUVI_CLOSED, limit),
+        ).fetchall()
+        for row in rows:
+            gabinete = mapping.get(int(row["procurador_responsavel_id"] or 0), "")
+            if gabinete_filter and gabinete != gabinete_filter:
+                continue
+            waiting = row["situacao"] in ("TRIAGEM", "ANALISE", "AGUARDANDO_PROVIDENCIA")
+            due = today if waiting else None
+            urgency = URGENTE if waiting else SEM_PRAZO
+            if row["prioridade"] == "URGENTE" and urgency == SEM_PRAZO:
+                urgency = URGENTE
+                due = today
+            linked = "Vinculada a representação" if row["representacao_id"] else ""
+            items.append(
+                PendingItem(
+                    source_module="ouvidoria",
+                    source_id=str(row["id"]),
+                    gabinete=gabinete or "—",
+                    title=(row["numero_interno"] or row["titulo"] or "Notícia de fato")[:80],
+                    subtitle=((row["titulo"] or "") + ((" · " + linked) if linked else ""))[:80],
+                    due_date=due,
+                    start_date=parse_date(row["data_recebimento"], today),
+                    end_date=due,
+                    status_original=OUVI_STATUS_LABELS.get(row["situacao"], row["situacao"]),
+                    urgency=urgency,
+                    context=row["situacao"],
+                    navigation="Ouvidoria",
+                    metadata={"situacao": row["situacao"]},
+                )
+            )
+        return items
+    except BaseException:
+        if ctx is not None:
+            ctx.__exit__(*__import__("sys").exc_info())
+        raise
+    else:
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
+
+
+def fetch_access_requests(
+    store,
+    principal,
+    *,
+    today,
+    gabinete_filter=None,
+    connection=None,
+    mapping=None,
+    limit=SOURCE_CAP,
+):
+    _ = mapping
+    if not _has_table(store, "access_requests", connection):
+        return []
+    items = []
+    ctx = None
+    if connection is None:
+        ctx = store.connection(read_only=True)
+        connection = ctx.__enter__()
+    try:
+        rows = connection.execute(
+            "SELECT id,nome,email,gabinete,created_at FROM access_requests "
+            "WHERE status='pendente' ORDER BY created_at,id LIMIT ?",
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            gabinete = row["gabinete"] or "—"
+            if gabinete_filter and gabinete != gabinete_filter:
+                continue
+            due = today
+            items.append(
+                PendingItem(
+                    source_module="access_requests",
+                    source_id=str(row["id"]),
+                    gabinete=gabinete,
+                    title="Solicitação de acesso",
+                    subtitle=((row["nome"] or "") + " · " + (row["email"] or ""))[:80],
+                    due_date=due,
+                    start_date=due,
+                    end_date=due,
+                    status_original="Pendente",
+                    urgency=URGENTE,
+                    context=row["gabinete"] or "",
+                    navigation="Administração",
+                    metadata={"secao": "Solicitações"},
+                )
+            )
+        return items
+    except BaseException:
+        if ctx is not None:
+            ctx.__exit__(*__import__("sys").exc_info())
+        raise
+    else:
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
+
+
+def item_in_period(item, period, today):
+    if period in (None, "todos", "todas"):
         return True
     due = item.due_date
     if item.source_module == "memorandos" and item.status_original == "EM ANDAMENTO":
         due = today
     if due is None:
-        return period == "todos"
+        return period in ("todos", "todas")
+    if period == "vencidas":
+        return due < today
     if period == "hoje":
         return due == today
     last = {"3d": 3, "7d": 7, "30d": 30}[period]
-    return today <= due <= today + timedelta(days=last)
+    return today < due <= today + timedelta(days=last)
+
+
+def _in_period(item, period, today):
+    return item_in_period(item, period, today)
 
 
 def collect_pending(
@@ -572,8 +952,9 @@ def collect_pending(
     modules=None,
     gabinete=None,
     urgency=None,
-    period="todos",
+    period="todas",
     alert_window=False,
+    pesquisa=None,
 ):
     """Backend-authorized aggregation. Unknown gabinetes are ignored, never expanded."""
     store = unwrap_store(store)
@@ -584,13 +965,23 @@ def collect_pending(
         principal
     ):
         return [], {}, today
-    wanted = set(modules or ("oficios", "agenda", "memorandos"))
+    if modules:
+        wanted = set(modules)
+    else:
+        wanted = set(CORE_MODULES)
+        if not alert_window:
+            wanted.update(EXTENDED_MODULES)
     errors = {}
     collected = []
     sources = (
         ("oficios", fetch_oficios, "oficios"),
         ("agenda", fetch_agenda, "agenda"),
+        ("afastamentos", fetch_afastamentos, "agenda"),
         ("memorandos", fetch_memorandos, "memorandos"),
+        ("tarefas", fetch_tarefas, "tarefas"),
+        ("representacoes", fetch_representacoes, "representacoes"),
+        ("ouvidoria", fetch_ouvidoria, "ouvidoria"),
+        ("admin", fetch_access_requests, "admin"),
     )
     due_on_or_before = None
     start_from = None
@@ -603,6 +994,7 @@ def collect_pending(
         start_from = moment.isoformat()
         until = (moment + timedelta(hours=24)).isoformat()
         start_on_or_before = due_on_or_before
+        wanted &= set(CORE_MODULES)
     extra = {
         "oficios": {"due_on_or_before": due_on_or_before},
         "agenda": {"start_from": start_from, "until": until},
@@ -611,7 +1003,8 @@ def collect_pending(
     with store.connection(read_only=True) as connection:
         mapping = _cabinet_map(connection)
         for key, loader, permission in sources:
-            if key not in wanted or not has_permission(principal, permission):
+            selected = key if key != "afastamentos" else "agenda"
+            if selected not in wanted or not has_permission(principal, permission):
                 continue
             try:
                 collected.extend(
@@ -622,22 +1015,37 @@ def collect_pending(
                         gabinete_filter=gabinete,
                         connection=connection,
                         mapping=mapping,
-                        **extra[key],
+                        **extra.get(key, {}),
                     )
                 )
-                errors[key] = None
+                errors[selected] = None
             except Exception as exc:
                 LOGGER.exception("Falha ao carregar pendências de %s", key)
                 registrar_erro(
                     store, modulo="pendencias", acao="CONSULTAR", erro=exc, principal=principal
                 )
-                errors[key] = key
+                errors[selected] = selected
+    needle = (pesquisa or "").strip().casefold()
     filtered = []
     for item in collected:
         if urgency and item.urgency != urgency:
             continue
         if not _in_period(item, period, today):
             continue
+        if needle:
+            hay = " ".join(
+                part
+                for part in (
+                    item.title,
+                    item.subtitle,
+                    item.gabinete,
+                    item.status_original,
+                    item.navigation,
+                )
+                if part
+            ).casefold()
+            if needle not in hay:
+                continue
         filtered.append(item)
     filtered.sort(
         key=lambda item: (
@@ -645,6 +1053,8 @@ def collect_pending(
             if item.urgency in URGENCY_ORDER
             else 9,
             item.due_date or date.max,
+            item.source_module,
+            item.gabinete or "",
             item.title,
         )
     )
