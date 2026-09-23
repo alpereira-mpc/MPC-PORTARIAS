@@ -82,6 +82,13 @@ def _clear_home_search():
     st.session_state[HOME_SEARCH_INPUT_VERSION] = version
 
 
+def _submit_home_search(input_key):
+    """Commit the current input from either Enter or the Search button."""
+    st.session_state["global_search_run"] = normalize_term(
+        st.session_state.get(input_key, "")
+    )
+
+
 def _persistent_errors(term, errors):
     """Confirm a source failure on two consecutive renders before showing it."""
     failed = tuple(sorted(key for key, value in errors.items() if value))
@@ -121,24 +128,30 @@ def render_home_search(store, principal):
         for key in HOME_SEARCH_STATE_KEYS
         if key != "global_search_q"
     )
-    with st.form("global_search_form", border=False):
-        query = st.text_input(
-            "Busca",
-            key=input_key,
-            label_visibility="collapsed",
-            placeholder="Pesquisar no Ferramentas MPC-PB...",
+    query = st.text_input(
+        "Busca",
+        key=input_key,
+        label_visibility="collapsed",
+        placeholder="Pesquisar no Ferramentas MPC-PB...",
+        on_change=_submit_home_search,
+        args=(input_key,),
+    )
+    search_column, clear_column = st.columns(2)
+    with search_column:
+        st.button(
+            "Buscar",
+            type="primary",
+            key="global_search_submit",
+            on_click=_submit_home_search,
+            args=(input_key,),
         )
-        search_column, clear_column = st.columns(2)
-        with search_column:
-            submitted = st.form_submit_button("Buscar", type="primary")
-        with clear_column:
-            if search_active or (submitted and normalize_term(query)):
-                st.form_submit_button(
-                    "Limpar busca",
-                    on_click=_clear_home_search,
-                )
-    if submitted:
-        st.session_state["global_search_run"] = normalize_term(query)
+    with clear_column:
+        if search_active or normalize_term(query):
+            st.button(
+                "Limpar busca",
+                key="global_search_clear",
+                on_click=_clear_home_search,
+            )
     term = st.session_state.get("global_search_run")
     if not term:
         st.caption(f"Digite pelo menos {MIN_CHARS} caracteres para pesquisar.")

@@ -248,7 +248,7 @@ def test_source_error_remains_isolated_if_audit_logging_fails(store, monkeypatch
     assert all(item.source_module != "portarias" for item in hits)
 
 
-def test_home_search_form(store, monkeypatch):
+def test_home_search_controls(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
     from tests.access_testing import enable_login
@@ -263,8 +263,9 @@ def test_home_search_form(store, monkeypatch):
     )
     assert any("Digite pelo menos" in c for c in captions)
     app.text_input(key="global_search_q").set_value("ab").run()
-    # Form submit needs the button inside the form.
-    app.button(key="FormSubmitter:global_search_form-Buscar").click().run()
+    assert app.session_state["global_search_run"] == "ab"
+    assert any("ao menos" in str(item.value) for item in app.markdown)
+    app.button(key="global_search_submit").click().run()
     assert not app.exception
     blob = " ".join(str(m.value) for m in app.markdown) + " ".join(
         str(c.value) for c in app.caption
@@ -283,11 +284,11 @@ def test_home_search_clear_resets_results_input_and_errors(store, monkeypatch):
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
 
     app.text_input(key="global_search_q").set_value("Sheyla").run()
-    app.button(key="FormSubmitter:global_search_form-Buscar").click().run()
+    app.button(key="global_search_submit").click().run()
     assert not app.exception and not app.error
     result_text = " ".join(str(c.value) for c in app.caption)
     assert "Resultados para" in result_text
-    clear_key = "FormSubmitter:global_search_form-Limpar busca"
+    clear_key = "global_search_clear"
     assert any(button.key == clear_key for button in app.button)
 
     app.session_state["global_search_error"] = "estado residual"
@@ -343,19 +344,39 @@ def test_home_search_only_shows_persistent_source_error(store, monkeypatch):
     monkeypatch.setattr(search_ui, "section_label", lambda *args, **kwargs: None)
     monkeypatch.setattr(search_ui, "empty_state", lambda *args, **kwargs: None)
 
-    class Form:
+    class Column:
         def __enter__(self):
             return self
 
         def __exit__(self, *args):
             return False
 
-    monkeypatch.setattr(search_ui.st, "form", lambda *args, **kwargs: Form())
+    monkeypatch.setattr(
+        search_ui.st, "columns", lambda *args, **kwargs: (Column(), Column())
+    )
     monkeypatch.setattr(search_ui.st, "text_input", lambda *args, **kwargs: "falha")
-    monkeypatch.setattr(search_ui.st, "form_submit_button", lambda *args, **kwargs: False)
+    monkeypatch.setattr(search_ui.st, "button", lambda *args, **kwargs: False)
     search_ui.st.session_state[search_ui.HOME_SEARCH_ACTIVE] = True
 
     search_ui.render_home_search(store, _admin(store))
     assert errors == [] and warnings == []
     search_ui.render_home_search(store, _admin(store))
     assert errors == ["Não foi possível concluir a busca agora."]
+
+
+def test_authenticated_home_search_never_mounts_a_streamlit_form(store, monkeypatch):
+    from inspect import getsource
+    from streamlit.testing.v1 import AppTest
+
+    from database.store import ROOT
+    from services.search_ui import render_home_search
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+
+    assert not app.exception and not app.error
+    assert any(button.key == "global_search_submit" for button in app.button)
+    assert "st.form(" not in getsource(render_home_search)
+    assert "st.form_submit_button" not in getsource(render_home_search)
