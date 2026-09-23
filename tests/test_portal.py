@@ -47,6 +47,29 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     assert not any(getattr(b, "key", None) == "open_portarias" for b in app.button)
 
 
+def test_authenticated_transition_prepares_a_clean_portal_session(monkeypatch):
+    import portal
+
+    state = {
+        "portal_module": "Portarias",
+        "audit_sessao_registrada": True,
+        "audit_modulo_atual": "portarias",
+        portal.PORTAL_NAV_REQUEST: {"module": "Portarias", "state": {}},
+        portal.PORTAL_ALERTS_REQUEST: True,
+    }
+    monkeypatch.setattr(portal.st, "session_state", state)
+    identity = {"email": "admin@test.local"}
+
+    assert portal._begin_authenticated_session(identity) is True
+    assert state["_portal_authenticated_email"] == "admin@test.local"
+    assert state["portal_module"] == "Início"
+    assert "audit_sessao_registrada" not in state
+    assert "audit_modulo_atual" not in state
+    assert portal.PORTAL_NAV_REQUEST not in state
+    assert portal.PORTAL_ALERTS_REQUEST not in state
+    assert portal._begin_authenticated_session(identity) is False
+
+
 def test_brand_assets_are_packaged_with_the_repository():
     from inspect import getsource
 
