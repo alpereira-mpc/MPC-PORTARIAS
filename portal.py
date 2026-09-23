@@ -588,7 +588,6 @@ def _logout():
     for key in (
         "_portal_theme",
         "_portal_theme_error",
-        "_portal_authenticated_email",
         "_audit_actor",
         "_audit_identity",
         "audit_sessao_registrada",
@@ -633,34 +632,6 @@ def _application_store():
     return store
 
 
-def _begin_authenticated_session(identity):
-    """Prepare the portal shell before its first authenticated render.
-
-    Streamlit restores the OIDC identity at the start of a rerun, while this
-    script's session state can still contain values from the public shell (or
-    from a preceding identity in the same browser session). Do not create any
-    authenticated widgets until a clean run has started for this identity.
-    """
-    email = identity["email"]
-    if _session_get("_portal_authenticated_email") == email:
-        return False
-    for key in (
-        "portal_module",
-        "audit_sessao_registrada",
-        "audit_modulo_atual",
-        "audit_negado_registrado",
-        PORTAL_NAV_REQUEST,
-        PORTAL_ALERTS_REQUEST,
-        PORTAL_SPECIAL_VIEW,
-        PORTAL_SPECIAL_RETURN,
-        PORTAL_SPECIAL_ANCHOR,
-    ):
-        st.session_state.pop(key, None)
-    st.session_state["_portal_authenticated_email"] = email
-    st.session_state["portal_module"] = "Início"
-    return True
-
-
 def render_portal(sidebar_context=None):
     from services.access import (
         current_user,
@@ -675,16 +646,13 @@ def render_portal(sidebar_context=None):
         layout="wide",
     )
     identity = oidc_identity()
+    apply_theme(_active_theme(identity))
     if identity is None:
-        apply_theme(_active_theme(identity))
         with st.sidebar:
             render_sidebar_brand()
         render_institutional_header()
         render_login()
         st.stop()
-    if _begin_authenticated_session(identity):
-        st.rerun()
-    apply_theme(_active_theme(identity))
     try:
         store = _application_store()
     except Exception:
