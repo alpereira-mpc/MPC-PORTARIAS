@@ -123,6 +123,9 @@ class MemorandosStore:
             row = c.execute("SELECT status FROM memorandos WHERE id=?", (identifier,)).fetchone()
             if not row or row["status"] != STATUS_RASCUNHO:
                 raise ValueError("Somente rascunho pode ser excluído.")
+            from database.internal_collaboration import InternalCollaborationStore
+
+            InternalCollaborationStore.delete_origin(c, "memorando", identifier)
             c.execute("DELETE FROM memorandos WHERE id=?", (identifier,))
             self.store.event(c, "memorandos_excluir_rascunho", {"id": identifier})
 
@@ -156,6 +159,9 @@ class MemorandosStore:
                 "data_inicio": row["data_inicio"],
                 "data_fim": row["data_fim"],
             }
+            from database.internal_collaboration import InternalCollaborationStore
+
+            InternalCollaborationStore.delete_origin(c, "memorando", identifier)
             c.execute("DELETE FROM memorandos_arquivos WHERE memorando_id=?", (identifier,))
             c.execute(
                 "DELETE FROM memorandos_substituicao_etapas WHERE memorando_id=?",

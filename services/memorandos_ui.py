@@ -346,6 +346,9 @@ def _details(service,row,principal):
             st.rerun()
     if principal.administrator and r["status"] != "RASCUNHO":
         _hard_delete_controls(service, row, principal, r)
+    from services.internal_collaboration_ui import render_internal_collaboration
+
+    render_internal_collaboration(service.store, principal, "memorando", row["id"])
 
 
 def _clear_memo_ui_state(identifier=None):

@@ -37,6 +37,9 @@ def isolate_database_secrets(monkeypatch):
     import database.ouvidoria as ouvidoria
 
     ouvidoria._READY.clear()
+    import database.internal_collaboration as internal_collaboration
+
+    internal_collaboration._READY.clear()
     import services.pending as pending
 
     pending._TABLES.clear()

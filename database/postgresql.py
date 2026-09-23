@@ -60,6 +60,8 @@ TABLES = (
     "ouvidoria_andamentos",
     "ouvidoria_providencias",
     "ouvidoria_documentos",
+    "notas_internas",
+    "encaminhamentos_internos",
 )
 IDENTITY_TABLES = {
     "procuradores",
@@ -88,6 +90,8 @@ IDENTITY_TABLES = {
     "ouvidoria_integrantes",
     "ouvidoria_andamentos",
     "ouvidoria_providencias",
+    "notas_internas",
+    "encaminhamentos_internos",
 }
 HISTORY_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS portarias_recent_idx "

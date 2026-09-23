@@ -681,7 +681,13 @@ def edit_draft(identifier):
         st.session_state.pop(key, None)
 
 
-def details(service, r):
+def _open_linked_response(identifier):
+    st.session_state["oficio_page"] = "Recebidos"
+    st.session_state["oficio_open_ids"] = {identifier}
+    st.session_state["oficio_detail"] = identifier
+
+
+def details(service, r, principal=None):
     direction = "Enviado" if r.get("direcao") == "ENVIADO" else "Recebido"
     render_record(
         label(r),
@@ -737,7 +743,14 @@ def details(service, r):
     if r.get("corpo"):
         st.text(r["corpo"])
     if r.get("responde_a"):
-        empty_state("Em resposta ao Ofício " + label(service.get(r["responde_a"])))
+        response = service.get(r["responde_a"])
+        empty_state("Respondido pelo Ofício recebido " + label(response))
+        st.button(
+            "Abrir resposta",
+            key="open_response_" + r["id"],
+            on_click=_open_linked_response,
+            args=(response["id"],),
+        )
     if r["direcao"] == "RECEBIDO":
         for reply in read_list(service, related=r["id"]):
             empty_state(
@@ -862,6 +875,77 @@ def details(service, r):
             evento = "OFICIO_CANCELADO" if status == "Cancelado" else "OFICIO_ALTERADO"
             audit_oficio(evento, "MOVIMENTAR", {**r, "status": status})
             done("Movimentação registrada.")
+    if r["direcao"] == "ENVIADO" and r.get("numero") is not None and r["status"] != "Cancelado":
+        section_label("Resposta")
+        with st.form("response_tracking_" + r["id"]):
+            waiting = st.checkbox(
+                "Aguarda resposta",
+                value=bool(r.get("aguarda_resposta")),
+                key="waiting_response_" + r["id"],
+            )
+            expected = st.date_input(
+                "Data esperada para resposta (opcional)",
+                value=(
+                    date.fromisoformat(r["data_esperada_resposta"])
+                    if r.get("data_esperada_resposta")
+                    else None
+                ),
+                format="DD/MM/YYYY",
+                key="expected_response_" + r["id"],
+            )
+            save_tracking = st.form_submit_button("Salvar acompanhamento")
+        if save_tracking:
+            service.set_response_tracking(
+                r["id"], waiting, expected.isoformat() if waiting and expected else None
+            )
+            audit_oficio(
+                "OFICIO_ACOMPANHAMENTO_RESPOSTA",
+                "ALTERAR",
+                r,
+                extra={"aguarda_resposta": waiting, "possui_data_esperada": bool(expected)},
+            )
+            done("Acompanhamento de resposta atualizado.")
+        if not r.get("responde_a"):
+            candidates = service.response_candidates(
+                r["id"], st.session_state.get("oficio_gabinete_member")
+            )
+            by_id = {item["id"]: item for item in candidates}
+            with st.form("link_response_" + r["id"]):
+                chosen = st.selectbox(
+                    "Ofício recebido",
+                    list(by_id),
+                    index=None,
+                    placeholder="Selecione a resposta recebida",
+                    format_func=lambda value: (
+                        f"{by_id[value]['numero_externo']} · {by_id[value]['assunto']} · "
+                        + date.fromisoformat(by_id[value]["data"]).strftime("%d/%m/%Y")
+                        if value in by_id
+                        else ""
+                    ),
+                    key="response_choice_" + r["id"],
+                )
+                link = st.form_submit_button("Vincular resposta")
+            if link:
+                if not chosen:
+                    st.error("Selecione um Ofício recebido.")
+                else:
+                    service.link_response(r["id"], chosen)
+                    audit_oficio("OFICIO_RESPOSTA_VINCULADA", "VINCULAR", r)
+                    done("Resposta vinculada.")
+        else:
+            with st.form("unlink_response_" + r["id"]):
+                confirm_unlink = st.checkbox(
+                    "Confirmo que desejo desfazer somente o vínculo",
+                    key="unlink_confirm_" + r["id"],
+                )
+                unlink = st.form_submit_button("Desvincular resposta")
+            if unlink:
+                if not confirm_unlink:
+                    st.error("Confirme a desvinculação.")
+                else:
+                    service.unlink_response(r["id"])
+                    audit_oficio("OFICIO_RESPOSTA_DESVINCULADA", "DESVINCULAR", r)
+                    done("Vínculo da resposta removido; nenhum Ofício foi excluído.")
     history = (
         st.container(key=recebidos_historico_key(r["id"]))
         if r["direcao"] == "RECEBIDO"
@@ -885,6 +969,15 @@ def details(service, r):
                 hide_index=True,
                 use_container_width=True,
             )
+    from services.internal_collaboration_ui import render_internal_collaboration
+
+    if principal is not None:
+        render_internal_collaboration(
+            service.store,
+            principal,
+            "oficio_enviado" if r["direcao"] == "ENVIADO" else "oficio_recebido",
+            r["id"],
+        )
 
 
 def render_filters(*, direction=None, tracking=False, submit_label=None):
@@ -954,7 +1047,7 @@ def _toggle_oficio_detail(record_id):
         st.session_state.pop("oficio_detail", None)
 
 
-def _details_if_open(service, record_id, drawn):
+def _details_if_open(service, record_id, drawn, principal):
     if not _oficio_detail_is_open(record_id) or record_id in drawn:
         return
     record = service.get(record_id)
@@ -963,10 +1056,18 @@ def _details_if_open(service, record_id, drawn):
     drawn.add(record_id)
     with st.container(border=True, key=f"mpc_card_detail_{record_id}"):
         detail_mark()
-        details(service, record)
+        details(service, record, principal)
 
 
-def listing(service, people, direction=None, tracking=False, filters=None, detail_drawn=None):
+def listing(
+    service,
+    people,
+    direction=None,
+    tracking=False,
+    filters=None,
+    detail_drawn=None,
+    principal=None,
+):
     filters = filters or render_filters(direction=direction, tracking=tracking)
     page = st.number_input("Página", 1, value=1)
     rows = read_list(
@@ -992,6 +1093,16 @@ def listing(service, people, direction=None, tracking=False, filters=None, detai
     drawn = detail_drawn if detail_drawn is not None else set()
     for index, r in enumerate(rows):
         attention_text = attention(r)
+        if r.get("aguarda_resposta") and not r.get("responde_a"):
+            response_text = (
+                "Resposta esperada até "
+                + date.fromisoformat(r["data_esperada_resposta"]).strftime("%d/%m/%Y")
+                if r.get("data_esperada_resposta")
+                else "Aguardando resposta"
+            )
+            attention_text = " · ".join(
+                part for part in (attention_text, response_text) if part
+            )
         direction_label = "Enviado" if r.get("direcao") == "ENVIADO" else "Recebido"
         marks = badges(
             (direction_label, "brand" if r.get("direcao") == "ENVIADO" else "info"),
@@ -1029,7 +1140,7 @@ def listing(service, people, direction=None, tracking=False, filters=None, detai
                 args=(r["id"],),
             )
         if is_open:
-            _details_if_open(service, r["id"], drawn)
+            _details_if_open(service, r["id"], drawn, principal)
 
 
 def render(store=None, principal=None):
@@ -1167,7 +1278,13 @@ def render(store=None, principal=None):
             overview_filters = render_filters(submit_label="Consultar ofícios")
             detail_drawn = set()
             if overview_filters["submitted"]:
-                listing(service, people, filters=overview_filters, detail_drawn=detail_drawn)
+                listing(
+                    service,
+                    people,
+                    filters=overview_filters,
+                    detail_drawn=detail_drawn,
+                    principal=principal,
+                )
             section_label("Últimas movimentações")
             for index, row in enumerate(read_list(service, limit=5)):
                 is_open = _oficio_detail_is_open(row["id"])
@@ -1185,15 +1302,15 @@ def render(store=None, principal=None):
                         args=(row["id"],),
                     )
                 if is_open:
-                    _details_if_open(service, row["id"], detail_drawn)
+                    _details_if_open(service, row["id"], detail_drawn, principal)
         elif page == "Novo Ofício":
             editor(service, people)
         elif page == "Recebidos":
             received_form(service, people)
-            listing(service, people, "RECEBIDO")
+            listing(service, people, "RECEBIDO", principal=principal)
         elif page == "Enviados":
-            listing(service, people, "ENVIADO")
+            listing(service, people, "ENVIADO", principal=principal)
         else:
-            listing(service, people, tracking=True)
+            listing(service, people, tracking=True, principal=principal)
     except (ValueError, RuntimeError) as exc:
         st.error(str(exc))

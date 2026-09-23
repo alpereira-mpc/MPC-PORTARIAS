@@ -607,6 +607,9 @@ def _detail_body(store, principal, record):
             )
             st.session_state["representacoes_download"] = item["id"]
             st.rerun()
+    from services.internal_collaboration_ui import render_internal_collaboration
+
+    render_internal_collaboration(store, principal, "representacao", record["id"])
     protocolled = is_protocolled(record)
     flow = _toolbar(
         "rep_toolbar_flow",

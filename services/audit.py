@@ -110,6 +110,11 @@ ACTION_LABELS = {
     "REGISTRAR": "Registro",
     "CORRIGIR": "Alteração",
     "REABRIR": "Reabertura",
+    "VINCULAR": "Vinculação",
+    "DESVINCULAR": "Desvinculação",
+    "ENCAMINHAR": "Encaminhamento",
+    "CIENCIA": "Ciência",
+    "CONCLUIR": "Conclusão",
 }
 EVENT_LABELS = {
     "SESSAO_INICIADA": "Início de sessão",
@@ -171,6 +176,13 @@ EVENT_LABELS = {
     "AFASTAMENTO_CRIADO": "Afastamento criado",
     "AFASTAMENTO_EDITADO": "Afastamento alterado",
     "AFASTAMENTO_CANCELADO": "Afastamento cancelado",
+    "OFICIO_ACOMPANHAMENTO_RESPOSTA": "Acompanhamento de resposta alterado",
+    "OFICIO_RESPOSTA_VINCULADA": "Resposta de Ofício vinculada",
+    "OFICIO_RESPOSTA_DESVINCULADA": "Resposta de Ofício desvinculada",
+    "NOTA_INTERNA_CRIADA": "Nota interna criada",
+    "ENCAMINHAMENTO_CRIADO": "Encaminhamento criado",
+    "ENCAMINHAMENTO_CIENTE": "Ciência de encaminhamento registrada",
+    "ENCAMINHAMENTO_CONCLUIDO": "Encaminhamento concluído",
 }
 ENTITY_LABELS = {
     "portaria": "Portaria",
@@ -186,6 +198,11 @@ ENTITY_LABELS = {
     "funcao_institucional": "Função institucional",
     "solicitacao_acesso": "Solicitação de acesso",
     "documento": "Documento",
+    "oficio_enviado": "Ofício enviado",
+    "oficio_recebido": "Ofício recebido",
+    "memorando": "Memorando",
+    "representacao": "Representação",
+    "ouvidoria": "Notícia de fato",
 }
 RESULT_LABELS = {
     "OK": "Sucesso",

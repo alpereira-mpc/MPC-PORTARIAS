@@ -356,6 +356,9 @@ class RepresentacoesStore:
                     "Representação protocolada não pode ser excluída. Utilize encerramento, cancelamento ou arquivamento."
                 )
             self._unlink_ouvidoria(c, identifier, stamp, actor or "")
+            from database.internal_collaboration import InternalCollaborationStore
+
+            InternalCollaborationStore.delete_origin(c, "representacao", identifier)
             c.execute("DELETE FROM representacoes WHERE id=?", (identifier,))
         return True
 

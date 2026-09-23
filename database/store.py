@@ -56,6 +56,9 @@ def ensure_addon_schemas(store):
     from database.access import ensure_schema
 
     ensure_schema(store)
+    from database.internal_collaboration import ensure_schema as ensure_collaboration
+
+    ensure_collaboration(store)
     from database.memorandos import MemorandosStore
 
     MemorandosStore(store)

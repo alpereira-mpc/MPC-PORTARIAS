@@ -480,6 +480,9 @@ def _detail(store, principal, record):
                 )
                 st.session_state["ouvidoria_download"] = item["id"]
                 st.rerun()
+        from services.internal_collaboration_ui import render_internal_collaboration
+
+        render_internal_collaboration(store, principal, "ouvidoria", record["id"])
         flow = _toolbar(
             "ouvi_toolbar_flow",
             [

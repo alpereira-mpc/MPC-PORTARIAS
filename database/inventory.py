@@ -65,6 +65,11 @@ OUVIDORIA_TABLES = (
 
 AUDIT_TABLES = ("auditoria_eventos",)
 
+INTERNAL_COLLABORATION_TABLES = (
+    "notas_internas",
+    "encaminhamentos_internos",
+)
+
 POSTGRES_ONLY_TABLES = ("schema_migrations", "backup_snapshots")
 
 APPLICATION_TABLES = (
@@ -76,6 +81,7 @@ APPLICATION_TABLES = (
     + REPRESENTACOES_TABLES
     + OUVIDORIA_TABLES
     + AUDIT_TABLES
+    + INTERNAL_COLLABORATION_TABLES
     + POSTGRES_ONLY_TABLES
 )
 
@@ -88,6 +94,7 @@ ESSENTIAL_TABLES = (
     + REPRESENTACOES_TABLES
     + OUVIDORIA_TABLES
     + AUDIT_TABLES
+    + INTERNAL_COLLABORATION_TABLES
 )
 
 SCHEMA_MARKERS = (
@@ -97,6 +104,8 @@ SCHEMA_MARKERS = (
     "auditoria_schema_v1",
     "oficios_schema_v1",
     "oficios_schema_v2",
+    "oficios_schema_v3",
+    "colaboracao_interna_schema_v1",
     "representacoes_schema_v1",
     "ouvidoria_schema_v1",
 )
@@ -111,6 +120,20 @@ ESSENTIAL_COLUMNS = {
     "memorandos": ("status", "payload", "numero_oficial"),
     "memorandos_arquivos": ("nome", "tipo", "sha256", "conteudo"),
     "oficios": ("direcao", "status", "payload"),
+    "notas_internas": (
+        "origem_modulo",
+        "origem_id",
+        "autor_id",
+        "texto",
+        "criado_em",
+    ),
+    "encaminhamentos_internos": (
+        "origem_modulo",
+        "origem_id",
+        "destinatario_id",
+        "status",
+        "criado_em",
+    ),
     "oficio_arquivos": ("nome", "tipo", "conteudo"),
     "agenda_compromissos": ("tipo", "inicio", "payload"),
     "sequencias": ("ano", "ultimo"),

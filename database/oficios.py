@@ -20,7 +20,11 @@ from services.oficios import (
     validate_upload,
 )
 
-COLUMNS = "id,direcao,serie,ano,numero,status,data,prazo,membro_id,assunto,destinatario,numero_externo,responde_a,payload,criada,atualizada,data_envio,cancelada"
+COLUMNS = (
+    "id,direcao,serie,ano,numero,status,data,prazo,membro_id,assunto,destinatario,"
+    "numero_externo,responde_a,payload,criada,atualizada,data_envio,cancelada,"
+    "aguarda_resposta,data_esperada_resposta"
+)
 
 
 class OficiosStore:
@@ -36,8 +40,9 @@ class OficiosStore:
         # Read-only fast path on subsequent reruns; no DDL/writer lock after migration.
         with self.store.connection(read_only=True) as c:
             if c.execute(
-                "SELECT valor FROM configuracoes WHERE chave='oficios_schema_v2'"
-            ).fetchone():
+                "SELECT COUNT(*) FROM configuracoes "
+                "WHERE chave IN ('oficios_schema_v2','oficios_schema_v3')"
+            ).fetchone()[0] == 2:
                 self._schema_ready = True
                 return
         binary = "BYTEA" if self.store.backend == "postgresql" else "BLOB"
@@ -46,7 +51,7 @@ class OficiosStore:
             for statement in [
                 "CREATE TABLE IF NOT EXISTS oficio_series (sigla TEXT PRIMARY KEY, membro_id INTEGER NOT NULL UNIQUE REFERENCES procuradores(id), modelo TEXT NOT NULL, cabecalho TEXT NOT NULL, digitos INTEGER NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS oficio_sequencias (serie TEXT NOT NULL REFERENCES oficio_series(sigla), ano INTEGER NOT NULL CHECK(ano BETWEEN 1000 AND 9999), proximo INTEGER NOT NULL CHECK(proximo>0), confirmada TEXT NOT NULL, PRIMARY KEY(serie,ano))",
-                "CREATE TABLE IF NOT EXISTS oficios (id TEXT PRIMARY KEY, direcao TEXT NOT NULL CHECK(direcao IN ('ENVIADO','RECEBIDO')), serie TEXT REFERENCES oficio_series(sigla), ano INTEGER NOT NULL, numero INTEGER CHECK(numero>0), status TEXT NOT NULL, data TEXT NOT NULL, prazo TEXT, membro_id INTEGER REFERENCES procuradores(id), assunto TEXT NOT NULL, destinatario TEXT NOT NULL, numero_externo TEXT NOT NULL, responde_a TEXT REFERENCES oficios(id), payload TEXT NOT NULL, criada TEXT NOT NULL, atualizada TEXT NOT NULL, data_envio TEXT, cancelada TEXT, UNIQUE(serie,ano,numero), CHECK(numero IS NULL OR (direcao='ENVIADO' AND serie IS NOT NULL AND status!='Rascunho')))",
+                "CREATE TABLE IF NOT EXISTS oficios (id TEXT PRIMARY KEY, direcao TEXT NOT NULL CHECK(direcao IN ('ENVIADO','RECEBIDO')), serie TEXT REFERENCES oficio_series(sigla), ano INTEGER NOT NULL, numero INTEGER CHECK(numero>0), status TEXT NOT NULL, data TEXT NOT NULL, prazo TEXT, membro_id INTEGER REFERENCES procuradores(id), assunto TEXT NOT NULL, destinatario TEXT NOT NULL, numero_externo TEXT NOT NULL, responde_a TEXT REFERENCES oficios(id), payload TEXT NOT NULL, criada TEXT NOT NULL, atualizada TEXT NOT NULL, data_envio TEXT, cancelada TEXT, aguarda_resposta INTEGER NOT NULL DEFAULT 0 CHECK(aguarda_resposta IN (0,1)), data_esperada_resposta TEXT, UNIQUE(serie,ano,numero), CHECK(numero IS NULL OR (direcao='ENVIADO' AND serie IS NOT NULL AND status!='Rascunho')))",
                 "CREATE TABLE IF NOT EXISTS oficio_destinatarios (oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, membro_id INTEGER NOT NULL REFERENCES procuradores(id), PRIMARY KEY(oficio_id,membro_id))",
                 f"CREATE TABLE IF NOT EXISTS oficio_arquivos (id TEXT PRIMARY KEY, oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, nome TEXT NOT NULL, tipo TEXT NOT NULL, tamanho INTEGER NOT NULL, incluida TEXT NOT NULL, conteudo {binary} NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS oficio_movimentacoes (id TEXT PRIMARY KEY, oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, instante TEXT NOT NULL, anterior TEXT NOT NULL, novo TEXT NOT NULL, observacao TEXT NOT NULL)",
@@ -55,10 +60,27 @@ class OficiosStore:
                 "CREATE INDEX IF NOT EXISTS oficio_arquivo_idx ON oficio_arquivos(oficio_id)",
                 "CREATE INDEX IF NOT EXISTS oficio_movimento_idx ON oficio_movimentacoes(oficio_id,instante)",
                 "CREATE INDEX IF NOT EXISTS oficio_membro_idx ON oficio_destinatarios(membro_id,oficio_id)",
+                "CREATE INDEX IF NOT EXISTS oficio_resposta_idx ON oficios(responde_a)",
                 "CREATE TABLE IF NOT EXISTS oficio_numeros_liberados (serie TEXT NOT NULL REFERENCES oficio_series(sigla), ano INTEGER NOT NULL, numero INTEGER NOT NULL CHECK(numero>0), PRIMARY KEY(serie,ano,numero))",
                 f"CREATE TABLE IF NOT EXISTS oficio_quarentena (id TEXT PRIMARY KEY, instante TEXT NOT NULL, motivo TEXT NOT NULL, dados TEXT NOT NULL, arquivos {binary} NOT NULL)",
             ]:
                 c.execute(statement)
+            if self.store.backend == "postgresql":
+                columns = {
+                    row[0]
+                    for row in c.execute(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema=current_schema() AND table_name='oficios'"
+                    )
+                }
+            else:
+                columns = {row[1] for row in c.execute("PRAGMA table_info(oficios)")}
+            if "aguarda_resposta" not in columns:
+                c.execute(
+                    "ALTER TABLE oficios ADD COLUMN aguarda_resposta INTEGER NOT NULL DEFAULT 0"
+                )
+            if "data_esperada_resposta" not in columns:
+                c.execute("ALTER TABLE oficios ADD COLUMN data_esperada_resposta TEXT")
             people = [dict(r) for r in c.execute("SELECT id,nome FROM procuradores")]
             for name, (sigla, modelo, heading, digits) in SERIES.items():
                 matches = [
@@ -78,6 +100,9 @@ class OficiosStore:
             )
             c.execute(
                 "INSERT INTO configuracoes VALUES('oficios_schema_v2','1') ON CONFLICT DO NOTHING"
+            )
+            c.execute(
+                "INSERT INTO configuracoes VALUES('oficios_schema_v3','1') ON CONFLICT DO NOTHING"
             )
         self._schema_ready = True
 
@@ -213,6 +238,7 @@ class OficiosStore:
         return {
             **json.loads(row["payload"]),
             **{k: row[k] for k in row.keys() if k != "payload"},
+            "aguarda_resposta": bool(row["aguarda_resposta"]),
         }
 
     def get(self, identifier):
@@ -308,7 +334,11 @@ class OficiosStore:
                 )
             else:
                 c.execute(
-                    "INSERT INTO oficios VALUES(" + ",".join("?" for _ in values) + ")",
+                    "INSERT INTO oficios(id,direcao,serie,ano,numero,status,data,prazo,"
+                    "membro_id,assunto,destinatario,numero_externo,responde_a,payload,"
+                    "criada,atualizada,data_envio,cancelada) VALUES("
+                    + ",".join("?" for _ in values)
+                    + ")",
                     values,
                 )
             for member in set(members):
@@ -500,6 +530,105 @@ class OficiosStore:
                 note + (f" | Envio: {sent}" if sent else ""),
             )
 
+    def set_response_tracking(self, identifier, waiting, expected_date=None):
+        if expected_date:
+            date.fromisoformat(expected_date)
+        waiting = bool(waiting)
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            record = self._get(c, identifier)
+            if (
+                record["direcao"] != "ENVIADO"
+                or record["numero"] is None
+                or record["status"] == "Cancelado"
+            ):
+                raise ValueError("O acompanhamento exige um Ofício enviado e numerado.")
+            if not waiting:
+                expected_date = None
+            status = record["status"]
+            if not record.get("responde_a"):
+                if waiting and status not in ("Concluído", "Respondido"):
+                    status = "Aguardando resposta"
+                elif not waiting and status == "Aguardando resposta":
+                    status = "Enviado"
+            stamp = now()
+            c.execute(
+                "UPDATE oficios SET aguarda_resposta=?,data_esperada_resposta=?,"
+                "status=?,atualizada=? WHERE id=?",
+                (1 if waiting else 0, expected_date, status, stamp, identifier),
+            )
+            self._movement(
+                c,
+                identifier,
+                record["status"],
+                status,
+                "Acompanhamento de resposta ativado"
+                if waiting
+                else "Acompanhamento de resposta desativado",
+            )
+
+    def response_candidates(self, identifier, member_id=None, limit=200):
+        with self.store.connection(read_only=True) as c:
+            record = self._get(c, identifier)
+            if record["direcao"] != "ENVIADO":
+                return []
+            args = [identifier]
+            member_clause = ""
+            if member_id:
+                member_clause = (
+                    " AND EXISTS (SELECT 1 FROM oficio_destinatarios d "
+                    "WHERE d.oficio_id=o.id AND d.membro_id=?)"
+                )
+                args.append(member_id)
+            args.append(max(1, min(int(limit), 500)))
+            return [
+                dict(row)
+                for row in c.execute(
+                    "SELECT o.id,o.numero_externo,o.assunto,o.data,o.status "
+                    "FROM oficios o WHERE o.direcao='RECEBIDO' AND NOT EXISTS ("
+                    "SELECT 1 FROM oficios linked "
+                    "WHERE linked.responde_a=o.id AND linked.id!=?)"
+                    + member_clause
+                    + " ORDER BY o.data DESC,o.id DESC LIMIT ?",
+                    args,
+                )
+            ]
+
+    def link_response(self, identifier, received_id):
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            sent = self._get(c, identifier)
+            received = self._get(c, received_id)
+            if sent["direcao"] != "ENVIADO" or sent["numero"] is None:
+                raise ValueError("Selecione um Ofício enviado e numerado.")
+            if received["direcao"] != "RECEBIDO":
+                raise ValueError("A resposta deve ser um Ofício recebido.")
+            if sent.get("responde_a"):
+                raise ValueError("Este Ofício já possui resposta vinculada.")
+            if c.execute(
+                "SELECT id FROM oficios WHERE responde_a=? AND id!=? LIMIT 1",
+                (received_id, identifier),
+            ).fetchone():
+                raise ValueError("Este Ofício recebido já está vinculado como resposta.")
+            c.execute(
+                "UPDATE oficios SET responde_a=?,status='Respondido',atualizada=? WHERE id=?",
+                (received_id, now(), identifier),
+            )
+            self._movement(c, identifier, sent["status"], "Respondido", "Resposta vinculada")
+
+    def unlink_response(self, identifier):
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            sent = self._get(c, identifier)
+            if sent["direcao"] != "ENVIADO" or not sent.get("responde_a"):
+                raise ValueError("Este Ofício não possui resposta vinculada.")
+            status = "Aguardando resposta" if sent.get("aguarda_resposta") else "Enviado"
+            c.execute(
+                "UPDATE oficios SET responde_a=NULL,status=?,atualizada=? WHERE id=?",
+                (status, now(), identifier),
+            )
+            self._movement(c, identifier, sent["status"], status, "Resposta desvinculada")
+
     def delete_draft(self, identifier, confirmed=False):
         if not confirmed:
             raise ValueError("Confirme a exclusão do rascunho.")
@@ -509,6 +638,9 @@ class OficiosStore:
             if r["numero"] is not None or r["status"] != "Rascunho":
                 raise ValueError("Ofício numerado deve ser cancelado.")
             self.store.event(c, "oficio_excluir_rascunho", {"id": identifier})
+            from database.internal_collaboration import InternalCollaborationStore
+
+            InternalCollaborationStore.delete_origin(c, "oficio_enviado", identifier)
             c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
 
     def delete_received(self, identifier, acknowledged=False, typed=""):
@@ -549,6 +681,9 @@ class OficiosStore:
                     "assunto": record.get("assunto"),
                 },
             )
+            from database.internal_collaboration import InternalCollaborationStore
+
+            InternalCollaborationStore.delete_origin(c, "oficio_recebido", identifier)
             c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
 
     def delete_generated(
@@ -622,6 +757,9 @@ class OficiosStore:
                 "INSERT INTO oficio_numeros_liberados VALUES(?,?,?)",
                 (record["serie"], record["ano"], record["numero"]),
             )
+            from database.internal_collaboration import InternalCollaborationStore
+
+            InternalCollaborationStore.delete_origin(c, "oficio_enviado", identifier)
             c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
 
     def files(self, identifier):

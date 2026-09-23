@@ -425,6 +425,9 @@ class OuvidoriaStore:
                 raise ValueError(
                     "Esta notícia de fato não pode ser excluída definitivamente porque já possui histórico de andamentos que deve ser preservado."
                 )
+            from database.internal_collaboration import InternalCollaborationStore
+
+            InternalCollaborationStore.delete_origin(c, "ouvidoria", identifier)
             c.execute("DELETE FROM ouvidoria_manifestacoes WHERE id=?", (identifier,))
         return True
 
