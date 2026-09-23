@@ -277,6 +277,8 @@ class InternalCollaborationStore:
             ]
 
     def _can_receive(self, principal, row):
+        if row["remetente_id"] == principal.id:
+            return False
         return bool(
             principal.administrator
             or (row["destinatario_id"] and row["destinatario_id"] == principal.id)

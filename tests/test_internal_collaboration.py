@@ -161,3 +161,71 @@ def test_forwarding_explicit_acknowledgement_completion_and_permissions(store):
             "Não deve ampliar acesso.",
             recipient_id=outsider,
         )
+
+
+def test_forwarding_author_cannot_acknowledge_or_conclude_own_request(store):
+    author = _user(
+        store,
+        "author-cabinet@test.local",
+        oficios=True,
+        gabinetes=["PROGE"],
+    )
+    other_member = _user(
+        store,
+        "other-cabinet@test.local",
+        oficios=True,
+        gabinetes=["PROGE"],
+    )
+    service = OficiosStore(store)
+    office_id = service.save(sample(service))
+    repository = InternalCollaborationStore(store)
+    forwarding_id = repository.create_forwarding(
+        "oficio_enviado",
+        office_id,
+        author,
+        "Providência para o gabinete.",
+        cabinet="PROGE",
+    )
+
+    author_view = repository.list_forwardings("oficio_enviado", office_id, author)[0]
+    assert author_view["pode_agir"] is False
+    with pytest.raises(ValueError, match="destinatário"):
+        repository.mark_acknowledged(forwarding_id, author)
+    with pytest.raises(ValueError, match="destinatário"):
+        repository.conclude(forwarding_id, author)
+
+    other_view = repository.list_forwardings(
+        "oficio_enviado", office_id, other_member
+    )[0]
+    assert other_view["pode_agir"] is True
+    repository.mark_acknowledged(forwarding_id, other_member)
+    repository.conclude(forwarding_id, other_member)
+    concluded = repository.list_forwardings(
+        "oficio_enviado", office_id, other_member
+    )[0]
+    assert concluded["status"] == "CONCLUIDO"
+    assert concluded["ciente_por_id"] == other_member
+    assert concluded["concluido_por_id"] == other_member
+
+
+def test_administrator_author_and_self_recipient_cannot_act(store):
+    administrator = AccessStore(store).get_by_email("admin@test.local")["id"]
+    service = OficiosStore(store)
+    office_id = service.save(sample(service))
+    repository = InternalCollaborationStore(store)
+    forwarding_id = repository.create_forwarding(
+        "oficio_enviado",
+        office_id,
+        administrator,
+        "Providência individual.",
+        recipient_id=administrator,
+    )
+
+    row = repository.list_forwardings(
+        "oficio_enviado", office_id, administrator
+    )[0]
+    assert row["pode_agir"] is False
+    with pytest.raises(ValueError, match="destinatário"):
+        repository.mark_acknowledged(forwarding_id, administrator)
+    with pytest.raises(ValueError, match="destinatário"):
+        repository.conclude(forwarding_id, administrator)
