@@ -585,14 +585,25 @@ def _detail_compact(store, principal, record):
             empty_state("Nenhum documento anexado.")
         pending = st.session_state.get("representacoes_download")
         for item in files:
-            cols = st.columns([3, 2, 2, 2])
+            cols = st.columns([3, 2, 2, 2], vertical_alignment="center")
             cols[0].write(label(DOCUMENTOS, item["tipo_documento"]))
             cols[1].caption(item.get("descricao") or item["nome_arquivo"])
             cols[2].caption(format_date_br(item.get("data_documento"), empty=""))
             if pending == item["id"]:
                 file = download(store, item["id"])
-                cols[3].download_button("Baixar", file["conteudo"], file["nome"], file["tipo"], key="rep_dl_" + item["id"])
-            elif cols[3].button("Preparar download", key="rep_prep_" + item["id"]):
+                cols[3].download_button(
+                    "Baixar",
+                    file["conteudo"],
+                    file["nome"],
+                    file["tipo"],
+                    key="rep_dl_" + item["id"],
+                    width="stretch",
+                )
+            elif cols[3].button(
+                "Preparar download",
+                key="rep_prep_" + item["id"],
+                width="stretch",
+            ):
                 from services.audit import registrar_download
 
                 registrar_download(
@@ -732,7 +743,7 @@ def _detail_body(store, principal, record):
         empty_state("Nenhum documento anexado.")
     pending = st.session_state.get("representacoes_download")
     for item in files:
-        cols = st.columns([3, 2, 2, 2])
+        cols = st.columns([3, 2, 2, 2], vertical_alignment="center")
         cols[0].write(label(DOCUMENTOS, item["tipo_documento"]))
         cols[1].caption(item.get("descricao") or item["nome_arquivo"])
         cols[2].caption(format_date_br(item.get("data_documento"), empty=""))
@@ -744,8 +755,13 @@ def _detail_body(store, principal, record):
                 file["nome"],
                 file["tipo"],
                 key="rep_dl_" + item["id"],
+                width="stretch",
             )
-        elif cols[3].button("Preparar download", key="rep_prep_" + item["id"]):
+        elif cols[3].button(
+            "Preparar download",
+            key="rep_prep_" + item["id"],
+            width="stretch",
+        ):
             from services.audit import registrar_download
 
             registrar_download(
