@@ -96,6 +96,37 @@ def test_concluding_a_task_is_idempotent(store):
     assert len(history_ids) == len(set(history_ids))
 
 
+def test_start_and_wait_transitions_are_idempotent(store):
+    repo = TarefasStore(store)
+    task = repo.create(1, {"titulo": "Aguardar uma vez"})
+
+    started, started_changed = repo.transition_status(
+        task["id"], 1, "EM_ANDAMENTO"
+    )
+    started_again, started_again_changed = repo.transition_status(
+        task["id"], 1, "EM_ANDAMENTO"
+    )
+    waiting, waiting_changed = repo.transition_status(task["id"], 1, "AGUARDANDO")
+    waiting_again, waiting_again_changed = repo.transition_status(
+        task["id"], 1, "AGUARDANDO"
+    )
+
+    assert started_changed is True
+    assert started_again_changed is False
+    assert started_again == started
+    assert waiting_changed is True
+    assert waiting_again_changed is False
+    assert waiting_again == waiting
+    assert [row["id"] for row in repo.list_active(1)] == [task["id"]]
+    with store.connection(read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM tarefas WHERE id=?", (task["id"],)
+            ).fetchone()[0]
+            == 1
+        )
+
+
 def test_creation_with_three_reminders(store):
     repo = TarefasStore(store)
     due = date.today().fromordinal(date.today().toordinal() + 2)
@@ -336,9 +367,23 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
     app.button(key=f"task_start_{first['id']}").click().run()
     assert not app.exception
     assert repo.get(first["id"], owner["id"])["status"] == "EM_ANDAMENTO"
+    assert sum("Ativa alfa" in str(item.value) for item in app.markdown) == 1
     app.button(key=f"task_wait_{first['id']}").click().run()
     assert not app.exception
     assert repo.get(first["id"], owner["id"])["status"] == "AGUARDANDO"
+    assert sum("Ativa alfa" in str(item.value) for item in app.markdown) == 1
+    assert not any(
+        button.key == f"task_wait_{first['id']}" for button in app.button
+    )
+    app.run().run()
+    assert sum("Ativa alfa" in str(item.value) for item in app.markdown) == 1
+    with store.connection(read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM tarefas WHERE id=?", (first["id"],)
+            ).fetchone()[0]
+            == 1
+        )
     app.button(key=f"task_resume_{first['id']}").click().run()
     assert not app.exception
     assert repo.get(first["id"], owner["id"])["status"] == "EM_ANDAMENTO"

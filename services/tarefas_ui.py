@@ -45,6 +45,18 @@ def _audit(store, principal, event, action, identifier):
     registrar_evento(store, evento=event, modulo="tarefas", acao=action, principal=principal, entidade_tipo="tarefa", entidade_id=identifier)
 
 
+def _transition_active_status(
+    repo, store, principal, identifier, status, action, message
+):
+    _record, changed = repo.transition_status(identifier, principal.id, status)
+    if changed:
+        _audit(store, principal, "TAREFA_STATUS_ALTERADO", action, identifier)
+    from services.alerts import invalidate_alert_summary
+
+    invalidate_alert_summary()
+    st.session_state["tarefas_message"] = message
+
+
 def _parse_hour(value, label):
     value = (value or "").strip()
     if not HOUR_RE.fullmatch(value):
@@ -164,12 +176,33 @@ def _card(repo, store, principal, row, index=0):
         with st.container(key=f"task_actions_{row['id']}"):
             actions_mark()
             controls=st.columns(5)
-            if row["status"] == "A_FAZER" and controls[0].button("Iniciar", key=f"task_start_{row['id']}"):
-                repo.change_status(row["id"],principal.id,"EM_ANDAMENTO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","INICIAR",row["id"]); _done("Tarefa iniciada.")
-            elif row["status"] == "EM_ANDAMENTO" and controls[0].button("Aguardando", key=f"task_wait_{row['id']}"):
-                repo.change_status(row["id"],principal.id,"AGUARDANDO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","AGUARDAR",row["id"]); _done("Tarefa aguardando.")
-            elif row["status"] == "AGUARDANDO" and controls[0].button("Retomar", key=f"task_resume_{row['id']}"):
-                repo.change_status(row["id"],principal.id,"EM_ANDAMENTO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","RETOMAR",row["id"]); _done("Tarefa retomada.")
+            status_action = {
+                "A_FAZER": (
+                    "Iniciar", "start", "EM_ANDAMENTO", "INICIAR", "Tarefa iniciada."
+                ),
+                "EM_ANDAMENTO": (
+                    "Aguardando", "wait", "AGUARDANDO", "AGUARDAR", "Tarefa aguardando."
+                ),
+                "AGUARDANDO": (
+                    "Retomar", "resume", "EM_ANDAMENTO", "RETOMAR", "Tarefa retomada."
+                ),
+            }.get(row["status"])
+            if status_action:
+                label, key_part, target, audit_action, message = status_action
+                controls[0].button(
+                    label,
+                    key=f"task_{key_part}_{row['id']}",
+                    on_click=_transition_active_status,
+                    args=(
+                        repo,
+                        store,
+                        principal,
+                        row["id"],
+                        target,
+                        audit_action,
+                        message,
+                    ),
+                )
             if row["status"] in ACTIVE and controls[1].button("Concluir", key=f"task_finish_{row['id']}"):
                 _record, changed = repo.transition_status(row["id"],principal.id,"CONCLUIDA")
                 if changed: _audit(store,principal,"TAREFA_STATUS_ALTERADO","CONCLUIR",row["id"])
