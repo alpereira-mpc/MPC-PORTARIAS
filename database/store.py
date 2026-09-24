@@ -77,6 +77,9 @@ def ensure_addon_schemas(store):
     from database.ouvidoria import OuvidoriaStore
 
     OuvidoriaStore(store)
+    from database.institutional import InstitutionalFunctions
+
+    InstitutionalFunctions(store)
 
 
 class Store:

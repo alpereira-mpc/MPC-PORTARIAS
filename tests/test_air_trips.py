@@ -56,7 +56,15 @@ def test_member_with_trip_cannot_be_removed_without_explicit_treatment(store):
 
 def test_trip_alerts_target_commitment_and_skip_closed(store):
     agenda = AgendaStore(store); tomorrow = date.today() + timedelta(days=1); identifier = commitment(agenda, day=date.today())
-    agenda.upsert_commitment_trip(identifier, 1, trip(ida_data=tomorrow.isoformat(), volta_data=tomorrow.isoformat()))
+    agenda.upsert_commitment_trip(
+        identifier,
+        1,
+        trip(
+            ida_data=tomorrow.isoformat(),
+            volta_data=tomorrow.isoformat(),
+            aeroporto_volta="João Pessoa",
+        ),
+    )
     alerts = trip_alerts(store, tomorrow)
     assert {item.category for item in alerts} == {"viagem_ida", "viagem_volta"}
     assert all(item.severity == ALTO and item.metadata["compromisso_id"] == identifier for item in alerts)

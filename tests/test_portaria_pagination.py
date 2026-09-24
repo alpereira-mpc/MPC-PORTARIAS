@@ -37,7 +37,7 @@ def test_regular_and_slightly_longer_portarias_remain_on_one_page(store):
     }
     larger_text = _one_page_pdf(larger, 99)
 
-    note = regular["substituicoes"][0]["nota"]
+    note = " ".join(regular["substituicoes"][0]["nota"].split())
     for rendered in (regular_text, larger_text):
         assert "ELVIRA SAMARA PEREIRA DE OLIVEIRA" in rendered
-        assert note in rendered
+        assert note in " ".join(rendered.split())

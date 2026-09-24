@@ -2,8 +2,9 @@ from database.postgresql import Cursor
 
 
 class _RawCursor:
-    def __init__(self, row):
+    def __init__(self, row, rowcount=-1):
         self.row = row
+        self.rowcount = rowcount
 
     def fetchone(self):
         return self.row

@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -22,11 +23,14 @@ def test_date_inputs_and_edit_preserve_iso(store, monkeypatch, kind):
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     agenda = AgendaStore(store)
-    record = draft(kind, members=[3], day="2026-09-30")
+    day = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    record = draft(kind, members=[3], day=day.isoformat())
     identifier = agenda.save(record)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_agenda").click().run()
-    app.session_state["agenda_edit"] = agenda.list("2026-09-30", "2026-10-01")[0]
+    app.session_state["agenda_edit"] = agenda.list(
+        day.isoformat(), (day + timedelta(days=1)).isoformat()
+    )[0]
     app.run()
     assert all(widget.proto.format == "DD/MM/YYYY" for widget in app.date_input)
     app.date_input[0].set_value(date(2026, 10, 3)).run()
