@@ -81,8 +81,10 @@ def _date_text(value):
     return format_local(value)[:10] if value else "—"
 
 
-def open_origin(item, store=None, principal=None):
-    from portal import request_portal_navigation
+def open_origin(item, store=None, principal=None, *, rerun=True):
+    from portal import queue_portal_navigation, request_portal_navigation
+
+    navigate = request_portal_navigation if rerun else queue_portal_navigation
 
     module = getattr(item, "source_module", "")
     source_id = getattr(item, "source_id", None)
@@ -95,10 +97,10 @@ def open_origin(item, store=None, principal=None):
             return
         from services.record_engagement_ui import open_linked_origin
 
-        open_linked_origin(origin_module, origin_id, store, principal)
+        open_linked_origin(origin_module, origin_id, store, principal, rerun=rerun)
         return
     if module == "portarias":
-        request_portal_navigation("Portarias", nav="Histórico", portaria_open_id=source_id)
+        navigate("Portarias", nav="Histórico", portaria_open_id=source_id)
         return
     if module == "oficios":
         code = gabinete if gabinete and gabinete != "—" else None
@@ -107,13 +109,13 @@ def open_origin(item, store=None, principal=None):
             if metadata.get("direcao") == "ENVIADO"
             else "Recebidos"
         )
-        request_portal_navigation(
+        navigate(
             "Ofícios",
             pending_open_oficio={"id": source_id, "gabinete": code, "page": page},
         )
         return
     if module == "agenda":
-        request_portal_navigation(
+        navigate(
             "Agenda",
             pending_open_agenda=metadata.get("compromisso_id")
             or metadata.get("afastamento_id")
@@ -121,25 +123,25 @@ def open_origin(item, store=None, principal=None):
         )
         return
     if module == "memorandos":
-        request_portal_navigation(
+        navigate(
             "Memorandos",
             pending_open_memorando={"id": source_id, "page": "Histórico"},
         )
         return
     if module == "tarefas":
         identifier = int(source_id) if str(source_id).isdigit() else source_id
-        request_portal_navigation("Tarefas", tarefas_open_id=identifier)
+        navigate("Tarefas", tarefas_open_id=identifier)
         return
     if module == "representacoes":
         identifier = int(source_id) if str(source_id).isdigit() else source_id
-        request_portal_navigation("Representações", representacoes_view=identifier)
+        navigate("Representações", representacoes_view=identifier)
         return
     if module == "ouvidoria":
         identifier = int(source_id) if str(source_id).isdigit() else source_id
-        request_portal_navigation("Ouvidoria", ouvidoria_open_id=identifier)
+        navigate("Ouvidoria", ouvidoria_open_id=identifier)
         return
     if module == "sistema":
-        request_portal_navigation(
+        navigate(
             "Administração",
             pending_open_admin={
                 "secao": metadata.get("secao") or "Sistema",
@@ -148,13 +150,13 @@ def open_origin(item, store=None, principal=None):
         )
         return
     if module == "admin":
-        request_portal_navigation(
+        navigate(
             "Administração",
             pending_open_admin={"secao": metadata.get("secao") or "Acessos e Auditoria"},
         )
         return
     if module == "access_requests":
-        request_portal_navigation(
+        navigate(
             "Administração",
             pending_open_admin={"secao": metadata.get("secao") or "Solicitações"},
         )

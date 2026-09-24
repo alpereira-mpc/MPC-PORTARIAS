@@ -600,6 +600,7 @@ def _logout():
         PORTAL_SPECIAL_RETURN,
         PORTAL_SPECIAL_ANCHOR,
         "_alerts_bell_cache",
+        "_alerts_bell_open",
         "_reports_read_cache",
         "_tramita_previews",
     ):

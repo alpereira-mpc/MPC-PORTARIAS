@@ -127,6 +127,23 @@ def test_start_and_wait_transitions_are_idempotent(store):
         )
 
 
+def test_generic_update_cannot_change_task_status(store):
+    repo = TarefasStore(store)
+    task = repo.create(1, {"titulo": "Status protegido"})
+    repo.transition_status(task["id"], 1, "AGUARDANDO")
+
+    updated = repo.update(
+        task["id"],
+        1,
+        {"observacoes": "Somente observação", "status": "CANCELADA"},
+    )
+
+    assert updated["observacoes"] == "Somente observação"
+    assert updated["status"] == "AGUARDANDO"
+    assert updated["cancelado_em"] is None
+    assert [row["id"] for row in repo.list_active(1)] == [task["id"]]
+
+
 def test_creation_with_three_reminders(store):
     repo = TarefasStore(store)
     due = date.today().fromordinal(date.today().toordinal() + 2)
@@ -324,6 +341,59 @@ def test_new_task_form_keeps_existing_listing(store, monkeypatch):
     assert not any("Nova tarefa" in str(item.value) for item in app.subheader)
     titles = " ".join(str(item.value) for item in app.markdown)
     assert "Tarefa visível no módulo" in titles
+
+
+@pytest.mark.parametrize("status", ("A_FAZER", "EM_ANDAMENTO", "AGUARDANDO"))
+def test_editing_only_notes_preserves_overdue_active_status(
+    store, monkeypatch, status
+):
+    from streamlit.testing.v1 import AppTest
+
+    from database.access import AccessStore
+    from database.store import ROOT
+    from tests.access_testing import TEST_IDENTITY, enable_login
+
+    enable_login(monkeypatch, store)
+    owner = AccessStore(store).get_by_email(TEST_IDENTITY["email"])
+    repo = TarefasStore(store)
+    overdue = date.today() - timedelta(days=1)
+    task = repo.create(
+        owner["id"],
+        {
+            "titulo": f"Atrasada {status}",
+            "prazo_data": overdue.isoformat(),
+            "prioridade": "ALTA",
+        },
+    )
+    if status != "A_FAZER":
+        task, changed = repo.transition_status(task["id"], owner["id"], status)
+        assert changed is True
+    monkeypatch.setattr("database.store.Store", lambda: store)
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio(key="portal_module").set_value("Tarefas").run()
+    app.button(key=f"task_edit_{task['id']}").click().run()
+    assert not app.exception
+    assert app.selectbox(key=f"tarefas_form_{task['id']}status").disabled is True
+
+    app.text_area(key=f"tarefas_form_{task['id']}notes").set_value(
+        "Observação atualizada"
+    ).run()
+    app.button(key=f"tarefas_form_{task['id']}submit").click().run()
+
+    assert not app.exception
+    updated = repo.get(task["id"], owner["id"])
+    assert updated["status"] == status
+    assert updated["observacoes"] == "Observação atualizada"
+    assert updated["prazo_data"] == overdue.isoformat()
+    assert updated["concluido_em"] is None
+    assert updated["cancelado_em"] is None
+    assert [row["id"] for row in repo.list_active(owner["id"])].count(task["id"]) == 1
+    app.run()
+    assert sum(
+        button.key == f"task_finish_{task['id']}" for button in app.button
+    ) == 1
+    assert any("Atrasada" in str(item.value) for item in app.markdown)
 
 
 def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(

@@ -99,7 +99,7 @@ class TarefasStore:
             return self._row(c.execute("SELECT * FROM tarefas WHERE id=? AND owner_user_id=?", (identifier, owner_user_id)).fetchone())
 
     def update(self, identifier, owner_user_id, values):
-        allowed = ("titulo","descricao","categoria","prioridade","status","prazo_data","prazo_hora","lembrete_em","observacoes")
+        allowed = ("titulo","descricao","categoria","prioridade","prazo_data","prazo_hora","lembrete_em","observacoes")
         data = {k: values[k] for k in allowed if k in values}
         if "titulo" in data and not str(data["titulo"]).strip():
             raise ValueError("Informe o título da tarefa.")

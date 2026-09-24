@@ -40,25 +40,27 @@ def _audit(store, principal, event, action, module, identifier, extra=None):
     )
 
 
-def open_linked_origin(module, identifier, store, principal):
+def open_linked_origin(module, identifier, store, principal, *, rerun=True):
     RecordEngagementStore(store).authorize_origin(module, identifier, principal.id)
-    from portal import request_portal_navigation
+    from portal import queue_portal_navigation, request_portal_navigation
+
+    navigate = request_portal_navigation if rerun else queue_portal_navigation
 
     if module.startswith("oficio_"):
         page = "Acompanhamento" if module == "oficio_enviado" else "Recebidos"
-        request_portal_navigation(
+        navigate(
             "Ofícios", pending_open_oficio={"id": identifier, "page": page}
         )
     elif module == "memorando":
-        request_portal_navigation(
+        navigate(
             "Memorandos", pending_open_memorando={"id": identifier, "page": "Histórico"}
         )
     elif module == "representacao":
-        request_portal_navigation("Representações", representacoes_view=int(identifier))
+        navigate("Representações", representacoes_view=int(identifier))
     elif module == "ouvidoria":
-        request_portal_navigation("Ouvidoria", ouvidoria_open_id=int(identifier))
+        navigate("Ouvidoria", ouvidoria_open_id=int(identifier))
     elif module == "tarefa":
-        request_portal_navigation("Tarefas", tarefas_open_id=int(identifier))
+        navigate("Tarefas", tarefas_open_id=int(identifier))
 
 
 def _create_task(module, identifier, title):

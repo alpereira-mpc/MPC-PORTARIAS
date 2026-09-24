@@ -57,6 +57,14 @@ def _transition_active_status(
     st.session_state["tarefas_message"] = message
 
 
+def _open_editor(row):
+    prefix = "tarefas_form_" + str(row["id"])
+    for key in list(st.session_state):
+        if key.startswith(prefix):
+            st.session_state.pop(key, None)
+    st.session_state["tarefas_edit"] = row
+
+
 def _parse_hour(value, label):
     value = (value or "").strip()
     if not HOUR_RE.fullmatch(value):
@@ -101,7 +109,18 @@ def _editor(repo, store, principal):
     section_label("Classificação")
     priority_column, _ = st.columns([2, 5])
     priority = priority_column.selectbox("Prioridade", PRIORITIES, index=PRIORITIES.index(old.get("prioridade", "NORMAL")), format_func=PRIORITY_LABELS.get, key=prefix+"priority")
-    status = st.selectbox("Status", ACTIVE, index=ACTIVE.index(old.get("status", "A_FAZER")) if old.get("status") in ACTIVE else 0, format_func=STATUS_LABELS.get, key=prefix+"status") if editing else "A_FAZER"
+    if editing:
+        status_key = prefix + "status"
+        st.session_state[status_key] = (
+            old["status"] if old.get("status") in ACTIVE else "A_FAZER"
+        )
+        st.selectbox(
+            "Status",
+            ACTIVE,
+            format_func=STATUS_LABELS.get,
+            key=status_key,
+            disabled=True,
+        )
     definir_prazo = st.checkbox("Definir prazo", value=bool(old.get("prazo_data")), key=prefix + "deadline")
     due_date, due_time = _deadline_values(prefix, old, definir_prazo)
     definir_lembretes = st.checkbox("Definir lembretes", value=bool(existing_reminders or old.get("lembrete_em")), key=prefix + "reminder")
@@ -135,7 +154,7 @@ def _editor(repo, store, principal):
             if due_time is not None:
                 due_time = _parse_hour(due_time, "Hora do prazo").strftime("%H:%M")
             reminders = [datetime.combine(day, _parse_hour(hour, f"Hora do lembrete {number}"), INSTITUTIONAL_TZ).isoformat() for day, hour, number in reminder_inputs]
-            values={"titulo":title,"descricao":description,"prioridade":priority,"status":status,"prazo_data":due_date,"prazo_hora":due_time,"lembretes":reminders,"observacoes":notes,"origem_modulo":old.get("origem_modulo"),"origem_id":old.get("origem_id")}
+            values={"titulo":title,"descricao":description,"prioridade":priority,"prazo_data":due_date,"prazo_hora":due_time,"lembretes":reminders,"observacoes":notes,"origem_modulo":old.get("origem_modulo"),"origem_id":old.get("origem_id")}
             record = repo.update(old["id"],principal.id,values) if editing else repo.create(principal.id,values)
             if not record: st.error("Tarefa não encontrada."); return
             event = "TAREFA_EDITADA" if old.get("id") else "TAREFA_VINCULADA_CRIADA" if record.get("origem_modulo") else "TAREFA_CRIADA"
@@ -207,8 +226,12 @@ def _card(repo, store, principal, row, index=0):
                 _record, changed = repo.transition_status(row["id"],principal.id,"CONCLUIDA")
                 if changed: _audit(store,principal,"TAREFA_STATUS_ALTERADO","CONCLUIR",row["id"])
                 _done("Tarefa concluída.")
-            if controls[2].button("Editar", key=f"task_edit_{row['id']}"):
-                st.session_state["tarefas_edit"]=row; st.rerun()
+            controls[2].button(
+                "Editar",
+                key=f"task_edit_{row['id']}",
+                on_click=_open_editor,
+                args=(row,),
+            )
             if row["status"] in ACTIVE and controls[3].button("Cancelar",key=f"task_cancel_{row['id']}"):
                 repo.change_status(row["id"],principal.id,"CANCELADA"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","CANCELAR",row["id"]); _done("Tarefa cancelada.")
             with controls[4].popover("Excluir"):

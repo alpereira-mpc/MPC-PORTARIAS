@@ -1025,6 +1025,49 @@ def test_inicio_after_change_refreshes_bell_without_f5(store, monkeypatch):
     )
 
 
+def test_bell_navigation_closes_popover_without_consuming_alerts(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    from database.access import AccessStore
+    from database.store import ROOT
+    from database.tarefas import TarefasStore
+    from services.alerts import BELL_CACHE_KEY
+    from services.alerts_ui import BELL_OPEN_KEY
+
+    enable_login(monkeypatch, store)
+    owner = AccessStore(store).get_by_email(TEST_IDENTITY["email"])
+    task = TarefasStore(store).create(
+        owner["id"],
+        {"titulo": "Alerta do sininho", "prazo_data": "2026-09-13"},
+    )
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    monkeypatch.setattr("services.alerts.system_alerts", lambda *a, **k: [])
+    monkeypatch.setattr("services.alerts.now_recife", lambda now=None: NOW)
+    monkeypatch.setattr("services.pending.today_recife", lambda now=None: TODAY)
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert not app.exception
+    total = app.session_state[BELL_CACHE_KEY]["payload"]["total"]
+    assert total >= 1
+
+    app.session_state[BELL_OPEN_KEY] = True
+    app.run()
+    assert app.session_state[BELL_OPEN_KEY] is True
+    app.button(key="bell_open_0").click().run()
+
+    assert not app.exception
+    assert app.session_state[BELL_OPEN_KEY] is False
+    assert app.sidebar.radio(key="portal_module").value == "Tarefas"
+    assert app.session_state[BELL_CACHE_KEY]["payload"]["total"] == total
+    assert TarefasStore(store).get(task["id"], owner["id"])["status"] == "A_FAZER"
+
+    app.session_state[BELL_OPEN_KEY] = True
+    app.run()
+    assert app.session_state[BELL_OPEN_KEY] is True
+    assert app.session_state[BELL_CACHE_KEY]["payload"]["total"] == total
+    assert app.button(key="bell_open_0")
+
+
 def test_audit_alertas_once_per_entry(store):
     from services.audit import registrar_modulo
 

@@ -34,6 +34,7 @@ MODULE_OPTIONS = (
     ("sistema", "Sistema"),
     ("access_requests", "Solicitações"),
 )
+BELL_OPEN_KEY = "_alerts_bell_open"
 
 
 def _require(principal):
@@ -141,7 +142,12 @@ def load_bell_summary(store, principal):
     return payload
 
 
-def open_alert_origin(item, store=None, principal=None):
+def close_bell():
+    if BELL_OPEN_KEY in st.session_state:
+        st.session_state[BELL_OPEN_KEY] = False
+
+
+def open_alert_origin(item, store=None, principal=None, *, rerun=True):
     from portal import PORTAL_SPECIAL_RETURN, clear_alerts_overlay
 
     clear_alerts_overlay()
@@ -154,9 +160,24 @@ def open_alert_origin(item, store=None, principal=None):
         from services.record_engagement_ui import open_linked_origin
 
         origin_id = (item.metadata or {}).get("origin_id") or item.source_id
-        open_linked_origin(origin_module, origin_id, store, principal)
+        open_linked_origin(origin_module, origin_id, store, principal, rerun=rerun)
         return
-    open_origin(item)
+    open_origin(item, rerun=rerun)
+
+
+def _open_bell_origin(item, store, principal):
+    close_bell()
+    try:
+        open_alert_origin(item, store, principal, rerun=False)
+    except ValueError:
+        st.session_state["_alerts_bell_navigation_error"] = True
+
+
+def _open_all_from_bell():
+    from portal import queue_alerts_view
+
+    close_bell()
+    queue_alerts_view()
 
 
 def _notice_actions(store, principal, item, key):
@@ -180,7 +201,14 @@ def render_bell(store, principal):
         summary = {"total": 0, "top": []}
     total = int(summary.get("total") or 0)
     label = f"🔔 {total}" if total else "🔔"
-    with st.popover(label, use_container_width=True):
+    with st.popover(
+        label,
+        use_container_width=True,
+        key=BELL_OPEN_KEY,
+        on_change="rerun",
+    ):
+        if st.session_state.pop("_alerts_bell_navigation_error", None):
+            st.error("A origem não existe ou você não possui mais acesso.")
         top = summary.get("top") or []
         if not top:
             st.caption("Nenhum alerta ativo no momento.")
@@ -188,11 +216,12 @@ def render_bell(store, principal):
         last = len(top) - 1
         for index, item in enumerate(top):
             st.markdown(_bell_item_markdown(item), unsafe_allow_html=True)
-            if st.button(_open_label(item), key=f"bell_open_{index}"):
-                try:
-                    open_alert_origin(item, store, principal)
-                except ValueError:
-                    st.error("A origem não existe ou você não possui mais acesso.")
+            st.button(
+                _open_label(item),
+                key=f"bell_open_{index}",
+                on_click=_open_bell_origin,
+                args=(item, store, principal),
+            )
             if index != last:
                 st.markdown(
                     '<hr style="margin:0.45rem 0;border:none;'
@@ -204,14 +233,12 @@ def render_bell(store, principal):
             'border-top:1px solid rgba(49,51,63,.1)">',
             unsafe_allow_html=True,
         )
-        if st.button(
+        st.button(
             "Ver todos os alertas",
             key="bell_open_all",
             type="tertiary",
-        ):
-            from portal import request_alerts_view
-
-            request_alerts_view()
+            on_click=_open_all_from_bell,
+        )
 
 
 def render(store, principal):
