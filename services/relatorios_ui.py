@@ -3,12 +3,14 @@
 import logging
 from datetime import date, datetime
 
+import pandas as pd
 import streamlit as st
 
 from database.tramita_reports import TramitaReportsStore
 from services.access import require_permission
 from services.audit import registrar_evento
 from services.date_format import format_date_br
+from services.themes import theme_tokens
 from services.tramita_reports import file_hash, parse_movements, parse_stock
 from services.ui_theme import empty_state, filter_mark, kpi_mark, section_label
 
@@ -18,6 +20,47 @@ MONTHS = (
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 )
 LOGGER = logging.getLogger(__name__)
+
+
+def style_report_table(rows, theme_name="vermelho"):
+    """Apply the active theme to report data without changing its values."""
+    palette = theme_tokens(theme_name)
+    frame = pd.DataFrame(rows)
+    styler = frame.style.apply(
+        lambda row: [
+            (
+                f"background-color:{palette['themed_table_bg']};"
+                if row.name % 2 == 0
+                else f"background-color:{palette['themed_table_stripe_bg']};"
+            )
+            + f"color:{palette['themed_table_fg']};"
+            + f"border-bottom:1px solid {palette['themed_table_border']}"
+        ]
+        * len(row),
+        axis=1,
+    )
+    return styler.set_table_styles(
+        [
+            {
+                "selector": "th.col_heading",
+                "props": [
+                    ("background-color", palette["themed_table_header_bg"]),
+                    ("color", palette["themed_table_header_fg"]),
+                    ("font-weight", "700"),
+                    ("border-bottom", f"1px solid {palette['themed_table_border']}"),
+                ],
+            }
+        ]
+    )
+
+
+def _report_table(target, rows):
+    selected_theme = st.session_state.get("_portal_theme", {}).get("name", "vermelho")
+    target.dataframe(
+        style_report_table(rows, selected_theme),
+        hide_index=True,
+        use_container_width=True,
+    )
 
 
 def _format_date(value):
@@ -108,14 +151,14 @@ def production(store, principal=None):
                             "Pareceres": row["opinions"], "Cotas": row["quotas"],
                             "Tempo médio até devolução": round(row["days"] / row["timed"], 1) if row["timed"] else None})
     st.subheader("Comparativo por Procurador")
-    st.dataframe(grouped, hide_index=True, use_container_width=True)
+    _report_table(st, grouped)
     if grouped:
         st.bar_chart(grouped, x="Procurador", y=["Entradas", "Saídas"])
     facets = read(("movement_facets", competence, person), lambda: reports.movement_facets(competence, person))
     by_field = {field: [row for row in facets if row["field"] == field and row["value"]] for field in ("subcategoria", "origem")}
     st.subheader("Naturezas e jurisdicionados")
     for col, field, label in zip(st.columns(2), ("subcategoria", "origem"), ("Natureza", "Jurisdicionado/Origem")):
-        col.dataframe([{label: row["value"], "Quantidade": row["n"]} for row in sorted(by_field[field], key=lambda row: (-row["n"], row["value"]))[:10]], hide_index=True, use_container_width=True)
+        _report_table(col, [{label: row["value"], "Quantidade": row["n"]} for row in sorted(by_field[field], key=lambda row: (-row["n"], row["value"]))[:10]])
     st.subheader("Detalhamento mensal")
     a, b, c = st.columns(3)
     natureza = a.selectbox("Natureza", ["Todas", *sorted(row["value"] for row in by_field["subcategoria"])])
@@ -126,10 +169,10 @@ def production(store, principal=None):
                "tipo_movimentacao": {"Todos": None, "Entrada": "ENTRADA", "Saída": "SAIDA"}[kind]}
     offset = _page_offset("rel_prod_page", (competence, repr(filters)))
     rows = read(("movement_page", competence, filters, offset), lambda: reports.movement_page(competence, filters, offset))
-    st.dataframe([{"Protocolo": row["protocolo"], "Natureza": row["subcategoria"], "Jurisdicionado": row["origem"],
+    _report_table(st, [{"Protocolo": row["protocolo"], "Natureza": row["subcategoria"], "Jurisdicionado": row["origem"],
                    "Procurador": row["procurador"], "Entrada": _format_date(row["data_realizacao"]) if row["tipo_movimentacao"] == "ENTRADA" else "",
                    "Saída": _format_date(row["data_devolucao"]) if row["tipo_movimentacao"] == "SAIDA" else "",
-                   "Resultado": row["motivo_devolucao"]} for row in rows[:100]], hide_index=True, use_container_width=True)
+                   "Resultado": row["motivo_devolucao"]} for row in rows[:100]])
     _page_controls("rel_prod_page", offset, rows)
 
 
@@ -153,11 +196,11 @@ def current_view(store, principal=None):
             st.metric(label, value)
     selected = st.selectbox("Procurador", ["Todos", *people], key="rel_stock_procurador")
     st.subheader("Estoque por Procurador")
-    st.dataframe([{"Procurador": row["procurador"], "Processos atualmente distribuídos": row["n"],
+    _report_table(st, [{"Procurador": row["procurador"], "Processos atualmente distribuídos": row["n"],
                    "Tempo médio com procurador": round(float(row["days"]) / row["timed"], 1) if row["timed"] else None,
                    "Maior permanência atual": row["maximum"], "+30 dias": row["over30"],
                    "+60 dias": row["over60"], "+90 dias": row["over90"]}
-                  for row in sorted(summary, key=lambda row: row["procurador"]) if row["procurador"]], hide_index=True, use_container_width=True)
+                  for row in sorted(summary, key=lambda row: row["procurador"]) if row["procurador"]])
     fields = (("natureza", "Natureza", "subcategoria"), ("jurisdicionado", "Jurisdicionado", "jurisdicionado"),
               ("fase", "Fase", "fase"), ("assistente", "Assistente", "assistente"))
     filters = {"procurador": None if selected == "Todos" else selected}
@@ -181,12 +224,12 @@ def current_view(store, principal=None):
         lambda: reports.stock_details(snapshot, filters, None if band == "Todas" else band, offset),
     )
     st.subheader("Faixas de permanência")
-    st.dataframe([{"Faixa": row["faixa"], "Processos": row["n"]} for row in bands if row["faixa"]], hide_index=True, use_container_width=True)
+    _report_table(st, [{"Faixa": row["faixa"], "Processos": row["n"]} for row in bands if row["faixa"]])
     st.subheader("Processos há mais tempo com o Procurador")
-    st.dataframe([{"Protocolo": row["protocolo"], "Procurador": row["procurador"], "Natureza": row["subcategoria"],
+    _report_table(st, [{"Protocolo": row["protocolo"], "Procurador": row["procurador"], "Natureza": row["subcategoria"],
                    "Jurisdicionado": row["jurisdicionado"], "Fase": row["fase"], "Dias com Procurador": row["dias_com_procurador"],
                    "Dias no MPC-PB": row["dias_no_mpc"], "Assistente": row["assistente"], "Prescrição": row["prescricao"]}
-                  for row in rows[:100]], hide_index=True, use_container_width=True)
+                  for row in rows[:100]])
     _page_controls("rel_stock_page", offset, rows)
 
 
