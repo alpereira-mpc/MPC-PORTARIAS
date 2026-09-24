@@ -2,8 +2,15 @@ from datetime import datetime
 from io import BytesIO
 
 from pypdf import PdfReader
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import KeepTogether, Spacer, Table
 
-from document_generator.agenda_pdf import generate_agenda_pdf
+from document_generator.agenda_pdf import (
+    CARD_GAP,
+    _PAGE_MARGIN,
+    _day_flowables,
+    generate_agenda_pdf,
+)
 from services.agenda_ui import agenda_pdf_filename, all_upcoming
 
 
@@ -52,6 +59,91 @@ def test_pdf_contains_commitments_and_leaves_without_technical_ids():
     assert "14h30" in text
     assert "internal-commitment-id" not in text
     assert "internal-leave-id" not in text
+
+
+def _commitment(day, hour, person, title):
+    return {
+        "inicio": f"{day}T{hour}:00",
+        "titulo": title,
+        "sem_hora": False,
+        "situacao": "Agendado",
+        "procuradores": [person],
+        "local": "Sede",
+    }
+
+
+def _leave(day, person, name):
+    return {
+        "inicio": f"{day}T00:00:00",
+        "data_inicio": day,
+        "data_fim": day,
+        "afastamento": True,
+        "procurador_id": person,
+        "motivo": name,
+    }
+
+
+def _card_styles():
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+
+    base = getSampleStyleSheet()
+    return {
+        "day": ParagraphStyle(
+            "AgendaDayTest",
+            parent=base["Heading3"],
+            fontName="Helvetica-Bold",
+            fontSize=10.5,
+            leading=13,
+            spaceBefore=4,
+            spaceAfter=2,
+        ),
+        "commitment_box": ParagraphStyle(
+            "AgendaCommitmentBoxTest", parent=base["Normal"], fontSize=9, leading=11
+        ),
+        "leave_box": ParagraphStyle(
+            "AgendaLeaveBoxTest", parent=base["Normal"], fontSize=9, leading=11
+        ),
+    }
+
+
+def test_same_day_records_are_separate_cards():
+    names = {1: "Elvira", 2: "Marcílio", 3: "Bradson", 4: "Sheyla"}
+    day = datetime(2026, 10, 13).date()
+    records = [
+        _commitment("2026-10-13", "09:00", 1, "Sessão"),
+        _leave("2026-10-13", 4, "Licença"),
+        _leave("2026-10-13", 2, "Férias"),
+        _leave("2026-10-13", 3, "Missão"),
+    ]
+    styles = _card_styles()
+    width = A4[0] - (2 * _PAGE_MARGIN)
+    blocks = _day_flowables(day, records, names, styles, width)
+
+    assert len(blocks) == 4
+    assert isinstance(blocks[0], KeepTogether)
+    assert isinstance(blocks[0]._content[-1], Table)
+    assert not any(isinstance(item, Spacer) for item in blocks[0]._content)
+    for block in blocks[1:]:
+        assert isinstance(block, KeepTogether)
+        spacer, card = block._content
+        assert isinstance(spacer, Spacer) and spacer.height == CARD_GAP
+        assert isinstance(card, Table)
+        assert card.splitByRow == 0
+
+    alone = _day_flowables(day, records[:1], names, styles, width)
+    assert len(alone) == 1
+    assert isinstance(alone[0]._content[-1], Table)
+
+    content = generate_agenda_pdf(
+        records,
+        names,
+        ["Período: 13/10/2026"],
+        generated_at=datetime(2026, 10, 13, 9, 0),
+    )
+    text = _text(content)
+    assert text.count("13/10/2026") >= 1
+    assert text.count("COMPROMISSO") == 1
+    assert text.count("AFASTAMENTO") == 3
 
 
 def test_empty_pdf_is_valid_and_filename_uses_brazilian_period():
