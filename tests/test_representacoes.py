@@ -509,3 +509,23 @@ def test_project_can_be_deleted_but_protocolled_cannot(store):
 
     assert "placeholder=empty" in inspect.getsource(_filter_select)
     assert "value=0" not in filters
+
+
+def test_detail_uses_conditional_sections_and_keeps_protocol_summary():
+    import inspect
+
+    from services.representacoes_ui import _detail, _detail_compact
+
+    source = inspect.getsource(_detail_compact)
+    assert "st.radio(" in source
+    assert '"Visão geral"' in source
+    assert '"Andamentos"' in source
+    assert '"Documentos"' in source
+    assert '"Organização"' in source
+    assert '"Gestão"' in source
+    assert 'elif section == "Andamentos"' in source
+    assert 'elif section == "Documentos"' in source
+    assert "Dados do projeto original" in source
+    assert source.count("progress(store, record[") == 1
+    assert source.count("documents(store, record[") == 1
+    assert "_detail_compact(store, principal, record)" in inspect.getsource(_detail)

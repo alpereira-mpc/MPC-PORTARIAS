@@ -498,7 +498,160 @@ def _protocol_form(store, principal, identifier):
 def _detail(store, principal, record):
     _detail_chrome("rep")
     with st.container(key="rep_detail"):
-        _detail_body(store, principal, record)
+        _detail_compact(store, principal, record)
+
+
+def _detail_summary(store, record):
+    procuradores_map, assessores_map = people_index(store)
+    groups = grouped_members(record, procuradores_map, assessores_map)
+    render_record(record["titulo"], badges_html=badges(*_badge_items(record)), boxed=True)
+    summary = [
+        ("Representado", record.get("representado")),
+        ("Situação", label(SITUACOES, record.get("situacao"))),
+        ("Fase processual", label(FASES, record.get("fase_processual"))),
+        ("Processo", record.get("numero_processo")),
+        ("Relator", relator_label(record.get("relator")) if record.get("relator") else None),
+        ("Responsável MPC", ", ".join(groups["PROCURADOR_RESPONSAVEL"]) or "—"),
+    ]
+    definition_block("Situação atual", summary)
+    return groups
+
+
+def _detail_compact(store, principal, record):
+    groups = _detail_summary(store, record)
+    protocolled = is_protocolled(record)
+    sections = ["Visão geral", "Andamentos", "Documentos", "Organização", "Gestão"]
+    section = st.radio(
+        "Seção da Representação",
+        sections,
+        horizontal=True,
+        key="rep_detail_section_" + str(record["id"]),
+        label_visibility="collapsed",
+    )
+    if section == "Visão geral":
+        definition_block(
+            "Identificação",
+            (
+                ("Objeto", record.get("objeto")),
+                ("Origem", label(ORIGENS, record["origem"])),
+                ("Abertura", format_date_br(record.get("data_abertura"))),
+                ("Representado", record.get("representado")),
+                ("Tema/área", record.get("tema")),
+                ("Prioridade", label(PRIORIDADES, record["prioridade"])),
+                ("Observações", record.get("observacoes")),
+            ),
+        )
+        definition_block(
+            "Equipe",
+            (
+                ("Procurador responsável", ", ".join(groups["PROCURADOR_RESPONSAVEL"]) or "—"),
+                ("Signatários", ", ".join(groups["PROCURADOR_SIGNATARIO"]) or "—"),
+                ("Assessores", ", ".join(groups["ASSESSOR"]) or "—"),
+            ),
+        )
+        if protocolled:
+            definition_block(
+                "Processo",
+                (("Número", record.get("numero_processo")), ("Protocolo", format_date_br(record.get("data_protocolo"))),
+                 ("Relator", relator_label(record.get("relator")) if record.get("relator") else None),
+                 ("Pedido de medida cautelar", "Sim" if record.get("possui_medida_cautelar") else "Não")),
+            )
+            with st.expander("Dados do projeto original"):
+                st.caption("Dados preservados do projeto que originou esta Representação.")
+                st.write(record.get("objeto") or "—")
+        else:
+            st.caption("Este projeto ainda não foi protocolado no TRAMITA.")
+    elif section == "Andamentos":
+        if st.button("Novo andamento", key="rep_dt_prg"):
+            st.session_state["representacoes_progress"] = record["id"]
+            st.rerun()
+        timeline = progress(store, record["id"])
+        if not timeline:
+            empty_state("Nenhum andamento registrado.")
+        show_all = len(timeline) <= 20 or st.checkbox(
+            "Ver todos os andamentos", key="rep_all_progress_" + str(record["id"])
+        )
+        for item in timeline if show_all else timeline[:20]:
+            heading, descricao = andamento_display(item)
+            st.markdown(f"**{format_date_br(item['data'])}** · {heading}" + (f"  \n{descricao}" if descricao else ""))
+        if len(timeline) > 20:
+            st.caption(f"Exibidos {len(timeline) if show_all else 20} de {len(timeline)} andamentos.")
+    elif section == "Documentos":
+        if st.button("Anexar documento", key="rep_dt_doc"):
+            st.session_state["representacoes_file"] = record["id"]
+            st.rerun()
+        files = documents(store, record["id"])
+        if not files:
+            empty_state("Nenhum documento anexado.")
+        pending = st.session_state.get("representacoes_download")
+        for item in files:
+            cols = st.columns([3, 2, 2, 2])
+            cols[0].write(label(DOCUMENTOS, item["tipo_documento"]))
+            cols[1].caption(item.get("descricao") or item["nome_arquivo"])
+            cols[2].caption(format_date_br(item.get("data_documento"), empty=""))
+            if pending == item["id"]:
+                file = download(store, item["id"])
+                cols[3].download_button("Baixar", file["conteudo"], file["nome"], file["tipo"], key="rep_dl_" + item["id"])
+            elif cols[3].button("Preparar download", key="rep_prep_" + item["id"]):
+                from services.audit import registrar_download
+
+                registrar_download(
+                    store,
+                    modulo="representacoes",
+                    entidade_tipo="representacao",
+                    entidade_id=record["id"],
+                    arquivo=item.get("nome_arquivo"),
+                    formato=item.get("mime_type"),
+                    rotulo=record.get("titulo"),
+                    principal=principal,
+                )
+                st.session_state["representacoes_download"] = item["id"]
+                st.rerun()
+    elif section == "Organização":
+        from services.internal_collaboration_ui import render_internal_collaboration
+        from services.record_engagement_ui import render_origin_tools
+
+        render_internal_collaboration(store, principal, "representacao", record["id"])
+        render_origin_tools(store, principal, "representacao", record["id"], record["titulo"])
+    else:
+        flow = _toolbar(
+            "rep_toolbar_flow",
+            [
+                ("Registrar protocolo", "rep_dt_prot", "primary") if not protocolled else None,
+                ("Editar", "rep_dt_ed", "secondary"),
+            ],
+        )
+        if flow == "rep_dt_prot":
+            st.session_state["representacoes_protocol"] = record["id"]
+            st.rerun()
+        if flow == "rep_dt_ed":
+            st.session_state["representacoes_edit"] = record["id"]
+            st.rerun()
+        if protocolled:
+            fase_keys = list(FASES)
+            chosen = st.selectbox("Atualizar fase", fase_keys, index=fase_keys.index(record.get("fase_processual")) if record.get("fase_processual") in FASES else 0, format_func=FASES.get, key="rep_dt_fase")
+            situacao = st.selectbox("Situação institucional", ["EM_TRAMITACAO", "JULGADA", "ENCERRADA", "SUSPENSA", "CANCELADA"], format_func=SITUACOES.get, key="rep_dt_sit")
+            if st.button("Salvar fase", key="rep_dt_fase_ok"):
+                set_phase(store, record["id"], chosen, principal)
+                _done("Fase processual atualizada.")
+            if st.button("Atualizar situação", key="rep_dt_sit_ok"):
+                set_status(store, record["id"], situacao, principal)
+                _done("Situação atualizada.")
+        if st.button("Voltar", key="rep_dt_back"):
+            st.session_state.pop("representacoes_view", None)
+            st.rerun()
+        reason = delete_blocked_reason(record)
+        if reason:
+            st.caption(reason)
+        elif st.button("Excluir definitivamente", key="rep_del"):
+            st.session_state["representacoes_confirm_delete"] = record["id"]
+            st.rerun()
+        if st.session_state.get("representacoes_confirm_delete") == record["id"]:
+            st.warning("Tem certeza de que deseja excluir definitivamente este Projeto de Representação?")
+            if st.button("Confirmar exclusão", type="primary", key="rep_del_yes"):
+                delete(store, record["id"], principal)
+                _clear_forms()
+                _done("Projeto de Representação excluído.")
 
 
 def _detail_body(store, principal, record):
