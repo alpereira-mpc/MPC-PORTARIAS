@@ -422,13 +422,39 @@ color:var(--mpc-control-fg);
 }}
 [data-testid="stVerticalBlockBorderWrapper"]{{
 background:var(--mpc-card-b);
+background-color:var(--mpc-card-b) !important;
 border:1px solid var(--mpc-card-border-b) !important;
 border-radius:var(--mpc-radius);
 box-shadow:var(--mpc-shadow);
 }}
-[data-testid="stForm"]{{
+[data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"],
+[data-testid="stForm"] [data-testid="stVerticalBlock"]{{
+background:transparent !important;
+background-color:transparent !important;
+}}
+[data-testid="stForm"],
+[data-testid="stForm"] > div{{
 background:var(--mpc-card-b) !important;
+background-color:var(--mpc-card-b) !important;
 border-color:var(--mpc-card-border-b) !important;
+color:var(--mpc-text);
+}}
+[data-testid="stFileUploaderDropzone"],
+[data-testid="stFileUploaderDropzoneInstructions"]{{
+background:var(--mpc-card-b) !important;
+background-color:var(--mpc-card-b) !important;
+color:var(--mpc-text) !important;
+border-color:var(--mpc-card-border-b) !important;
+}}
+[data-testid="stDialog"] [role="dialog"]{{
+background:var(--mpc-card-institutional-bg) !important;
+background-color:var(--mpc-card-institutional-bg) !important;
+color:var(--mpc-text);
+}}
+[data-baseweb="menu"]{{
+background:var(--mpc-card-institutional-bg) !important;
+background-color:var(--mpc-card-institutional-bg) !important;
+color:var(--mpc-text) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-record--brand){{
 border-left:3px solid var(--mpc-brand) !important;
@@ -444,7 +470,8 @@ border-left:3px solid var(--mpc-danger) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-record--muted){{
 border-left:3px solid var(--mpc-border-md) !important;
-background:var(--mpc-soft);
+background:var(--mpc-card-institutional-bg) !important;
+background-color:var(--mpc-card-institutional-bg) !important;
 }}
 [data-testid="stVerticalBlockBorderWrapper"]:has(.mpc-record--neutral){{
 border-left:3px solid var(--mpc-border-md) !important;
@@ -655,7 +682,13 @@ flex-shrink:0;
 section[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"],
 section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"]{{
 background:var(--mpc-expander) !important;
+background-color:var(--mpc-expander) !important;
 border-top:1px solid var(--mpc-expander-border) !important;
+}}
+section[data-testid="stMain"] [data-testid="stExpander"] details > div,
+section[data-testid="stSidebar"] [data-testid="stExpander"] details > div{{
+background:transparent !important;
+background-color:transparent !important;
 }}
 section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stVerticalBlock"]{{
 background:var(--mpc-expander) !important;
@@ -827,7 +860,7 @@ padding:.75rem .9rem .7rem;
 .mpc-stack .mpc-record--success,.mpc-record-boxed.mpc-record--success{{border-left-color:var(--mpc-success);}}
 .mpc-stack .mpc-record--warning,.mpc-record-boxed.mpc-record--warning{{border-left-color:var(--mpc-warning);}}
 .mpc-stack .mpc-record--danger,.mpc-record-boxed.mpc-record--danger{{border-left-color:var(--mpc-danger);}}
-.mpc-stack .mpc-record--muted,.mpc-record-boxed.mpc-record--muted{{border-left-color:var(--mpc-border-md);background:var(--mpc-soft);}}
+.mpc-stack .mpc-record--muted,.mpc-record-boxed.mpc-record--muted{{border-left-color:var(--mpc-border-md);background:var(--mpc-card-institutional-bg);}}
 .mpc-stack .mpc-record--neutral,.mpc-record-boxed.mpc-record--neutral{{border-left-color:var(--mpc-border-md);}}
 .mpc-stack .mpc-record--info,.mpc-record-boxed.mpc-record--info{{border-left-color:var(--mpc-info);}}
 .mpc-stack .mpc-stripe-a,.mpc-stack .mpc-card-even,.mpc-record-boxed.mpc-stripe-a,.mpc-record-boxed.mpc-card-even{{background:var(--mpc-card-a);}}
@@ -992,7 +1025,7 @@ color:#594500 !important;
 border-color:#E7C968 !important;
 }}
 .mpc-section-label{{
-margin:1.05rem 0 .4rem;
+margin:.75rem 0 .35rem;
 font-size:.78rem;
 font-weight:700;
 letter-spacing:.06em;
@@ -1002,7 +1035,7 @@ color:var(--mpc-text-3);
 .mpc-trip{{
 margin:.45rem 0 0;
 padding:.55rem .7rem;
-background:var(--mpc-soft);
+background:var(--mpc-card-b);
 border:1px solid var(--mpc-border);
 border-radius:8px;
 }}

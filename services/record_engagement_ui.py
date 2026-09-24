@@ -8,7 +8,7 @@ from database.record_engagement import RecordEngagementStore
 from database.tarefas import TarefasStore
 from services.audit import INSTITUTIONAL_TZ, registrar_evento
 from services.date_format import format_date_br
-from services.ui_theme import empty_state, section_label
+from services.ui_theme import actions_mark, section_label
 
 ORIGIN_LABELS = {
     "oficio_enviado": "Ofício enviado",
@@ -153,7 +153,8 @@ def render_origin_tools(store, principal, module, identifier, title):
     prefix = f"eng_{module}_{identifier}"
     repo = RecordEngagementStore(store)
     section_label("Organização pessoal")
-    left, middle = st.columns(2)
+    actions_mark()
+    left, middle, _spacer = st.columns([1.15, 1.25, 2.6])
     if left.button("Criar tarefa", key=prefix + "_task"):
         _create_task(module, identifier, title)
     following = repo.is_following(principal.id, module, identifier)
@@ -173,7 +174,7 @@ def render_origin_tools(store, principal, module, identifier, title):
     related = TarefasStore(store).list_related(module, identifier, principal.id)
     section_label("Tarefas relacionadas")
     if not related:
-        empty_state("Nenhuma tarefa relacionada.")
+        st.caption("Nenhuma tarefa relacionada.")
     for row in related:
         due = format_date_br(row.get("prazo_data"), empty="Sem prazo")
         cols = st.columns([4, 1])
