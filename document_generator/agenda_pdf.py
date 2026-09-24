@@ -5,7 +5,6 @@ from html import escape
 from io import BytesIO
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -18,6 +17,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from document_generator.report_header import build_report_header
 from services.date_format import format_date_br
 
 WEEKDAYS = ("Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado", "Domingo")
@@ -119,9 +119,6 @@ def generate_agenda_pdf(records, names, filters, *, generated_at=None):
                                  author="Ministério Público de Contas da Paraíba")
     base = getSampleStyleSheet()
     styles = {
-        "institution": ParagraphStyle("AgendaInstitution", parent=base["Heading1"], fontName="Helvetica-Bold", fontSize=13, leading=16, alignment=TA_CENTER, textColor=colors.HexColor("#222222"), spaceAfter=3 * mm),
-        "title": ParagraphStyle("AgendaTitle", parent=base["Heading2"], fontName="Helvetica-Bold", fontSize=12, leading=15, alignment=TA_CENTER, spaceAfter=4 * mm),
-        "filter": ParagraphStyle("AgendaFilter", parent=base["Normal"], fontSize=8.5, leading=11),
         "day": ParagraphStyle("AgendaDay", parent=base["Heading3"], fontName="Helvetica-Bold", fontSize=10.5, leading=13, spaceBefore=4 * mm, spaceAfter=2 * mm),
         "item_title": ParagraphStyle("AgendaItemTitle", parent=base["Normal"], fontSize=9.5, leading=12),
         "item": ParagraphStyle("AgendaItem", parent=base["Normal"], fontSize=9, leading=11),
@@ -129,10 +126,11 @@ def generate_agenda_pdf(records, names, filters, *, generated_at=None):
         "commitment_box": ParagraphStyle("AgendaCommitmentBox", parent=base["Normal"], fontSize=9, leading=11),
         "leave_box": ParagraphStyle("AgendaLeaveBox", parent=base["Normal"], fontSize=9, leading=11),
     }
-    story = [Paragraph("MINISTÉRIO PÚBLICO DE CONTAS DA PARAÍBA", styles["institution"]),
-             Paragraph("Agenda e Afastamentos dos Procuradores", styles["title"])]
-    story.extend(Paragraph(_safe(label), styles["filter"]) for label in filters)
-    story.append(Spacer(1, 3 * mm))
+    story = build_report_header(
+        "Agenda e Afastamentos dos Procuradores",
+        filters=filters,
+        width=content_width,
+    )
     day_groups = []
     for record in ordered:
         day = datetime.fromisoformat(record["inicio"]).date()

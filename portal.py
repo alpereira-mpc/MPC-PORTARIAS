@@ -774,7 +774,7 @@ def render_portal(sidebar_context=None):
             )
             if message := st.session_state.pop("_portal_theme_error", None):
                 st.warning(message)
-        st.caption(f"Versão {APP_VERSION}")
+        st.caption(f"Versão {APP_VERSION}", text_alignment="right")
         if selected != "Memorandos":
             st.session_state["memorando_form_active"] = False
         if selected != "Relatórios e Indicadores":

@@ -1,5 +1,6 @@
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 
 from pypdf import PdfReader
 from reportlab.lib.pagesizes import A4
@@ -11,7 +12,14 @@ from document_generator.agenda_pdf import (
     _day_flowables,
     generate_agenda_pdf,
 )
+from document_generator.report_header import (
+    INSTITUTION_NAME,
+    LOGO_WIDTH,
+    build_report_header,
+    institutional_logo_path,
+)
 from services.agenda_ui import agenda_pdf_filename, all_upcoming
+from services.branding import SIDEBAR_LOGO
 
 
 def _text(content):
@@ -195,3 +203,52 @@ def test_all_upcoming_uses_every_filtered_page():
     assert [call[4] for call in calls] == [0, 30]
     assert [call[4] for call in agenda.calls] == [0, 30]
     assert all(call[1:4] == (7, "EVENTO", "Agendado") for call in calls)
+
+
+def test_report_header_reuses_sidebar_logo_without_distortion():
+    from PIL import Image as PilImage
+    from reportlab.platypus import Image
+
+    path = institutional_logo_path()
+    assert path == SIDEBAR_LOGO
+    assert path.name == "mpcpb_logo_sidebar_transparent.png"
+    assert path.is_file()
+    assert not path.is_absolute() or "assets" in path.parts
+    pixels = PilImage.open(path)
+    header = build_report_header(
+        "Agenda e Afastamentos dos Procuradores",
+        filters=["Período: 13/10/2026", "Procurador: Todos"],
+        width=A4[0] - (2 * _PAGE_MARGIN),
+    )
+    logo = header[0]._cellvalues[0][0]
+    assert isinstance(logo, Image)
+    assert Path(logo.filename).resolve() == path.resolve()
+    assert logo.drawWidth == LOGO_WIDTH
+    assert abs((logo.drawHeight / logo.drawWidth) - (pixels.height / pixels.width)) < 0.01
+
+
+def test_institutional_header_is_first_page_only_and_footer_remains():
+    records = [
+        _commitment(f"2026-11-{day:02d}", "09:00", 1, f"Sessão {day}")
+        for day in range(1, 28)
+    ]
+    content = generate_agenda_pdf(
+        records,
+        {1: "Dra. Elvira"},
+        ["Período: 01/11/2026 a 27/11/2026", "Procurador: Dra. Elvira"],
+        generated_at=datetime(2026, 11, 1, 8, 30),
+    )
+    reader = PdfReader(BytesIO(content))
+    assert len(reader.pages) >= 2
+    first = reader.pages[0].extract_text() or ""
+    later = "\n".join(page.extract_text() or "" for page in reader.pages[1:])
+    assert INSTITUTION_NAME in first
+    assert "Agenda e Afastamentos dos Procuradores" in first
+    assert "Período: 01/11/2026 a 27/11/2026" in first
+    assert "Dra. Elvira" in first
+    assert INSTITUTION_NAME not in later
+    assert "Gerado em 01/11/2026 às 08:30" in first
+    assert "Gerado em 01/11/2026 às 08:30" in later
+    assert "Página 1" in first
+    assert "Página 2" in later
+    assert later.count("COMPROMISSO") >= 1
