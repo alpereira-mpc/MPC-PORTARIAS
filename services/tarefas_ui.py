@@ -48,11 +48,6 @@ def _remember(message, *, clear_edit=True):
     st.session_state["tarefas_message"] = message
 
 
-def _done(message, *, clear_edit=True):
-    _remember(message, clear_edit=clear_edit)
-    st.rerun()
-
-
 def _audit(store, principal, event, action, identifier):
     registrar_evento(store, evento=event, modulo="tarefas", acao=action, principal=principal, entidade_tipo="tarefa", entidade_id=identifier)
 
@@ -89,6 +84,106 @@ def _delete_task(repo, store, principal, identifier):
     if repo.delete(identifier, principal.id):
         _audit(store, principal, "TAREFA_EXCLUIDA", "EXCLUIR", identifier)
         _remember("Tarefa excluída.")
+
+
+def _begin_new_task():
+    st.session_state["tarefas_edit"] = {}
+
+
+def _drop_reminder_slot(state_key, slot):
+    slots = list(st.session_state.get(state_key) or [])
+    if slot in slots:
+        slots.remove(slot)
+        st.session_state[state_key] = slots
+
+
+def _add_reminder_slot(state_key):
+    slots = list(st.session_state.get(state_key) or [0])
+    if len(slots) < 3:
+        slots.append(max(slots) + 1)
+        st.session_state[state_key] = slots
+
+
+def _iso_day(value):
+    if value in (None, ""):
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)[:10]
+
+
+def _editor_payload(prefix):
+    due_date = due_time = None
+    if st.session_state.get(prefix + "deadline"):
+        due_date = _iso_day(st.session_state.get(prefix + "date"))
+        if st.session_state.get(prefix + "has_time"):
+            due_time = _parse_hour(
+                st.session_state.get(prefix + "time") or "", "Hora do prazo"
+            ).strftime("%H:%M")
+    reminders = []
+    if st.session_state.get(prefix + "reminder"):
+        for index, slot in enumerate(st.session_state.get(prefix + "reminder_slots") or []):
+            day = _iso_day(st.session_state.get(f"{prefix}reminder_{slot}_date"))
+            hour = st.session_state.get(f"{prefix}reminder_{slot}_time")
+            if day and hour:
+                reminders.append(
+                    datetime.combine(
+                        date.fromisoformat(day),
+                        _parse_hour(hour, f"Hora do lembrete {index + 1}"),
+                        INSTITUTIONAL_TZ,
+                    ).isoformat()
+                )
+    return {
+        "titulo": st.session_state.get(prefix + "title", ""),
+        "descricao": st.session_state.get(prefix + "description", ""),
+        "prioridade": st.session_state.get(prefix + "priority", "NORMAL"),
+        "prazo_data": due_date,
+        "prazo_hora": due_time,
+        "lembretes": reminders,
+        "observacoes": st.session_state.get(prefix + "notes", ""),
+    }
+
+
+def _cancel_editor(prefix):
+    for key in list(st.session_state):
+        if str(key).startswith(prefix):
+            st.session_state.pop(key, None)
+    st.session_state.pop("tarefas_edit", None)
+
+
+def _save_editor(repo, store, principal, prefix, old):
+    try:
+        values = _editor_payload(prefix)
+        values["origem_modulo"] = old.get("origem_modulo")
+        values["origem_id"] = old.get("origem_id")
+        editing = bool(old.get("id"))
+        record = (
+            repo.update(old["id"], principal.id, values)
+            if editing
+            else repo.create(principal.id, values)
+        )
+        if not record:
+            st.session_state["tarefas_form_error"] = "Tarefa não encontrada."
+            return
+        event = (
+            "TAREFA_EDITADA"
+            if editing
+            else "TAREFA_VINCULADA_CRIADA"
+            if record.get("origem_modulo")
+            else "TAREFA_CRIADA"
+        )
+        _audit(
+            store,
+            principal,
+            event,
+            "EDITAR" if editing else "CRIAR",
+            record["id"],
+        )
+        if not editing:
+            for key in list(st.session_state):
+                if str(key).startswith(prefix):
+                    st.session_state.pop(key, None)
+        _remember("Tarefa salva.")
+    except ValueError as exc:
+        st.session_state["tarefas_form_error"] = str(exc)
 
 
 def _open_editor(row):
@@ -158,46 +253,47 @@ def _editor(repo, store, principal):
     definir_prazo = st.checkbox("Definir prazo", value=bool(old.get("prazo_data")), key=prefix + "deadline")
     due_date, due_time = _deadline_values(prefix, old, definir_prazo)
     definir_lembretes = st.checkbox("Definir lembretes", value=bool(existing_reminders or old.get("lembrete_em")), key=prefix + "reminder")
-    reminder_inputs = []
     if definir_lembretes:
         with st.container(border=True):
             st.caption("Lembretes")
             for index, slot in enumerate(st.session_state[reminder_state]):
                 initial = datetime.fromisoformat(existing_reminders[index]["lembrar_em"]) if index < len(existing_reminders) else datetime.now(INSTITUTIONAL_TZ)
                 date_column, time_column, remove_column = st.columns([4, 4, 1])
-                reminder_date = date_column.date_input(f"Lembrete {index + 1} — Data", initial.date(), format="DD/MM/YYYY", key=f"{prefix}reminder_{slot}_date")
+                date_column.date_input(f"Lembrete {index + 1} — Data", initial.date(), format="DD/MM/YYYY", key=f"{prefix}reminder_{slot}_date")
                 initial_time = initial.strftime("%H:%M")
                 options = REMINDER_TIMES if initial_time in REMINDER_TIMES else tuple(sorted((*REMINDER_TIMES, initial_time)))
-                reminder_time = time_column.selectbox(f"Lembrete {index + 1} — Hora", options, index=options.index(initial_time), key=f"{prefix}reminder_{slot}_time")
-                reminder_inputs.append((reminder_date, reminder_time, index + 1))
-                if index and remove_column.button("Remover", key=f"{prefix}reminder_remove_{slot}"):
-                    st.session_state[reminder_state].remove(slot); st.rerun()
-            if len(st.session_state[reminder_state]) < 3 and st.button("+ Adicionar lembrete", key=prefix+"add_reminder"):
-                st.session_state[reminder_state].append(max(st.session_state[reminder_state]) + 1); st.rerun()
+                time_column.selectbox(f"Lembrete {index + 1} — Hora", options, index=options.index(initial_time), key=f"{prefix}reminder_{slot}_time")
+                if index:
+                    remove_column.button(
+                        "Remover",
+                        key=f"{prefix}reminder_remove_{slot}",
+                        on_click=_drop_reminder_slot,
+                        args=(reminder_state, slot),
+                    )
+            if len(st.session_state[reminder_state]) < 3:
+                st.button(
+                    "+ Adicionar lembrete",
+                    key=prefix + "add_reminder",
+                    on_click=_add_reminder_slot,
+                    args=(reminder_state,),
+                )
     section_label("Observações")
     notes = st.text_area("Observações", value=old.get("observacoes", ""), key=prefix+"notes")
-    submitted = st.button("Salvar alterações" if editing else "Criar tarefa", type="primary", key=prefix+"submit")
-    if st.button("Cancelar", key=prefix+"cancel"):
-        for key in list(st.session_state):
-            if key.startswith(prefix):
-                st.session_state.pop(key, None)
-        st.session_state.pop("tarefas_edit", None)
-        st.rerun()
-    if submitted:
-        try:
-            if due_time is not None:
-                due_time = _parse_hour(due_time, "Hora do prazo").strftime("%H:%M")
-            reminders = [datetime.combine(day, _parse_hour(hour, f"Hora do lembrete {number}"), INSTITUTIONAL_TZ).isoformat() for day, hour, number in reminder_inputs]
-            values={"titulo":title,"descricao":description,"prioridade":priority,"prazo_data":due_date,"prazo_hora":due_time,"lembretes":reminders,"observacoes":notes,"origem_modulo":old.get("origem_modulo"),"origem_id":old.get("origem_id")}
-            record = repo.update(old["id"],principal.id,values) if editing else repo.create(principal.id,values)
-            if not record: st.error("Tarefa não encontrada."); return
-            event = "TAREFA_EDITADA" if old.get("id") else "TAREFA_VINCULADA_CRIADA" if record.get("origem_modulo") else "TAREFA_CRIADA"
-            _audit(store,principal,event,"EDITAR" if old.get("id") else "CRIAR",record["id"])
-            if not editing:
-                for key in list(st.session_state):
-                    if key.startswith(prefix): st.session_state.pop(key, None)
-            _done("Tarefa salva.")
-        except ValueError as exc: st.error(str(exc))
+    if form_error := st.session_state.pop("tarefas_form_error", None):
+        st.error(form_error)
+    st.button(
+        "Salvar alterações" if editing else "Criar tarefa",
+        type="primary",
+        key=prefix + "submit",
+        on_click=_save_editor,
+        args=(repo, store, principal, prefix, old),
+    )
+    st.button(
+        "Cancelar",
+        key=prefix+"cancel",
+        on_click=_cancel_editor,
+        args=(prefix,),
+    )
     if old.get("id"):
         from services.record_engagement_ui import render_task_reminders
 
@@ -443,9 +539,12 @@ def render(store, principal):
     repo=TarefasStore(store)
     st.title(module_title("tarefas", "TAREFAS")); st.caption("Organização pessoal de demandas, prazos e prioridades")
     if st.session_state.pop("tarefas_message",None): st.success("Alteração realizada.")
-    if st.button("+ Nova tarefa", type="primary", key="tarefas_new"):
-        st.session_state["tarefas_edit"] = {}
-        st.rerun()
+    st.button(
+        "+ Nova tarefa",
+        type="primary",
+        key="tarefas_new",
+        on_click=_begin_new_task,
+    )
     linked = st.session_state.pop("tarefas_new_origin", None)
     if linked:
         st.session_state["tarefas_edit"] = linked

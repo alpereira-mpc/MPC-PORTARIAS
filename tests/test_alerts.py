@@ -1032,7 +1032,7 @@ def test_bell_navigation_closes_popover_without_consuming_alerts(store, monkeypa
     from database.store import ROOT
     from database.tarefas import TarefasStore
     from services.alerts import BELL_CACHE_KEY
-    from services.alerts_ui import BELL_OPEN_KEY
+    from services.alerts_ui import BELL_INTENT, bell_is_open, bell_widget_key
 
     enable_login(monkeypatch, store)
     owner = AccessStore(store).get_by_email(TEST_IDENTITY["email"])
@@ -1050,21 +1050,119 @@ def test_bell_navigation_closes_popover_without_consuming_alerts(store, monkeypa
     total = app.session_state[BELL_CACHE_KEY]["payload"]["total"]
     assert total >= 1
 
-    app.session_state[BELL_OPEN_KEY] = True
+    app.session_state[bell_widget_key(app.session_state)] = True
     app.run()
-    assert app.session_state[BELL_OPEN_KEY] is True
+    assert bell_is_open(app.session_state) is True
     app.button(key="bell_open_0").click().run()
 
     assert not app.exception
-    assert app.session_state[BELL_OPEN_KEY] is False
+    assert bell_is_open(app.session_state) is False
     assert app.sidebar.radio(key="portal_module").value == "Tarefas"
     assert app.session_state[BELL_CACHE_KEY]["payload"]["total"] == total
     assert TarefasStore(store).get(task["id"], owner["id"])["status"] == "A_FAZER"
 
-    app.session_state[BELL_OPEN_KEY] = True
+    app.session_state[bell_widget_key(app.session_state)] = True
     app.run()
-    assert app.session_state[BELL_OPEN_KEY] is True
+    assert bell_is_open(app.session_state) is False
+    app.session_state[BELL_INTENT] = True
+    app.session_state[bell_widget_key(app.session_state)] = True
+    app.run()
+    assert bell_is_open(app.session_state) is True
     assert app.session_state[BELL_CACHE_KEY]["payload"]["total"] == total
+    assert app.button(key="bell_open_0")
+
+
+def test_closed_bell_stays_closed_through_task_reruns(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    from database.access import AccessStore
+    from database.store import ROOT
+    from database.tarefas import TarefasStore
+    from services.alerts import BELL_CACHE_KEY
+    from services.alerts_ui import BELL_INTENT, bell_is_open, bell_widget_key
+
+    enable_login(monkeypatch, store)
+    owner = AccessStore(store).get_by_email(TEST_IDENTITY["email"])
+    repo = TarefasStore(store)
+    task = repo.create(
+        owner["id"],
+        {
+            "titulo": "Sininho permanece fechado",
+            "descricao": "Texto inicial",
+            "observacoes": "Nota inicial",
+            "prioridade": "NORMAL",
+            "prazo_data": "2026-09-13",
+        },
+    )
+    created = repo.get(task["id"], owner["id"])["criado_em"]
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    monkeypatch.setattr("services.alerts.system_alerts", lambda *a, **k: [])
+    monkeypatch.setattr("services.alerts.now_recife", lambda now=None: NOW)
+    monkeypatch.setattr("services.pending.today_recife", lambda now=None: TODAY)
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    total = app.session_state[BELL_CACHE_KEY]["payload"]["total"]
+    assert total >= 1
+    app.session_state[bell_widget_key(app.session_state)] = True
+    app.run()
+    assert bell_is_open(app.session_state) is True
+
+    app.button(key="bell_open_0").click().run()
+    assert not app.exception
+    assert bell_is_open(app.session_state) is False
+    assert app.sidebar.radio(key="portal_module").value == "Tarefas"
+
+    def closed():
+        assert bell_is_open(app.session_state) is False
+        assert BELL_INTENT in app.session_state
+        assert app.session_state[BELL_INTENT] is False
+
+    prefix = f"tarefas_form_{task['id']}"
+    if f"{prefix}cancel" not in {button.key for button in app.button}:
+        app.button(key=f"task_edit_{task['id']}").click().run()
+    closed()
+    app.text_input(key=prefix + "title").set_value("Sininho título novo").run()
+    app.text_area(key=prefix + "description").set_value("Descrição nova").run()
+    app.text_area(key=prefix + "notes").set_value("Observação nova").run()
+    app.selectbox(key=prefix + "priority").set_value("ALTA").run()
+    closed()
+    app.button(key=prefix + "submit").click().run()
+    assert not app.exception
+    closed()
+    saved = repo.get(task["id"], owner["id"])
+    assert saved["titulo"] == "Sininho título novo"
+    assert saved["descricao"] == "Descrição nova"
+    assert saved["observacoes"] == "Observação nova"
+    assert saved["prioridade"] == "ALTA"
+    assert saved["status"] == "A_FAZER"
+    assert saved["criado_em"] == created
+    assert saved["prazo_data"] == "2026-09-13"
+    with store.connection(read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM tarefas WHERE id=?", (task["id"],)
+            ).fetchone()[0]
+            == 1
+        )
+
+    app.button(key=f"task_edit_{task['id']}").click().run()
+    closed()
+    app.button(key=prefix + "cancel").click().run()
+    assert not app.exception
+    closed()
+    assert "tarefas_edit" not in app.session_state
+    assert repo.get(task["id"], owner["id"])["titulo"] == "Sininho título novo"
+
+    app.button(key=f"task_start_{task['id']}").click().run()
+    assert not app.exception
+    closed()
+    assert repo.get(task["id"], owner["id"])["status"] == "EM_ANDAMENTO"
+    assert app.session_state[BELL_CACHE_KEY]["payload"]["total"] == total
+
+    app.session_state[BELL_INTENT] = True
+    app.session_state[bell_widget_key(app.session_state)] = True
+    app.run()
+    assert bell_is_open(app.session_state) is True
     assert app.button(key="bell_open_0")
 
 

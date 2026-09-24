@@ -35,6 +35,8 @@ MODULE_OPTIONS = (
     ("access_requests", "Solicitações"),
 )
 BELL_OPEN_KEY = "_alerts_bell_open"
+BELL_EPOCH = "_alerts_bell_epoch"
+BELL_INTENT = "_alerts_bell_intent"
 
 
 def _require(principal):
@@ -142,9 +144,36 @@ def load_bell_summary(store, principal):
     return payload
 
 
+def _state_get(state, key, default=None):
+    if state is None:
+        state = st.session_state
+    return state[key] if key in state else default
+
+
+def bell_widget_key(state=None):
+    """Key of the popover currently mounted.
+
+    Closing the bell retires the previous key. A later rerun cannot reopen the
+    panel by replaying the browser value stored for the old widget.
+    """
+    epoch = int(_state_get(state, BELL_EPOCH, 0) or 0)
+    if epoch <= 0:
+        return BELL_OPEN_KEY
+    return f"{BELL_OPEN_KEY}_{epoch}"
+
+
+def bell_is_open(state=None):
+    return bool(_state_get(state, bell_widget_key(state), False))
+
+
 def close_bell():
-    if BELL_OPEN_KEY in st.session_state:
-        st.session_state[BELL_OPEN_KEY] = False
+    st.session_state[BELL_INTENT] = False
+    st.session_state.pop(bell_widget_key(), None)
+    st.session_state[BELL_EPOCH] = int(st.session_state.get(BELL_EPOCH, 0) or 0) + 1
+
+
+def _remember_bell_intent():
+    st.session_state[BELL_INTENT] = bool(st.session_state.get(bell_widget_key(), False))
 
 
 def open_alert_origin(item, store=None, principal=None, *, rerun=True):
@@ -201,11 +230,14 @@ def render_bell(store, principal):
         summary = {"total": 0, "top": []}
     total = int(summary.get("total") or 0)
     label = f"🔔 {total}" if total else "🔔"
+    widget_key = bell_widget_key()
+    if st.session_state.get(BELL_INTENT) is False:
+        st.session_state[widget_key] = False
     with st.popover(
         label,
         use_container_width=True,
-        key=BELL_OPEN_KEY,
-        on_change="rerun",
+        key=widget_key,
+        on_change=_remember_bell_intent,
     ):
         if st.session_state.pop("_alerts_bell_navigation_error", None):
             st.error("A origem não existe ou você não possui mais acesso.")
