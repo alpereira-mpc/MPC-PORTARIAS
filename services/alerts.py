@@ -281,6 +281,46 @@ def task_alerts(store, principal, now):
     return alerts
 
 
+def engagement_alerts(store, principal, now):
+    """One indexed, user-scoped query for due reminders and follow notices."""
+    from database.record_engagement import RecordEngagementStore
+
+    module_map = {
+        "oficio_enviado": "oficios",
+        "oficio_recebido": "oficios",
+        "memorando": "memorandos",
+        "representacao": "representacoes",
+        "ouvidoria": "ouvidoria",
+        "tarefa": "tarefas",
+    }
+    result = []
+    for row in RecordEngagementStore(store).due(principal.id, now):
+        moment = parse_datetime(row["lembrar_em"])
+        kind = row["tipo"]
+        result.append(
+            AlertItem(
+                source_module=module_map[row["origem_modulo"]],
+                source_id=str(row["origem_id"]),
+                gabinete="—",
+                severity=ATENCAO if kind == "LEMBRETE" else INFORMATIVO,
+                category="lembrete_registro" if kind == "LEMBRETE" else "registro_seguido",
+                title="LEMBRETE" if kind == "LEMBRETE" else "ATUALIZAÇÃO",
+                description=(row.get("texto") or "Lembrete do registro")[:160],
+                date=moment.date() if moment else now.date(),
+                datetime=moment,
+                source_status="PENDENTE",
+                navigation_target=module_map[row["origem_modulo"]],
+                metadata={
+                    "notice_id": row["id"],
+                    "notice_type": kind,
+                    "origin_module": row["origem_modulo"],
+                    "origin_id": row["origem_id"],
+                },
+            )
+        )
+    return result
+
+
 def _from_pending(item, severity, category, title, moment=None):
     extra = (item.subtitle or item.context or "").strip()
     description = item.title
@@ -540,6 +580,15 @@ def collect_alerts(
         except Exception as exc:
             LOGGER.exception("Falha ao carregar alertas de tarefas")
             errors["tarefas"] = "tarefas"
+    engagement_modules = {"oficios", "memorandos", "representacoes", "ouvidoria", "tarefas"}
+    if wanted is None or bool(wanted & engagement_modules):
+        try:
+            notices = engagement_alerts(store, principal, now)
+            if wanted is not None:
+                notices = [item for item in notices if item.source_module in wanted]
+            collected.extend(notices)
+        except Exception:
+            LOGGER.exception("Falha ao carregar lembretes e acompanhamentos")
     if has_permission(principal, "agenda") and (wanted is None or "agenda" in wanted):
         try:
             collected.extend(trip_alerts(store, today + timedelta(days=1)))

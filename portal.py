@@ -38,6 +38,7 @@ PORTAL_NAV_STATE_KEYS = frozenset(
         "pending_open_memorando",
         "pending_open_admin",
         "tarefas_open_id",
+        "tarefas_new_origin",
         "representacoes_view",
         "ouvidoria_open_id",
         "portaria_open_id",

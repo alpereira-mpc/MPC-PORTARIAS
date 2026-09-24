@@ -483,6 +483,9 @@ def _detail(store, principal, record):
         from services.internal_collaboration_ui import render_internal_collaboration
 
         render_internal_collaboration(store, principal, "ouvidoria", record["id"])
+        from services.record_engagement_ui import render_origin_tools
+
+        render_origin_tools(store, principal, "ouvidoria", record["id"], record["titulo"])
         flow = _toolbar(
             "ouvi_toolbar_flow",
             [

@@ -1,7 +1,7 @@
 """Aggregation of operational pending items. No dedicated pending table."""
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import json
 import logging
 
@@ -31,7 +31,7 @@ PERIODS = (
     ("todas", "Todas ativas"),
 )
 CORE_MODULES = ("oficios", "agenda", "memorandos")
-EXTENDED_MODULES = ("tarefas", "representacoes", "ouvidoria", "admin")
+EXTENDED_MODULES = ("tarefas", "representacoes", "ouvidoria", "lembretes", "admin")
 REP_CLOSED = ("JULGADA", "ENCERRADA", "ARQUIVADA", "CANCELADA")
 OUVI_CLOSED = ("ENCERRADA", "ARQUIVADA")
 TASK_ACTIVE = ("A_FAZER", "EM_ANDAMENTO", "AGUARDANDO")
@@ -939,6 +939,55 @@ def item_in_period(item, period, today):
     return today < due <= today + timedelta(days=last)
 
 
+def fetch_user_notices(
+    store,
+    principal,
+    *,
+    today=None,
+    gabinete_filter=None,
+    connection=None,
+    mapping=None,
+    **_kwargs,
+):
+    """Single indexed lookup; it never reads any origin module table."""
+    _ = store, gabinete_filter, mapping
+    today = today or today_recife()
+    moment = now_recife().astimezone(timezone.utc)
+    rows = connection.execute(
+        "SELECT id,tipo,origem_modulo,origem_id,texto,lembrar_em FROM avisos_usuario "
+        "WHERE usuario_id=? AND status='PENDENTE' AND lembrar_em<=? "
+        "ORDER BY lembrar_em,id LIMIT 100",
+        (principal.id, moment.isoformat()),
+    ).fetchall()
+    items = []
+    for row in rows:
+        due = parse_datetime(row["lembrar_em"])
+        due_date = due.date() if due else today
+        items.append(
+            PendingItem(
+                source_module="lembretes",
+                source_id=str(row["id"]),
+                gabinete="—",
+                title="Lembrete" if row["tipo"] == "LEMBRETE" else "Atualização em registro seguido",
+                subtitle=(row["texto"] or "Abrir registro de origem")[:160],
+                due_date=due_date,
+                start_date=due_date,
+                end_date=due_date,
+                status_original="Pendente",
+                urgency=classify_deadline(due_date, today),
+                context="",
+                navigation="Origem",
+                metadata={
+                    "notice_id": row["id"],
+                    "notice_type": row["tipo"],
+                    "origin_module": row["origem_modulo"],
+                    "origin_id": row["origem_id"],
+                },
+            )
+        )
+    return items
+
+
 def _in_period(item, period, today):
     return item_in_period(item, period, today)
 
@@ -981,6 +1030,7 @@ def collect_pending(
         ("tarefas", fetch_tarefas, "tarefas"),
         ("representacoes", fetch_representacoes, "representacoes"),
         ("ouvidoria", fetch_ouvidoria, "ouvidoria"),
+        ("lembretes", fetch_user_notices, "pendencias"),
         ("admin", fetch_access_requests, "admin"),
     )
     due_on_or_before = None

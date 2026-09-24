@@ -66,8 +66,18 @@ def _deadline_values(prefix, row, enabled):
 
 def _editor(repo, store, principal):
     old = st.session_state.get("tarefas_edit") or {}
-    prefix = "tarefas_form_" + str(old.get("id", "new"))
-    st.subheader("Editar tarefa" if old else "Nova tarefa")
+    editing = bool(old.get("id"))
+    form_identity = old.get("id") or (
+        "new_" + old["origem_modulo"] + "_" + str(old["origem_id"])
+        if old.get("origem_modulo") and old.get("origem_id")
+        else "new"
+    )
+    prefix = "tarefas_form_" + str(form_identity)
+    st.subheader("Editar tarefa" if editing else "Nova tarefa")
+    if old.get("origem_modulo"):
+        from services.record_engagement_ui import render_task_origin
+
+        render_task_origin(store, principal, old, "editor")
     # Normal widgets, rather than st.form, preserve the current widget state
     # while a conditional checkbox triggers Streamlit's regular rerun.
     existing_reminders = repo.reminders(old["id"], principal.id) if old.get("id") else []
@@ -79,7 +89,7 @@ def _editor(repo, store, principal):
     section_label("Classificação")
     priority_column, _ = st.columns([2, 5])
     priority = priority_column.selectbox("Prioridade", PRIORITIES, index=PRIORITIES.index(old.get("prioridade", "NORMAL")), format_func=PRIORITY_LABELS.get, key=prefix+"priority")
-    status = st.selectbox("Status", ACTIVE, index=ACTIVE.index(old.get("status", "A_FAZER")) if old.get("status") in ACTIVE else 0, format_func=STATUS_LABELS.get, key=prefix+"status") if old else "A_FAZER"
+    status = st.selectbox("Status", ACTIVE, index=ACTIVE.index(old.get("status", "A_FAZER")) if old.get("status") in ACTIVE else 0, format_func=STATUS_LABELS.get, key=prefix+"status") if editing else "A_FAZER"
     definir_prazo = st.checkbox("Definir prazo", value=bool(old.get("prazo_data")), key=prefix + "deadline")
     due_date, due_time = _deadline_values(prefix, old, definir_prazo)
     definir_lembretes = st.checkbox("Definir lembretes", value=bool(existing_reminders or old.get("lembrete_em")), key=prefix + "reminder")
@@ -101,7 +111,7 @@ def _editor(repo, store, principal):
                 st.session_state[reminder_state].append(max(st.session_state[reminder_state]) + 1); st.rerun()
     section_label("Observações")
     notes = st.text_area("Observações", value=old.get("observacoes", ""), key=prefix+"notes")
-    submitted = st.button("Salvar alterações" if old else "Criar tarefa", type="primary", key=prefix+"submit")
+    submitted = st.button("Salvar alterações" if editing else "Criar tarefa", type="primary", key=prefix+"submit")
     if st.button("Cancelar", key=prefix+"cancel"):
         for key in list(st.session_state):
             if key.startswith(prefix):
@@ -113,15 +123,20 @@ def _editor(repo, store, principal):
             if due_time is not None:
                 due_time = _parse_hour(due_time, "Hora do prazo").strftime("%H:%M")
             reminders = [datetime.combine(day, _parse_hour(hour, f"Hora do lembrete {number}"), INSTITUTIONAL_TZ).isoformat() for day, hour, number in reminder_inputs]
-            values={"titulo":title,"descricao":description,"prioridade":priority,"status":status,"prazo_data":due_date,"prazo_hora":due_time,"lembretes":reminders,"observacoes":notes}
-            record = repo.update(old["id"],principal.id,values) if old else repo.create(principal.id,values)
+            values={"titulo":title,"descricao":description,"prioridade":priority,"status":status,"prazo_data":due_date,"prazo_hora":due_time,"lembretes":reminders,"observacoes":notes,"origem_modulo":old.get("origem_modulo"),"origem_id":old.get("origem_id")}
+            record = repo.update(old["id"],principal.id,values) if editing else repo.create(principal.id,values)
             if not record: st.error("Tarefa não encontrada."); return
-            _audit(store,principal,"TAREFA_EDITADA" if old else "TAREFA_CRIADA","EDITAR" if old else "CRIAR",record["id"])
-            if not old:
+            event = "TAREFA_EDITADA" if old.get("id") else "TAREFA_VINCULADA_CRIADA" if record.get("origem_modulo") else "TAREFA_CRIADA"
+            _audit(store,principal,event,"EDITAR" if old.get("id") else "CRIAR",record["id"])
+            if not editing:
                 for key in list(st.session_state):
                     if key.startswith(prefix): st.session_state.pop(key, None)
             _done("Tarefa salva.")
         except ValueError as exc: st.error(str(exc))
+    if old.get("id"):
+        from services.record_engagement_ui import render_task_reminders
+
+        render_task_reminders(store, principal, old["id"])
 
 
 def _card(repo, store, principal, row, index=0):
@@ -142,6 +157,10 @@ def _card(repo, store, principal, row, index=0):
         marks += badge("Atrasada", "danger")
     with card_container(index, f"task_{row['id']}", critical=overdue):
         render_record(row["titulo"], badges_html=marks, meta=due_label, accent=accent)
+        if row.get("origem_modulo"):
+            from services.record_engagement_ui import render_task_origin
+
+            render_task_origin(store, principal, row, "active")
         with st.container(key=f"task_actions_{row['id']}"):
             actions_mark()
             controls=st.columns(5)
@@ -180,6 +199,10 @@ def _history_card(repo, store, principal, row, index=0):
             ),
             accent="muted" if row["status"] == "CANCELADA" else "success",
         )
+        if row.get("origem_modulo"):
+            from services.record_engagement_ui import render_task_origin
+
+            render_task_origin(store, principal, row, "history")
         with st.container(key=f"history_actions_{row['id']}"):
             actions_mark()
             controls = st.columns(2)
@@ -319,6 +342,9 @@ def render(store, principal):
     if st.button("+ Nova tarefa", type="primary", key="tarefas_new"):
         st.session_state["tarefas_edit"] = {}
         st.rerun()
+    linked = st.session_state.pop("tarefas_new_origin", None)
+    if linked:
+        st.session_state["tarefas_edit"] = linked
     if st.session_state.get("tarefas_open_id"):
         found = repo.get(st.session_state.pop("tarefas_open_id"), principal.id)
         if found:

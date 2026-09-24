@@ -551,6 +551,10 @@ def registrar_evento(
             "criado_em": stamp,
         }
         identifier = AuditStore(store).insert(row)
+        try:
+            _emit_follow_notice(store, row, identifier)
+        except Exception:
+            LOGGER.exception("Falha ao gerar aviso de acompanhamento; auditoria preservada.")
         if state is not None:
             try:
                 if "audit_sessao_inicio" not in state:
@@ -564,6 +568,75 @@ def registrar_evento(
     except Exception:
         LOGGER.exception("Falha ao registrar auditoria; operação principal preservada.")
         return None
+
+
+def _emit_follow_notice(store, row, audit_id):
+    """Fan out only explicitly relevant, already-persisted domain events."""
+    event = row.get("evento") or ""
+    module = row.get("modulo") or ""
+    entity_id = row.get("entidade_id")
+    if not entity_id or row.get("resultado") != "OK":
+        return
+    relevant = {
+        "oficios": {
+            "OFICIO_FINALIZADO",
+            "OFICIO_ALTERADO",
+            "OFICIO_CANCELADO",
+            "OFICIO_RESPOSTA_VINCULADA",
+        },
+        "memorandos": {"MEMORANDO_FINALIZADO", "NUMERO_OFICIAL"},
+        "representacoes": {
+            "REPRESENTACAO_PROTOCOLADA",
+            "REPRESENTACAO_STATUS_ALTERADO",
+            "REPRESENTACAO_FASE_ALTERADA",
+            "DOCUMENTO_ANEXADO",
+        },
+        "ouvidoria": {
+            "DOCUMENTO_ANEXADO",
+            "NOTICIA_FATO_ENCERRADA",
+            "NOTICIA_FATO_ARQUIVADA",
+        },
+    }
+    if event not in relevant.get(module, set()):
+        return
+    origin_module = {
+        "memorandos": "memorando",
+        "representacoes": "representacao",
+        "ouvidoria": "ouvidoria",
+    }.get(module)
+    if module == "oficios":
+        with store.connection(read_only=True) as c:
+            found = c.execute(
+                "SELECT direcao FROM oficios WHERE id=?", (str(entity_id),)
+            ).fetchone()
+        if not found:
+            return
+        origin_module = (
+            "oficio_enviado" if found[0] == "ENVIADO" else "oficio_recebido"
+        )
+    from database.record_engagement import RecordEngagementStore
+
+    labels = {
+        "OFICIO_FINALIZADO": "O Ofício seguido foi finalizado.",
+        "OFICIO_ALTERADO": "O Ofício seguido teve a situação atualizada.",
+        "OFICIO_CANCELADO": "O Ofício seguido foi cancelado.",
+        "OFICIO_RESPOSTA_VINCULADA": "Uma resposta foi vinculada ao Ofício seguido.",
+        "MEMORANDO_FINALIZADO": "O Memorando seguido foi finalizado.",
+        "NUMERO_OFICIAL": "O Memorando seguido recebeu número oficial.",
+        "REPRESENTACAO_PROTOCOLADA": "A Representação seguida foi protocolada.",
+        "REPRESENTACAO_STATUS_ALTERADO": "A Representação seguida teve a situação atualizada.",
+        "REPRESENTACAO_FASE_ALTERADA": "A Representação seguida mudou de fase.",
+        "DOCUMENTO_ANEXADO": "Um novo documento foi anexado ao registro seguido.",
+        "NOTICIA_FATO_ENCERRADA": "A Notícia de Fato seguida foi encerrada.",
+        "NOTICIA_FATO_ARQUIVADA": "A Notícia de Fato seguida foi arquivada.",
+    }
+    RecordEngagementStore(store).emit(
+        origin_module,
+        entity_id,
+        row.get("usuario_id"),
+        f"audit:{audit_id}",
+        labels[event],
+    )
 
 
 def iniciar_sessao_autorizada(store, principal, state=None):

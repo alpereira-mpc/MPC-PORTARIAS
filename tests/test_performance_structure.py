@@ -176,8 +176,47 @@ def test_pending_sql_has_no_blob_columns():
         + getsource(pending.fetch_tarefas)
         + getsource(pending.fetch_representacoes)
         + getsource(pending.fetch_ouvidoria)
+        + getsource(pending.fetch_user_notices)
         + getsource(pending.fetch_access_requests)
     )
     assert "conteudo" not in source
     assert "docx" not in source.lower()
     assert "alert_window" in getsource(pending.collect_pending)
+
+
+def test_engagement_alerts_use_one_user_scoped_query_and_home_does_not_load_them(
+    store, monkeypatch
+):
+    from contextlib import contextmanager
+
+    from services import alerts
+
+    principal = _admin(store)
+    alerts.engagement_alerts(store, principal, datetime(2026, 9, 14, 9, 0, 0))
+    original = store.connection
+    statements = []
+
+    @contextmanager
+    def counted(**kwargs):
+        with original(**kwargs) as connection:
+            connection.set_trace_callback(statements.append)
+            yield connection
+
+    monkeypatch.setattr(store, "connection", counted)
+    alerts.engagement_alerts(store, principal, datetime(2026, 9, 14, 9, 0, 0))
+    selects = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    assert len(selects) == 1
+    assert "FROM avisos_usuario" in selects[0]
+    assert "usuario_id=" in selects[0]
+    assert "engagement_alerts" not in getsource(alerts.dashboard_counts)
+
+
+def test_record_listings_do_not_lookup_related_tasks():
+    from database.tarefas import TarefasStore
+    from services import memorandos_ui, oficios_ui, ouvidoria_ui, representacoes_ui
+
+    assert "list_related" not in getsource(TarefasStore._list)
+    assert "render_origin_tools" not in getsource(oficios_ui.read_list)
+    assert "render_origin_tools" not in getsource(representacoes_ui.list_records)
+    assert "render_origin_tools" not in getsource(ouvidoria_ui.list_records)
+    assert "render_origin_tools" not in getsource(memorandos_ui.render)

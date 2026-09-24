@@ -4,7 +4,7 @@ from datetime import date, datetime, time
 
 from database.store import now, schema_key_of, unwrap_store
 
-MARKER = "tarefas_schema_v2"
+MARKER = "tarefas_schema_v3"
 _READY = set()
 ACTIVE = ("A_FAZER", "EM_ANDAMENTO", "AGUARDANDO")
 HISTORY = ("CONCLUIDA", "CANCELADA")
@@ -31,10 +31,33 @@ class TarefasStore:
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             c.execute(f"CREATE TABLE IF NOT EXISTS tarefas (id {identity}, owner_user_id BIGINT NOT NULL, titulo TEXT NOT NULL, descricao TEXT NOT NULL DEFAULT '', categoria TEXT NOT NULL DEFAULT '', prioridade TEXT NOT NULL DEFAULT 'NORMAL' CHECK(prioridade IN ('BAIXA','NORMAL','ALTA','URGENTE')), status TEXT NOT NULL DEFAULT 'A_FAZER' CHECK(status IN ('A_FAZER','EM_ANDAMENTO','AGUARDANDO','CONCLUIDA','CANCELADA')), prazo_data TEXT, prazo_hora TEXT, lembrete_em TEXT, observacoes TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL, concluido_em TEXT, cancelado_em TEXT)")
+            if self.store.backend == "postgresql":
+                columns = {
+                    row[0]
+                    for row in c.execute(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema=current_schema() AND table_name='tarefas'"
+                    )
+                }
+            else:
+                columns = {row[1] for row in c.execute("PRAGMA table_info(tarefas)")}
+            if "origem_modulo" not in columns:
+                c.execute(
+                    "ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS origem_modulo TEXT"
+                    if self.store.backend == "postgresql"
+                    else "ALTER TABLE tarefas ADD COLUMN origem_modulo TEXT"
+                )
+            if "origem_id" not in columns:
+                c.execute(
+                    "ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS origem_id TEXT"
+                    if self.store.backend == "postgresql"
+                    else "ALTER TABLE tarefas ADD COLUMN origem_id TEXT"
+                )
             c.execute(f"CREATE TABLE IF NOT EXISTS tarefas_checklist (id {identity}, tarefa_id BIGINT NOT NULL REFERENCES tarefas(id) ON DELETE CASCADE, texto TEXT NOT NULL, concluido INTEGER NOT NULL DEFAULT 0 CHECK(concluido IN (0,1)), ordem INTEGER NOT NULL, criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL)")
             c.execute(f"CREATE TABLE IF NOT EXISTS tarefas_lembretes (id {identity}, tarefa_id BIGINT NOT NULL REFERENCES tarefas(id) ON DELETE CASCADE, lembrar_em TEXT NOT NULL, criado_em TEXT NOT NULL, UNIQUE(tarefa_id,lembrar_em))")
             c.execute("CREATE INDEX IF NOT EXISTS tarefas_owner_status_prazo_idx ON tarefas(owner_user_id,status,prazo_data)")
             c.execute("CREATE INDEX IF NOT EXISTS tarefas_owner_prioridade_idx ON tarefas(owner_user_id,prioridade)")
+            c.execute("CREATE INDEX IF NOT EXISTS tarefas_origem_idx ON tarefas(origem_modulo,origem_id)")
             c.execute("CREATE INDEX IF NOT EXISTS tarefas_checklist_tarefa_idx ON tarefas_checklist(tarefa_id,ordem)")
             c.execute("CREATE INDEX IF NOT EXISTS tarefas_lembretes_tarefa_momento_idx ON tarefas_lembretes(tarefa_id,lembrar_em)")
             # Compatibility with the original single reminder field.  Do not
@@ -53,9 +76,21 @@ class TarefasStore:
             raise ValueError("Informe o título da tarefa.")
         raw_reminders = values.get("lembretes", ([values["lembrete_em"]] if values.get("lembrete_em") else ()))
         stamp = now(); reminders = self._validate_reminders(raw_reminders, values.get("prazo_data"), values.get("prazo_hora"))
+        origin_module = values.get("origem_modulo") or None
+        origin_id = values.get("origem_id") or None
+        if bool(origin_module) != bool(origin_id):
+            raise ValueError("A origem da tarefa está incompleta.")
+        if origin_module:
+            from database.record_engagement import RecordEngagementStore
+
+            if origin_module == "tarefa":
+                raise ValueError("Uma tarefa não pode ter outra tarefa como origem.")
+            RecordEngagementStore(self.store).authorize_origin(
+                origin_module, origin_id, owner_user_id
+            )
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
-            identifier = c.execute("INSERT INTO tarefas(owner_user_id,titulo,descricao,categoria,prioridade,status,prazo_data,prazo_hora,lembrete_em,observacoes,criado_em,atualizado_em) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (owner_user_id,title,(values.get("descricao") or "").strip(),(values.get("categoria") or "").strip(),values.get("prioridade") or "NORMAL","A_FAZER",values.get("prazo_data"),values.get("prazo_hora"),None,(values.get("observacoes") or "").strip(),stamp,stamp)).lastrowid
+            identifier = c.execute("INSERT INTO tarefas(owner_user_id,titulo,descricao,categoria,prioridade,status,prazo_data,prazo_hora,lembrete_em,observacoes,criado_em,atualizado_em,origem_modulo,origem_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (owner_user_id,title,(values.get("descricao") or "").strip(),(values.get("categoria") or "").strip(),values.get("prioridade") or "NORMAL","A_FAZER",values.get("prazo_data"),values.get("prazo_hora"),None,(values.get("observacoes") or "").strip(),stamp,stamp,origin_module,str(origin_id) if origin_id else None)).lastrowid
             c.executemany("INSERT INTO tarefas_lembretes(tarefa_id,lembrar_em,criado_em) VALUES(?,?,?)", [(identifier, reminder, stamp) for reminder in reminders])
         return self.get(identifier, owner_user_id)
 
@@ -98,8 +133,36 @@ class TarefasStore:
             c.execute("BEGIN IMMEDIATE")
             row = c.execute("SELECT id FROM tarefas WHERE id=? AND owner_user_id=?", (identifier, owner_user_id)).fetchone()
             if not row: return False
+            from database.record_engagement import RecordEngagementStore
+
+            RecordEngagementStore.detach_origin(c, "tarefa", identifier)
             c.execute("DELETE FROM tarefas WHERE id=? AND owner_user_id=?", (identifier, owner_user_id))
             return True
+
+    def list_related(self, module, identifier, actor_id):
+        from database.record_engagement import RecordEngagementStore
+
+        RecordEngagementStore(self.store).authorize_origin(module, identifier, actor_id)
+        with self.store.connection(read_only=True) as c:
+            return [
+                dict(row)
+                for row in c.execute(
+                    "SELECT t.id,t.titulo,t.prazo_data,t.prazo_hora,t.status,"
+                    "COALESCE(u.nome,'Usuário indisponível') AS responsavel "
+                    "FROM tarefas t LEFT JOIN usuarios_acesso u ON u.id=t.owner_user_id "
+                    "WHERE t.origem_modulo=? AND t.origem_id=? "
+                    "ORDER BY t.atualizado_em DESC,t.id DESC LIMIT 100",
+                    (module, str(identifier)),
+                )
+            ]
+
+    @staticmethod
+    def detach_origin(connection, module, identifier):
+        connection.execute(
+            "UPDATE tarefas SET origem_modulo=NULL,origem_id=NULL,atualizado_em=? "
+            "WHERE origem_modulo=? AND origem_id=?",
+            (now(), module, str(identifier)),
+        )
 
     def reminders(self, identifier, owner_user_id):
         if not self.get(identifier, owner_user_id): return []

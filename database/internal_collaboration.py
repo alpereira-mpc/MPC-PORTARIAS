@@ -1,6 +1,7 @@
 """Notas internas e encaminhamentos associados por referência a registros existentes."""
 
 from datetime import date
+import logging
 
 from database.access import AccessStore
 from database.store import now, schema_key_of, unwrap_store
@@ -8,6 +9,7 @@ from services.oficios import GABINETES
 
 MARKER = "colaboracao_interna_schema_v1"
 _READY = set()
+LOGGER = logging.getLogger("mpc.internal_collaboration")
 
 ORIGINS = {
     "oficio_enviado": ("oficios", "oficios", "id", "ENVIADO"),
@@ -163,6 +165,14 @@ class InternalCollaborationStore:
             raise ValueError("Acesso não autorizado a este registro.")
         return principal, permission, row
 
+    def authorize_origin(self, module, identifier, actor_id):
+        """Revalidate current access without exposing protected origin data."""
+        with self.store.connection(read_only=True) as c:
+            _principal, _permission, row = self._authorized_origin(
+                c, module, identifier, actor_id
+            )
+            return dict(row)
+
     def add_note(self, module, identifier, actor_id, text):
         text = (text or "").strip()
         if not text or len(text) > 4000:
@@ -262,7 +272,20 @@ class InternalCollaborationStore:
                     now(),
                 ),
             )
-            return inserted.lastrowid
+            forwarding_id = inserted.lastrowid
+        from database.record_engagement import RecordEngagementStore
+
+        try:
+            RecordEngagementStore(self.store).emit(
+                module,
+                identifier,
+                actor.id,
+                f"encaminhamento:{forwarding_id}:criado",
+                "Um novo encaminhamento foi criado no registro seguido.",
+            )
+        except Exception:
+            LOGGER.exception("Falha ao avisar seguidores sobre encaminhamento criado.")
+        return forwarding_id
 
     def list_forwardings(self, module, identifier, actor_id):
         with self.store.connection(read_only=True) as c:
@@ -336,10 +359,28 @@ class InternalCollaborationStore:
                         forwarding_id,
                     ),
                 )
-            return target
+        if target == "CONCLUIDO":
+            from database.record_engagement import RecordEngagementStore
+
+            try:
+                RecordEngagementStore(self.store).emit(
+                    row["origem_modulo"],
+                    row["origem_id"],
+                    actor.id,
+                    f"encaminhamento:{forwarding_id}:concluido",
+                    "Um encaminhamento do registro seguido foi concluído.",
+                )
+            except Exception:
+                LOGGER.exception("Falha ao avisar seguidores sobre encaminhamento concluído.")
+        return target
 
     @staticmethod
     def delete_origin(connection, module, identifier):
+        from database.record_engagement import RecordEngagementStore
+        from database.tarefas import TarefasStore
+
+        TarefasStore.detach_origin(connection, module, identifier)
+        RecordEngagementStore.detach_origin(connection, module, identifier)
         connection.execute(
             "DELETE FROM notas_internas WHERE origem_modulo=? AND origem_id=?",
             (module, str(identifier)),

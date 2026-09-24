@@ -349,12 +349,26 @@ def _details(service,row,principal):
     from services.internal_collaboration_ui import render_internal_collaboration
 
     render_internal_collaboration(service.store, principal, "memorando", row["id"])
+    engagement_key = "memo_engagement_open"
+    if st.button(
+        "Tarefas, lembretes e acompanhamento",
+        key="memo_engagement_" + row["id"],
+    ):
+        st.session_state[engagement_key] = row["id"]
+    if st.session_state.get(engagement_key) == row["id"]:
+        from services.record_engagement_ui import render_origin_tools
+
+        render_origin_tools(
+            service.store, principal, "memorando", row["id"], row["cadeia"]
+        )
 
 
 def _clear_memo_ui_state(identifier=None):
     st.session_state.pop("pending_focus_memorando", None)
     st.session_state.pop("pending_open_memorando", None)
     st.session_state.pop("memo_hard_delete_id", None)
+    if not identifier or st.session_state.get("memo_engagement_open") == identifier:
+        st.session_state.pop("memo_engagement_open", None)
     if not identifier:
         return
     for prefix in (

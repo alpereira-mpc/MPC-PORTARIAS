@@ -1,6 +1,7 @@
 """Business rules for Ouvidoria. No Streamlit and no BLOB listing."""
 
 from datetime import date
+import logging
 
 from database.institutional import INITIAL
 from database.ouvidoria import OuvidoriaStore
@@ -11,6 +12,8 @@ from services.representacoes import (
     create as create_representacao,
     procuradores,
 )
+
+LOGGER = logging.getLogger("mpc.ouvidoria")
 
 OUVIDOR_NOME = INITIAL["OUVIDOR"]
 TIPOS = {
@@ -349,7 +352,7 @@ def create(store, values, principal, uploads=None):
     return created
 
 
-def update(store, identifier, values, principal):
+def update(store, identifier, values, principal, *, notify_status=True):
     current = get(store, identifier)
     if current is None:
         raise ValueError("Notícia de fato não encontrada.")
@@ -394,6 +397,39 @@ def update(store, identifier, values, principal):
         updated,
         {"alteracoes": changes} if changes else None,
     )
+    if old and new and int(old) != int(new):
+        from database.record_engagement import RecordEngagementStore
+
+        try:
+            RecordEngagementStore(store).emit(
+                "ouvidoria",
+                identifier,
+                principal.id,
+                f"ouvidoria:{identifier}:responsavel:{updated['atualizado_em']}",
+                "A Notícia de Fato seguida mudou de responsável.",
+            )
+        except Exception:
+            LOGGER.exception("Falha ao avisar seguidores sobre mudança de responsável.")
+    if notify_status and current.get("situacao") != updated.get("situacao"):
+        from database.record_engagement import RecordEngagementStore
+
+        notices = {
+            "ENCERRADA": "A Notícia de Fato seguida foi encerrada.",
+            "ARQUIVADA": "A Notícia de Fato seguida foi arquivada.",
+        }
+        try:
+            RecordEngagementStore(store).emit(
+                "ouvidoria",
+                identifier,
+                principal.id,
+                f"ouvidoria:{identifier}:situacao:{updated['atualizado_em']}",
+                notices.get(
+                    updated.get("situacao"),
+                    "A Notícia de Fato seguida teve a situação atualizada.",
+                ),
+            )
+        except Exception:
+            LOGGER.exception("Falha ao avisar seguidores sobre mudança de situação.")
     return updated
 
 
@@ -559,7 +595,7 @@ def close(store, identifier, situacao, principal, resultado=None, conclusao=""):
             m["membro_id"] for m in current.get("integrantes") or [] if m["papel"] == "ASSESSOR"
         ],
     }
-    updated = update(store, identifier, values, principal)
+    updated = update(store, identifier, values, principal, notify_status=False)
     tipo = "ARQUIVADA" if situacao == "ARQUIVADA" else "ENCERRADA"
     add_progress(store, identifier, {"tipo": tipo, "data": date.today().isoformat()}, principal)
     _audit(

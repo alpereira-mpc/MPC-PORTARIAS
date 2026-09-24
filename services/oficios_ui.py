@@ -978,6 +978,15 @@ def details(service, r, principal=None):
             "oficio_enviado" if r["direcao"] == "ENVIADO" else "oficio_recebido",
             r["id"],
         )
+        from services.record_engagement_ui import render_origin_tools
+
+        render_origin_tools(
+            service.store,
+            principal,
+            "oficio_enviado" if r["direcao"] == "ENVIADO" else "oficio_recebido",
+            r["id"],
+            label(r),
+        )
 
 
 def render_filters(*, direction=None, tracking=False, submit_label=None):

@@ -1,11 +1,14 @@
 """Business rules for Representações. No Streamlit and no BLOB listing."""
 
 from datetime import date
+import logging
 import re
 
 from database.memorandos import MemorandosStore
 from database.representacoes import RepresentacoesStore
 from services.oficios import validate_upload
+
+LOGGER = logging.getLogger("mpc.representacoes")
 
 ORIGENS = {
     "DE_OFICIO": "De ofício",
@@ -398,6 +401,35 @@ def update(store, identifier, values, principal):
         updated,
         {"alteracoes": changes} if changes else None,
     )
+    old_responsible = next(
+        (
+            member["membro_id"]
+            for member in current.get("integrantes") or ()
+            if member["papel"] == "PROCURADOR_RESPONSAVEL"
+        ),
+        None,
+    )
+    new_responsible = next(
+        (
+            member["membro_id"]
+            for member in updated.get("integrantes") or ()
+            if member["papel"] == "PROCURADOR_RESPONSAVEL"
+        ),
+        None,
+    )
+    if old_responsible != new_responsible:
+        from database.record_engagement import RecordEngagementStore
+
+        try:
+            RecordEngagementStore(store).emit(
+                "representacao",
+                identifier,
+                principal.id,
+                f"representacao:{identifier}:responsavel:{updated['atualizado_em']}",
+                "A Representação seguida mudou de responsável.",
+            )
+        except Exception:
+            LOGGER.exception("Falha ao avisar seguidores sobre mudança de responsável.")
     return updated
 
 

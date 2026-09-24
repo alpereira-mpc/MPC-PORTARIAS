@@ -70,6 +70,8 @@ INTERNAL_COLLABORATION_TABLES = (
     "encaminhamentos_internos",
 )
 
+RECORD_ENGAGEMENT_TABLES = ("registros_seguidos", "avisos_usuario")
+
 POSTGRES_ONLY_TABLES = ("schema_migrations", "backup_snapshots")
 
 APPLICATION_TABLES = (
@@ -82,6 +84,7 @@ APPLICATION_TABLES = (
     + OUVIDORIA_TABLES
     + AUDIT_TABLES
     + INTERNAL_COLLABORATION_TABLES
+    + RECORD_ENGAGEMENT_TABLES
     + POSTGRES_ONLY_TABLES
 )
 
@@ -95,6 +98,7 @@ ESSENTIAL_TABLES = (
     + OUVIDORIA_TABLES
     + AUDIT_TABLES
     + INTERNAL_COLLABORATION_TABLES
+    + RECORD_ENGAGEMENT_TABLES
 )
 
 SCHEMA_MARKERS = (
@@ -106,6 +110,8 @@ SCHEMA_MARKERS = (
     "oficios_schema_v2",
     "oficios_schema_v3",
     "colaboracao_interna_schema_v1",
+    "tarefas_schema_v3",
+    "record_engagement_schema_v1",
     "representacoes_schema_v1",
     "ouvidoria_schema_v1",
 )
@@ -133,6 +139,16 @@ ESSENTIAL_COLUMNS = {
         "destinatario_id",
         "status",
         "criado_em",
+    ),
+    "tarefas": ("owner_user_id", "status", "origem_modulo", "origem_id"),
+    "registros_seguidos": ("usuario_id", "origem_modulo", "origem_id"),
+    "avisos_usuario": (
+        "usuario_id",
+        "tipo",
+        "origem_modulo",
+        "origem_id",
+        "lembrar_em",
+        "status",
     ),
     "oficio_arquivos": ("nome", "tipo", "conteudo"),
     "agenda_compromissos": ("tipo", "inicio", "payload"),

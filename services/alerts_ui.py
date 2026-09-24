@@ -29,6 +29,8 @@ MODULE_OPTIONS = (
     ("agenda", "Agenda e Afastamentos"),
     ("memorandos", "Memorandos"),
     ("tarefas", "Tarefas"),
+    ("representacoes", "Representações"),
+    ("ouvidoria", "Ouvidoria"),
     ("sistema", "Sistema"),
     ("access_requests", "Solicitações"),
 )
@@ -65,11 +67,15 @@ def _module_label(code):
 
 
 def _open_label(item):
+    if (item.metadata or {}).get("origin_module"):
+        return "Abrir origem"
     return {
         "oficios": "Ver em Ofícios",
         "agenda": "Ver na Agenda",
         "memorandos": "Ver em Memorandos",
         "tarefas": "Ver em Tarefas",
+        "representacoes": "Ver em Representações",
+        "ouvidoria": "Ver na Ouvidoria",
         "sistema": "Ver Saúde do Sistema",
         "access_requests": "Ver Solicitações",
     }.get(item.source_module, "Ver origem")
@@ -135,13 +141,34 @@ def load_bell_summary(store, principal):
     return payload
 
 
-def open_alert_origin(item):
+def open_alert_origin(item, store=None, principal=None):
     from portal import PORTAL_SPECIAL_RETURN, clear_alerts_overlay
 
     clear_alerts_overlay()
     if PORTAL_SPECIAL_RETURN in st.session_state:
         st.session_state.pop(PORTAL_SPECIAL_RETURN)
+    origin_module = (item.metadata or {}).get("origin_module")
+    if origin_module and store is not None and principal is not None:
+        # Engagement alerts carry origem_modulo; navigate by that key so Ofícios
+        # enviado/recebido open the correct page and permissions are rechecked.
+        from services.record_engagement_ui import open_linked_origin
+
+        origin_id = (item.metadata or {}).get("origin_id") or item.source_id
+        open_linked_origin(origin_module, origin_id, store, principal)
+        return
     open_origin(item)
+
+
+def _notice_actions(store, principal, item, key):
+    metadata = item.metadata or {}
+    notice_id = metadata.get("notice_id")
+    if not notice_id:
+        return
+    from services.record_engagement_ui import render_notice_actions
+
+    render_notice_actions(
+        store, principal, notice_id, metadata.get("notice_type"), key
+    )
 
 
 def render_bell(store, principal):
@@ -162,7 +189,10 @@ def render_bell(store, principal):
         for index, item in enumerate(top):
             st.markdown(_bell_item_markdown(item), unsafe_allow_html=True)
             if st.button(_open_label(item), key=f"bell_open_{index}"):
-                open_alert_origin(item)
+                try:
+                    open_alert_origin(item, store, principal)
+                except ValueError:
+                    st.error("A origem não existe ou você não possui mais acesso.")
             if index != last:
                 st.markdown(
                     '<hr style="margin:0.45rem 0;border:none;'
@@ -277,4 +307,8 @@ def render(store, principal):
                 accent=status_tone(item.severity),
             )
             if st.button(_open_label(item), key=f"alert_open_{start + offset}"):
-                open_alert_origin(item)
+                try:
+                    open_alert_origin(item, store, principal)
+                except ValueError:
+                    st.error("A origem não existe ou você não possui mais acesso.")
+            _notice_actions(store, principal, item, f"alert_notice_{start + offset}")

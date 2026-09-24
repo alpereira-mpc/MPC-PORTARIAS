@@ -35,6 +35,7 @@ MODULE_OPTIONS = (
     ("tarefas", "Tarefas"),
     ("representacoes", "Representações"),
     ("ouvidoria", "Ouvidoria"),
+    ("lembretes", "Lembretes e avisos"),
     ("access_requests", "Administração"),
 )
 PERIOD_CAPTIONS = dict(PERIODS)
@@ -60,6 +61,7 @@ OPEN_LABELS = {
     "tarefas": "Ver em Tarefas",
     "representacoes": "Ver em Representações",
     "ouvidoria": "Ver na Ouvidoria",
+    "lembretes": "Abrir origem",
     "access_requests": "Ver em Administração",
     "sistema": "Ver em Administração",
 }
@@ -79,13 +81,22 @@ def _date_text(value):
     return format_local(value)[:10] if value else "—"
 
 
-def open_origin(item):
+def open_origin(item, store=None, principal=None):
     from portal import request_portal_navigation
 
     module = getattr(item, "source_module", "")
     source_id = getattr(item, "source_id", None)
     gabinete = getattr(item, "gabinete", None)
     metadata = getattr(item, "metadata", None) or {}
+    if module == "lembretes":
+        origin_module = metadata.get("origin_module")
+        origin_id = metadata.get("origin_id")
+        if store is None or principal is None:
+            return
+        from services.record_engagement_ui import open_linked_origin
+
+        open_linked_origin(origin_module, origin_id, store, principal)
+        return
     if module == "portarias":
         request_portal_navigation("Portarias", nav="Histórico", portaria_open_id=source_id)
         return
@@ -149,8 +160,8 @@ def open_origin(item):
         )
 
 
-def _open(item):
-    open_origin(item)
+def _open(item, store=None, principal=None):
+    open_origin(item, store, principal)
 
 
 def _set_period(code):
@@ -280,7 +291,21 @@ def render(store, principal):
                 OPEN_LABELS.get(row.source_module, "Abrir origem"),
                 key=f"pending_go_{row.source_module}_{row.source_id}_{index}",
             ):
-                _open(row)
+                try:
+                    _open(row, store, principal)
+                except ValueError:
+                    st.error("A origem não existe ou você não possui mais acesso.")
+            if row.source_module == "lembretes":
+                from services.record_engagement_ui import render_notice_actions
+
+                meta = row.metadata or {}
+                render_notice_actions(
+                    store,
+                    principal,
+                    meta.get("notice_id"),
+                    meta.get("notice_type"),
+                    f"pending_notice_{row.source_id}_{index}",
+                )
     nav_a, nav_b, nav_c = st.columns([1, 2, 1])
     if nav_a.button("Anterior", disabled=page <= 1, key="pending_prev"):
         st.session_state["pending_page"] = page - 1
@@ -303,4 +328,7 @@ def render(store, principal):
         item = view[choice]
         label = OPEN_LABELS.get(item.source_module, "Abrir origem")
         if st.button(label, key="pending_open_go"):
-            _open(item)
+            try:
+                _open(item, store, principal)
+            except ValueError:
+                st.error("A origem não existe ou você não possui mais acesso.")

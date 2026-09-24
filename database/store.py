@@ -59,6 +59,9 @@ def ensure_addon_schemas(store):
     from database.internal_collaboration import ensure_schema as ensure_collaboration
 
     ensure_collaboration(store)
+    from database.record_engagement import ensure_schema as ensure_engagement
+
+    ensure_engagement(store)
     from database.memorandos import MemorandosStore
 
     MemorandosStore(store)

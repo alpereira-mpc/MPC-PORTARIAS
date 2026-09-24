@@ -47,6 +47,8 @@ TABLES = (
     "tarefas",
     "tarefas_checklist",
     "tarefas_lembretes",
+    "registros_seguidos",
+    "avisos_usuario",
     "tramita_importacoes",
     "tramita_movimentacoes",
     "tramita_estoque",
@@ -80,6 +82,8 @@ IDENTITY_TABLES = {
     "tarefas",
     "tarefas_checklist",
     "tarefas_lembretes",
+    "registros_seguidos",
+    "avisos_usuario",
     "tramita_importacoes",
     "tramita_movimentacoes",
     "tramita_estoque",
@@ -123,6 +127,8 @@ class Row:
 class Cursor:
     def __init__(self, cursor, returning_id=False):
         self.cursor = cursor
+        # psycopg exposes rowcount; engagement follow/conclude rely on it.
+        self.rowcount = cursor.rowcount
         if returning_id:
             row = cursor.fetchone()
             self.lastrowid = row[0] if row is not None else None

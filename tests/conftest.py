@@ -40,6 +40,11 @@ def isolate_database_secrets(monkeypatch):
     import database.internal_collaboration as internal_collaboration
 
     internal_collaboration._READY.clear()
+    import database.record_engagement as record_engagement
+    import database.tarefas as tarefas
+
+    record_engagement._READY.clear()
+    tarefas._READY.clear()
     import services.pending as pending
 
     pending._TABLES.clear()

@@ -610,6 +610,9 @@ def _detail_body(store, principal, record):
     from services.internal_collaboration_ui import render_internal_collaboration
 
     render_internal_collaboration(store, principal, "representacao", record["id"])
+    from services.record_engagement_ui import render_origin_tools
+
+    render_origin_tools(store, principal, "representacao", record["id"], record["titulo"])
     protocolled = is_protocolled(record)
     flow = _toolbar(
         "rep_toolbar_flow",
