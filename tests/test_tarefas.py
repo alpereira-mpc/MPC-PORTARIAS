@@ -73,6 +73,29 @@ def test_status_and_alerts_are_owner_scoped(store):
     assert not any(alert.source_module == "tarefas" for alert in other)
 
 
+def test_concluding_a_task_is_idempotent(store):
+    repo = TarefasStore(store)
+    task = repo.create(1, {"titulo": "Concluir uma vez"})
+    with store.connection(read_only=True) as connection:
+        before_count = connection.execute("SELECT COUNT(*) FROM tarefas").fetchone()[0]
+
+    first, first_changed = repo.transition_status(task["id"], 1, "CONCLUIDA")
+    second, second_changed = repo.transition_status(task["id"], 1, "CONCLUIDA")
+
+    assert first_changed is True
+    assert second_changed is False
+    assert second == first
+    assert first["id"] == task["id"]
+    with store.connection(read_only=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM tarefas").fetchone()[0] == before_count
+    active_ids = [row["id"] for row in repo.list_active(1)]
+    history_ids = [row["id"] for row in repo.list_history(1)]
+    assert active_ids == []
+    assert history_ids == [task["id"]]
+    assert len(active_ids) == len(set(active_ids))
+    assert len(history_ids) == len(set(history_ids))
+
+
 def test_creation_with_three_reminders(store):
     repo = TarefasStore(store)
     due = date.today().fromordinal(date.today().toordinal() + 2)
@@ -286,6 +309,8 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
     repo = TarefasStore(store)
     first = repo.create(owner["id"], {"titulo": "Ativa alfa"})
     second = repo.create(owner["id"], {"titulo": "Ativa beta"})
+    to_cancel = repo.create(owner["id"], {"titulo": "Ativa cancelar"})
+    edit_only = repo.create(owner["id"], {"titulo": "Ativa editar"})
     completed = repo.create(owner["id"], {"titulo": "Concluída recente"})
     cancelled = repo.create(owner["id"], {"titulo": "Cancelada recente"})
     repo.change_status(completed["id"], owner["id"], "CONCLUIDA")
@@ -308,11 +333,26 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
     assert app.button(key=f"task_finish_{first['id']}")
     assert app.button(key=f"task_finish_{second['id']}")
 
+    app.button(key=f"task_start_{first['id']}").click().run()
+    assert not app.exception
+    assert repo.get(first["id"], owner["id"])["status"] == "EM_ANDAMENTO"
+    app.button(key=f"task_wait_{first['id']}").click().run()
+    assert not app.exception
+    assert repo.get(first["id"], owner["id"])["status"] == "AGUARDANDO"
+    app.button(key=f"task_resume_{first['id']}").click().run()
+    assert not app.exception
+    assert repo.get(first["id"], owner["id"])["status"] == "EM_ANDAMENTO"
+
+    app.button(key=f"task_cancel_{to_cancel['id']}").click().run()
+    assert not app.exception
+    assert repo.get(to_cancel["id"], owner["id"])["status"] == "CANCELADA"
+    assert app.expander[0].label == "Tarefas concluídas e canceladas (3)"
+
     app.button(key=f"task_finish_{first['id']}").click().run()
 
     assert not app.exception
     assert repo.get(first["id"], owner["id"])["status"] == "CONCLUIDA"
-    assert app.expander[0].label == "Tarefas concluídas e canceladas (3)"
+    assert app.expander[0].label == "Tarefas concluídas e canceladas (4)"
     assert not any(
         button.key == f"task_finish_{first['id']}" for button in app.button
     )
@@ -334,6 +374,11 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
     assert not any(
         button.key == f"task_finish_{second['id']}" for button in app.button
     )
+
+    app.text_input(key="tarefas_q").set_value("").run()
+    app.button(key=f"task_edit_{edit_only['id']}").click().run()
+    assert not app.exception
+    assert app.text_input(key=f"tarefas_form_{edit_only['id']}title").value == "Ativa editar"
 
 
 def test_active_task_cards_are_paginated(store, monkeypatch):

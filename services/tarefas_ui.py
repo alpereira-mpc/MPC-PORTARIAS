@@ -171,7 +171,9 @@ def _card(repo, store, principal, row, index=0):
             elif row["status"] == "AGUARDANDO" and controls[0].button("Retomar", key=f"task_resume_{row['id']}"):
                 repo.change_status(row["id"],principal.id,"EM_ANDAMENTO"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","RETOMAR",row["id"]); _done("Tarefa retomada.")
             if row["status"] in ACTIVE and controls[1].button("Concluir", key=f"task_finish_{row['id']}"):
-                repo.change_status(row["id"],principal.id,"CONCLUIDA"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","CONCLUIR",row["id"]); _done("Tarefa concluída.")
+                _record, changed = repo.transition_status(row["id"],principal.id,"CONCLUIDA")
+                if changed: _audit(store,principal,"TAREFA_STATUS_ALTERADO","CONCLUIR",row["id"])
+                _done("Tarefa concluída.")
             if controls[2].button("Editar", key=f"task_edit_{row['id']}"):
                 st.session_state["tarefas_edit"]=row; st.rerun()
             if row["status"] in ACTIVE and controls[3].button("Cancelar",key=f"task_cancel_{row['id']}"):
@@ -334,7 +336,6 @@ def _task_history(repo, store, principal):
             empty_state("Nenhuma tarefa concluída ou cancelada.")
 
 
-@st.fragment
 def render(store, principal):
     repo=TarefasStore(store)
     st.title(module_title("tarefas", "TAREFAS")); st.caption("Organização pessoal de demandas, prazos e prioridades")

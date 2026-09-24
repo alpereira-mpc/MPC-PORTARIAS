@@ -8,7 +8,8 @@ from services.access import require_permission
 from services.audit import aplicar_exclusao_usuario, aplicar_usuario
 from services.oficios import GABINETES
 from services.branding import module_title
-from services.ui_theme import form_mark, render_html, section_label
+from services.themes import theme_tokens, valid_theme
+from services.ui_theme import DANGER, SUCCESS, form_mark, render_html, section_label
 
 LOGGER = logging.getLogger(__name__)
 ADMIN_SECTIONS = (
@@ -21,6 +22,85 @@ ADMIN_SECTIONS = (
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
 AUDIT_TABS = ("Visão Geral", "Acessos", "Auditoria")
 ADMIN_NAV_REQUEST = "pending_open_admin"
+_USER_COLUMNS = (
+    "Nome",
+    "E-mail",
+    "Perfil",
+    "Ativo",
+    "Portarias",
+    "Agenda e Afastamentos",
+    "Ofícios",
+    "Memorandos",
+    "Relatórios",
+    "Representações",
+    "Ouvidoria",
+    "Admin",
+    "Gabinetes",
+)
+
+
+def user_rows(users):
+    return [
+        {
+            "Nome": user["nome"],
+            "E-mail": user["email"],
+            "Perfil": user["perfil"],
+            "Ativo": "Sim" if user["ativo"] else "Não",
+            "Portarias": "Sim" if user["pode_portarias"] else "Não",
+            "Agenda e Afastamentos": "Sim" if user["pode_agenda"] else "Não",
+            "Ofícios": "Sim" if user["pode_oficios"] else "Não",
+            "Memorandos": "Sim" if user["pode_memorandos"] else "Não",
+            "Relatórios": "Sim" if user["pode_relatorios"] else "Não",
+            "Representações": "Sim" if user["pode_representacoes"] else "Não",
+            "Ouvidoria": "Sim" if user["pode_ouvidoria"] else "Não",
+            "Admin": "Sim" if user["pode_admin"] else "Não",
+            "Gabinetes": ", ".join(user["gabinetes"]) or "—",
+        }
+        for user in users
+    ]
+
+
+def style_user_table(rows, theme_name="vermelho"):
+    import pandas as pd
+
+    frame = pd.DataFrame(rows, columns=list(_USER_COLUMNS))
+    tokens = theme_tokens(valid_theme(theme_name))
+    background = tokens["themed_table_bg"]
+    foreground = tokens["themed_table_fg"]
+    header_background = tokens["themed_table_header_bg"]
+    header_foreground = tokens["themed_table_header_fg"]
+
+    def paint(value):
+        text = "" if value is None else str(value)
+        if text == "Sim":
+            color, weight = SUCCESS, "700"
+        elif text == "Não":
+            color, weight = DANGER, "700"
+        else:
+            color, weight = foreground, "600"
+        return (
+            f"background-color: {background}; color: {color}; font-weight: {weight}"
+        )
+
+    styler = frame.style.map(paint)
+    styler.set_table_styles(
+        [
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", header_background),
+                    ("color", header_foreground),
+                    ("font-weight", "700"),
+                ],
+            }
+        ]
+    )
+    return styler
+
+
+def _active_theme_name():
+    cached = st.session_state.get("_portal_theme") or {}
+    return valid_theme(cached.get("name"))
 
 
 def institutional_functions(store, principal):
@@ -300,27 +380,22 @@ def render(store, principal):
     if st.session_state.pop("acesso_select_new", False):
         st.session_state["acesso_pick"] = 0
     section_label("Usuários")
+    st.markdown(
+        """
+        <style>
+        .st-key-admin_users_table [data-testid="stDataFrame"] {
+          background: var(--mpc-themed-table-bg);
+          color: var(--mpc-themed-table-fg);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.dataframe(
-        [
-            {
-                "Nome": u["nome"],
-                "E-mail": u["email"],
-                "Perfil": u["perfil"],
-                "Ativo": "Sim" if u["ativo"] else "Não",
-                "Portarias": "Sim" if u["pode_portarias"] else "Não",
-                "Agenda e Afastamentos": "Sim" if u["pode_agenda"] else "Não",
-                "Ofícios": "Sim" if u["pode_oficios"] else "Não",
-                "Memorandos": "Sim" if u["pode_memorandos"] else "Não",
-                "Relatórios": "Sim" if u["pode_relatorios"] else "Não",
-                "Representações": "Sim" if u["pode_representacoes"] else "Não",
-                "Ouvidoria": "Sim" if u["pode_ouvidoria"] else "Não",
-                "Admin": "Sim" if u["pode_admin"] else "Não",
-                "Gabinetes": ", ".join(u["gabinetes"]) or "—",
-            }
-            for u in users
-        ],
+        style_user_table(user_rows(users), _active_theme_name()),
         hide_index=True,
         use_container_width=True,
+        key="admin_users_table",
     )
     section_label("Cadastro")
     choices = {0: "Novo usuário"}

@@ -32,6 +32,28 @@ def requires_substitute(holder):
     return holder.get("funcao") in ("Procurador-Geral", "Subprocurador-Geral")
 
 
+def portaria_substitute_ids(holder, people):
+    """Eligible substitute ids for a Portaria.
+
+    Procurador-Geral and Subprocurador-Geral follow ``eligible_substitutes``.
+    Other members keep the existing Portaria list: every other active member.
+    """
+    members = list(people.values()) if isinstance(people, dict) else list(people)
+    if holder and requires_substitute(holder):
+        allowed = {person["id"] for person in eligible_substitutes(holder, members)}
+        return [person["id"] for person in members if person["id"] in allowed]
+    holder_id = holder.get("id") if holder else None
+    return [
+        person["id"]
+        for person in members
+        if person.get("ativo", True) and person["id"] != holder_id
+    ]
+
+
+def accepted_substitute(selected_id, eligible_ids):
+    return selected_id if selected_id in eligible_ids else None
+
+
 def substitution_pending(record, people):
     """Presentation-only institutional pending state; it is never persisted."""
     holder = next((p for p in people if p["id"] == record.get("procurador_id")), None)

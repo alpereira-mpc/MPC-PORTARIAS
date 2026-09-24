@@ -27,6 +27,7 @@ from services.ui_store import display_store
 from document_generator.docx import generate
 from document_generator.pdf import convert, PdfUnavailable
 from services.exports import setup_logging, export_record
+from services.afastamentos import accepted_substitute, portaria_substitute_ids
 from services.validation import warnings_for
 from services.wording import compose, preview_text, parsed, role, validate
 from services.wording import reason_text, normalized_payload
@@ -817,14 +818,28 @@ def substitution_fields(
                     seat_default if seat_default not in seats else "",
                     key=holder_key + "otherseat",
                 )
-        sub_id = choose(
-            "Procurador substituto",
-            [j for j in people if j != holder_id],
-            (old.get("substituto") or {}).get("id"),
-            key=holder_key + "sub",
-            format_func=lambda j: people[j]["nome"],
-            optional=True,
-        )
+        sub_key = holder_key + "sub"
+        eligible_ids = portaria_substitute_ids(holder, people)
+        if (
+            sub_key in st.session_state
+            and st.session_state[sub_key] not in eligible_ids
+            and st.session_state[sub_key] is not None
+        ):
+            del st.session_state[sub_key]
+        if eligible_ids:
+            sub_id = choose(
+                "Procurador substituto",
+                eligible_ids,
+                accepted_substitute(
+                    (old.get("substituto") or {}).get("id"), eligible_ids
+                ),
+                key=sub_key,
+                format_func=lambda j: people[j]["nome"],
+                optional=True,
+            )
+        else:
+            st.caption("Não há substituto elegível para esta função institucional.")
+            sub_id = None
         section_label("Período")
         same_period = (
             st.checkbox(

@@ -118,15 +118,31 @@ class TarefasStore:
         return self.get(identifier, owner_user_id)
 
     def change_status(self, identifier, owner_user_id, status):
-        if status not in (*ACTIVE, *HISTORY) or not self.get(identifier, owner_user_id):
-            return None
+        record, _changed = self.transition_status(identifier, owner_user_id, status)
+        return record
+
+    def transition_status(self, identifier, owner_user_id, status):
+        if status not in (*ACTIVE, *HISTORY):
+            return None, False
         stamp = now()
         concluded = stamp if status == "CONCLUIDA" else None
         cancelled = stamp if status == "CANCELADA" else None
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
+            current = c.execute(
+                "SELECT * FROM tarefas WHERE id=? AND owner_user_id=?",
+                (identifier, owner_user_id),
+            ).fetchone()
+            if not current:
+                return None, False
+            if current["status"] == status:
+                return self._row(current), False
             c.execute("UPDATE tarefas SET status=?,concluido_em=?,cancelado_em=?,atualizado_em=? WHERE id=? AND owner_user_id=?", (status, concluded, cancelled, stamp, identifier, owner_user_id))
-        return self.get(identifier, owner_user_id)
+            changed = c.execute(
+                "SELECT * FROM tarefas WHERE id=? AND owner_user_id=?",
+                (identifier, owner_user_id),
+            ).fetchone()
+        return self._row(changed), True
 
     def delete(self, identifier, owner_user_id):
         with self.store.connection() as c:
@@ -205,7 +221,11 @@ class TarefasStore:
         values=[*args]; values += [date.today().isoformat()] if statuses==ACTIVE else []
         with self.store.connection(read_only=True) as c:
             rows=c.execute("SELECT t.* FROM tarefas t"+where+" ORDER BY "+order+" LIMIT ? OFFSET ?",(*values,limit,offset)).fetchall()
-        return [dict(r) for r in rows]
+        records = [dict(r) for r in rows]
+        identifiers = [record["id"] for record in records]
+        if len(identifiers) != len(set(identifiers)):
+            raise RuntimeError("A consulta de tarefas retornou IDs duplicados.")
+        return records
     def list_active(self, owner, filters=None, limit=100, offset=0): return self._list(owner,ACTIVE,filters,limit,offset)
     def list_history(self, owner, filters=None, limit=30, offset=0): return self._list(owner,HISTORY,filters,limit,offset)
     def alert_window(self, owner, now_local):

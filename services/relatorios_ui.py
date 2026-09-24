@@ -84,7 +84,12 @@ def production(store, principal=None):
         return
     with st.container(border=True):
         filter_mark()
-        competence = st.selectbox("Competência", options, format_func=lambda value: f"{value[5:7]}/{value[:4]}")
+        selector, _rest = st.columns([1.45, 4.55])
+        competence = selector.selectbox(
+            "Mês de referência:",
+            options,
+            format_func=lambda value: f"{value[5:7]}/{value[:4]}",
+        )
     summary = read(("production_summary", competence), lambda: reports.production_summary(competence))
     totals = {key: sum(row[key] for row in summary.values()) for key in ("entries", "exits", "opinions", "quotas", "days", "timed")}
     average = totals["days"] / totals["timed"] if totals["timed"] else None

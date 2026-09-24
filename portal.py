@@ -821,9 +821,7 @@ def render_portal(sidebar_context=None):
             require_permission(principal, "tarefas")
             from services.tarefas_ui import render
 
-            # Tarefas owns its fragment and paginated listing. Keeping it out of
-            # the generic wrapper avoids nested state after write actions.
-            render(store, principal)
+            _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Relatórios e Indicadores":
             require_permission(principal, "relatorios")
