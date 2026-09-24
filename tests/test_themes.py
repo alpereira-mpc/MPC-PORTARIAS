@@ -6,12 +6,36 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from database.access import AccessStore
-from services.themes import THEMES, valid_theme
+from services.themes import THEME_LABELS, THEMES, valid_theme
 from services.ui_theme import _css
 from tests.access_testing import enable_login, seed_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_theme_labels_are_official_and_legacy_keys_keep_their_palettes():
+    assert THEME_LABELS == {
+        "vermelho": "Rosa",
+        "azul": "Azul",
+        "verde": "Verde",
+        "dourado": "Dourado",
+        "vermelho_escuro": "Lilás",
+    }
+    assert "Vermelho" not in THEME_LABELS.values()
+    assert "Vermelho escuro" not in THEME_LABELS.values()
+    assert valid_theme("vermelho") == "vermelho"
+    assert valid_theme("vermelho_escuro") == "vermelho_escuro"
+    assert THEMES["vermelho"]["primary"] == "#9B1724"
+    assert THEMES["vermelho_escuro"]["primary"] == "#68131D"
+
+    from portal import render_portal
+
+    source = __import__("inspect").getsource(render_portal)
+    assert "tuple(THEME_LABELS)" in source
+    assert "format_func=THEME_LABELS.get" in source
+
+
 def test_red_palette_is_the_fallback():
     red = _css("vermelho")
     assert "--mpc-brand:#9B1724" in red

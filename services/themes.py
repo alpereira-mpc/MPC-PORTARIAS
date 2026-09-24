@@ -137,11 +137,11 @@ THEMES = {
 }
 
 THEME_LABELS = {
-    "vermelho": "Vermelho",
+    "vermelho": "Rosa",
     "azul": "Azul",
     "verde": "Verde",
     "dourado": "Dourado",
-    "vermelho_escuro": "Vermelho escuro",
+    "vermelho_escuro": "Lilás",
 }
 
 
