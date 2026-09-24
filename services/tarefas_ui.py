@@ -33,11 +33,23 @@ REMINDER_TIMES = tuple(
 ACTIVE_PAGE_SIZE = 20
 
 
-def _done(message, *, clear_edit=True):
+def _remember(message, *, clear_edit=True):
+    """Record the outcome for the rerun Streamlit already schedules.
+
+    Status buttons run inside the portal fragment. Calling ``st.rerun()`` after
+    cards have been drawn leaves that partial output on screen and paints the
+    fresh list underneath it.
+    """
     from services.alerts import invalidate_alert_summary
+
     invalidate_alert_summary()
-    if clear_edit: st.session_state.pop("tarefas_edit", None)
+    if clear_edit:
+        st.session_state.pop("tarefas_edit", None)
     st.session_state["tarefas_message"] = message
+
+
+def _done(message, *, clear_edit=True):
+    _remember(message, clear_edit=clear_edit)
     st.rerun()
 
 
@@ -51,10 +63,32 @@ def _transition_active_status(
     _record, changed = repo.transition_status(identifier, principal.id, status)
     if changed:
         _audit(store, principal, "TAREFA_STATUS_ALTERADO", action, identifier)
-    from services.alerts import invalidate_alert_summary
+    _remember(message, clear_edit=False)
 
-    invalidate_alert_summary()
-    st.session_state["tarefas_message"] = message
+
+def _finish_task(repo, store, principal, identifier):
+    _record, changed = repo.transition_status(identifier, principal.id, "CONCLUIDA")
+    if changed:
+        _audit(store, principal, "TAREFA_STATUS_ALTERADO", "CONCLUIR", identifier)
+    _remember("Tarefa concluída.")
+
+
+def _cancel_task(repo, store, principal, identifier):
+    repo.change_status(identifier, principal.id, "CANCELADA")
+    _audit(store, principal, "TAREFA_STATUS_ALTERADO", "CANCELAR", identifier)
+    _remember("Tarefa cancelada.")
+
+
+def _reopen_task(repo, store, principal, identifier):
+    repo.change_status(identifier, principal.id, "A_FAZER")
+    _audit(store, principal, "TAREFA_STATUS_ALTERADO", "REABRIR", identifier)
+    _remember("Tarefa reaberta.")
+
+
+def _delete_task(repo, store, principal, identifier):
+    if repo.delete(identifier, principal.id):
+        _audit(store, principal, "TAREFA_EXCLUIDA", "EXCLUIR", identifier)
+        _remember("Tarefa excluída.")
 
 
 def _open_editor(row):
@@ -222,29 +256,38 @@ def _card(repo, store, principal, row, index=0):
                         message,
                     ),
                 )
-            if row["status"] in ACTIVE and controls[1].button("Concluir", key=f"task_finish_{row['id']}"):
-                _record, changed = repo.transition_status(row["id"],principal.id,"CONCLUIDA")
-                if changed: _audit(store,principal,"TAREFA_STATUS_ALTERADO","CONCLUIR",row["id"])
-                _done("Tarefa concluída.")
+            if row["status"] in ACTIVE:
+                controls[1].button(
+                    "Concluir",
+                    key=f"task_finish_{row['id']}",
+                    on_click=_finish_task,
+                    args=(repo, store, principal, row["id"]),
+                )
             controls[2].button(
                 "Editar",
                 key=f"task_edit_{row['id']}",
                 on_click=_open_editor,
                 args=(row,),
             )
-            if row["status"] in ACTIVE and controls[3].button("Cancelar",key=f"task_cancel_{row['id']}"):
-                repo.change_status(row["id"],principal.id,"CANCELADA"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","CANCELAR",row["id"]); _done("Tarefa cancelada.")
+            if row["status"] in ACTIVE:
+                controls[3].button(
+                    "Cancelar",
+                    key=f"task_cancel_{row['id']}",
+                    on_click=_cancel_task,
+                    args=(repo, store, principal, row["id"]),
+                )
             with controls[4].popover("Excluir"):
                 confirmed = st.checkbox(
                     "Confirmo a exclusão definitiva",
                     key=f"task_confirm_{row['id']}",
                 )
-                if st.button(
+                st.button(
                     "Excluir tarefa",
                     key=f"task_delete_{row['id']}",
                     disabled=not confirmed,
-                ):
-                    if repo.delete(row["id"],principal.id): _audit(store,principal,"TAREFA_EXCLUIDA","EXCLUIR",row["id"]); _done("Tarefa excluída.")
+                    on_click=_delete_task,
+                    args=(repo, store, principal, row["id"]),
+                )
 
 
 def _history_card(repo, store, principal, row, index=0):
@@ -264,21 +307,25 @@ def _history_card(repo, store, principal, row, index=0):
         with st.container(key=f"history_actions_{row['id']}"):
             actions_mark()
             controls = st.columns(2)
-            if row["status"] == "CONCLUIDA" and controls[0].button(
-                "Reabrir", key=f"task_reopen_{row['id']}"
-            ):
-                repo.change_status(row["id"],principal.id,"A_FAZER"); _audit(store,principal,"TAREFA_STATUS_ALTERADO","REABRIR",row["id"]); _done("Tarefa reaberta.")
+            if row["status"] == "CONCLUIDA":
+                controls[0].button(
+                    "Reabrir",
+                    key=f"task_reopen_{row['id']}",
+                    on_click=_reopen_task,
+                    args=(repo, store, principal, row["id"]),
+                )
             with controls[1].popover("Excluir"):
                 confirmed = st.checkbox(
                     "Confirmo a exclusão definitiva",
                     key=f"history_confirm_{row['id']}",
                 )
-                if st.button(
+                st.button(
                     "Excluir tarefa",
                     key=f"history_delete_{row['id']}",
                     disabled=not confirmed,
-                ):
-                    if repo.delete(row["id"],principal.id): _audit(store,principal,"TAREFA_EXCLUIDA","EXCLUIR",row["id"]); _done("Tarefa excluída.")
+                    on_click=_delete_task,
+                    args=(repo, store, principal, row["id"]),
+                )
 
 
 def _move_page(key, delta):

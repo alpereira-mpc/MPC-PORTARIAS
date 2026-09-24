@@ -526,3 +526,116 @@ def test_active_task_cards_are_paginated(store, monkeypatch):
         [button for button in app.button if str(button.key).startswith("task_finish_")]
     ) == 5
     assert app.button(key="tarefas_active_previous")
+
+
+def _markdown_text(app):
+    return "\n".join(str(item.value) for item in app.markdown)
+
+
+def _button_keys(app, prefix):
+    return [str(button.key) for button in app.button if str(button.key).startswith(prefix)]
+
+
+def _assert_single_active_render(app, repo, owner_id, titles):
+    text = _markdown_text(app)
+    assert text.count("Tarefas ativas") == 1
+    for title in titles:
+        assert text.count(title) == 1
+    active = repo.list_active(owner_id)
+    finish_keys = _button_keys(app, "task_finish_")
+    assert len(finish_keys) == len(set(finish_keys))
+    assert {key.removeprefix("task_finish_") for key in finish_keys} == {
+        str(row["id"]) for row in active
+    }
+    counts = repo.situation_counts(owner_id)
+    shown = {metric.label: int(metric.value) for metric in app.metric}
+    assert shown["Atrasadas"] == counts["atrasadas"]
+    assert shown["Hoje"] == counts["hoje"]
+    assert shown["Próximas"] == counts["proximas"]
+    assert shown["Em andamento"] == counts["em_andamento"]
+    assert shown["Aguardando"] == counts["aguardando"]
+    with repo.store.connection(read_only=True) as connection:
+        for row in active:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM tarefas WHERE id=?", (row["id"],)
+                ).fetchone()[0]
+                == 1
+            )
+
+
+def test_status_changes_rebuild_each_task_once(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    import services.tarefas_ui as tarefas_ui
+    from database.access import AccessStore
+    from database.store import ROOT
+    from tests.access_testing import TEST_IDENTITY, enable_login
+
+    enable_login(monkeypatch, store)
+    owner = AccessStore(store).get_by_email(TEST_IDENTITY["email"])
+    repo = TarefasStore(store)
+    alpha = repo.create(owner["id"], {"titulo": "Acumulo alfa"})
+    beta = repo.create(owner["id"], {"titulo": "Acumulo beta"})
+    gamma = repo.create(owner["id"], {"titulo": "Acumulo gama"})
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    reruns = []
+    original_rerun = tarefas_ui.st.rerun
+
+    def spy_rerun(*args, **kwargs):
+        reruns.append(1)
+        return original_rerun(*args, **kwargs)
+
+    monkeypatch.setattr(tarefas_ui.st, "rerun", spy_rerun)
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio(key="portal_module").set_value("Tarefas").run()
+    assert not app.exception
+    _assert_single_active_render(
+        app, repo, owner["id"], ["Acumulo alfa", "Acumulo beta", "Acumulo gama"]
+    )
+
+    def act(key):
+        before = len(reruns)
+        app.button(key=key).click().run()
+        assert not app.exception
+        assert len(reruns) == before
+        app.run()
+        assert not app.exception
+        assert len(reruns) == before
+
+    act(f"task_finish_{alpha['id']}")
+    assert repo.get(alpha["id"], owner["id"])["status"] == "CONCLUIDA"
+    _assert_single_active_render(app, repo, owner["id"], ["Acumulo beta", "Acumulo gama"])
+    assert _markdown_text(app).count("Acumulo alfa") == 1
+    assert _button_keys(app, f"task_finish_{alpha['id']}") == []
+
+    act(f"task_start_{beta['id']}")
+    assert repo.get(beta["id"], owner["id"])["status"] == "EM_ANDAMENTO"
+    assert _button_keys(app, f"task_start_{beta['id']}") == []
+    assert _button_keys(app, f"task_wait_{beta['id']}") == [f"task_wait_{beta['id']}"]
+    _assert_single_active_render(app, repo, owner["id"], ["Acumulo beta", "Acumulo gama"])
+
+    act(f"task_wait_{beta['id']}")
+    assert repo.get(beta["id"], owner["id"])["status"] == "AGUARDANDO"
+    assert _button_keys(app, f"task_resume_{beta['id']}") == [
+        f"task_resume_{beta['id']}"
+    ]
+    _assert_single_active_render(app, repo, owner["id"], ["Acumulo beta", "Acumulo gama"])
+
+    act(f"task_resume_{beta['id']}")
+    assert repo.get(beta["id"], owner["id"])["status"] == "EM_ANDAMENTO"
+    _assert_single_active_render(app, repo, owner["id"], ["Acumulo beta", "Acumulo gama"])
+
+    act(f"task_cancel_{gamma['id']}")
+    assert repo.get(gamma["id"], owner["id"])["status"] == "CANCELADA"
+    _assert_single_active_render(app, repo, owner["id"], ["Acumulo beta"])
+    assert _markdown_text(app).count("Acumulo gama") == 1
+    assert _button_keys(app, f"task_cancel_{gamma['id']}") == []
+
+    act(f"task_finish_{beta['id']}")
+    assert repo.get(beta["id"], owner["id"])["status"] == "CONCLUIDA"
+    _assert_single_active_render(app, repo, owner["id"], [])
+    assert _button_keys(app, "task_finish_") == []
+    with store.connection(read_only=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM tarefas").fetchone()[0] == 3
