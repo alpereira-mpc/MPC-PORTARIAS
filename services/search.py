@@ -5,6 +5,7 @@ from datetime import date
 import json
 import logging
 import re
+import unicodedata
 
 from database.store import unwrap_store
 from services.access import has_permission
@@ -25,6 +26,7 @@ LIKE_ESCAPE = "\\"
 NUMBER_YEAR = re.compile(r"^(\d{1,6})\s*/\s*(\d{4})$")
 YEAR_ONLY = re.compile(r"^(20\d{2})$")
 NUMBER_ONLY = re.compile(r"^\d{1,6}$")
+DATE_BR = re.compile(r"^(\d{2})/(\d{2})/(\d{4})$")
 MODULE_LABELS = {
     "portarias": "Portarias",
     "oficios": "Ofícios",
@@ -60,6 +62,14 @@ def normalize_term(value):
     return " ".join(str(value or "").strip().split())
 
 
+def normalize_search_text(value):
+    """Normalize user text for portable, accent-insensitive SQL matching."""
+    decomposed = unicodedata.normalize("NFKD", normalize_term(value))
+    return "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    ).casefold()
+
+
 def parse_number_year(term):
     match = NUMBER_YEAR.match(term)
     if match:
@@ -76,6 +86,55 @@ def like_value(term):
 
 def _like_sql(column):
     return f"LOWER({column}) LIKE LOWER(?) ESCAPE '{LIKE_ESCAPE}'"
+
+
+def _normalized_sql(column):
+    """Return a SQLite/PostgreSQL-compatible accent-folded text expression."""
+    expression = f"COALESCE({column},'')"
+    for accented, plain in (
+        ("á", "a"),
+        ("à", "a"),
+        ("â", "a"),
+        ("ã", "a"),
+        ("ä", "a"),
+        ("é", "e"),
+        ("è", "e"),
+        ("ê", "e"),
+        ("ë", "e"),
+        ("í", "i"),
+        ("ì", "i"),
+        ("î", "i"),
+        ("ï", "i"),
+        ("ó", "o"),
+        ("ò", "o"),
+        ("ô", "o"),
+        ("õ", "o"),
+        ("ö", "o"),
+        ("ú", "u"),
+        ("ù", "u"),
+        ("û", "u"),
+        ("ü", "u"),
+        ("ç", "c"),
+        ("ñ", "n"),
+    ):
+        expression = (
+            f"REPLACE(REPLACE({expression},'{accented}','{plain}'),"
+            f"'{accented.upper()}','{plain}')"
+        )
+    return f"LOWER({expression})"
+
+
+def _normalized_like_sql(column):
+    return f"{_normalized_sql(column)} LIKE ? ESCAPE '{LIKE_ESCAPE}'"
+
+
+def _date_br_sql(column):
+    """Format ISO date text as DD/MM/YYYY without changing persisted values."""
+    return (
+        f"CASE WHEN COALESCE({column},'')='' THEN '' ELSE "
+        f"SUBSTR({column},9,2)||'/'||SUBSTR({column},6,2)||'/'||"
+        f"SUBSTR({column},1,4) END"
+    )
 
 
 def _parse_date(value):
@@ -223,7 +282,7 @@ def search_oficios(
     allowed = _scope_cabinets(principal, None)
     if not allowed:
         return []
-    like = like_value(term)
+    like = like_value(normalize_search_text(term))
     number, year = parse_number_year(term)
     placeholders = _sql_in(allowed)
     scope = (
@@ -237,24 +296,64 @@ def search_oficios(
         + placeholders
         + ")))"
     )
-    text = (
-        "("
-        + _like_sql("o.assunto")
-        + " OR "
-        + _like_sql("o.destinatario")
-        + " OR "
-        + _like_sql("COALESCE(o.numero_externo,'')")
-        + " OR "
-        + _like_sql("COALESCE(o.serie,'')")
-        + " OR "
-        + _like_sql("COALESCE(o.status,'')")
-        + " OR "
-        + _like_sql("CAST(o.numero AS TEXT)")
-        + " OR "
-        + _like_sql("CAST(o.ano AS TEXT)")
-        + ")"
+    searchable_columns = (
+        "o.assunto",
+        "o.destinatario",
+        "o.numero_externo",
+        "o.serie",
+        "o.status",
+        "o.direcao",
+        "CAST(o.numero AS TEXT)",
+        "CAST(o.ano AS TEXT)",
+        "o.payload",
+        "o.responde_a",
+        "CAST(o.aguarda_resposta AS TEXT)",
     )
-    params = [*allowed, *allowed, *allowed, like, like, like, like, like, like, like]
+    searchable_dates = (
+        "o.data",
+        "o.prazo",
+        "o.data_envio",
+        "o.cancelada",
+        "o.data_esperada_resposta",
+    )
+    searchable_text = " || ' ' || ".join(
+        [f"COALESCE({column},'')" for column in searchable_columns]
+        + [_date_br_sql(column) for column in searchable_dates]
+    )
+    text_parts = [_normalized_like_sql(searchable_text)]
+    text_parts.extend(
+        (
+            "EXISTS (SELECT 1 FROM procuradores p WHERE p.id=o.membro_id AND "
+            + _normalized_like_sql("p.nome")
+            + ")",
+            "EXISTS (SELECT 1 FROM oficio_destinatarios d JOIN procuradores p "
+            "ON p.id=d.membro_id WHERE d.oficio_id=o.id AND "
+            + _normalized_like_sql("p.nome")
+            + ")",
+            "EXISTS (SELECT 1 FROM oficio_movimentacoes m WHERE m.oficio_id=o.id AND ("
+            + _normalized_like_sql("m.anterior")
+            + " OR "
+            + _normalized_like_sql("m.novo")
+            + " OR "
+            + _normalized_like_sql("m.observacao")
+            + "))",
+            "EXISTS (SELECT 1 FROM oficio_arquivos a WHERE a.oficio_id=o.id AND "
+            + _normalized_like_sql("a.nome")
+            + ")",
+        )
+    )
+    text_params = [like] * 7
+    if match := DATE_BR.match(term):
+        day, month, year_text = match.groups()
+        text_parts.append(_normalized_like_sql("o.payload"))
+        text_params.append(like_value(f"{year_text}-{month}-{day}"))
+    text = "(" + " OR ".join(text_parts) + ")"
+    params = [
+        *allowed,
+        *allowed,
+        *allowed,
+        *text_params,
+    ]
     filter_sql = text
     if number is not None:
         filter_sql = "(" + text + " OR (o.numero=? AND o.ano=?))"

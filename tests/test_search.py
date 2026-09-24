@@ -86,6 +86,71 @@ def test_search_oficios_portarias_agenda(store):
     assert all(item.source_module != "oficios" or item.title for item in numbered)
 
 
+def test_search_oficios_covers_received_metadata_accents_dates_and_identifiers(store):
+    oficios, _, _ = _prepare(store)
+    proge = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "PROGE")
+    received_id = oficios.save(
+        {
+            "direcao": "RECEBIDO",
+            "numero_externo": "5230/2026/MFF/PR-PB/PRDC-JAS/2026",
+            "remetente": "JANAINA ANDRADE DE SOUSA",
+            "instituicao": "PROCURADORIA DA REPÚBLICA - PARAÍBA",
+            "data": "2026-09-16",
+            "data_recebimento": "2026-09-17",
+            "membros": [proge],
+            "assunto": "Encaminha documentação",
+            "processo": "Despacho nº 18311/2026 (PR-PB-00053243/2026)",
+            "observacoes": "Ofício referente a despacho e imagens da Pedra do Ingá",
+            "status": "Recebido",
+        }
+    )
+    sent_id = oficios.save(
+        {
+            **oficio_sample(oficios, proge),
+            "assunto": "Encaminhamento enviado específico",
+            "destinatario": "DESTINATÁRIO ENVIADO ESPECÍFICO",
+            "processo": "PROC-ENVIADO-2026",
+            "observacoes": "Observação enviada específica",
+        }
+    )
+    admin = _admin(store)
+    for term in (
+        "5230",
+        "Encaminha documentação",
+        "Janaina",
+        "JANAINA",
+        "janaina",
+        "Procuradoria",
+        "Paraíba",
+        "paraiba",
+        "18311",
+        "PR-PB-00053243",
+        "00053243",
+        "53243",
+        "Pedra do Ingá",
+        "inga",
+        "16/09/2026",
+        "17/09/2026",
+    ):
+        hits, errors, _ = global_search(store, admin, term)
+        assert not errors.get("oficios"), term
+        assert any(hit.source_id == received_id for hit in hits), term
+    for term in ("Destinatário enviado específico", "PROC-ENVIADO-2026"):
+        hits, _, _ = global_search(store, admin, term)
+        assert any(hit.source_id == sent_id for hit in hits), term
+    hits, _, _ = global_search(store, admin, "campo inexistente de oficio")
+    assert all(hit.source_id != received_id for hit in hits)
+
+
+def test_search_oficios_uses_one_query_without_attachment_contents():
+    from services.search import search_oficios
+
+    source = getsource(search_oficios)
+    assert source.count("connection.execute(") == 1
+    assert "conteudo" not in source
+    assert "a.nome" in source
+
+
 def test_permissions_hide_modules_cabinets_and_foreign_tasks(store):
     oficios, _, _ = _prepare(store)
     proge = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "PROGE")
