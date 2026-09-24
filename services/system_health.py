@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import importlib
 import os
 import platform
-import subprocess
+import re
 import sys
 import time
 
@@ -16,14 +16,13 @@ from database.inventory import (
 from database.store import unwrap_store
 from services.audit import INSTITUTIONAL_TZ, format_local
 from services.branding import APP_NAME
-import re
+from services.versioning import APP_VERSION
 
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 OK = "OK"
 ATTENTION = "ATENÇÃO"
 ERROR = "ERRO"
-_VERSION_CACHE = None
 
 
 def _status(*parts):
@@ -62,38 +61,13 @@ def list_columns(connection, backend, table):
 
 
 def app_version():
-    global _VERSION_CACHE
-    if _VERSION_CACHE is not None:
-        return _VERSION_CACHE
-    from database.store import ROOT
-
-    text = (ROOT / "app.py").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        if line.startswith("VERSION = "):
-            _VERSION_CACHE = line.split("=", 1)[1].strip().strip("\"'")
-            return _VERSION_CACHE
-    _VERSION_CACHE = ""
-    return _VERSION_CACHE
+    """Return the in-memory official product version."""
+    return APP_VERSION
 
 
 def git_build():
-    from database.store import ROOT
-
-    try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "--short=8", "HEAD"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if completed.returncode != 0:
-        return None
-    value = (completed.stdout or "").strip()
-    return value or None
+    """Build IDs are intentionally not discovered through Git at runtime."""
+    return None
 
 
 def runtime_environment():

@@ -18,6 +18,7 @@ from services.branding import (
 from services.ui_store import asset
 from services.ui_theme import apply_theme, badge, empty_state, institutional_card_mark, render_html
 from services.themes import THEME_LABELS, valid_theme
+from services.versioning import APP_VERSION
 
 LOGGER = logging.getLogger(__name__)
 
@@ -767,6 +768,7 @@ def render_portal(sidebar_context=None):
             )
             if message := st.session_state.pop("_portal_theme_error", None):
                 st.warning(message)
+        st.caption(f"Versão {APP_VERSION}")
         if selected != "Memorandos":
             st.session_state["memorando_form_active"] = False
         if selected != "Relatórios e Indicadores":

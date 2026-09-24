@@ -36,8 +36,8 @@ from services.deletion import REASONS
 from services.branding import module_title
 from services.date_format import format_date_br
 from services.ui_theme import badges, empty_state, form_mark, operational_card_mark, render_html, render_record, section_label, status_tone
+from services.versioning import APP_VERSION
 
-VERSION = "1.1.0"
 raw_store = unwrap_store(
     st.session_state["_mpc_store"] if "_mpc_store" in st.session_state else None
 )
@@ -206,7 +206,7 @@ def member_editor(prefix):
 def configuration():
     settings = store.settings()
     st.subheader("Configurações")
-    st.caption(f"Versão {VERSION} · Dados armazenados neste computador")
+    st.caption(f"Versão {APP_VERSION} · Dados armazenados neste computador")
     with st.expander("Numeração anual", expanded=True):
         year = int(
             st.number_input(
