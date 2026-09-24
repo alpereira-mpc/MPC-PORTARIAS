@@ -905,11 +905,13 @@ def render(store=None, principal=None):
         item_scope,
         st.session_state.get("agenda_revision", 0),
     )
-    if st.button(
+    pdf_actions = st.container(
+        horizontal_alignment="center", key="agenda_pdf_actions"
+    )
+    if pdf_actions.button(
         "📄 Gerar PDF da listagem",
         key="agenda_generate_pdf",
         disabled=not rows,
-        use_container_width=True,
     ):
         export_rows = rows
         if view == "Próximos":
@@ -952,11 +954,10 @@ def render(store=None, principal=None):
         }
     export = st.session_state.get("agenda_pdf_export")
     if export and export["signature"] == export_signature:
-        st.download_button(
+        pdf_actions.download_button(
             "Baixar agenda em PDF",
             export["data"],
             export["name"],
             mime="application/pdf",
             key="agenda_download_pdf",
-            use_container_width=True,
         )
