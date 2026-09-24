@@ -58,6 +58,41 @@ def records(agenda, start, end, member=None, kind=None, status=None, *, offset=N
     return read_agenda(key, start, end, member, kind, status, agenda, offset, active)
 
 
+def all_upcoming(agenda, start, member, kind, status, *, include_appointments, include_leaves):
+    """Load every filtered upcoming page only when an export is requested."""
+    appointments, leaves = [], []
+    if include_appointments:
+        offset = 0
+        while True:
+            page = records(
+                agenda, start, None, member, kind, status, offset=offset, active=True
+            )
+            appointments.extend(page[:30])
+            if len(page) <= 30:
+                break
+            offset += 30
+    if include_leaves:
+        offset = 0
+        while True:
+            page = agenda.active_leaves(
+                start, None, member, upcoming=True, limit=30, offset=offset
+            )
+            leaves.extend(page[:30])
+            if len(page) <= 30:
+                break
+            offset += 30
+    return appointments, leaves
+
+
+def agenda_pdf_filename(start, end=None):
+    first = start.strftime("%d-%m-%Y")
+    return (
+        f"Agenda_MPC-PB_{first}_a_{end.strftime('%d-%m-%Y')}.pdf"
+        if end and end != start
+        else f"Agenda_MPC-PB_{first}.pdf"
+    )
+
+
 def done(message):
     from services.alerts import invalidate_alert_summary
 
@@ -859,3 +894,69 @@ def render(store=None, principal=None):
         editing = st.session_state.get("agenda_edit")
         if editing and editing.get("id") == row["id"]:
             editor(agenda, people, principal)
+
+    export_signature = (
+        view,
+        start.isoformat(),
+        end.isoformat() if view != "Próximos" else None,
+        member,
+        kind,
+        status,
+        item_scope,
+        st.session_state.get("agenda_revision", 0),
+    )
+    if st.button(
+        "📄 Gerar PDF da listagem",
+        key="agenda_generate_pdf",
+        disabled=not rows,
+        use_container_width=True,
+    ):
+        export_rows = rows
+        if view == "Próximos":
+            export_rows, export_leaves = all_upcoming(
+                agenda,
+                today.isoformat(),
+                member,
+                kind,
+                status,
+                include_appointments=show_appointments,
+                include_leaves=show_leaves
+                and (item_scope == "Somente afastamentos" or (not kind and not status)),
+            )
+            export_leaves = [
+                {**row, "inicio": row["data_inicio"] + "T00:00:00", "afastamento": True}
+                for row in export_leaves
+            ]
+            export_rows = [*export_rows, *export_leaves]
+        from document_generator.agenda_pdf import generate_agenda_pdf
+
+        filter_labels = [
+            "Período: "
+            + (
+                "a partir de " + today.strftime("%d/%m/%Y")
+                if view == "Próximos"
+                else start.strftime("%d/%m/%Y")
+                + " a "
+                + (end - timedelta(days=1)).strftime("%d/%m/%Y")
+            ),
+            "Procurador: " + names.get(member, "Todos"),
+            "Tipo de item: " + item_scope,
+            "Tipo de compromisso: " + TYPES.get(kind, "Todos"),
+            "Situação: " + (status or "Todas"),
+        ]
+        last_day = None if view == "Próximos" else end - timedelta(days=1)
+        st.session_state["agenda_pdf_export"] = {
+            "signature": export_signature,
+            "data": generate_agenda_pdf(export_rows, names, filter_labels),
+            "name": agenda_pdf_filename(start, last_day),
+        }
+    export = st.session_state.get("agenda_pdf_export")
+    if export and export["signature"] == export_signature:
+        st.download_button(
+            "Baixar agenda em PDF",
+            export["data"],
+            export["name"],
+            mime="application/pdf",
+            key="agenda_download_pdf",
+            use_container_width=True,
+        )
