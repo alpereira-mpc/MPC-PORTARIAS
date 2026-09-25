@@ -58,30 +58,15 @@ def records(agenda, start, end, member=None, kind=None, status=None, *, offset=N
     return read_agenda(key, start, end, member, kind, status, agenda, offset, active)
 
 
-def all_upcoming(agenda, start, member, kind, status, *, include_appointments, include_leaves):
-    """Load every filtered upcoming page only when an export is requested."""
-    appointments, leaves = [], []
-    if include_appointments:
-        offset = 0
-        while True:
-            page = records(
-                agenda, start, None, member, kind, status, offset=offset, active=True
-            )
-            appointments.extend(page[:30])
-            if len(page) <= 30:
-                break
-            offset += 30
-    if include_leaves:
-        offset = 0
-        while True:
-            page = agenda.active_leaves(
-                start, None, member, upcoming=True, limit=30, offset=offset
-            )
-            leaves.extend(page[:30])
-            if len(page) <= 30:
-                break
-            offset += 30
-    return appointments, leaves
+def _listing_summary(appointments, leaves):
+    def word(count, singular, plural):
+        return f"{count} {singular if count == 1 else plural}"
+
+    return (
+        word(appointments, "compromisso", "compromissos")
+        + " · "
+        + word(leaves, "afastamento", "afastamentos")
+    )
 
 
 def agenda_pdf_filename(start, end=None):
@@ -739,44 +724,12 @@ def render(store=None, principal=None):
         start = anchor.replace(day=1)
         end = start + timedelta(days=calendar.monthrange(anchor.year, anchor.month)[1])
     if view == "Próximos":
-        signature = (
-            today.isoformat(),
-            member,
-            kind,
-            status,
-            item_scope,
-            st.session_state.get("agenda_revision", 0),
-        )
-        if st.session_state.get("agenda_upcoming_filters") != signature:
-            st.session_state["agenda_upcoming_offset"] = 0
-            st.session_state["agenda_upcoming_filters"] = signature
-        offset = st.session_state.get("agenda_upcoming_offset", 0)
-        rows = records(agenda, today.isoformat(), None, member, kind, status, offset=offset, active=True) if show_appointments else []
+        rows = records(agenda, today.isoformat(), None, member, kind, status, active=True) if show_appointments else []
         leaves = (
-            agenda.active_leaves(today.isoformat(), None, member, upcoming=True, limit=30, offset=offset)
+            agenda.active_leaves(today.isoformat(), None, member, upcoming=True)
             if show_leaves
             and (item_scope == "Somente afastamentos" or (not kind and not status))
             else []
-        )
-        # A deletion in another session can empty the current page.
-        if not rows and not leaves and offset:
-            st.session_state["agenda_upcoming_offset"] = 0
-            st.rerun()
-        has_next = len(rows) > 30 or len(leaves) > 30
-        rows = rows[:30]
-        leaves = leaves[:30]
-        if leaves:
-            st.caption(f"Página {offset // 30 + 1} · {len(rows)} compromissos · {len(leaves)} afastamentos")
-        elif rows:
-            st.caption(f"Exibindo {offset + 1}–{offset + len(rows)}")
-        previous, following = st.columns(2)
-        previous.button(
-            "Anterior", disabled=offset == 0, key="agenda_upcoming_previous",
-            on_click=move_page, args=("agenda_upcoming_offset", -30),
-        )
-        following.button(
-            "Próxima", disabled=not has_next, key="agenda_upcoming_next",
-            on_click=move_page, args=("agenda_upcoming_offset", 30),
         )
     else:
         rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status, active=True) if show_appointments else []
@@ -786,6 +739,8 @@ def render(store=None, principal=None):
             and (item_scope == "Somente afastamentos" or (not kind and not status))
             else []
         )
+    if rows or leaves:
+        st.caption(_listing_summary(len(rows), len(leaves)))
     for leave_record in leaves:
         leave_record["inicio"] = leave_record["data_inicio"] + "T00:00:00"; leave_record["afastamento"] = True
     rows.extend(leaves)
@@ -913,23 +868,6 @@ def render(store=None, principal=None):
         key="agenda_generate_pdf",
         disabled=not rows,
     ):
-        export_rows = rows
-        if view == "Próximos":
-            export_rows, export_leaves = all_upcoming(
-                agenda,
-                today.isoformat(),
-                member,
-                kind,
-                status,
-                include_appointments=show_appointments,
-                include_leaves=show_leaves
-                and (item_scope == "Somente afastamentos" or (not kind and not status)),
-            )
-            export_leaves = [
-                {**row, "inicio": row["data_inicio"] + "T00:00:00", "afastamento": True}
-                for row in export_leaves
-            ]
-            export_rows = [*export_rows, *export_leaves]
         from document_generator.agenda_pdf import generate_agenda_pdf
 
         filter_labels = [
@@ -949,7 +887,7 @@ def render(store=None, principal=None):
         last_day = None if view == "Próximos" else end - timedelta(days=1)
         st.session_state["agenda_pdf_export"] = {
             "signature": export_signature,
-            "data": generate_agenda_pdf(export_rows, names, filter_labels),
+            "data": generate_agenda_pdf(rows, names, filter_labels),
             "name": agenda_pdf_filename(start, last_day),
         }
     export = st.session_state.get("agenda_pdf_export")

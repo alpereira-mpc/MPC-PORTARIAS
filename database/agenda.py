@@ -129,7 +129,7 @@ class AgendaStore:
         _READY.add(key)
 
     def _list(self, c, start, end, member=None, kind=None, status=None, *, offset=None, active_only=None):
-        if offset is None:
+        if offset is None and end is not None:
             clauses = ["a.inicio < ?", "COALESCE(a.fim,a.inicio) >= ?"]
             values = [end, start]
         else:

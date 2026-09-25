@@ -18,7 +18,7 @@ from document_generator.report_header import (
     build_report_header,
     institutional_logo_path,
 )
-from services.agenda_ui import agenda_pdf_filename, all_upcoming
+from services.agenda_ui import agenda_pdf_filename, _listing_summary
 from services.branding import SIDEBAR_LOGO
 
 
@@ -163,46 +163,10 @@ def test_empty_pdf_is_valid_and_filename_uses_brazilian_period():
     ) == "Agenda_MPC-PB_01-10-2026_a_31-10-2026.pdf"
 
 
-def test_all_upcoming_uses_every_filtered_page():
-    class Agenda:
-        def __init__(self):
-            self.calls = []
-
-        def active_leaves(self, start, end, member, *, upcoming, limit, offset):
-            self.calls.append((start, member, upcoming, limit, offset))
-            count = 31 if offset == 0 else 2
-            return [{"id": f"leave-{offset}-{index}"} for index in range(count)]
-
-    agenda = Agenda()
-    calls = []
-
-    def paged_records(_agenda, start, end, member, kind, status, *, offset, active):
-        calls.append((start, member, kind, status, offset, active))
-        count = 31 if offset == 0 else 3
-        return [{"id": f"appointment-{offset}-{index}"} for index in range(count)]
-
-    from services import agenda_ui
-
-    original = agenda_ui.records
-    agenda_ui.records = paged_records
-    try:
-        appointments, leaves = all_upcoming(
-            agenda,
-            "2026-09-24",
-            7,
-            "EVENTO",
-            "Agendado",
-            include_appointments=True,
-            include_leaves=True,
-        )
-    finally:
-        agenda_ui.records = original
-
-    assert len(appointments) == 33
-    assert len(leaves) == 32
-    assert [call[4] for call in calls] == [0, 30]
-    assert [call[4] for call in agenda.calls] == [0, 30]
-    assert all(call[1:4] == (7, "EVENTO", "Agendado") for call in calls)
+def test_listing_summary_has_no_page_label():
+    assert _listing_summary(4, 6) == "4 compromissos · 6 afastamentos"
+    assert _listing_summary(1, 0) == "1 compromisso · 0 afastamentos"
+    assert _listing_summary(0, 1) == "0 compromissos · 1 afastamento"
 
 
 def test_report_header_reuses_sidebar_logo_without_distortion():

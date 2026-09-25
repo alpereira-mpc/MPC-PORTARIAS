@@ -32,6 +32,9 @@ def test_upcoming_dates_filters_and_pagination(request, backend_fixture):
     pages = [agenda.upcoming("2026-09-10", offset=offset) for offset in (0, 30, 60)]
     assert [len(page) for page in pages] == [31, 31, 6]
     assert [r["id"] for page in pages for r in page[:30]] == [*expected, distant_id]
+    complete = agenda.active("2026-09-10", None)
+    assert [r["id"] for r in complete] == [*expected, distant_id]
+    assert len({r["id"] for r in complete}) == len(complete)
     assert pages[0][0]["inicio"] == "2026-09-10T00:00:00"
     assert pages[0][0]["procuradores"] == [1, 2]
     assert {p for page in pages for row in page for p in row["procuradores"]} == {
@@ -58,7 +61,33 @@ class FixedDatetime(datetime):
         return cls(2026, 9, 10, 18, 0, tzinfo=tz)
 
 
-def test_upcoming_ui_pagination_and_reference_date(store, monkeypatch):
+def _captions(app):
+    return [caption.value for caption in app.caption]
+
+
+def _visible(app):
+    return "\n".join(str(item.value) for item in (*app.markdown, *app.subheader))
+
+
+def _assert_continuous(app, summary, present, absent=()):
+    captions = _captions(app)
+    assert summary in captions
+    assert not any(caption.startswith("Página ") for caption in captions)
+    assert not any(caption.startswith("Exibindo ") for caption in captions)
+    keys = {button.key for button in app.button}
+    assert "agenda_upcoming_previous" not in keys
+    assert "agenda_upcoming_next" not in keys
+    shown = _visible(app)
+    for title in present:
+        assert title in shown
+    for title in absent:
+        assert title not in shown
+    dates = [item.value for item in app.subheader]
+    assert dates == sorted(dates, key=lambda value: datetime.strptime(value, "%d/%m/%Y"))
+    assert len(dates) == len(set(dates))
+
+
+def test_upcoming_ui_lists_every_record_without_pagination(store, monkeypatch):
     import services.agenda_ui as ui
 
     monkeypatch.setattr(ui, "datetime", FixedDatetime)
@@ -69,35 +98,128 @@ def test_upcoming_ui_pagination_and_reference_date(store, monkeypatch):
     agenda = AgendaStore(store)
     for index in range(32):
         record = draft("EVENTO", members=[3] if index == 31 else [2])
-        start = datetime(2026, 9, 10) + timedelta(hours=index)
+        start = datetime(2026, 9, 10, 8, 0) + timedelta(minutes=20 * index)
         record.update(
             titulo=f"Futuro {index:02}",
             inicio=start.isoformat(),
-            fim=(start + timedelta(minutes=30)).isoformat(),
+            fim=(start + timedelta(minutes=15)).isoformat(),
         )
         agenda.save(record)
-    agenda.save(draft("EVENTO", day="2026-09-09"))
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_agenda").click().run()
+    titles = [f"Futuro {index:02}" for index in range(32)]
+    for view in ("Hoje", "Semana", "Mês", "Próximos"):
+        app.radio(key="agenda_view").set_value(view).run()
+        assert not app.exception and not app.error
+        _assert_continuous(app, "32 compromissos · 0 afastamentos", titles)
+    assert not app.date_input
     app.radio(key="agenda_view").set_value("Semana").run()
-    app.date_input(key="agenda_anchor").set_value(datetime(2020, 1, 1).date()).run()
+    assert app.date_input
     app.radio(key="agenda_view").set_value("Próximos").run()
-    assert not app.exception and not app.date_input
-    assert any("Futuro 00" in m.value for m in app.markdown)
-    assert not any("Futuro 30" in m.value for m in app.markdown)
-    assert any(c.value == "Exibindo 1–30" for c in app.caption)
-    assert app.button(key="agenda_upcoming_previous").disabled
-    app.button(key="agenda_upcoming_next").click().run()
-    assert any(c.value == "Exibindo 31–32" for c in app.caption)
-    assert app.button(key="agenda_upcoming_next").disabled
-    app.button(key="agenda_upcoming_previous").click().run()
-    assert any(c.value == "Exibindo 1–30" for c in app.caption)
-    app.button(key="agenda_upcoming_next").click().run()
     app.selectbox(key="agenda_filter_member").set_value(3).run()
-    assert any(c.value == "Exibindo 1–1" for c in app.caption)
-    assert any("Futuro 31" in m.value for m in app.markdown)
-    assert not any("Sessão" in c.value for c in app.caption)
+    _assert_continuous(app, "1 compromisso · 0 afastamentos", ("Futuro 31",), ("Futuro 00",))
+    app.selectbox(key="agenda_filter_type").set_value("DESPACHO").run()
+    assert not any(caption.startswith("Página ") for caption in _captions(app))
+    assert "agenda_upcoming_next" not in {button.key for button in app.button}
+    assert not any("Futuro" in item.value for item in app.markdown)
     assert not app.exception and not app.error
+
+
+def test_views_keep_mixed_dates_in_order_without_pagination(store, monkeypatch):
+    import services.afastamentos as leaves
+    import services.agenda_ui as ui
+
+    monkeypatch.setattr(ui, "datetime", FixedDatetime)
+    monkeypatch.setattr(leaves, "datetime", FixedDatetime)
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    agenda = AgendaStore(store)
+    for day, title, member in (
+        ("2026-09-10", "Evento de hoje", 2),
+        ("2026-09-11", "Evento da semana", 2),
+        ("2026-09-20", "Evento do mês", 2),
+        ("2026-10-02", "Evento futuro", 3),
+    ):
+        record = draft("EVENTO", members=[member], day=day)
+        record["titulo"] = title
+        agenda.save(record)
+    agenda.save_leave(
+        {
+            "procurador_id": 2,
+            "motivo": "Férias",
+            "data_inicio": "2026-09-10",
+            "data_fim": "2026-09-11",
+        }
+    )
+    agenda.save_leave(
+        {
+            "procurador_id": 3,
+            "motivo": "Outro",
+            "motivo_outro": "Compromisso externo",
+            "data_inicio": "2026-09-26",
+            "data_fim": "2026-10-12",
+        }
+    )
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_agenda").click().run()
+    expectations = {
+        "Hoje": (
+            "1 compromisso · 1 afastamento",
+            ("Evento de hoje",),
+            ("Evento da semana", "Evento do mês", "Evento futuro"),
+            ["10/09/2026"],
+        ),
+        "Semana": (
+            "2 compromissos · 1 afastamento",
+            ("Evento de hoje", "Evento da semana"),
+            ("Evento do mês", "Evento futuro"),
+            ["10/09/2026", "11/09/2026"],
+        ),
+        "Mês": (
+            "3 compromissos · 2 afastamentos",
+            ("Evento de hoje", "Evento da semana", "Evento do mês"),
+            ("Evento futuro",),
+            ["10/09/2026", "11/09/2026", "20/09/2026", "26/09/2026"],
+        ),
+        "Próximos": (
+            "4 compromissos · 2 afastamentos",
+            ("Evento de hoje", "Evento da semana", "Evento do mês", "Evento futuro"),
+            (),
+            ["10/09/2026", "11/09/2026", "20/09/2026", "26/09/2026", "02/10/2026"],
+        ),
+    }
+    for view, (summary, present, absent, dates) in expectations.items():
+        app.radio(key="agenda_view").set_value(view).run()
+        assert not app.exception and not app.error
+        _assert_continuous(app, summary, present, absent)
+        assert [item.value for item in app.subheader] == dates
+    app.selectbox(key="agenda_filter_item_scope").set_value("Somente compromissos").run()
+    _assert_continuous(
+        app,
+        "4 compromissos · 0 afastamentos",
+        ("Evento de hoje", "Evento da semana", "Evento do mês", "Evento futuro"),
+    )
+    assert sum(button.label == "Editar afastamento" for button in app.button) == 0
+    app.selectbox(key="agenda_filter_item_scope").set_value("Somente afastamentos").run()
+    _assert_continuous(
+        app, "0 compromissos · 2 afastamentos", (), ("Evento futuro", "Evento de hoje")
+    )
+    assert sum(button.label == "Editar afastamento" for button in app.button) == 2
+    assert sum(button.label == "Editar" for button in app.button) == 0
+    app.selectbox(key="agenda_filter_item_scope").set_value("Todos").run()
+    app.selectbox(key="agenda_filter_member").set_value(3).run()
+    _assert_continuous(
+        app,
+        "1 compromisso · 1 afastamento",
+        ("Evento futuro",),
+        ("Evento de hoje", "Evento da semana", "Evento do mês"),
+    )
+    app.radio(key="agenda_section").set_value("Histórico").run()
+    assert not app.exception
+    assert app.button(key="agenda_history_previous").disabled
+    assert "agenda_upcoming_next" not in {button.key for button in app.button}
 
 
 class PreviousAgendaStore:
