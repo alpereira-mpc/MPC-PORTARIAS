@@ -9,6 +9,9 @@ exports/*
 tmp/
 *.log
 .streamlit/secrets.toml
+gmail_oauth_client.json
+gmail_token.json
+**/token.json
 *.xlsx
 !tests/**/*.xlsx
 

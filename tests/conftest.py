@@ -34,6 +34,9 @@ def isolate_database_secrets(monkeypatch):
     import database.representacoes as representacoes
 
     representacoes._READY.clear()
+    import database.notifications as notifications
+
+    notifications._READY.clear()
     import database.ouvidoria as ouvidoria
 
     ouvidoria._READY.clear()

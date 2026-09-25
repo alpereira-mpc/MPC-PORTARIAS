@@ -301,11 +301,16 @@ def render(store, principal):
     st.subheader("Sistema")
     area = st.radio(
         "Sistema",
-        ["Saúde", "Backup"],
+        ["Saúde", "Backup", "Comunicações"],
         horizontal=True,
         key="admin_sistema_aba",
     )
     if area == "Backup":
         render_backup(store, principal)
+        return
+    if area == "Comunicações":
+        from services.notification_ui import render_admin_recipients
+
+        render_admin_recipients(store, principal)
         return
     render_health(store, principal)

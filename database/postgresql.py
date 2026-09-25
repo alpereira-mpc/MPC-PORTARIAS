@@ -96,6 +96,8 @@ IDENTITY_TABLES = {
     "ouvidoria_providencias",
     "notas_internas",
     "encaminhamentos_internos",
+    "notificacoes_email",
+    "notificacao_destinatarios",
 }
 HISTORY_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS portarias_recent_idx "

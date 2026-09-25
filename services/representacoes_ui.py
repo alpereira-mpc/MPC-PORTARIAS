@@ -1,7 +1,11 @@
 """Streamlit UI for Representações. Follows existing portal visual patterns."""
 
 from datetime import date
+import logging
+
 import streamlit as st
+
+LOGGER = logging.getLogger("mpc.representacoes.ui")
 
 from services.access import has_permission, require_permission
 from services.branding import module_title
@@ -559,6 +563,15 @@ def _detail_compact(store, principal, record):
             with st.expander("Dados do projeto original"):
                 st.caption("Dados preservados do projeto que originou esta Representação.")
                 st.write(record.get("objeto") or "—")
+            try:
+                from services.notification_ui import render_protocol_notice
+
+                render_protocol_notice(store, principal, record)
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception:
+                LOGGER.exception("Falha ao exibir a comunicação do protocolo")
+                st.error("Não foi possível carregar a comunicação do protocolo.")
         else:
             st.caption("Este projeto ainda não foi protocolado no TRAMITA.")
     elif section == "Andamentos":

@@ -80,6 +80,9 @@ def ensure_addon_schemas(store):
     from database.institutional import InstitutionalFunctions
 
     InstitutionalFunctions(store)
+    from database.notifications import NotificationsStore
+
+    NotificationsStore(store)
 
 
 class Store:
