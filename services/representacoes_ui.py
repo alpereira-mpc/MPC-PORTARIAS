@@ -48,6 +48,7 @@ from services.representacoes import (
     set_status,
     update,
 )
+from services.ui_store import display_store
 from services.ui_theme import (
     actions_mark,
     badges,
@@ -950,7 +951,9 @@ def render(store, principal):
         else:
             _detail(store, principal, record)
             return
-    people, servers, procuradores_map, assessores_map = people_context(store)
+    people, servers, procuradores_map, assessores_map = people_context(
+        display_store(store)
+    )
     st.session_state["_rep_people"] = (people, servers)
     filters = _filters()
     rows = list_records(store, filters)

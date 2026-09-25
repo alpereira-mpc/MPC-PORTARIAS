@@ -49,6 +49,69 @@ def test_collect_pending_reuses_one_read_connection(store):
     assert sql.count(True) <= 2
 
 
+def test_representacoes_list_reuses_display_catalog(monkeypatch):
+    """Procuradores da lista usam o catálogo de apresentação já existente.
+
+    Servidores não fazem parte desse catálogo e continuam em leitura direta.
+    """
+    from database.memorandos import MemorandosStore
+    from services.representacoes import people_context
+    from services.ui_store import _read, display_store
+
+    _read.clear()
+    calls = {"catalog": 0, "servers": 0}
+
+    class Probe:
+        backend = "postgresql"
+
+        def catalog(self, table):
+            assert table == "procuradores"
+            calls["catalog"] += 1
+            return [
+                {"id": 1, "nome": "Procurador Atual", "ativo": 1},
+                {"id": 2, "nome": "Procurador Histórico", "ativo": 0},
+            ]
+
+        def read_cache_key(self, tables):
+            assert tables == ("procuradores",)
+            return ("representacoes-list", tables)
+
+    def init(self, store):
+        self.store = store
+
+    def all_servers(self, include_inactive=False):
+        assert include_inactive is True
+        calls["servers"] += 1
+        return [
+            {"id": 8, "nome": "Assessor Ativo", "ativo": 1, "setor": "PROGE"},
+            {"id": 9, "nome": "Servidor Histórico", "ativo": 0, "setor": "PROGE"},
+        ]
+
+    monkeypatch.setattr(MemorandosStore, "__init__", init)
+    monkeypatch.setattr(MemorandosStore, "all_servers", all_servers)
+    probe = Probe()
+
+    def listed():
+        return people_context(display_store(probe))
+
+    first = listed()
+    second = listed()
+
+    def refuse_catalog(table):
+        raise AssertionError("catálogo de procuradores consultado de novo")
+
+    probe.catalog = refuse_catalog
+    third = listed()
+    assert calls == {"catalog": 1, "servers": 3}
+    assert first == second == third
+    assert first[0] == {1: "Procurador Atual"}
+    assert first[2][2] == "Procurador Histórico"
+    assert 2 not in first[0]
+    assert first[1] == {8: "Assessor Ativo"}
+    assert first[3][9] == "Servidor Histórico"
+    _read.clear()
+
+
 def test_representacoes_people_context_uses_two_reads(store, monkeypatch):
     from contextlib import contextmanager
 
@@ -65,11 +128,22 @@ def test_representacoes_people_context_uses_two_reads(store, monkeypatch):
             yield connection
 
     monkeypatch.setattr(store, "connection", counted)
+    from services.ui_store import display_store
+
     active_people, active_servers, all_people, all_servers = people_context(store)
     assert calls == 2
     assert active_people
     assert set(active_people) <= set(all_people)
     assert set(active_servers) <= set(all_servers)
+    calls = 0
+    assert display_store(store) is store
+    assert people_context(display_store(store)) == (
+        active_people,
+        active_servers,
+        all_people,
+        all_servers,
+    )
+    assert calls == 2
 
 
 def test_audit_overview_reuses_users_and_skips_duplicate_dashboard(store, monkeypatch):
