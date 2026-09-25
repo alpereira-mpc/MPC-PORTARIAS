@@ -6,6 +6,7 @@ from pypdf import PdfWriter
 
 from database.access import AccessStore
 from database.representacoes import DOCUMENT_META, RepresentacoesStore
+from database.store import Store
 from services.access import (
     can_access_representacoes,
     has_permission,
@@ -29,6 +30,7 @@ from services.representacoes import (
     delete_blocked_reason,
     documents,
     download,
+    exclude_progress,
     get,
     kind_label,
     list_records,
@@ -531,3 +533,206 @@ def test_detail_uses_conditional_sections_and_keeps_protocol_summary():
     assert source.count("progress(store, record[") == 1
     assert source.count("documents(store, record[") == 1
     assert "_detail_compact(store, principal, record)" in inspect.getsource(_detail)
+
+
+def test_exclude_progress_keeps_the_row_and_hides_it(store, monkeypatch):
+    import json
+
+    def _blocked(*_args, **_kwargs):
+        raise AssertionError("e-mail")
+
+    monkeypatch.setattr("services.email_transport.institutional_transport", _blocked)
+    monkeypatch.setattr("services.notifications.confirm_send", _blocked)
+    monkeypatch.setattr("services.gmail_transport._service_credentials", _blocked)
+    principal = _principal(store, email="andamento@test.local")
+    payload, *_ = _payload(store)
+    record = create(store, payload, principal)
+    add_progress(
+        store,
+        record["id"],
+        {"tipo": "MINUTA_PREPARADA", "data": "2026-09-10", "descricao": "Minuta válida."},
+        principal,
+    )
+    add_progress(
+        store,
+        record["id"],
+        {
+            "tipo": "LIVRE",
+            "data": "2026-09-25",
+            "descricao": "Lançamento que não deveria constar.",
+        },
+        principal,
+    )
+    by_text = {item["descricao"]: item["id"] for item in progress(store, record["id"])}
+    kept = by_text["Minuta válida."]
+    mistaken = by_text["Lançamento que não deveria constar."]
+    with store.connection(read_only=True) as c:
+        before = dict(
+            c.execute(
+                "SELECT data,tipo,descricao,criado_em,criado_por "
+                "FROM representacao_andamentos WHERE id=?",
+                (mistaken,),
+            ).fetchone()
+        )
+        notices = c.execute("SELECT COUNT(*) FROM notificacoes_email").fetchone()[0]
+        recipients = c.execute(
+            "SELECT COUNT(*) FROM notificacao_destinatarios"
+        ).fetchone()[0]
+    exclude_progress(
+        store,
+        record["id"],
+        mistaken,
+        "Lançamento realizado por engano.",
+        principal,
+    )
+    visible = progress(store, record["id"])
+    assert mistaken not in {item["id"] for item in visible}
+    assert kept in {item["id"] for item in visible}
+    listed = next(item for item in list_records(store) if item["id"] == record["id"])
+    assert listed["ultimo_andamento"]["descricao"] == "Minuta válida."
+    with store.connection(read_only=True) as c:
+        row = dict(
+            c.execute(
+                "SELECT * FROM representacao_andamentos WHERE id=?",
+                (mistaken,),
+            ).fetchone()
+        )
+        kept_row = dict(
+            c.execute(
+                "SELECT data,tipo,descricao,criado_em,criado_por,excluido "
+                "FROM representacao_andamentos WHERE id=?",
+                (kept,),
+            ).fetchone()
+        )
+        event = c.execute(
+            "SELECT usuario_email,entidade_tipo,entidade_id,acao,detalhes_json "
+            "FROM auditoria_eventos WHERE evento=?",
+            ("ANDAMENTO_EXCLUIDO",),
+        ).fetchone()
+        assert (
+            c.execute("SELECT COUNT(*) FROM notificacoes_email").fetchone()[0] == notices
+        )
+        assert (
+            c.execute("SELECT COUNT(*) FROM notificacao_destinatarios").fetchone()[0]
+            == recipients
+        )
+    assert row["excluido"] == 1
+    assert row["excluido_por"] == "andamento@test.local"
+    assert row["excluido_em"]
+    assert row["motivo_exclusao"] == "Lançamento realizado por engano."
+    assert row["data"] == before["data"] == "2026-09-25"
+    assert row["tipo"] == before["tipo"] == "LIVRE"
+    assert row["descricao"] == before["descricao"]
+    assert row["criado_em"] == before["criado_em"]
+    assert row["criado_por"] == before["criado_por"]
+    assert kept_row["excluido"] == 0
+    assert kept_row["descricao"] == "Minuta válida."
+    assert event["usuario_email"] == "andamento@test.local"
+    assert event["entidade_tipo"] == "representacao"
+    assert event["entidade_id"] == str(record["id"])
+    assert event["acao"] == "EXCLUIR"
+    details = json.loads(event["detalhes_json"])
+    assert details["andamento_id"] == mistaken
+    assert details["motivo"] == "Lançamento realizado por engano."
+
+
+def test_exclude_progress_rejects_blank_reason_and_missing_access(store):
+    principal = _principal(store, email="acesso@test.local")
+    payload, *_ = _payload(store)
+    record = create(store, payload, principal)
+    add_progress(
+        store,
+        record["id"],
+        {"tipo": "LIVRE", "data": "2026-09-25", "descricao": "Registro a preservar."},
+        principal,
+    )
+    progress_id = next(
+        item["id"]
+        for item in progress(store, record["id"])
+        if item["descricao"] == "Registro a preservar."
+    )
+    for blank in ("", "   ", None):
+        with pytest.raises(ValueError, match="Informe o motivo da exclusão"):
+            exclude_progress(store, record["id"], progress_id, blank, principal)
+    denied = _principal(store, email="sem-acesso@test.local", representacoes=False)
+    with pytest.raises(ValueError, match="Acesso não autorizado"):
+        exclude_progress(
+            store,
+            record["id"],
+            progress_id,
+            "Lançamento realizado por engano.",
+            denied,
+        )
+    assert progress_id in {item["id"] for item in progress(store, record["id"])}
+    with store.connection(read_only=True) as c:
+        row = c.execute(
+            "SELECT excluido,descricao FROM representacao_andamentos WHERE id=?",
+            (progress_id,),
+        ).fetchone()
+        assert row["excluido"] == 0
+        assert row["descricao"] == "Registro a preservar."
+        assert (
+            c.execute(
+                "SELECT COUNT(*) FROM auditoria_eventos WHERE evento=?",
+                ("ANDAMENTO_EXCLUIDO",),
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_existing_progress_table_gains_exclusion_columns(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE representacao_andamentos ("
+        "id INTEGER PRIMARY KEY,"
+        "representacao_id INTEGER NOT NULL,"
+        "data TEXT NOT NULL,"
+        "tipo TEXT NOT NULL,"
+        "descricao TEXT NOT NULL DEFAULT '',"
+        "criado_em TEXT NOT NULL,"
+        "criado_por TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO representacao_andamentos("
+        "id,representacao_id,data,tipo,descricao,criado_em,criado_por) "
+        "VALUES(7,3,'2026-09-25','LIVRE','Texto original',"
+        "'2026-09-25T12:00:00','autor@test.local')"
+    )
+    connection.commit()
+    connection.close()
+    legacy = Store(path)
+    with legacy.connection(read_only=True) as c:
+        names = {
+            row[1]
+            for row in c.execute("PRAGMA table_info(representacao_andamentos)")
+        }
+        row = c.execute("SELECT * FROM representacao_andamentos WHERE id=7").fetchone()
+    assert {"excluido", "excluido_em", "excluido_por", "motivo_exclusao"} <= names
+    assert row["descricao"] == "Texto original"
+    assert row["data"] == "2026-09-25"
+    assert row["tipo"] == "LIVRE"
+    assert row["criado_em"] == "2026-09-25T12:00:00"
+    assert row["criado_por"] == "autor@test.local"
+    assert row["excluido"] == 0
+    assert not row["excluido_em"]
+    assert row["excluido_por"] == ""
+    assert row["motivo_exclusao"] == ""
+
+
+def test_andamento_exclusion_is_offered_in_the_timeline():
+    from services.representacoes_ui import _detail_compact, _render_progress_item
+
+    screen = inspect.getsource(_detail_compact)
+    action = inspect.getsource(_render_progress_item)
+    assert "_render_progress_item(" in screen
+    assert "Excluir andamento" in action
+    assert "Confirma a exclusão deste andamento?" in action
+    assert "Motivo da exclusão" in action
+    assert "exclude_progress(" in action
+    assert ".strip()" in action
+    assert "DELETE" not in inspect.getsource(RepresentacoesStore.exclude_progress)
+    assert "gmail" not in action.casefold()
+    assert "notificac" not in action.casefold()

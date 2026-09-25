@@ -449,6 +449,36 @@ def progress(store, identifier):
     return open_store(store).progress(identifier)
 
 
+def exclude_progress(store, identifier, progress_id, reason, principal):
+    """Logical removal. The original progress row stays in the table."""
+    from services.access import require_permission
+
+    require_permission(principal, "representacoes")
+    record = get(store, identifier)
+    if record is None:
+        raise ValueError("Representação não encontrada.")
+    cleaned = str(reason or "").strip()
+    if not cleaned:
+        raise ValueError("Informe o motivo da exclusão.")
+    original = open_store(store).exclude_progress(
+        identifier, progress_id, actor_of(principal), cleaned
+    )
+    _audit(
+        store,
+        principal,
+        "ANDAMENTO_EXCLUIDO",
+        "EXCLUIR",
+        record,
+        {
+            "andamento_id": progress_id,
+            "motivo": cleaned,
+            "data": original["data"],
+            "tipo": original["tipo"],
+        },
+    )
+    return original
+
+
 def documents(store, identifier):
     return open_store(store).documents(identifier)
 

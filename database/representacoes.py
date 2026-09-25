@@ -13,6 +13,12 @@ COLUMNS = (
 )
 MEMBER_COLUMNS = "id,representacao_id,membro_tipo,membro_id,papel,criado_em"
 PROGRESS_COLUMNS = "id,representacao_id,data,tipo,descricao,criado_em,criado_por"
+PROGRESS_EXCLUSION_COLUMNS = (
+    ("excluido", "INTEGER NOT NULL DEFAULT 0"),
+    ("excluido_em", "TEXT"),
+    ("excluido_por", "TEXT NOT NULL DEFAULT ''"),
+    ("motivo_exclusao", "TEXT NOT NULL DEFAULT ''"),
+)
 DOCUMENT_META = (
     "id,representacao_id,andamento_id,tipo_documento,descricao,data_documento,"
     "nome_arquivo,mime_type,tamanho,criado_em,criado_por"
@@ -77,7 +83,11 @@ class RepresentacoesStore:
                 "tipo TEXT NOT NULL,"
                 "descricao TEXT NOT NULL DEFAULT '',"
                 "criado_em TEXT NOT NULL,"
-                "criado_por TEXT NOT NULL)"
+                "criado_por TEXT NOT NULL,"
+                "excluido INTEGER NOT NULL DEFAULT 0 CHECK(excluido IN (0,1)),"
+                "excluido_em TEXT,"
+                "excluido_por TEXT NOT NULL DEFAULT '',"
+                "motivo_exclusao TEXT NOT NULL DEFAULT '')"
             )
             c.execute(
                 f"CREATE TABLE IF NOT EXISTS representacao_documentos ("
@@ -133,6 +143,7 @@ class RepresentacoesStore:
                     "ALTER TABLE representacoes ADD COLUMN possui_medida_cautelar "
                     "INTEGER NOT NULL DEFAULT 0"
                 )
+            self._ensure_progress_exclusion(c)
             c.execute(
                 "INSERT INTO configuracoes(chave,valor) VALUES(?,?) ON CONFLICT(chave) DO NOTHING",
                 (MARKER, "1"),
@@ -497,7 +508,8 @@ class RepresentacoesStore:
                     "SELECT representacao_id,data,tipo,descricao,"
                     "ROW_NUMBER() OVER (PARTITION BY representacao_id "
                     "ORDER BY data DESC, id DESC) AS rn "
-                    f"FROM representacao_andamentos WHERE representacao_id IN ({placeholders})"
+                    "FROM representacao_andamentos "
+                    f"WHERE representacao_id IN ({placeholders}) AND excluido=0"
                     ") ranked WHERE rn=1",
                     ids,
                 ):
@@ -535,7 +547,7 @@ class RepresentacoesStore:
                 dict(row)
                 for row in c.execute(
                     f"SELECT {PROGRESS_COLUMNS} FROM representacao_andamentos "
-                    "WHERE representacao_id=? ORDER BY data DESC, id DESC",
+                    "WHERE representacao_id=? AND excluido=0 ORDER BY data DESC, id DESC",
                     (identifier,),
                 )
             ]
@@ -582,6 +594,60 @@ class RepresentacoesStore:
                     stamp,
                 ),
             )
+
+    def exclude_progress(self, identifier, progress_id, actor, reason):
+        stamp = now()
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT id,data,tipo,descricao,criado_em,criado_por,excluido "
+                "FROM representacao_andamentos WHERE id=? AND representacao_id=?",
+                (progress_id, identifier),
+            ).fetchone()
+            if not row:
+                raise ValueError("Andamento não encontrado.")
+            if int(row["excluido"] or 0):
+                raise ValueError("Andamento já excluído.")
+            original = {
+                "data": row["data"],
+                "tipo": row["tipo"],
+                "descricao": row["descricao"],
+                "criado_em": row["criado_em"],
+                "criado_por": row["criado_por"],
+            }
+            updated = c.execute(
+                "UPDATE representacao_andamentos SET excluido=1,excluido_em=?,"
+                "excluido_por=?,motivo_exclusao=? WHERE id=? AND representacao_id=? "
+                "AND excluido=0",
+                (stamp, actor, reason, progress_id, identifier),
+            )
+            if not updated.rowcount:
+                raise ValueError("Andamento já excluído.")
+        return original
+
+    def _ensure_progress_exclusion(self, c):
+        if self.store.backend == "postgresql":
+            present = {
+                row[0]
+                for row in c.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() "
+                    "AND table_name='representacao_andamentos'"
+                )
+            }
+        else:
+            present = {
+                row[1]
+                for row in c.execute(
+                    "PRAGMA table_info(representacao_andamentos)"
+                )
+            }
+        for name, definition in PROGRESS_EXCLUSION_COLUMNS:
+            if name not in present:
+                c.execute(
+                    "ALTER TABLE representacao_andamentos "
+                    f"ADD COLUMN {name} {definition}"
+                )
 
     def _add_progress(self, c, identifier, data, tipo, descricao, stamp, actor):
         c.execute(

@@ -26,6 +26,7 @@ from services.representacoes import (
     create,
     delete,
     delete_blocked_reason,
+    exclude_progress,
     documents,
     download,
     get,
@@ -136,6 +137,7 @@ def _clear_forms():
         "representacoes_progress",
         "representacoes_file",
         "representacoes_confirm_delete",
+        "representacoes_exclude_progress",
         "representacoes_download",
     ):
         st.session_state.pop(key, None)
@@ -525,6 +527,50 @@ def _detail_summary(store, record):
     return groups
 
 
+def _render_progress_item(store, principal, record, item, pending):
+    heading, descricao = andamento_display(item)
+    shown = format_date_br(item["data"])
+    line = f"**{shown}** · {heading}"
+    if descricao:
+        line += f"  \n{descricao}"
+    if pending == item["id"]:
+        st.markdown(line)
+        st.warning("Confirma a exclusão deste andamento?")
+        st.caption(f"{shown} · {heading}")
+        if descricao:
+            st.write(descricao)
+        motivo = st.text_input(
+            "Motivo da exclusão",
+            key=f"rep_exc_motivo_{item['id']}",
+            placeholder="Lançamento realizado por engano.",
+        )
+        confirm, cancel = st.columns(2)
+        if confirm.button(
+            "Confirmar exclusão",
+            type="primary",
+            key=f"rep_exc_yes_{item['id']}",
+        ):
+            if not str(motivo or "").strip():
+                st.error("Informe o motivo da exclusão.")
+            else:
+                try:
+                    exclude_progress(store, record["id"], item["id"], motivo, principal)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state.pop("representacoes_exclude_progress", None)
+                    _done("Andamento excluído.")
+        if cancel.button("Cancelar", key=f"rep_exc_no_{item['id']}"):
+            st.session_state.pop("representacoes_exclude_progress", None)
+            st.rerun()
+        return
+    text, action = st.columns([5, 1.5])
+    text.markdown(line)
+    if action.button("Excluir andamento", key=f"rep_exc_{item['id']}"):
+        st.session_state["representacoes_exclude_progress"] = item["id"]
+        st.rerun()
+
+
 def _detail_compact(store, principal, record):
     groups = _detail_summary(store, record)
     protocolled = is_protocolled(record)
@@ -588,9 +634,9 @@ def _detail_compact(store, principal, record):
         show_all = len(timeline) <= 20 or st.checkbox(
             "Ver todos os andamentos", key="rep_all_progress_" + str(record["id"])
         )
+        pending = st.session_state.get("representacoes_exclude_progress")
         for item in timeline if show_all else timeline[:20]:
-            heading, descricao = andamento_display(item)
-            st.markdown(f"**{format_date_br(item['data'])}** · {heading}" + (f"  \n{descricao}" if descricao else ""))
+            _render_progress_item(store, principal, record, item, pending)
         if len(timeline) > 20:
             st.caption(f"Exibidos {len(timeline) if show_all else 20} de {len(timeline)} andamentos.")
     elif section == "Documentos":
