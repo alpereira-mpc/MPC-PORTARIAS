@@ -429,6 +429,256 @@ def test_home_search_only_shows_persistent_source_error(store, monkeypatch):
     assert errors == ["Não foi possível concluir a busca agora."]
 
 
+def _ids(hits, module):
+    return {item.source_id for item in hits if item.source_module == module}
+
+
+def test_search_representation_ignores_case_and_diacritics(store):
+    from services.representacoes import (
+        add_progress,
+        create as create_rep,
+        exclude_progress,
+        register_protocol,
+    )
+    from services.ouvidoria import create as create_ouvi
+    from services.search import search_ouvidoria, search_representacoes
+    from tests.test_ouvidoria import _payload as ouvi_payload
+    from tests.test_representacoes import _payload as rep_payload
+    from tests.test_representacoes import _server
+
+    admin = _admin(store)
+    elvira = next(
+        person["id"]
+        for person in store.catalog("procuradores")
+        if person["nome"] == "Elvira Samara Pereira de Oliveira"
+    )
+    data, _member, others, _assessor = rep_payload(store)
+    data.update(
+        titulo="REPRESENTAÇÃO em face da Prefeitura Municipal de Baía da Traição",
+        representado="Prefeitura Municipal de Baía da Traição",
+        procurador_responsavel=elvira,
+        procuradores_signatarios=[item for item in others if item != elvira],
+        assessores=[_server(store, "Lúcia Patrício de Souza Araújo")],
+    )
+    created = create_rep(store, data, admin)
+    register_protocol(
+        store,
+        created["id"],
+        {
+            "numero_processo": "05483/26",
+            "relator": "André Carlo Torres Pontes",
+            "fase_processual": "INSTRUCAO",
+            "data_protocolo": "2026-09-25",
+        },
+        admin,
+    )
+    add_progress(
+        store,
+        created["id"],
+        {"tipo": "LIVRE", "descricao": "Andamento visível da instrução"},
+        admin,
+    )
+    hidden = add_progress(
+        store,
+        created["id"],
+        {"tipo": "LIVRE", "descricao": "Segredo excluído da busca global"},
+        admin,
+    )
+    secret = next(item for item in hidden if item["descricao"].startswith("Segredo"))
+    exclude_progress(store, created["id"], secret["id"], "Registro indevido", admin)
+    tasks = TarefasStore(store)
+    task = tasks.create(
+        admin.id,
+        {
+            "titulo": "Noticiar representação de Baía da Traição",
+            "prazo_data": "2026-09-14",
+        },
+    )
+    tasks.change_status(task["id"], admin.id, "CONCLUIDA")
+    _oficios, agenda, _memorandos = _prepare(store)
+    agenda.save(
+        dict(
+            tipo="EVENTO",
+            procuradores=[elvira],
+            inicio="2026-09-20T09:00:00",
+            fim="2026-09-20T10:00:00",
+            situacao="Agendado",
+            titulo="Seminário de licitações",
+            categoria="Curso",
+            local="TCE-PB",
+        ),
+        institutional_confirmed=True,
+        conflict_confirmed=True,
+    )
+    news = create_ouvi(
+        store,
+        ouvi_payload(
+            store,
+            titulo="Irregularidade em Conceição",
+            manifestante_identificado=True,
+            manifestante_nome="Zenóbia Secreta",
+        )[0],
+        admin,
+    )
+    representation_id = str(created["id"])
+    task_id = str(task["id"])
+
+    def found(term):
+        hits, errors, _meta = global_search(store, admin, term)
+        assert not any(errors.values()), errors
+        return hits
+
+    for term in ("baia da traicao", "Baía da Traição", "BAIA DA TRAICAO"):
+        hits = found(term)
+        assert representation_id in _ids(hits, "representacoes"), term
+        assert task_id in _ids(hits, "tarefas"), term
+        assert any(item.navigation == "Representações" for item in hits if item.source_id == representation_id)
+    for term, module, identifier in (
+        ("05483/26", "representacoes", representation_id),
+        ("Elvira Samara", "representacoes", representation_id),
+        ("Lucia Patricio", "representacoes", representation_id),
+        ("Andre Carlo Torres Pontes", "representacoes", representation_id),
+        ("andamento visivel", "representacoes", representation_id),
+        ("seminario", "agenda", None),
+        ("conceicao", "ouvidoria", str(news["id"])),
+    ):
+        hits = found(term)
+        if identifier is None:
+            assert _ids(hits, module), term
+        else:
+            assert identifier in _ids(hits, module), term
+    hidden_hits = found("segredo excluido")
+    assert representation_id not in _ids(hidden_hits, "representacoes")
+    private_hits = found("zenobia secreta")
+    assert str(news["id"]) not in _ids(private_hits, "ouvidoria")
+    denied = _user(
+        store,
+        "sem.rep.acento@test.local",
+        pode_representacoes=False,
+        pode_ouvidoria=False,
+    )
+    denied_hits, denied_errors, _meta = global_search(store, denied, "05483/26")
+    assert not any(denied_errors.values())
+    assert representation_id not in _ids(denied_hits, "representacoes")
+    empty, empty_errors, empty_meta = global_search(store, admin, "zzzz-sem-resultado-xyz")
+    assert empty == [] and not any(empty_errors.values()) and empty_meta["total"] == 0
+    assert getsource(search_representacoes).count("connection.execute(") == 1
+    assert "excluido=0" in getsource(search_representacoes)
+    assert "manifestante" not in getsource(search_ouvidoria)
+
+
+def test_like_metacharacters_stay_literal_and_portuguese_diacritics_match(store):
+    from services.search import _normalized_sql, like_value, normalize_search_text
+
+    folded = {
+        "Antônio": "antonio",
+        "ANTÔNIO": "antonio",
+        "Avô": "avo",
+        "AVÔ": "avo",
+        "Conceição": "conceicao",
+        "Lúcia": "lucia",
+        "João": "joao",
+        "José": "jose",
+        "Ângela": "angela",
+        "Márcia": "marcia",
+        "Baía da Traição": "baia da traicao",
+        "D'Ávila": "d'avila",
+    }
+    for original, expected in folded.items():
+        assert normalize_search_text(original) == expected
+    with store.connection() as connection:
+        connection.execute("CREATE TEMP TABLE fold_probe(valor TEXT)")
+        connection.executemany(
+            "INSERT INTO fold_probe VALUES(?)", [(value,) for value in folded]
+        )
+        expression = _normalized_sql("valor")
+        for original, expected in folded.items():
+            stored = connection.execute(
+                f"SELECT {expression} FROM fold_probe WHERE valor=?",
+                (original,),
+            ).fetchone()[0]
+            assert stored == expected
+        connection.executemany(
+            "INSERT INTO fold_probe VALUES(?)",
+            [
+                ("Alíquota de 50%",),
+                ("Registro comum sem curinga",),
+                ("abcXdef sem underline",),
+                ("Código abc_def literal",),
+                ("teste de rotina",),
+                ("teste% oficial",),
+            ],
+        )
+        probe = f"SELECT valor FROM fold_probe WHERE {expression} LIKE ? ESCAPE '\\'"
+
+        def matched(term):
+            return {
+                row[0]
+                for row in connection.execute(
+                    probe, (like_value(normalize_search_text(term)),)
+                )
+            }
+
+        assert "Registro comum sem curinga" not in matched("%%%")
+        assert "Registro comum sem curinga" not in matched("___")
+        assert "abcXdef sem underline" not in matched("abc_def")
+        assert "Código abc_def literal" in matched("abc_def")
+        assert "teste de rotina" not in matched("teste%")
+        assert "teste% oficial" in matched("teste%")
+        assert matched("50%") == {"Alíquota de 50%"}
+        assert "D'Ávila" in matched("d'ávila")
+        assert "D'Ávila" in matched("d'avila")
+
+    admin = _admin(store)
+    tasks = TarefasStore(store)
+    titles = {
+        "Alíquota de 50%": "percent",
+        "Registro comum sem curinga": "plain",
+        "abcXdef sem underline": "wild",
+        "Código abc_def literal": "literal",
+        "Parecer de D'Ávila": "apostrophe",
+        "Antônio Gomes": "antonio",
+        "Avô remoto": "avo",
+        "Conceição Lima": "conceicao",
+        "Lúcia Patrício": "lucia",
+    }
+    created = {
+        key: str(
+            tasks.create(admin.id, {"titulo": title, "prazo_data": "2026-09-14"})["id"]
+        )
+        for title, key in titles.items()
+    }
+
+    def found(term):
+        hits, errors, meta = global_search(store, admin, term)
+        assert not any(errors.values()), errors
+        return hits, meta
+
+    for term in ("%", "_", "'"):
+        hits, meta = found(term)
+        assert hits == [] and meta["status"] == "short"
+    for term in ("%%%", "___", "teste%", "%' OR '1'='1"):
+        hits, meta = found(term)
+        assert meta["status"] == "ok"
+        assert created["plain"] not in _ids(hits, "tarefas")
+    percent, _meta = found("50%")
+    assert created["percent"] in _ids(percent, "tarefas")
+    assert created["plain"] not in _ids(percent, "tarefas")
+    underlined, _meta = found("abc_def")
+    assert created["literal"] in _ids(underlined, "tarefas")
+    assert created["wild"] not in _ids(underlined, "tarefas")
+    apostrophe, _meta = found("d'ávila")
+    assert created["apostrophe"] in _ids(apostrophe, "tarefas")
+    for term, key in (
+        ("antonio", "antonio"),
+        ("avo", "avo"),
+        ("conceicao", "conceicao"),
+        ("lucia", "lucia"),
+    ):
+        hits, _meta = found(term)
+        assert created[key] in _ids(hits, "tarefas")
+
+
 def test_authenticated_home_search_never_mounts_a_streamlit_form(store, monkeypatch):
     from inspect import getsource
     from streamlit.testing.v1 import AppTest

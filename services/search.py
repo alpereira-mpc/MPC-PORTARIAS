@@ -84,8 +84,23 @@ def like_value(term):
     return "%" + escaped + "%"
 
 
-def _like_sql(column):
-    return f"LOWER({column}) LIKE LOWER(?) ESCAPE '{LIKE_ESCAPE}'"
+def _folded_like(term):
+    return like_value(normalize_search_text(term))
+
+
+def _label_sql(column, mapping):
+    """Match stored codes through their visible Portuguese labels."""
+    branches = []
+    for code, label in mapping.items():
+        safe_code = str(code).replace("'", "''")
+        safe_label = str(label).replace("'", "''")
+        branches.append(f"WHEN {column}='{safe_code}' THEN '{safe_label}'")
+    return "CASE " + " ".join(branches) + f" ELSE COALESCE({column},'') END"
+
+
+def _text_sql(*parts):
+    # NULL in any piece would erase the whole concatenation in SQLite.
+    return " || ' ' || ".join(f"COALESCE(({part}),'')" for part in parts)
 
 
 def _normalized_sql(column):
@@ -148,22 +163,24 @@ def _parse_date(value):
 
 
 def _score(term, *, code="", title="", extra="", number=None, year=None):
-    needle = term.casefold()
+    needle = normalize_search_text(term)
     score = 10
-    if code and code.casefold() == needle:
+    code_cf = normalize_search_text(code)
+    if code_cf and code_cf == needle:
         score = 100
     elif number is not None and str(number) == needle:
         score = 95
     elif year is not None and str(year) == needle:
         score = 72
-    title_cf = (title or "").casefold()
+    title_cf = normalize_search_text(title)
+    extra_cf = normalize_search_text(extra)
     if title_cf == needle:
         score = max(score, 90)
     elif title_cf.startswith(needle):
         score = max(score, 80)
     elif needle in title_cf:
         score = max(score, 60)
-    elif needle in (extra or "").casefold() or needle in (code or "").casefold():
+    elif needle in extra_cf or needle in code_cf:
         score = max(score, 40)
     return score
 
@@ -194,17 +211,17 @@ def search_portarias(connection, store, principal, term, *, limit):
         return []
     if not _has_table(store, "portarias", connection):
         return []
-    like = like_value(term)
+    like = _folded_like(term)
     number, year = parse_number_year(term)
     text = (
         "("
-        + _like_sql("p.payload")
+        + _normalized_like_sql("p.payload")
         + " OR "
-        + _like_sql("CAST(p.numero AS TEXT)")
+        + _normalized_like_sql("CAST(p.numero AS TEXT)")
         + " OR "
-        + _like_sql("CAST(p.ano AS TEXT)")
+        + _normalized_like_sql("CAST(p.ano AS TEXT)")
         + " OR EXISTS (SELECT 1 FROM substituicoes s WHERE s.portaria_id=p.id AND "
-        + _like_sql("s.payload")
+        + _normalized_like_sql("s.payload")
         + "))"
     )
     params = [like, like, like, like]
@@ -428,7 +445,7 @@ def search_agenda(
     if not has_permission(principal, "agenda"):
         return []
     items = []
-    like = like_value(term)
+    like = _folded_like(term)
     mapping = cabinet_map if cabinet_map is not None else _cabinet_map(connection)
     restrict = bool(visible_cabinets(principal)) or principal.administrator
     allowed = _scope_cabinets(principal, None) if restrict else []
@@ -438,13 +455,17 @@ def search_agenda(
         rows = connection.execute(
             "SELECT a.id,a.tipo,a.inicio,a.situacao,a.payload FROM agenda_compromissos a "
             "WHERE "
-            + _like_sql("a.payload")
+            + _normalized_like_sql("a.payload")
             + " OR "
-            + _like_sql("a.tipo")
+            + _normalized_like_sql("a.tipo")
             + " OR "
-            + _like_sql("a.situacao")
-            + " ORDER BY a.inicio DESC, a.id DESC LIMIT ?",
-            (like, like, like, limit),
+            + _normalized_like_sql("a.situacao")
+            + " OR EXISTS (SELECT 1 FROM agenda_compromisso_procuradores ap "
+            "JOIN procuradores p ON p.id=ap.procurador_id "
+            "WHERE ap.compromisso_id=a.id AND "
+            + _normalized_like_sql("p.nome")
+            + ") ORDER BY a.inicio DESC, a.id DESC LIMIT ?",
+            (like, like, like, like, limit),
         ).fetchall()
         people_map = {}
         if rows:
@@ -493,15 +514,17 @@ def search_agenda(
             )
     if _has_table(store, "agenda_afastamentos", connection):
         rows = connection.execute(
-            "SELECT id,procurador_id,motivo,data_inicio,data_fim,cancelado FROM agenda_afastamentos "
-            "WHERE "
-            + _like_sql("COALESCE(motivo,'')")
+            "SELECT id,procurador_id,motivo,motivo_outro,data_inicio,data_fim,cancelado "
+            "FROM agenda_afastamentos WHERE "
+            + _normalized_like_sql("motivo")
             + " OR "
-            + _like_sql("COALESCE(motivo_outro,'')")
+            + _normalized_like_sql("motivo_outro")
             + " OR "
-            + _like_sql("COALESCE(observacao,'')")
-            + " ORDER BY data_inicio DESC, id DESC LIMIT ?",
-            (like, like, like, limit),
+            + _normalized_like_sql("observacao")
+            + " OR EXISTS (SELECT 1 FROM procuradores p WHERE p.id=procurador_id AND "
+            + _normalized_like_sql("p.nome")
+            + ") ORDER BY data_inicio DESC, id DESC LIMIT ?",
+            (like, like, like, like, limit),
         ).fetchall()
         for row in rows:
             gabinete = mapping.get(int(row["procurador_id"] or 0), "")
@@ -539,22 +562,33 @@ def search_memorandos(
     allowed = _scope_cabinets(principal, None) if restrict else []
     if restrict and not allowed:
         return []
-    like = like_value(term)
+    like = _folded_like(term)
     mapping = cabinet_map if cabinet_map is not None else _cabinet_map(connection)
     rows = connection.execute(
         "SELECT m.id,m.status,m.numero_oficial,m.atualizado_em,s.data_inicio,s.motivo,"
-        "s.motivo_texto,s.gabinete_procurador_id,s.gabinete_snapshot "
+        "s.motivo_texto,s.gabinete_procurador_id,s.gabinete_snapshot,s.signatario_nome "
         "FROM memorandos m LEFT JOIN memorandos_substituicao s ON s.memorando_id=m.id "
         "WHERE "
-        + _like_sql("COALESCE(m.numero_oficial,'')")
-        + " OR "
-        + _like_sql("COALESCE(s.motivo,'')")
-        + " OR "
-        + _like_sql("COALESCE(s.motivo_texto,'')")
-        + " OR "
-        + _like_sql("COALESCE(s.gabinete_snapshot,'')")
-        + " ORDER BY m.atualizado_em DESC, m.id DESC LIMIT ?",
-        (like, like, like, like, limit),
+        + _normalized_like_sql(
+            _text_sql(
+                "COALESCE(m.numero_oficial,'')",
+                "COALESCE(m.payload,'')",
+                "COALESCE(s.motivo,'')",
+                "COALESCE(s.motivo_texto,'')",
+                "COALESCE(s.gabinete_snapshot,'')",
+                "COALESCE(s.signatario_nome,'')",
+            )
+        )
+        + " OR EXISTS (SELECT 1 FROM memorandos_substituicao_etapas e "
+        "WHERE e.memorando_id=m.id AND "
+        + _normalized_like_sql(
+            _text_sql(
+                "COALESCE(e.substituido_snapshot,'')",
+                "COALESCE(e.substituto_snapshot,'')",
+            )
+        )
+        + ") ORDER BY m.atualizado_em DESC, m.id DESC LIMIT ?",
+        (like, like, limit),
     ).fetchall()
     items = []
     for row in rows:
@@ -593,17 +627,27 @@ def search_tarefas(connection, store, principal, term, *, limit):
     owner = getattr(principal, "id", None)
     if owner is None:
         return []
-    like = like_value(term)
+    like = _folded_like(term)
+    status_label = _label_sql(
+        "status",
+        {
+            "A_FAZER": "A fazer",
+            "EM_ANDAMENTO": "Em andamento",
+            "AGUARDANDO": "Aguardando",
+            "CONCLUIDA": "Concluída",
+            "CANCELADA": "Cancelada",
+        },
+    )
     rows = connection.execute(
         "SELECT id,titulo,descricao,status,prazo_data,categoria FROM tarefas "
         "WHERE owner_user_id=? AND ("
-        + _like_sql("titulo")
-        + " OR "
-        + _like_sql("COALESCE(descricao,'')")
-        + " OR "
-        + _like_sql("COALESCE(categoria,'')")
-        + ") ORDER BY atualizado_em DESC, id DESC LIMIT ?",
-        (owner, like, like, like, limit),
+        + _normalized_like_sql(
+            _text_sql("titulo", "descricao", "categoria", "observacoes", status_label)
+        )
+        + " OR EXISTS (SELECT 1 FROM tarefas_checklist c WHERE c.tarefa_id=tarefas.id AND "
+        + _normalized_like_sql("c.texto")
+        + ")) ORDER BY atualizado_em DESC, id DESC LIMIT ?",
+        (owner, like, like, limit),
     ).fetchall()
     labels = {
         "A_FAZER": "A fazer",
@@ -637,23 +681,57 @@ def search_representacoes(connection, store, principal, term, *, limit):
         return []
     if not _has_table(store, "representacoes", connection):
         return []
-    like = like_value(term)
+    from services.representacoes import (
+        ANDAMENTOS,
+        DOCUMENTOS,
+        FASES,
+        ORIGENS,
+        PRIORIDADES,
+        SITUACOES,
+    )
+
+    like = _folded_like(term)
+    body = _text_sql(
+        "r.titulo",
+        "r.objeto",
+        "r.representado",
+        "r.tema",
+        "r.numero_processo",
+        "r.relator",
+        "r.observacoes",
+        "r.origem",
+        _label_sql("r.situacao", SITUACOES),
+        _label_sql("r.fase_processual", FASES),
+        _label_sql("r.prioridade", PRIORIDADES),
+        _label_sql("r.origem", ORIGENS),
+    )
+    progress = _text_sql("a.descricao", _label_sql("a.tipo", ANDAMENTOS))
+    document = _text_sql(
+        "d.nome_arquivo",
+        "d.descricao",
+        _label_sql("d.tipo_documento", DOCUMENTOS),
+    )
     rows = connection.execute(
-        "SELECT id,titulo,objeto,representado,situacao,numero_processo,data_abertura,tema "
-        "FROM representacoes WHERE "
-        + _like_sql("titulo")
-        + " OR "
-        + _like_sql("COALESCE(objeto,'')")
-        + " OR "
-        + _like_sql("COALESCE(representado,'')")
-        + " OR "
-        + _like_sql("COALESCE(numero_processo,'')")
-        + " OR "
-        + _like_sql("COALESCE(tema,'')")
-        + " ORDER BY data_abertura DESC, id DESC LIMIT ?",
+        "SELECT r.id,r.titulo,r.objeto,r.representado,r.situacao,r.numero_processo,"
+        "r.data_abertura,r.tema,r.relator FROM representacoes r WHERE "
+        + _normalized_like_sql(body)
+        + " OR EXISTS (SELECT 1 FROM representacao_integrantes i "
+        "JOIN procuradores p ON p.id=i.membro_id "
+        "WHERE i.representacao_id=r.id AND i.membro_tipo='PROCURADOR' AND "
+        + _normalized_like_sql("p.nome")
+        + ") OR EXISTS (SELECT 1 FROM representacao_integrantes i "
+        "JOIN servidores s ON s.id=i.membro_id "
+        "WHERE i.representacao_id=r.id AND i.membro_tipo='SERVIDOR' AND "
+        + _normalized_like_sql("s.nome")
+        + ") OR EXISTS (SELECT 1 FROM representacao_andamentos a "
+        "WHERE a.representacao_id=r.id AND a.excluido=0 AND "
+        + _normalized_like_sql(progress)
+        + ") OR EXISTS (SELECT 1 FROM representacao_documentos d "
+        "WHERE d.representacao_id=r.id AND "
+        + _normalized_like_sql(document)
+        + ") ORDER BY r.data_abertura DESC, r.id DESC LIMIT ?",
         (like, like, like, like, like, limit),
     ).fetchall()
-    from services.representacoes import SITUACOES
 
     items = []
     for row in rows:
@@ -690,21 +768,44 @@ def search_ouvidoria(connection, store, principal, term, *, limit):
         return []
     if not _has_table(store, "ouvidoria_manifestacoes", connection):
         return []
-    like = like_value(term)
+    from services.ouvidoria import RESULTADOS, SITUACOES
+
+    like = _folded_like(term)
+    body = _text_sql(
+        "o.titulo",
+        "o.resumo",
+        "o.representado",
+        "o.tema",
+        "o.numero_interno",
+        "o.observacoes",
+        "o.conclusao_analise",
+        _label_sql("o.situacao", SITUACOES),
+        _label_sql("o.resultado", RESULTADOS),
+    )
     rows = connection.execute(
-        "SELECT id,numero_interno,titulo,representado,situacao,data_recebimento,tema "
-        "FROM ouvidoria_manifestacoes WHERE "
-        + _like_sql("titulo")
-        + " OR "
-        + _like_sql("COALESCE(numero_interno,'')")
-        + " OR "
-        + _like_sql("COALESCE(representado,'')")
-        + " OR "
-        + _like_sql("COALESCE(tema,'')")
-        + " ORDER BY data_recebimento DESC, id DESC LIMIT ?",
-        (like, like, like, like, limit),
+        "SELECT o.id,o.numero_interno,o.titulo,o.representado,o.situacao,"
+        "o.data_recebimento,o.tema FROM ouvidoria_manifestacoes o WHERE "
+        + _normalized_like_sql(body)
+        + " OR EXISTS (SELECT 1 FROM ouvidoria_integrantes i "
+        "JOIN procuradores p ON p.id=i.membro_id "
+        "WHERE i.manifestacao_id=o.id AND i.membro_tipo='PROCURADOR' AND "
+        + _normalized_like_sql("p.nome")
+        + ") OR EXISTS (SELECT 1 FROM ouvidoria_integrantes i "
+        "JOIN servidores s ON s.id=i.membro_id "
+        "WHERE i.manifestacao_id=o.id AND i.membro_tipo='SERVIDOR' AND "
+        + _normalized_like_sql("s.nome")
+        + ") OR EXISTS (SELECT 1 FROM ouvidoria_andamentos a "
+        "WHERE a.manifestacao_id=o.id AND "
+        + _normalized_like_sql("a.descricao")
+        + ") OR EXISTS (SELECT 1 FROM ouvidoria_providencias v "
+        "WHERE v.manifestacao_id=o.id AND "
+        + _normalized_like_sql("v.descricao")
+        + ") OR EXISTS (SELECT 1 FROM ouvidoria_documentos d "
+        "WHERE d.manifestacao_id=o.id AND "
+        + _normalized_like_sql(_text_sql("d.nome_arquivo", "d.descricao"))
+        + ") ORDER BY o.data_recebimento DESC, o.id DESC LIMIT ?",
+        (like, like, like, like, like, like, limit),
     ).fetchall()
-    from services.ouvidoria import SITUACOES
 
     items = []
     for row in rows:
@@ -736,15 +837,13 @@ def search_admin(connection, store, principal, term, *, limit):
     if not has_permission(principal, "admin"):
         return []
     items = []
-    like = like_value(term)
+    like = _folded_like(term)
     if _has_table(store, "usuarios_acesso", connection):
         rows = connection.execute(
             "SELECT id,nome,email,perfil,ativo FROM usuarios_acesso WHERE "
-            + _like_sql("nome")
-            + " OR "
-            + _like_sql("email")
+            + _normalized_like_sql(_text_sql("nome", "email"))
             + " ORDER BY nome LIMIT ?",
-            (like, like, limit),
+            (like, limit),
         ).fetchall()
         for row in rows:
             items.append(
@@ -765,13 +864,9 @@ def search_admin(connection, store, principal, term, *, limit):
     if _has_table(store, "access_requests", connection):
         rows = connection.execute(
             "SELECT id,nome,email,gabinete,status,created_at FROM access_requests WHERE "
-            + _like_sql("nome")
-            + " OR "
-            + _like_sql("email")
-            + " OR "
-            + _like_sql("gabinete")
+            + _normalized_like_sql(_text_sql("nome", "email", "gabinete"))
             + " ORDER BY created_at DESC, id DESC LIMIT ?",
-            (like, like, like, limit),
+            (like, limit),
         ).fetchall()
         for row in rows:
             items.append(
