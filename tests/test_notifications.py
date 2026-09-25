@@ -8,7 +8,6 @@ import pytest
 from database.notifications import NotificationsStore
 from services.email_transport import NOT_CONFIGURED, DeliveryRejected, DeliveryUncertain, NotConfigured
 from services.notifications import (
-    EXPECTED_RECIPIENTS,
     confirm_send,
     ensure_draft,
     idempotency_key,
@@ -50,7 +49,7 @@ def _protocolled(store, principal=None):
     return principal, saved
 
 
-def _people(store, count=8):
+def _people(store, count=1):
     from services.access import resolve_principal
     from tests.test_representacoes import _server
 
@@ -127,8 +126,7 @@ def test_recipients_come_from_the_registry_and_block_bad_addresses(store):
     assert "pessoa1@tce.pb.gov.br" not in Path(build_preview.__code__.co_filename).read_text(encoding="utf-8")
     preview = build_preview(store, record, principal)
     assert len(preview["destinatarios"]) == 7
-    assert preview["warning"]
-    assert EXPECTED_RECIPIENTS == 8
+    assert "warning" not in preview
     assert not preview["blockers"]
     kind, identifier = members[0]
     save_recipient(store, admin, membro_tipo=kind, membro_id=identifier, email="", ativo=True)
@@ -156,9 +154,80 @@ def test_duplicate_active_email_is_blocked(store):
         )
 
 
+def test_zero_active_recipients_block_send(store):
+    from services.notifications import build_preview
+
+    principal, record = _protocolled(store)
+    preview = build_preview(store, record, principal)
+    assert preview["destinatarios"] == []
+    assert any("Não há destinatários ativos" in item for item in preview["blockers"])
+    transport = FakeTransport()
+    with pytest.raises(ValueError, match="Não há destinatários ativos"):
+        confirm_send(store, record, principal, transport)
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize("count", [1, 3, 8, 10])
+def test_send_uses_exactly_the_active_recipients(store, count):
+    from services.notifications import build_preview
+
+    principal, record = _protocolled(store)
+    _people(store, count=count)
+    preview = build_preview(store, record, principal)
+    assert len(preview["destinatarios"]) == count
+    assert preview["blockers"] == []
+    assert "8 destinatários" not in " ".join(preview["blockers"])
+    transport = FakeTransport(result="msg-" + str(count))
+    sent = confirm_send(store, record, principal, transport)
+    assert sent["status"] == "SENT"
+    assert len(transport.calls) == 1
+    assert len(transport.calls[0]["to"]) == count
+    assert len(set(transport.calls[0]["to"])) == count
+
+
+def test_invalid_active_email_blocks_send(store):
+    from services.notifications import SUBSCRIPTION_PROTOCOLO, build_preview
+
+    principal, record = _protocolled(store)
+    admin, members = _people(store, count=1)
+    kind, identifier = members[0]
+    with pytest.raises(ValueError, match="válido"):
+        save_recipient(store, admin, membro_tipo=kind, membro_id=identifier, email="invalido", ativo=True)
+    with store.connection() as connection:
+        connection.execute(
+            "UPDATE notificacao_destinatarios SET email=? WHERE evento=? AND membro_tipo=? AND membro_id=?",
+            ("invalido", SUBSCRIPTION_PROTOCOLO, kind, identifier),
+        )
+    preview = build_preview(store, record, principal)
+    assert any("inválido" in item for item in preview["blockers"])
+    transport = FakeTransport()
+    with pytest.raises(ValueError, match="inválido"):
+        confirm_send(store, record, principal, transport)
+    assert transport.calls == []
+
+
+def test_duplicate_stored_email_blocks_a_second_copy(store):
+    from services.notifications import SUBSCRIPTION_PROTOCOLO, build_preview
+
+    principal, record = _protocolled(store)
+    _admin, members = _people(store, count=2)
+    kind, identifier = members[1]
+    with store.connection() as connection:
+        connection.execute(
+            "UPDATE notificacao_destinatarios SET email=? WHERE evento=? AND membro_tipo=? AND membro_id=?",
+            ("pessoa1@tce.pb.gov.br", SUBSCRIPTION_PROTOCOLO, kind, identifier),
+        )
+    preview = build_preview(store, record, principal)
+    assert any("repetido" in item for item in preview["blockers"])
+    transport = FakeTransport()
+    with pytest.raises(ValueError, match="repetido"):
+        confirm_send(store, record, principal, transport)
+    assert transport.calls == []
+
+
 def test_success_persists_snapshot_and_refuses_a_second_send(store):
     principal, record = _protocolled(store)
-    _people(store, count=8)
+    _people(store, count=1)
     transport = FakeTransport(result="abc-123")
     sent = confirm_send(store, record, principal, transport)
     assert sent["status"] == "SENT"
@@ -168,7 +237,7 @@ def test_success_persists_snapshot_and_refuses_a_second_send(store):
     assert sent["corpo_snapshot"]["texto"]
     assert len(transport.calls) == 1
     assert transport.calls[0]["to"][0].endswith("@tce.pb.gov.br")
-    assert len(transport.calls[0]["to"]) == 8
+    assert len(transport.calls[0]["to"]) == 1
     with pytest.raises(ValueError, match="já enviada"):
         confirm_send(store, record, principal, transport)
     assert len(transport.calls) == 1
@@ -190,7 +259,7 @@ def test_success_persists_snapshot_and_refuses_a_second_send(store):
 
 def test_provider_rejection_marks_failed_and_does_not_retry(store):
     principal, record = _protocolled(store)
-    _people(store, count=8)
+    _people(store, count=1)
     transport = FakeTransport(error=DeliveryRejected("token secret=abc private_key -----"))
     with pytest.raises(ValueError, match="não foi concluído"):
         confirm_send(store, record, principal, transport)
@@ -209,7 +278,7 @@ def test_provider_rejection_marks_failed_and_does_not_retry(store):
 
 def test_uncertain_delivery_is_not_retried(store):
     principal, record = _protocolled(store)
-    _people(store, count=8)
+    _people(store, count=1)
     transport = FakeTransport(error=DeliveryUncertain("timeout"))
     with pytest.raises(ValueError, match="repetido automaticamente"):
         confirm_send(store, record, principal, transport)
@@ -224,7 +293,7 @@ def test_missing_configuration_does_not_mark_sent(store, monkeypatch):
     monkeypatch.delenv("GMAIL_SEND_ENABLED", raising=False)
     monkeypatch.delenv("GMAIL_SEND_SERVICE_ACCOUNT", raising=False)
     principal, record = _protocolled(store)
-    _people(store, count=8)
+    _people(store, count=1)
     with pytest.raises(NotConfigured, match=NOT_CONFIGURED):
         confirm_send(store, record, principal)
     saved = NotificationsStore(store).get_by_key(idempotency_key(record["id"]))
@@ -234,7 +303,7 @@ def test_missing_configuration_does_not_mark_sent(store, monkeypatch):
 
 def test_concurrent_claims_send_once(store):
     principal, record = _protocolled(store)
-    _people(store, count=8)
+    _people(store, count=1)
     ensure_draft(store, record, principal)
     barrier = Barrier(2)
     transport = FakeTransport()

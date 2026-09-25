@@ -76,8 +76,6 @@ def render_protocol_notice(store, principal, record):
     st.text("\n".join(names) if names else "Nenhum destinatário ativo.")
     st.text_input("Assunto", preview["assunto"], disabled=True, key="rep_mail_subject_" + str(record["id"]))
     st.text_area("Mensagem", preview["texto"], disabled=True, height=220, key="rep_mail_body_" + str(record["id"]))
-    if preview["warning"]:
-        st.warning(preview["warning"])
     for blocker in preview["blockers"]:
         st.error(blocker)
     if preview["status"] != "SENT" and not preview["configured"]:

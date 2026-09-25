@@ -22,7 +22,6 @@ LOGGER = logging.getLogger("mpc.notifications")
 EVENT_REPRESENTACAO_PROTOCOLADA = "REPRESENTACAO_PROTOCOLADA"
 SUBSCRIPTION_PROTOCOLO = "PROTOCOLO_DE_REPRESENTACAO"
 ENTITY_REPRESENTACAO = "representacao"
-EXPECTED_RECIPIENTS = 8
 STATUS_LABELS = {
     "DRAFT": "Pendente de envio",
     "SENDING": "Envio iniciado, sem confirmação",
@@ -144,20 +143,15 @@ def assess_recipients(recipients):
             invalid = True
             continue
         seen.append(email)
+    if not active:
+        blockers.append("Não há destinatários ativos para esta comunicação.")
     if missing:
         blockers.append("Há destinatário ativo sem e-mail institucional.")
     if invalid:
         blockers.append("Há e-mail institucional inválido.")
     if len(seen) != len(set(seen)):
         blockers.append("Há e-mail institucional repetido.")
-    warning = None
-    if len(active) != EXPECTED_RECIPIENTS:
-        warning = (
-            "A rotina institucional prevê 8 destinatários. Há "
-            + str(len(active))
-            + " destinatário(s) ativo(s)."
-        )
-    return blockers, warning
+    return blockers
 
 
 def compose(record):
@@ -202,14 +196,13 @@ def build_preview(store, record, principal):
             "texto": body.get("texto") or "",
             "html": body.get("html") or "",
             "blockers": [],
-            "warning": None,
             "sent_at": saved.get("enviado_em"),
             "error": "",
             "configured": True,
             "process_changed": record["numero_processo"] not in (saved.get("assunto_snapshot") or ""),
         }
     recipients = list_recipients(store, active_only=True)
-    blockers, warning = assess_recipients(recipients)
+    blockers = assess_recipients(recipients)
     message = compose(record)
     from services.email_transport import transport_available
 
@@ -229,7 +222,6 @@ def build_preview(store, record, principal):
         "texto": message["texto"],
         "html": message["html"],
         "blockers": blockers,
-        "warning": warning,
         "sent_at": None,
         "error": "" if saved is None else (saved.get("erro") or ""),
         "configured": transport_available(),
