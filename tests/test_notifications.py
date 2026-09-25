@@ -226,6 +226,8 @@ def test_duplicate_stored_email_blocks_a_second_copy(store):
 
 
 def test_success_persists_snapshot_and_refuses_a_second_send(store):
+    from services.notifications import build_preview
+
     principal, record = _protocolled(store)
     _people(store, count=1)
     transport = FakeTransport(result="abc-123")
@@ -234,6 +236,7 @@ def test_success_persists_snapshot_and_refuses_a_second_send(store):
     assert sent["enviado_em"]
     assert sent["provedor_mensagem_id"] == "abc-123"
     assert sent["assunto_snapshot"].endswith("TC 012345/26")
+    assert "Objeto: Apurar irregularidades" in sent["corpo_snapshot"]["texto"]
     assert sent["corpo_snapshot"]["texto"]
     assert len(transport.calls) == 1
     assert transport.calls[0]["to"][0].endswith("@tce.pb.gov.br")
@@ -246,6 +249,10 @@ def test_success_persists_snapshot_and_refuses_a_second_send(store):
             "UPDATE representacoes SET numero_processo=? WHERE id=?",
             ("TC 999999/26", record["id"]),
         )
+        connection.execute(
+            "UPDATE representacoes SET objeto=? WHERE id=?",
+            ("Objeto alterado posteriormente", record["id"]),
+        )
     changed = get(store, record["id"])
     summary = notice_summary(store, changed)
     assert summary["process_changed"] is True
@@ -254,7 +261,39 @@ def test_success_persists_snapshot_and_refuses_a_second_send(store):
         confirm_send(store, changed, transport=transport, principal=principal)
     stored = NotificationsStore(store).get_by_key(idempotency_key(record["id"]))
     assert stored["assunto_snapshot"].endswith("TC 012345/26")
+    assert "Objeto: Apurar irregularidades" in stored["corpo_snapshot"]["texto"]
+    assert "Objeto alterado posteriormente" not in build_preview(store, changed, principal)["texto"]
     assert len(transport.calls) == 1
+
+
+def test_protocol_message_includes_object_in_preview_and_sent_body(store):
+    from services.notifications import build_preview
+
+    principal, record = _protocolled(store)
+    _people(store, count=1)
+    preview = build_preview(store, record, principal)
+    assert "Objeto: Apurar irregularidades" in preview["texto"]
+    assert "Objeto: Apurar irregularidades" in preview["html"]
+    assert preview["assunto"].endswith("TC 012345/26")
+
+    transport = FakeTransport()
+    confirm_send(store, record, principal, transport)
+    assert "Objeto: Apurar irregularidades" in transport.calls[0]["text"]
+    assert "Objeto: Apurar irregularidades" in transport.calls[0]["html"]
+    assert transport.calls[0]["subject"].endswith("TC 012345/26")
+
+
+def test_protocol_message_omits_empty_object(store):
+    from services.notifications import build_preview
+
+    principal, record = _protocolled(store)
+    with store.connection() as connection:
+        connection.execute("UPDATE representacoes SET objeto='' WHERE id=?", (record["id"],))
+    preview = build_preview(store, get(store, record["id"]), principal)
+    assert "Objeto:" not in preview["texto"]
+    assert "Objeto:" not in preview["html"]
+    assert "None" not in preview["texto"]
+    assert "null" not in preview["texto"]
 
 
 def test_provider_rejection_marks_failed_and_does_not_retry(store):

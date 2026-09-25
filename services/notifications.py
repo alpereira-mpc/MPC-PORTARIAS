@@ -157,6 +157,7 @@ def assess_recipients(recipients):
 def compose(record):
     number = str(record.get("numero_processo") or "").strip()
     title = str(record.get("titulo") or "").strip()
+    object_text = str(record.get("objeto") or "").strip()
     day = format_date_br(record.get("data_protocolo"), empty="")
     subject = "MPC-PB — Protocolo de Representação — Processo TC nº " + number
     lines = [
@@ -168,6 +169,8 @@ def compose(record):
     ]
     if title:
         lines.append("Assunto: " + title)
+    if object_text:
+        lines.append("Objeto: " + object_text)
     if day:
         lines.append("Data do protocolo: " + day)
     lines.extend(["", "Atenciosamente,", "", SENDER_NAME])
@@ -175,6 +178,8 @@ def compose(record):
     html_lines = ["<p>Prezados(as),</p>", "<p>Informamos que foi protocolada no Tribunal de Contas do Estado da Paraíba a representação abaixo identificada:</p>", "<p>Processo TC nº: " + escape(number) + "<br>"]
     if title:
         html_lines.append("Assunto: " + escape(title) + "<br>")
+    if object_text:
+        html_lines.append("Objeto: " + escape(object_text) + "<br>")
     if day:
         html_lines.append("Data do protocolo: " + escape(day))
     html_lines.append("</p><p>Atenciosamente,<br>" + escape(SENDER_NAME) + "</p>")
