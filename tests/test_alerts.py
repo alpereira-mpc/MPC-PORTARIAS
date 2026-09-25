@@ -114,6 +114,67 @@ def test_agenda_severity_and_no_duplicates():
     assert alert_from_pending(next_day, NOW).severity == ATENCAO
     assert alert_from_pending(distant, NOW) is None
     assert alert_from_pending(past, NOW) is None
+    leave = _item(
+        source_module="agenda",
+        title="Afastamento",
+        context="afastamento",
+        navigation="Agenda",
+        due_date=TODAY + timedelta(days=1),
+        start_date=TODAY + timedelta(days=1),
+        metadata={"afastamento_id": "leave-1"},
+    )
+    assert alert_from_pending(leave, NOW) is None
+    assert alert_from_pending(next_day, NOW).title == "Compromisso próximo"
+
+
+def test_same_day_leave_does_not_join_commitment_alert(store):
+    from services.pending import collect_pending
+
+    oficios, agenda, _memorandos = _prepare(store)
+    member = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "MTFF")
+    moment = datetime(2026, 9, 25, 18, 0, tzinfo=INSTITUTIONAL_TZ)
+    agenda.save(
+        dict(
+            tipo="EVENTO",
+            procuradores=[member],
+            inicio="2026-09-26T10:00:00",
+            fim="2026-09-26T12:00:00",
+            situacao="Agendado",
+            sem_hora=False,
+            titulo="Evento da UNIDROIT e Tribunal de Haia (Memo 384/2026)",
+            categoria="Curso",
+            local="Tribunal",
+            observacoes="",
+        )
+    )
+    agenda.save_leave(
+        {
+            "procurador_id": member,
+            "motivo": "Outro",
+            "motivo_outro": "Compromisso externo",
+            "data_inicio": "2026-09-26",
+            "data_fim": "2026-10-12",
+        }
+    )
+    leaves = agenda.leaves("2026-09-26", "2026-10-13", member=member)
+    assert len(leaves) == 1
+    assert leaves[0]["motivo"] == "Outro"
+    pending, _, _ = collect_pending(
+        store, _admin(store), now=moment, today=moment.date(), modules=("agenda",)
+    )
+    assert any((item.metadata or {}).get("afastamento_id") for item in pending)
+    items, _, _ = collect_alerts(
+        store, _admin(store), now=moment, cached_health=HEALTHY
+    )
+    commitments = [item for item in items if item.category.startswith("compromisso")]
+    assert [item.title for item in commitments] == ["Compromisso próximo"]
+    assert "UNIDROIT" in commitments[0].description
+    assert not any((item.metadata or {}).get("afastamento_id") for item in items)
+    assert not any(item.description.startswith("Afastamento") for item in items)
+    summary = get_alert_summary(store, _admin(store), now=moment, cached_health=HEALTHY)
+    assert summary["total"] == len(items)
+    assert any("UNIDROIT" in item.description for item in summary["top"])
+    assert not any((item.metadata or {}).get("afastamento_id") for item in summary["top"])
 
 
 def test_memorando_severity_rules():
@@ -1023,6 +1084,17 @@ def test_inicio_after_change_refreshes_bell_without_f5(store, monkeypatch):
     assert "cache_data.clear" not in getsource(
         __import__("portal", fromlist=["home"]).home
     )
+
+
+def test_bell_outside_click_does_not_rerun_and_internal_close_still_retires_key():
+    from services.alerts_ui import close_bell, render_bell
+
+    screen = getsource(render_bell)
+    closing = getsource(close_bell)
+    assert 'on_change="ignore"' in screen
+    assert "_remember_bell_intent" not in screen
+    assert "BELL_EPOCH" in closing
+    assert "BELL_INTENT" in closing
 
 
 def test_bell_navigation_closes_popover_without_consuming_alerts(store, monkeypatch):

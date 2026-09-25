@@ -176,7 +176,12 @@ def alert_from_oficio(item):
 
 
 def alert_from_agenda(item, now):
-    start = parse_datetime((item.metadata or {}).get("inicio"))
+    metadata = item.metadata or {}
+    # A recorded leave is not an upcoming commitment. Administrative alerts that
+    # come from another source, such as an ongoing substitution, stay intact.
+    if metadata.get("afastamento_id") or item.context == "afastamento":
+        return None
+    start = parse_datetime(metadata.get("inicio"))
     if start is None and item.start_date:
         start = parse_datetime(item.start_date)
     if start is None:

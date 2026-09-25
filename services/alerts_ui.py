@@ -153,8 +153,10 @@ def _state_get(state, key, default=None):
 def bell_widget_key(state=None):
     """Key of the popover currently mounted.
 
-    Closing the bell retires the previous key. A later rerun cannot reopen the
-    panel by replaying the browser value stored for the old widget.
+    The popover itself does not track open/closed state, so clicking outside
+    closes it in the browser without a script rerun. An internal action still
+    retires this key. A later rerun cannot reopen the panel by replaying the
+    browser value stored for the old widget.
     """
     epoch = int(_state_get(state, BELL_EPOCH, 0) or 0)
     if epoch <= 0:
@@ -170,10 +172,6 @@ def close_bell():
     st.session_state[BELL_INTENT] = False
     st.session_state.pop(bell_widget_key(), None)
     st.session_state[BELL_EPOCH] = int(st.session_state.get(BELL_EPOCH, 0) or 0) + 1
-
-
-def _remember_bell_intent():
-    st.session_state[BELL_INTENT] = bool(st.session_state.get(bell_widget_key(), False))
 
 
 def open_alert_origin(item, store=None, principal=None, *, rerun=True):
@@ -237,7 +235,7 @@ def render_bell(store, principal):
         label,
         use_container_width=True,
         key=widget_key,
-        on_change=_remember_bell_intent,
+        on_change="ignore",
     ):
         if st.session_state.pop("_alerts_bell_navigation_error", None):
             st.error("A origem não existe ou você não possui mais acesso.")
