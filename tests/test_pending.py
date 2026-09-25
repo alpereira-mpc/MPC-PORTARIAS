@@ -338,9 +338,10 @@ def test_menu_and_central_ui(store, monkeypatch):
         r for r in app.sidebar.radio if getattr(r, "key", None) == "portal_module"
     )
     assert portal.options[0] == "Início"
-    assert portal.options[1] == "Pendências"
+    assert portal.options[1] == "Busca Global"
+    assert portal.options[2] == "Pendências"
     assert "Alertas" not in portal.options
-    assert portal.options[2] == "Portarias"
+    assert portal.options[3] == "Portarias"
     app.sidebar.radio(key="portal_module").set_value("Pendências").run()
     assert not app.exception
     headings = [str(h.value) for h in app.subheader]

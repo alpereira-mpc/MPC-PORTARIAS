@@ -313,6 +313,16 @@ def test_source_error_remains_isolated_if_audit_logging_fails(store, monkeypatch
     assert all(item.source_module != "portarias" for item in hits)
 
 
+def _open_global_search(app):
+    portal = app.sidebar.radio(key="portal_module")
+    assert portal.options[0] == "Início"
+    assert portal.options[1] == "Busca Global"
+    assert not any(getattr(button, "key", None) == "global_search_submit" for button in app.button)
+    portal.set_value("Busca Global").run()
+    assert not app.exception
+    return app
+
+
 def test_home_search_controls(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
@@ -322,6 +332,7 @@ def test_home_search_controls(store, monkeypatch):
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
+    _open_global_search(app)
     captions = [str(c.value) for c in app.caption]
     assert any("Pesquisar no Ferramentas MPC-PB" in str(i.value) for i in app.text_input) or any(
         "Busca global" in str(m.value) for m in app.markdown
@@ -347,6 +358,7 @@ def test_home_search_clear_resets_results_input_and_errors(store, monkeypatch):
     monkeypatch.setattr("database.store.Store", lambda: store)
     store.save_draft(sample(store))
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    _open_global_search(app)
 
     app.text_input(key="global_search_q").set_value("Sheyla").run()
     app.button(key="global_search_submit").click().run()
@@ -367,6 +379,13 @@ def test_home_search_clear_resets_results_input_and_errors(store, monkeypatch):
     assert "Digite pelo menos" in reset_text
     assert "Resultados para" not in reset_text
     assert not any(button.key == clear_key for button in app.button)
+    next(item for item in app.text_input if item.label == "Busca").set_value("Sheyla").run()
+    app.button(key="global_search_submit").click().run()
+    origin = next(button for button in app.button if str(button.label) == "Ver em Portarias")
+    origin.click().run()
+    assert not app.exception and not app.error
+    assert app.sidebar.radio(key="portal_module").value == "Portarias"
+    assert not any(getattr(button, "key", None) == "global_search_submit" for button in app.button)
 
 
 def test_home_search_clears_residual_state_on_reentry(store, monkeypatch):
@@ -377,15 +396,18 @@ def test_home_search_clears_residual_state_on_reentry(store, monkeypatch):
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    _open_global_search(app)
     app.session_state["global_search_q"] = "residual"
     app.session_state["global_search_run"] = "residual"
     app.sidebar.radio(key="portal_module").set_value("Portarias").run()
-    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    app.sidebar.radio(key="portal_module").set_value("Busca Global").run()
     assert not app.exception
     assert app.text_input(key="global_search_q").value == ""
     assert "global_search_run" not in app.session_state
     captions = " ".join(str(c.value) for c in app.caption)
     assert "Digite pelo menos" in captions
+    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    assert not any(getattr(button, "key", None) == "global_search_submit" for button in app.button)
 
 
 def test_home_search_only_shows_persistent_source_error(store, monkeypatch):
@@ -692,6 +714,8 @@ def test_authenticated_home_search_never_mounts_a_streamlit_form(store, monkeypa
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
 
     assert not app.exception and not app.error
+    assert not any(button.key == "global_search_submit" for button in app.button)
+    _open_global_search(app)
     assert any(button.key == "global_search_submit" for button in app.button)
     assert "st.form(" not in getsource(render_home_search)
     assert "st.form_submit_button" not in getsource(render_home_search)

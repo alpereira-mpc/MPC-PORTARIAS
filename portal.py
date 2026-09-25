@@ -419,15 +419,11 @@ def open_alertas():
     request_alerts_view()
 
 
-def home(principal, store=None):
+def home(principal):
     render_app_identity(
         variant="home",
         prompt="Selecione uma ferramenta para iniciar.",
     )
-    if store is not None:
-        from services.search_ui import render_home_search
-
-        render_home_search(store, principal)
     # Future modules remain registered, but only active tools occupy the Home grid.
     visible = [module for module in visible_modules(principal) if module.active]
     if not visible:
@@ -705,7 +701,7 @@ def render_portal(sidebar_context=None):
     from services.audit import iniciar_sessao_autorizada, registrar_modulo
 
     iniciar_sessao_autorizada(store, principal)
-    options = ["Início"]
+    options = ["Início", "Busca Global"]
     if has_permission(principal, "pendencias"):
         options.append("Pendências")
     if has_permission(principal, "portarias"):
@@ -795,8 +791,15 @@ def render_portal(sidebar_context=None):
         _render_module_fragment(render_alerts, store, principal)
         st.stop()
     if selected == "Início":
+        st.session_state.pop("_global_search_home_active", None)
         st.session_state["audit_modulo_atual"] = None
-        home(principal, store)
+        home(principal)
+        st.stop()
+    if selected == "Busca Global":
+        st.session_state["audit_modulo_atual"] = None
+        from services.search_ui import render_home_search
+
+        render_home_search(store, principal)
         st.stop()
     st.session_state.pop("_global_search_home_active", None)
     registrar_modulo(store, principal, selected)
