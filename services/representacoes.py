@@ -507,6 +507,9 @@ def add_document(store, identifier, values, name, content, principal):
 
 
 def register_protocol(store, identifier, values, principal, upload=None):
+    from services.access import require_permission
+
+    require_permission(principal, "representacoes_registrar_protocolo")
     current = get(store, identifier)
     if current is None:
         raise ValueError("Representação não encontrada.")

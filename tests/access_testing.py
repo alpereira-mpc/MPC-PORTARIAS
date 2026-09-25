@@ -25,6 +25,10 @@ def seed_access(
     pode_relatorios=None,
     pode_representacoes=None,
     pode_ouvidoria=None,
+    pode_representacoes_registrar_protocolo=None,
+    pode_representacoes_enviar_comunicacao=None,
+    pode_comunicacoes_configurar_destinatarios=None,
+    pode_comunicacoes_enviar_teste=None,
     gabinetes=None,
 ):
     access = AccessStore(store)
@@ -42,6 +46,10 @@ def seed_access(
         "pode_relatorios": perfil == "ADMINISTRADOR" if pode_relatorios is None else pode_relatorios,
         "pode_representacoes": perfil == "ADMINISTRADOR" if pode_representacoes is None else pode_representacoes,
         "pode_ouvidoria": perfil == "ADMINISTRADOR" if pode_ouvidoria is None else pode_ouvidoria,
+        "pode_representacoes_registrar_protocolo": perfil == "ADMINISTRADOR" if pode_representacoes_registrar_protocolo is None else pode_representacoes_registrar_protocolo,
+        "pode_representacoes_enviar_comunicacao": perfil == "ADMINISTRADOR" if pode_representacoes_enviar_comunicacao is None else pode_representacoes_enviar_comunicacao,
+        "pode_comunicacoes_configurar_destinatarios": perfil == "ADMINISTRADOR" if pode_comunicacoes_configurar_destinatarios is None else pode_comunicacoes_configurar_destinatarios,
+        "pode_comunicacoes_enviar_teste": perfil == "ADMINISTRADOR" if pode_comunicacoes_enviar_teste is None else pode_comunicacoes_enviar_teste,
         "gabinetes": list(GABINETES) if gabinetes is None else gabinetes,
     }
     return access.save_user(payload, existing["id"] if existing else None)

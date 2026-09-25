@@ -65,6 +65,8 @@ def _principal(store, email="rep@test.local", **flags):
         pode_memorandos=flags.get("memorandos", True),
         pode_relatorios=flags.get("relatorios", True),
         pode_representacoes=flags.get("representacoes", True),
+        pode_representacoes_registrar_protocolo=flags.get("registrar_protocolo", True),
+        pode_representacoes_enviar_comunicacao=flags.get("enviar_comunicacao", True),
     )
     return resolve_principal(store, {"email": email})
 

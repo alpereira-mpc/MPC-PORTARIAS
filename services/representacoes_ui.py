@@ -435,6 +435,9 @@ def _document_form(store, principal, identifier):
 
 
 def _protocol_form(store, principal, identifier):
+    if not has_permission(principal, "representacoes_registrar_protocolo"):
+        st.error("Acesso não autorizado para registrar protocolo.")
+        return
     section_label("Registrar protocolo")
     st.caption(
         "Informe os dados atribuídos pelo TRAMITA. Este projeto passa a ser tratado como Representação. "
@@ -630,7 +633,7 @@ def _detail_compact(store, principal, record):
         flow = _toolbar(
             "rep_toolbar_flow",
             [
-                ("Registrar protocolo", "rep_dt_prot", "primary") if not protocolled else None,
+                ("Registrar protocolo", "rep_dt_prot", "primary") if not protocolled and has_permission(principal, "representacoes_registrar_protocolo") else None,
                 ("Editar", "rep_dt_ed", "secondary"),
             ],
         )
@@ -783,7 +786,7 @@ def _detail_body(store, principal, record):
     flow = _toolbar(
         "rep_toolbar_flow",
         [
-            ("Registrar protocolo", "rep_dt_prot", "primary") if not protocolled else None,
+            ("Registrar protocolo", "rep_dt_prot", "primary") if not protocolled and has_permission(principal, "representacoes_registrar_protocolo") else None,
             ("Andamento", "rep_dt_prg", "secondary"),
             ("Anexar documento", "rep_dt_doc", "secondary"),
             ("Editar", "rep_dt_ed", "secondary"),

@@ -117,7 +117,7 @@ SCHEMA_MARKERS = (
 )
 
 ESSENTIAL_COLUMNS = {
-    "usuarios_acesso": ("email", "perfil", "pode_admin", "pode_memorandos", "pode_representacoes", "pode_ouvidoria", "protegido", "tema"),
+    "usuarios_acesso": ("email", "perfil", "pode_admin", "pode_memorandos", "pode_representacoes", "pode_ouvidoria", "pode_representacoes_registrar_protocolo", "pode_representacoes_enviar_comunicacao", "pode_comunicacoes_configurar_destinatarios", "pode_comunicacoes_enviar_teste", "protegido", "tema"),
     "ouvidoria_manifestacoes": ("numero_interno", "situacao", "classificacao_acesso", "representacao_id"),
     "usuario_gabinetes": ("usuario_id", "gabinete"),
     "access_requests": ("nome", "email", "gabinete", "status", "created_at"),

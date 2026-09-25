@@ -16,7 +16,9 @@ _READY = set()
 GABINETE_LIST = ",".join("'" + code + "'" for code in GABINETES)
 USER_COLUMNS = (
     "id,nome,email,perfil,ativo,pode_portarias,pode_agenda,pode_oficios,pode_memorandos,pode_relatorios,"
-    "pode_representacoes,pode_ouvidoria,pode_admin,protegido,criado_em,atualizado_em"
+    "pode_representacoes,pode_ouvidoria,pode_representacoes_registrar_protocolo,"
+    "pode_representacoes_enviar_comunicacao,pode_comunicacoes_configurar_destinatarios,"
+    "pode_comunicacoes_enviar_teste,pode_admin,protegido,criado_em,atualizado_em"
 )
 
 
@@ -73,6 +75,21 @@ class AccessStore:
                     c.execute(
                         "UPDATE usuarios_acesso SET pode_ouvidoria=1 WHERE perfil='ADMINISTRADOR'"
                     )
+            for column in (
+                "pode_representacoes_registrar_protocolo",
+                "pode_representacoes_enviar_comunicacao",
+                "pode_comunicacoes_configurar_destinatarios",
+                "pode_comunicacoes_enviar_teste",
+            ):
+                if column not in columns:
+                    with self.store.connection() as c:
+                        c.execute("BEGIN IMMEDIATE")
+                        c.execute(
+                            f"ALTER TABLE usuarios_acesso ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+                        )
+                        c.execute(
+                            f"UPDATE usuarios_acesso SET {column}=1 WHERE perfil='ADMINISTRADOR'"
+                        )
             if not protected:
                 with self.store.connection() as c:
                     c.execute("BEGIN IMMEDIATE")
@@ -101,6 +118,10 @@ class AccessStore:
                 "pode_relatorios INTEGER NOT NULL DEFAULT 0 CHECK(pode_relatorios IN (0,1)),"
                 "pode_representacoes INTEGER NOT NULL DEFAULT 0 CHECK(pode_representacoes IN (0,1)),"
                 "pode_ouvidoria INTEGER NOT NULL DEFAULT 0 CHECK(pode_ouvidoria IN (0,1)),"
+                "pode_representacoes_registrar_protocolo INTEGER NOT NULL DEFAULT 0 CHECK(pode_representacoes_registrar_protocolo IN (0,1)),"
+                "pode_representacoes_enviar_comunicacao INTEGER NOT NULL DEFAULT 0 CHECK(pode_representacoes_enviar_comunicacao IN (0,1)),"
+                "pode_comunicacoes_configurar_destinatarios INTEGER NOT NULL DEFAULT 0 CHECK(pode_comunicacoes_configurar_destinatarios IN (0,1)),"
+                "pode_comunicacoes_enviar_teste INTEGER NOT NULL DEFAULT 0 CHECK(pode_comunicacoes_enviar_teste IN (0,1)),"
                 "pode_admin INTEGER NOT NULL DEFAULT 0 CHECK(pode_admin IN (0,1)),"
                 "protegido INTEGER NOT NULL DEFAULT 0 CHECK(protegido IN (0,1)),"
                 "tema TEXT NOT NULL DEFAULT 'vermelho',"
@@ -134,6 +155,16 @@ class AccessStore:
                 c.execute(
                     "ALTER TABLE usuarios_acesso ADD COLUMN pode_ouvidoria INTEGER NOT NULL DEFAULT 0"
                 )
+            for column in (
+                "pode_representacoes_registrar_protocolo",
+                "pode_representacoes_enviar_comunicacao",
+                "pode_comunicacoes_configurar_destinatarios",
+                "pode_comunicacoes_enviar_teste",
+            ):
+                if column not in columns:
+                    c.execute(
+                        f"ALTER TABLE usuarios_acesso ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+                    )
             if "protegido" not in columns:
                 c.execute(
                     "ALTER TABLE usuarios_acesso ADD COLUMN protegido INTEGER NOT NULL DEFAULT 0"
@@ -144,7 +175,11 @@ class AccessStore:
                 )
             c.execute(
                 "UPDATE usuarios_acesso SET pode_memorandos=1, pode_relatorios=1, "
-                "pode_representacoes=1, pode_ouvidoria=1 WHERE perfil='ADMINISTRADOR'"
+                "pode_representacoes=1, pode_ouvidoria=1, "
+                "pode_representacoes_registrar_protocolo=1, "
+                "pode_representacoes_enviar_comunicacao=1, "
+                "pode_comunicacoes_configurar_destinatarios=1, "
+                "pode_comunicacoes_enviar_teste=1 WHERE perfil='ADMINISTRADOR'"
             )
             fk = "BIGINT" if self.store.backend == "postgresql" else "INTEGER"
             c.execute(
@@ -182,6 +217,10 @@ class AccessStore:
             "UPDATE usuarios_acesso SET protegido=1, perfil='ADMINISTRADOR', ativo=1, "
             "pode_admin=1, pode_portarias=1, pode_agenda=1, pode_oficios=1, pode_memorandos=1, "
             "pode_relatorios=1, pode_representacoes=1, pode_ouvidoria=1 "
+            ",pode_representacoes_registrar_protocolo=1, "
+            "pode_representacoes_enviar_comunicacao=1, "
+            "pode_comunicacoes_configurar_destinatarios=1, "
+            "pode_comunicacoes_enviar_teste=1 "
             "WHERE email=?",
             (PROTECTED_ADMIN_EMAIL,),
         )
@@ -274,6 +313,10 @@ class AccessStore:
                     "pode_relatorios",
                     "pode_representacoes",
                     "pode_ouvidoria",
+                    "pode_representacoes_registrar_protocolo",
+                    "pode_representacoes_enviar_comunicacao",
+                    "pode_comunicacoes_configurar_destinatarios",
+                    "pode_comunicacoes_enviar_teste",
                     "pode_admin",
                     "protegido",
                 ):
@@ -293,7 +336,7 @@ class AccessStore:
         if not EMAIL_RE.match(email):
             raise ValueError("Informe um e-mail válido.")
         if perfil == "ADMINISTRADOR":
-            flags = (1, 1, 1, 1, 1, 1, 1, 1)
+            flags = (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
             gabinetes = list(GABINETES)
         else:
             flags = (
@@ -304,6 +347,10 @@ class AccessStore:
                 flag(payload.get("pode_relatorios")),
                 flag(payload.get("pode_representacoes")),
                 flag(payload.get("pode_ouvidoria")),
+                flag(payload.get("pode_representacoes_registrar_protocolo")),
+                flag(payload.get("pode_representacoes_enviar_comunicacao")),
+                flag(payload.get("pode_comunicacoes_configurar_destinatarios")),
+                flag(payload.get("pode_comunicacoes_enviar_teste")),
                 flag(payload.get("pode_admin")),
             )
             gabinetes = []
@@ -335,14 +382,15 @@ class AccessStore:
                 existing["ativo"] = bool(existing["ativo"])
                 existing["protegido"] = bool(existing.get("protegido"))
                 existing["pode_admin"] = bool(existing["pode_admin"])
-            self._reject_protected_changes(existing, email, perfil, ativo, flags[7])
+            self._reject_protected_changes(existing, email, perfil, ativo, flags[11])
             self._reject_last_administrator_loss(c, existing, perfil, ativo)
             if identifier is None:
                 inserted = c.execute(
                     "INSERT INTO usuarios_acesso(nome,email,perfil,ativo,pode_portarias,"
                     "pode_agenda,pode_oficios,pode_memorandos,pode_relatorios,pode_representacoes,"
-                    "pode_ouvidoria,pode_admin,protegido,criado_em,atualizado_em) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "pode_ouvidoria,pode_representacoes_registrar_protocolo,pode_representacoes_enviar_comunicacao,"
+                    "pode_comunicacoes_configurar_destinatarios,pode_comunicacoes_enviar_teste,pode_admin,protegido,criado_em,atualizado_em) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (nome, email, perfil, ativo, *flags, protegido, stamp, stamp),
                 )
                 identifier = inserted.lastrowid
@@ -352,8 +400,10 @@ class AccessStore:
                     "UPDATE usuarios_acesso SET nome=?,email=?,perfil=?,ativo=?,"
                     "pode_portarias=?,pode_agenda=?,pode_oficios=?,pode_memorandos=?,pode_relatorios=?,"
                     "pode_representacoes=?,pode_ouvidoria=?,pode_admin=?,"
+                    "pode_representacoes_registrar_protocolo=?,pode_representacoes_enviar_comunicacao=?,"
+                    "pode_comunicacoes_configurar_destinatarios=?,pode_comunicacoes_enviar_teste=?,"
                     "atualizado_em=? WHERE id=?",
-                    (nome, email, perfil, ativo, *flags, stamp, identifier),
+                    (nome, email, perfil, ativo, *flags[:7], flags[11], *flags[7:11], stamp, identifier),
                 )
                 if email == PROTECTED_ADMIN_EMAIL:
                     self._mark_protected_admin(c)
@@ -470,7 +520,7 @@ class AccessStore:
     def _hydrate(self, c, row):
         record = dict(row)
         record["ativo"] = bool(record["ativo"])
-        for key in ("pode_portarias", "pode_agenda", "pode_oficios", "pode_memorandos", "pode_relatorios", "pode_representacoes", "pode_ouvidoria", "pode_admin", "protegido"):
+        for key in ("pode_portarias", "pode_agenda", "pode_oficios", "pode_memorandos", "pode_relatorios", "pode_representacoes", "pode_ouvidoria", "pode_representacoes_registrar_protocolo", "pode_representacoes_enviar_comunicacao", "pode_comunicacoes_configurar_destinatarios", "pode_comunicacoes_enviar_teste", "pode_admin", "protegido"):
             record[key] = bool(record.get(key))
         record["gabinetes"] = [
             r[0]

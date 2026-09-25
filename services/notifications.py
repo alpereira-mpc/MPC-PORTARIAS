@@ -245,6 +245,7 @@ def _snapshot_message(preview):
 def confirm_send(store, record, principal, transport=None):
     """Send one collective message. A second call cannot claim the same notice."""
     require_permission(principal, "representacoes")
+    require_permission(principal, "representacoes_enviar_comunicacao")
     _require_protocol(record)
     saved = ensure_draft(store, record, principal)
     if saved["status"] == "SENT":
@@ -339,6 +340,7 @@ def confirm_send(store, record, principal, transport=None):
 
 def save_recipient(store, principal, *, membro_tipo, membro_id, email, ativo):
     require_permission(principal, "admin")
+    require_permission(principal, "comunicacoes_configurar_destinatarios")
     if membro_tipo not in ("PROCURADOR", "SERVIDOR"):
         raise ValueError("Tipo de destinatário inválido.")
     normalized = normalize_email(email)

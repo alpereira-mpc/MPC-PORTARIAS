@@ -419,6 +419,10 @@ def render(store, principal):
         pode_relatorios=False,
         pode_representacoes=False,
         pode_ouvidoria=False,
+        pode_representacoes_registrar_protocolo=False,
+        pode_representacoes_enviar_comunicacao=False,
+        pode_comunicacoes_configurar_destinatarios=False,
+        pode_comunicacoes_enviar_teste=False,
         pode_admin=False,
         gabinetes=[],
     )
@@ -479,6 +483,26 @@ def render(store, principal):
             value=current["pode_representacoes"],
             key=prefix + "representacoes",
         )
+        protocolo = st.checkbox(
+            "Representações — Registrar protocolo",
+            value=current.get("pode_representacoes_registrar_protocolo", False),
+            key=prefix + "representacoes_registrar_protocolo",
+        )
+        comunicacao = st.checkbox(
+            "Representações — Enviar comunicação de protocolo",
+            value=current.get("pode_representacoes_enviar_comunicacao", False),
+            key=prefix + "representacoes_enviar_comunicacao",
+        )
+        destinatarios = st.checkbox(
+            "Comunicações — Configurar destinatários",
+            value=current.get("pode_comunicacoes_configurar_destinatarios", False),
+            key=prefix + "comunicacoes_configurar_destinatarios",
+        )
+        teste_email = st.checkbox(
+            "Comunicações — Enviar e-mail de teste",
+            value=current.get("pode_comunicacoes_enviar_teste", False),
+            key=prefix + "comunicacoes_enviar_teste",
+        )
         ouvidoria = st.checkbox(
             "Ouvidoria",
             value=current.get("pode_ouvidoria", False),
@@ -520,6 +544,10 @@ def render(store, principal):
                     "pode_memorandos": memorandos,
                     "pode_relatorios": relatorios,
                     "pode_representacoes": representacoes,
+                    "pode_representacoes_registrar_protocolo": protocolo,
+                    "pode_representacoes_enviar_comunicacao": comunicacao,
+                    "pode_comunicacoes_configurar_destinatarios": destinatarios,
+                    "pode_comunicacoes_enviar_teste": teste_email,
                     "pode_ouvidoria": ouvidoria,
                     "pode_admin": admin,
                     "gabinetes": gabinetes,

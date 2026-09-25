@@ -58,6 +58,9 @@ def _principal(store, email="ouvi@test.local", **flags):
         pode_memorandos=flags.get("memorandos", True),
         pode_relatorios=flags.get("relatorios", True),
         pode_representacoes=flags.get("representacoes", False),
+        pode_representacoes_registrar_protocolo=flags.get(
+            "registrar_protocolo", flags.get("representacoes", False)
+        ),
         pode_ouvidoria=flags.get("ouvidoria", True),
     )
     return resolve_principal(store, {"email": email})

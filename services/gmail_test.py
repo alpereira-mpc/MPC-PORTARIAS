@@ -43,6 +43,7 @@ def test_message(recipient, when=None):
 
 def send_institutional_test(store, principal, recipient, transport=None):
     require_permission(principal, "admin")
+    require_permission(principal, "comunicacoes_enviar_teste")
     address = institutional_recipient(recipient)
     if transport is None:
         try:

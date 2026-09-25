@@ -4,6 +4,7 @@ import logging
 
 import streamlit as st
 
+from services.access import has_permission
 from services.email_transport import NOT_CONFIGURED, NotConfigured
 from services.ui_theme import definition_block, section_label
 
@@ -54,6 +55,7 @@ def render_protocol_notice(store, principal, record):
     if summary["status"] == "SENDING":
         return
     label = "Visualizar comunicação enviada" if summary["status"] == "SENT" else "Visualizar e enviar e-mail"
+    can_send_notice = has_permission(principal, "representacoes_enviar_comunicacao")
     if not open_preview and st.button(label, key="rep_mail_open_" + str(record["id"])):
         if summary["status"] != "SENT":
             ensure_draft(store, record, principal)
@@ -91,7 +93,7 @@ def render_protocol_notice(store, principal, record):
         and preview["configured"]
         and preview["destinatarios"]
     )
-    if can_send and st.button("Confirmar envio", type="primary", key="rep_mail_send_" + str(record["id"])):
+    if can_send and can_send_notice and st.button("Confirmar envio", type="primary", key="rep_mail_send_" + str(record["id"])):
         try:
             confirm_send(store, record, principal)
         except NotConfigured as exc:
@@ -144,6 +146,9 @@ def render_admin_recipients(store, principal):
 def _recipient_form(store, principal, people, current):
     from services.notifications import save_recipient
 
+    if not has_permission(principal, "comunicacoes_configurar_destinatarios"):
+        st.caption("Seu acesso permite consultar os destinatários, mas não alterá-los.")
+        return
     labels = {
         index: f"{'Procurador' if kind == 'PROCURADOR' else 'Servidor'} — {name}"
         for index, (kind, _identifier, name, _role) in enumerate(people)
@@ -198,9 +203,10 @@ def render_gmail_test(store, principal):
         st.caption("Status: Não configurado")
     if status["problem"] == "sender":
         st.error("O remetente institucional deve ser mpc@tce.pb.gov.br.")
-    recipient = st.text_input("Destinatário de teste", key="gmail_test_recipient")
+    allowed = has_permission(principal, "comunicacoes_enviar_teste")
+    recipient = st.text_input("Destinatário de teste", key="gmail_test_recipient", disabled=not allowed)
     pending = st.session_state.get("gmail_test_pending")
-    if st.button("Enviar e-mail de teste", key="gmail_test_prepare"):
+    if st.button("Enviar e-mail de teste", key="gmail_test_prepare", disabled=not allowed):
         try:
             st.session_state["gmail_test_pending"] = institutional_recipient(recipient)
         except ValueError as exc:
@@ -213,7 +219,7 @@ def render_gmail_test(store, principal):
     if st.button("Cancelar teste", key="gmail_test_cancel"):
         st.session_state.pop("gmail_test_pending", None)
         st.rerun()
-    if st.button("Confirmar envio do teste", type="primary", key="gmail_test_confirm"):
+    if allowed and st.button("Confirmar envio do teste", type="primary", key="gmail_test_confirm"):
         try:
             send_institutional_test(store, principal, pending)
         except NotConfigured as exc:

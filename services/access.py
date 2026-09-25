@@ -6,6 +6,13 @@ from database.access import AccessStore, normalize_email
 from services.oficios import GABINETES
 
 MODULES = ("portarias", "agenda", "oficios", "memorandos", "tarefas", "relatorios", "representacoes", "ouvidoria", "admin")
+# Capacidades delegáveis para ações que podem produzir efeito institucional externo.
+CAPABILITIES = (
+    "representacoes_registrar_protocolo",
+    "representacoes_enviar_comunicacao",
+    "comunicacoes_configurar_destinatarios",
+    "comunicacoes_enviar_teste",
+)
 CACHE_SECONDS = 20
 
 
@@ -25,6 +32,10 @@ class Principal:
     pode_relatorios: bool = False
     pode_representacoes: bool = False
     pode_ouvidoria: bool = False
+    pode_representacoes_registrar_protocolo: bool = False
+    pode_representacoes_enviar_comunicacao: bool = False
+    pode_comunicacoes_configurar_destinatarios: bool = False
+    pode_comunicacoes_enviar_teste: bool = False
 
     @property
     def administrator(self):
@@ -88,6 +99,10 @@ def principal_from_record(record):
             pode_relatorios=True,
             pode_representacoes=True,
             pode_ouvidoria=True,
+            pode_representacoes_registrar_protocolo=True,
+            pode_representacoes_enviar_comunicacao=True,
+            pode_comunicacoes_configurar_destinatarios=True,
+            pode_comunicacoes_enviar_teste=True,
             pode_admin=True,
             gabinetes=tuple(GABINETES),
         )
@@ -109,6 +124,10 @@ def principal_from_record(record):
         pode_relatorios=bool(record.get("pode_relatorios", False)),
         pode_representacoes=bool(record.get("pode_representacoes", False)),
         pode_ouvidoria=bool(record.get("pode_ouvidoria", False)),
+        pode_representacoes_registrar_protocolo=bool(record.get("pode_representacoes_registrar_protocolo", False)),
+        pode_representacoes_enviar_comunicacao=bool(record.get("pode_representacoes_enviar_comunicacao", False)),
+        pode_comunicacoes_configurar_destinatarios=bool(record.get("pode_comunicacoes_configurar_destinatarios", False)),
+        pode_comunicacoes_enviar_teste=bool(record.get("pode_comunicacoes_enviar_teste", False)),
         pode_admin=bool(record["pode_admin"]),
         gabinetes=gabinetes,
     )
@@ -201,6 +220,8 @@ def has_permission(principal, module):
         return principal.pode_ouvidoria
     if module == "admin":
         return principal.pode_admin
+    if module in CAPABILITIES:
+        return principal.administrator or bool(getattr(principal, "pode_" + module, False))
     return False
 
 
