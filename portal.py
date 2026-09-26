@@ -16,7 +16,13 @@ from services.branding import (
     render_sidebar_brand,
 )
 from services.ui_store import asset
-from services.ui_theme import apply_theme, badge, empty_state, institutional_card_mark, render_html
+from services.ui_theme import (
+    apply_theme,
+    badge,
+    empty_state,
+    institutional_card_mark,
+    render_html,
+)
 from services.themes import THEME_LABELS, valid_theme
 from services.versioning import APP_VERSION
 
@@ -30,6 +36,9 @@ PORTAL_SPECIAL_VIEW = "portal_special_view"
 PORTAL_SPECIAL_RETURN = "portal_special_return"
 PORTAL_SPECIAL_ANCHOR = "portal_special_anchor"
 ALERTS_VIEW = "alerts"
+# Set only from the module radio (or the sidebar logo when it actually
+# changes the module). Consumed once so later reruns do not touch the drawer.
+PORTAL_MOBILE_SIDEBAR_COLLAPSE = "_portal_mobile_sidebar_collapse"
 PORTAL_NAV_STATE_KEYS = frozenset(
     {
         "nav",
@@ -284,6 +293,8 @@ def open_portarias():
 
 def open_home():
     """Return to Home through the same queued Portal navigation flow."""
+    if _session_get("portal_module") not in (None, "Início"):
+        _mark_mobile_sidebar_collapse()
     queue_portal_navigation("Início")
 
 
@@ -570,7 +581,11 @@ def _logout():
         from services.audit import registrar_logout
 
         registrar_logout(
-            st.session_state["_mpc_store"] if "_mpc_store" in st.session_state else None,
+            (
+                st.session_state["_mpc_store"]
+                if "_mpc_store" in st.session_state
+                else None
+            ),
             st.session_state.get("_audit_actor"),
             identity=st.session_state.get("_audit_identity"),
         )
@@ -634,6 +649,93 @@ def _application_store():
     store = Store()
     st.session_state["_mpc_store"] = store
     return store
+
+
+def _mark_mobile_sidebar_collapse():
+    """Remember that the user just picked another module in the sidebar."""
+    st.session_state[PORTAL_MOBILE_SIDEBAR_COLLAPSE] = True
+
+
+def _mobile_sidebar_collapse_markup(token):
+    """One-shot script that closes the mobile drawer after a module change.
+
+    Streamlit 1.56 has no API to collapse the sidebar after the first page
+    load. On narrow viewports the sidebar is a drawer: it closes on an
+    outside click, but choosing a radio option is a click inside the drawer,
+    so it stays open. This script runs only on the run that follows that
+    selection. It clicks Streamlit's own collapse control when the sidebar
+    is expanded and showing the mobile overlay shadow (``breakpoints.md``,
+    currently 768px). The saved ``stSidebarCollapsed-*`` preference is
+    restored immediately, so a later desktop session is not forced closed.
+    """
+    script = """
+<script>
+(function () {
+  var token = "__TOKEN__";
+  var attempts = 0;
+  function run() {
+    if (window.__mpcMobileSidebarCollapseToken === token) return;
+    var sidebar = document.querySelector('[data-testid="stSidebar"]');
+    if (!sidebar) {
+      if (attempts++ < 8) requestAnimationFrame(run);
+      return;
+    }
+    if (sidebar.getAttribute("aria-expanded") !== "true") return;
+    var shadow = window.getComputedStyle(sidebar).boxShadow;
+    if (!shadow || shadow === "none") {
+      if (attempts++ < 8) requestAnimationFrame(run);
+      return;
+    }
+    var button = sidebar.querySelector(
+      '[data-testid="stSidebarCollapseButton"] button'
+    );
+    if (!button) {
+      if (attempts++ < 8) requestAnimationFrame(run);
+      return;
+    }
+    window.__mpcMobileSidebarCollapseToken = token;
+    var prefix = "stSidebarCollapsed-";
+    var saved = [];
+    var known = {};
+    var index;
+    var key;
+    for (index = 0; index < localStorage.length; index++) {
+      key = localStorage.key(index);
+      if (key && key.indexOf(prefix) === 0) {
+        saved.push([key, localStorage.getItem(key)]);
+        known[key] = true;
+      }
+    }
+    button.click();
+    var created = [];
+    for (index = 0; index < localStorage.length; index++) {
+      key = localStorage.key(index);
+      if (key && key.indexOf(prefix) === 0 && !known[key]) created.push(key);
+    }
+    created.forEach(function (createdKey) {
+      localStorage.removeItem(createdKey);
+    });
+    saved.forEach(function (pair) {
+      localStorage.setItem(pair[0], pair[1]);
+    });
+  }
+  run();
+})();
+</script>
+"""
+    return script.replace("__TOKEN__", str(int(token)))
+
+
+def _emit_mobile_sidebar_collapse():
+    if not st.session_state.pop(PORTAL_MOBILE_SIDEBAR_COLLAPSE, False):
+        return
+    token = int(st.session_state.get("_portal_mobile_sidebar_collapse_seq", 0)) + 1
+    st.session_state["_portal_mobile_sidebar_collapse_seq"] = token
+    with st.container(key="portal_mobile_sidebar_collapse"):
+        st.html(
+            _mobile_sidebar_collapse_markup(token),
+            unsafe_allow_javascript=True,
+        )
 
 
 def render_portal(sidebar_context=None):
@@ -734,7 +836,15 @@ def render_portal(sidebar_context=None):
 
         _, logout_column = st.columns([3, 2])
         st.markdown(
-            "<style>div.st-key-portal_logout{display:flex;justify-content:flex-end;}</style>",
+            "<style>"
+            "div.st-key-portal_logout{display:flex;justify-content:flex-end;}"
+            "[data-testid='stElementContainer']:has([class*='st-key-portal_mobile_sidebar_collapse']),"
+            "[data-testid='stLayoutWrapper']:has([class*='st-key-portal_mobile_sidebar_collapse']),"
+            "[class*='st-key-portal_mobile_sidebar_collapse']{"
+            "display:none !important;height:0 !important;min-height:0 !important;"
+            "margin:0 !important;padding:0 !important;overflow:hidden !important;"
+            "}"
+            "</style>",
             unsafe_allow_html=True,
         )
         if logout_column.button("Sair", type="primary", key="portal_logout"):
@@ -748,6 +858,7 @@ def render_portal(sidebar_context=None):
             format_func=lambda option: (
                 "Agenda e Afastamentos" if option == "Agenda" else option
             ),
+            on_change=_mark_mobile_sidebar_collapse,
         )
         if (
             selected == "Portarias"
@@ -775,6 +886,7 @@ def render_portal(sidebar_context=None):
             st.session_state["memorando_form_active"] = False
         if selected != "Relatórios e Indicadores":
             st.session_state.pop("_tramita_previews", None)
+    _emit_mobile_sidebar_collapse()
     render_institutional_header(home=selected == "Início")
     if alerts_overlay_active(selected):
         st.session_state.pop("_global_search_home_active", None)

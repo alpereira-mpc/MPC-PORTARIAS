@@ -40,7 +40,9 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     assert any(b.label == "Solicitar acesso" for b in app.button)
     assert "Ainda não possui acesso?" in visible
     assert "Cadastre-se" not in visible
-    assert "Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br." in visible
+    assert (
+        "Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br." in visible
+    )
     app.button(key="access_request_open").click().run()
     assert not app.exception and not app.error
     assert any(i.label == "Nome completo" for i in app.text_input)
@@ -59,7 +61,9 @@ def test_brand_assets_are_packaged_with_the_repository():
     assert branding.SIDEBAR_LOGO.name == "mpcpb_logo_sidebar_transparent.png"
     assert branding.HEADER_IMAGE.name == "mpcpb_header_horizontal_transparent.png"
     assert branding.APP_NAME == "Ferramentas MPC-PB"
-    assert branding.APP_SHORT_SUBTITLE == "Portal Integrado de Gestão e Apoio Operacional"
+    assert (
+        branding.APP_SHORT_SUBTITLE == "Portal Integrado de Gestão e Apoio Operacional"
+    )
     assert branding.APP_SUBTITLE == (
         branding.APP_SHORT_SUBTITLE + " do Ministério Público de Contas da Paraíba"
     )
@@ -225,11 +229,17 @@ def test_relatorios_card_menu_and_route_follow_module_permission(store, monkeypa
     )
     monkeypatch.setattr(
         "services.access.oidc_identity",
-        lambda: {"email": "relatorios.portal@test.local", "name": "Leitor", "email_verified": True},
+        lambda: {
+            "email": "relatorios.portal@test.local",
+            "name": "Leitor",
+            "email_verified": True,
+        },
     )
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
-    assert any(getattr(button, "key", None) == "open_relatorios" for button in app.button)
+    assert any(
+        getattr(button, "key", None) == "open_relatorios" for button in app.button
+    )
     portal = next(radio for radio in app.sidebar.radio if radio.key == "portal_module")
     assert "Relatórios e Indicadores" in portal.options
     portal.set_value("Relatórios e Indicadores").run()
@@ -240,7 +250,9 @@ def test_relatorios_card_menu_and_route_follow_module_permission(store, monkeypa
     ]
 
 
-def test_relatorios_is_hidden_and_manipulated_navigation_is_reset_without_permission(store, monkeypatch):
+def test_relatorios_is_hidden_and_manipulated_navigation_is_reset_without_permission(
+    store, monkeypatch
+):
     from tests.access_testing import seed_access
 
     seed_access(
@@ -257,11 +269,17 @@ def test_relatorios_is_hidden_and_manipulated_navigation_is_reset_without_permis
     )
     monkeypatch.setattr(
         "services.access.oidc_identity",
-        lambda: {"email": "sem.relatorios@test.local", "name": "Sem", "email_verified": True},
+        lambda: {
+            "email": "sem.relatorios@test.local",
+            "name": "Sem",
+            "email_verified": True,
+        },
     )
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
-    assert not any(getattr(button, "key", None) == "open_relatorios" for button in app.button)
+    assert not any(
+        getattr(button, "key", None) == "open_relatorios" for button in app.button
+    )
     portal = next(radio for radio in app.sidebar.radio if radio.key == "portal_module")
     assert "Relatórios e Indicadores" not in portal.options
     from portal import PORTAL_NAV_REQUEST
@@ -271,7 +289,10 @@ def test_relatorios_is_hidden_and_manipulated_navigation_is_reset_without_permis
         "state": {},
     }
     app.run()
-    assert next(radio for radio in app.sidebar.radio if radio.key == "portal_module").value == "Início"
+    assert (
+        next(radio for radio in app.sidebar.radio if radio.key == "portal_module").value
+        == "Início"
+    )
 
 
 def test_denied_google_account_does_not_open_portal(store, monkeypatch):
@@ -354,7 +375,9 @@ def test_home_visible_modules_active_first_and_authorization():
     from portal import visible_modules
 
     admin = visible_modules(
-        _principal(portarias=True, agenda=True, oficios=True, admin=True, relatorios=True)
+        _principal(
+            portarias=True, agenda=True, oficios=True, admin=True, relatorios=True
+        )
     )
     assert [m.key for m in admin] == [
         "portarias",
@@ -369,7 +392,14 @@ def test_home_visible_modules_active_first_and_authorization():
     assert len(admin) == 6
 
     with_memo = visible_modules(
-        _principal(portarias=True, agenda=True, oficios=True, memorandos=True, admin=True, relatorios=True)
+        _principal(
+            portarias=True,
+            agenda=True,
+            oficios=True,
+            memorandos=True,
+            admin=True,
+            relatorios=True,
+        )
     )
     assert [m.key for m in with_memo] == [
         "portarias",
@@ -445,7 +475,6 @@ def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
     assert keys.index("open_ouvidoria") < keys.index("open_admin")
 
 
-
 def test_home_portarias_agenda_oficios_admin_roundtrip(store, monkeypatch):
     from tests.access_testing import enable_login
 
@@ -479,9 +508,7 @@ def test_authenticated_user_can_logout_to_restricted_screen(store, monkeypatch):
 
     session = {"identity": dict(TEST_IDENTITY)}
     enable_login(monkeypatch, store)
-    monkeypatch.setattr(
-        "services.access.oidc_identity", lambda: session["identity"]
-    )
+    monkeypatch.setattr("services.access.oidc_identity", lambda: session["identity"])
     monkeypatch.setattr("database.store.Store", lambda: store)
     ended = []
 
@@ -521,9 +548,7 @@ def test_denied_user_logout_uses_native_oidc(store, monkeypatch):
             "email_verified": True,
         }
     }
-    monkeypatch.setattr(
-        "services.access.oidc_identity", lambda: session["identity"]
-    )
+    monkeypatch.setattr("services.access.oidc_identity", lambda: session["identity"])
     monkeypatch.setattr("database.store.Store", lambda: store)
     ended = []
 
@@ -540,6 +565,14 @@ def test_denied_user_logout_uses_native_oidc(store, monkeypatch):
     assert not app.exception
     assert ended == [True]
     assert any(b.label == "Entrar com Gmail" for b in app.button)
+
+
+def _collapse_scripts(app):
+    return [
+        element.proto.body
+        for element in app.get("html")
+        if "stSidebarCollapseButton" in element.proto.body
+    ]
 
 
 def _no_callback_rerun_warning(app):
@@ -630,6 +663,92 @@ def test_home_cards_and_refresh_do_not_reapply_navigation(store, monkeypatch):
     assert app.sidebar.radio(key="portal_module").value == "Portarias"
 
 
+def test_mobile_sidebar_collapse_markup_targets_only_the_open_drawer():
+    from portal import _mobile_sidebar_collapse_markup
+
+    markup = _mobile_sidebar_collapse_markup(7)
+    assert "__TOKEN__" not in markup
+    assert 'var token = "7";' in markup
+    assert markup.index("aria-expanded") < markup.index("button.click")
+    assert markup.index("boxShadow") < markup.index("button.click")
+    assert 'data-testid="stSidebarCollapseButton"' in markup
+    assert "stSidebarCollapsed-" in markup
+    assert "initial_sidebar_state" not in markup
+
+
+def test_mobile_sidebar_collapses_only_after_an_effective_module_selection(
+    store, monkeypatch
+):
+    from portal import PORTAL_MOBILE_SIDEBAR_COLLAPSE
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert not app.exception
+    assert _collapse_scripts(app) == []
+
+    modules = (
+        "Busca Global",
+        "Pendências",
+        "Portarias",
+        "Agenda",
+        "Ofícios",
+        "Representações",
+        "Tarefas",
+        "Relatórios e Indicadores",
+        "Administração",
+    )
+    for module in modules:
+        app.sidebar.radio(key="portal_module").set_value(module).run()
+        assert not app.exception, module
+        _no_callback_rerun_warning(app)
+        assert len(_collapse_scripts(app)) == 1, module
+        assert PORTAL_MOBILE_SIDEBAR_COLLAPSE not in app.session_state
+        assert app.sidebar.radio(key="portal_module").value == module
+        app.run()
+        assert not app.exception, module
+        assert _collapse_scripts(app) == [], module
+        assert app.sidebar.radio(key="portal_module").value == module
+        if module == "Busca Global":
+            app.button(key="global_search_submit").click().run()
+            assert not app.exception
+            _no_callback_rerun_warning(app)
+            assert _collapse_scripts(app) == []
+            assert app.sidebar.radio(key="portal_module").value == "Busca Global"
+        if module == "Portarias":
+            app.sidebar.radio(key="nav").set_value("Histórico").run()
+            assert not app.exception
+            assert _collapse_scripts(app) == []
+            assert app.sidebar.radio(key="nav").value == "Histórico"
+            assert app.sidebar.radio(key="portal_module").value == "Portarias"
+
+    theme = next(item for item in app.sidebar.selectbox if item.label == "Tema")
+    theme.set_value("azul" if theme.value != "azul" else "verde").run()
+    assert not app.exception
+    assert _collapse_scripts(app) == []
+    assert app.sidebar.radio(key="portal_module").value == "Administração"
+
+    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    assert len(_collapse_scripts(app)) == 1
+    app.run()
+    assert _collapse_scripts(app) == []
+    app.button(key="open_portarias").click().run()
+    assert not app.exception
+    _no_callback_rerun_warning(app)
+    assert _collapse_scripts(app) == []
+    assert app.sidebar.radio(key="portal_module").value == "Portarias"
+    app.button(key="sidebar_home").click().run()
+    assert not app.exception
+    assert len(_collapse_scripts(app)) == 1
+    assert app.sidebar.radio(key="portal_module").value == "Início"
+    app.run()
+    assert _collapse_scripts(app) == []
+    app.button(key="sidebar_home").click().run()
+    assert _collapse_scripts(app) == []
+    assert app.sidebar.radio(key="portal_module").value == "Início"
+
+
 def test_logout_helper_is_defined_and_delegates_to_streamlit():
     import inspect
 
@@ -641,4 +760,3 @@ def test_logout_helper_is_defined_and_delegates_to_streamlit():
     portal_source = inspect.getsource(portal.render_portal)
     assert "_logout()" in portal_source
     assert "\n            logout()" not in portal_source
-
