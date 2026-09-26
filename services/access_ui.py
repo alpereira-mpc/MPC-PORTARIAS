@@ -18,6 +18,7 @@ ADMIN_SECTIONS = (
     "Funções Institucionais",
     "Acessos e Auditoria",
     "Sistema",
+    "Laboratório de IA",
 )
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
 AUDIT_TABS = ("Visão Geral", "Acessos", "Auditoria")
@@ -372,6 +373,11 @@ def render(store, principal):
         from services.system_ui import render as render_system
 
         render_system(store, principal)
+        return
+    if area == "Laboratório de IA":
+        from services.ai_lab_ui import render as render_ai_lab
+
+        render_ai_lab(principal)
         return
     access = AccessStore(store)
     users = access.list_users()
