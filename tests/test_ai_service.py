@@ -15,6 +15,7 @@ from services.ai_service import (
     GEMINI_MODEL,
     GeminiErro,
     GeminiNaoConfigurada,
+    extrair_dados_oficio_pdf,
     gemini_disponivel,
     resumir_documento_pdf,
 )
@@ -169,6 +170,7 @@ def test_sends_pdf_prompt_and_model_without_putting_the_key_in_the_url(
     assert PROMPT_MARK in parts[0]["text"]
     assert parts[1]["inlineData"]["mimeType"] == "application/pdf"
     assert base64.b64decode(parts[1]["inlineData"]["data"]) == PDF
+    assert "generationConfig" not in seen["body"]
     assert KEY not in caplog.text
     assert "1 0 obj" not in caplog.text
 
@@ -593,7 +595,11 @@ raise SystemExit(0 if not found else 1)
 
 def test_stable_modules_do_not_reference_the_lab():
     services = ROOT / "services"
-    integrated = {"representacoes.py", "representacoes_ui.py"}
+    integrated = {
+        "representacoes.py",
+        "representacoes_ui.py",
+        "oficios_ui.py",
+    }
     for name in (
         "representacoes.py",
         "representacoes_ui.py",
@@ -620,3 +626,166 @@ def test_stable_modules_do_not_reference_the_lab():
             "inlineData",
         ):
             assert needle not in text
+
+
+def _gemini_json(payload):
+    return json.dumps(
+        {"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]}
+    ).encode()
+
+
+OFICIO = {
+    "numero_externo": "Ofício n. 15/2026",
+    "remetente": "João da Silva",
+    "cargo_remetente": "Procurador de Justiça",
+    "instituicao": "Ministério Público de Contas",
+    "assunto": "Solicitação de informações",
+    "processo": "0001234-55.2026.8.15.0001",
+    "data": "2026-09-10",
+    "prazo": "01/10/2026",
+    "providencias_sugeridas": [
+        "Avaliar resposta ao órgão remetente até a data indicada no Ofício.",
+        "Verificar os documentos solicitados pelo remetente.",
+        "Terceira sugestão que deve ser descartada.",
+    ],
+    "data_recebimento": "1999-01-01",
+    "status": "Arquivado",
+    "observacoes": "Maria Aparecida dos Santos",
+}
+
+
+def test_oficio_extraction_validates_and_drops_unknown_fields(monkeypatch, caplog):
+    seen = {}
+    _key(monkeypatch)
+
+    def post(request):
+        seen["body"] = json.loads(request.data.decode("utf-8"))
+        seen["url"] = request.full_url
+        return _gemini_json(OFICIO)
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with caplog.at_level(logging.DEBUG):
+        data = extrair_dados_oficio_pdf(PDF)
+    assert data["numero_externo"] == "Ofício n. 15/2026"
+    assert data["remetente"] == "João da Silva"
+    assert data["prazo"] == "2026-10-01"
+    assert data["data"] == "2026-09-10"
+    assert data["providencias_sugeridas"] == OFICIO["providencias_sugeridas"][:2]
+    assert "data_recebimento" not in data
+    assert "status" not in data
+    assert "observacoes" not in data
+    assert seen["body"]["contents"][0]["parts"][0]["text"] == (
+        ai_service.PROMPT_EXTRACAO_OFICIO
+    )
+    assert seen["body"]["generationConfig"]["responseMimeType"] == "application/json"
+    assert "pedido cautelar" not in seen["body"]["contents"][0]["parts"][0]["text"]
+    assert seen["url"] == ai_service.GEMINI_ENDPOINT
+    assert KEY not in seen["url"]
+    assert "Maria Aparecida" not in caplog.text
+    assert "1 0 obj" not in caplog.text
+    assert KEY not in caplog.text
+
+
+def test_oficio_extraction_blanks_missing_and_unsafe_values(monkeypatch):
+    _key(monkeypatch)
+    monkeypatch.setattr(
+        ai_service,
+        "_post",
+        lambda request: _gemini_json(
+            {
+                "numero_externo": 15,
+                "remetente": "  ",
+                "data": "ontem",
+                "prazo": "2026-02-31",
+                "providencias_sugeridas": "Dar ciência.",
+                "outro": "inesperado",
+            }
+        ),
+    )
+    data = extrair_dados_oficio_pdf(PDF)
+    assert data == {
+        "numero_externo": "",
+        "remetente": "",
+        "cargo_remetente": "",
+        "instituicao": "",
+        "assunto": "",
+        "processo": "",
+        "data": "",
+        "prazo": "",
+        "providencias_sugeridas": [],
+    }
+
+
+def test_oficio_extraction_accepts_no_suggestions_and_ignores_the_empty_notice(
+    monkeypatch,
+):
+    _key(monkeypatch)
+    answers = [
+        {},
+        {
+            "providencias_sugeridas": [
+                "Nenhuma providência específica foi identificada no documento."
+            ]
+        },
+    ]
+
+    def post(request):
+        return _gemini_json(answers.pop(0))
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    assert extrair_dados_oficio_pdf(PDF)["providencias_sugeridas"] == []
+    assert extrair_dados_oficio_pdf(PDF)["providencias_sugeridas"] == []
+
+
+def test_oficio_extraction_rejects_unstructured_text_without_logging_it(
+    monkeypatch, caplog
+):
+    _key(monkeypatch)
+    leaked = "Maria Aparecida dos Santos pediu vista do processo secreto."
+    monkeypatch.setattr(
+        ai_service,
+        "_post",
+        lambda request: json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": leaked}]}}]}
+        ).encode(),
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(GeminiErro, match="interpretar a resposta"):
+            extrair_dados_oficio_pdf(PDF)
+    assert "Maria" not in caplog.text
+    assert "processo secreto" not in caplog.text
+    assert "1 0 obj" not in caplog.text
+
+
+def test_oficio_extraction_retries_503_and_stops_on_timeout(monkeypatch, caplog):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(
+                request.full_url, 503, "UNAVAILABLE", message="Maria Aparecida"
+            )
+        return _gemini_json({"numero_externo": "Ofício n. 3/2026"})
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with caplog.at_level(logging.DEBUG):
+        data = extrair_dados_oficio_pdf(PDF)
+    assert data["numero_externo"] == "Ofício n. 3/2026"
+    assert calls == [1, 1]
+    assert sleeps == [1]
+    assert "HTTP 503" in caplog.text
+    assert "Maria" not in caplog.text
+
+    attempts = []
+
+    def expire(_request):
+        attempts.append(1)
+        raise TimeoutError()
+
+    monkeypatch.setattr(ai_service, "_post", expire)
+    with pytest.raises(GeminiErro, match="não respondeu a tempo"):
+        extrair_dados_oficio_pdf(PDF)
+    assert attempts == [1]

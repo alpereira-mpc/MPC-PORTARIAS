@@ -5,10 +5,12 @@ User login remains the existing OAuth flow and is not used for this call.
 """
 
 import base64
+from datetime import datetime
 import json
 import logging
 import re
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 
@@ -43,6 +45,66 @@ PROMPT_RESUMO = (
     "Se determinada informação não estiver presente, "
     "informe que não foi identificada no documento."
 )
+PROMPT_EXTRACAO_OFICIO = (
+    "Você extrai dados administrativos de um Ofício recebido em PDF.\n"
+    "Leia o documento integralmente.\n"
+    "Use somente informações expressamente presentes no documento.\n"
+    "Se um dado não estiver claramente identificável, devolva string vazia.\n"
+    "Não infira, não complete, não deduza e não invente.\n"
+    "Não presuma órgão a partir de e-mail ou de domínio.\n"
+    "Não transforme número incidental em número de processo.\n"
+    "Não trate data citada no corpo como data do Ofício, "
+    "salvo se for a data de emissão do documento.\n"
+    "Não invente cargo nem prazo.\n"
+    "Não preencha o assunto com texto genérico.\n"
+    "O remetente é quem expede o Ofício, não uma pessoa apenas mencionada.\n"
+    "A instituição é o órgão remetente, não o destinatário.\n"
+    "O número do Ofício identifica este documento, não outro número citado.\n"
+    "O processo é o número de processo ou referência processual explícita, "
+    "não o número do Ofício nem número incidental.\n"
+    "A data é a data de emissão do documento, no formato AAAA-MM-DD.\n"
+    "O prazo só deve ser preenchido se estiver claramente estabelecido, "
+    "no formato AAAA-MM-DD.\n"
+    "Inclua no máximo duas providências objetivas, fundadas no texto.\n"
+    "Não crie obrigação inexistente, não afirme conclusão jurídica "
+    "e não assuma decisão do MPC-PB.\n"
+    "Não sugira fórmula genérica, como tomar as providências cabíveis, "
+    "analisar o documento ou encaminhar ao setor competente.\n"
+    "Se o Ofício for apenas informativo ou não houver providência concreta, "
+    "devolva a lista de providências vazia.\n"
+    "Responda somente com um objeto JSON contendo exatamente as chaves "
+    "numero_externo, remetente, cargo_remetente, instituicao, assunto, "
+    "processo, data, prazo e providencias_sugeridas.\n"
+    "providencias_sugeridas é uma lista com zero, uma ou duas strings."
+)
+OFICIO_EXTRAIDO_VAZIO = {
+    "numero_externo": "",
+    "remetente": "",
+    "cargo_remetente": "",
+    "instituicao": "",
+    "assunto": "",
+    "processo": "",
+    "data": "",
+    "prazo": "",
+    "providencias_sugeridas": [],
+}
+_OFICIO_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "numero_externo": {"type": "STRING"},
+        "remetente": {"type": "STRING"},
+        "cargo_remetente": {"type": "STRING"},
+        "instituicao": {"type": "STRING"},
+        "assunto": {"type": "STRING"},
+        "processo": {"type": "STRING"},
+        "data": {"type": "STRING"},
+        "prazo": {"type": "STRING"},
+        "providencias_sugeridas": {"type": "ARRAY", "items": {"type": "STRING"}},
+    },
+    "required": list(OFICIO_EXTRAIDO_VAZIO),
+}
+_OFICIO_TEXTO = 500
+_OFICIO_PROVIDENCIA = 240
 _STATUS_TOKEN = re.compile(r"[A-Z0-9_]{1,40}")
 
 
@@ -62,16 +124,37 @@ def gemini_disponivel():
 def resumir_documento_pdf(pdf_bytes):
     """Send one PDF and the fixed prompt to Gemini. Nothing is stored."""
     document = _validar_pdf(pdf_bytes)
+    return _texto_resposta(_consultar(document, PROMPT_RESUMO, "laboratório de IA"))
+
+
+def extrair_dados_oficio_pdf(pdf_bytes):
+    """Read one received-ofício PDF and return validated form fields.
+
+    Nothing is stored. Administrative fields are not part of the result.
+    """
+    document = _validar_pdf(pdf_bytes)
+    text = _texto_resposta(
+        _consultar(
+            document,
+            PROMPT_EXTRACAO_OFICIO,
+            "extração de ofício",
+            _OFICIO_SCHEMA,
+        )
+    )
+    return _dados_oficio(text)
+
+
+def _consultar(document, prompt, rotulo, schema=None):
     key = _api_key()
     if not key:
         raise GeminiNaoConfigurada()
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            raw = _post(_request(document, key))
+            raw = _post(_request(document, key, prompt, schema))
         except TimeoutError:
             # The call already waited TIMEOUT_SECONDS. Another round could
             # hold the page for several minutes, so this failure is final.
-            LOGGER.warning("Chamada ao laboratório de IA expirou.")
+            LOGGER.warning("Chamada ao %s expirou.", rotulo)
             raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
         except urllib.error.HTTPError as exc:
             code, status, retry_after = _detalhe_http(exc)
@@ -84,14 +167,15 @@ def resumir_documento_pdf(pdf_bytes):
                 _sleep(_espera(attempt, retry_after))
                 continue
             LOGGER.warning(
-                "Chamada ao laboratório de IA falhou (HTTP %s, %s).",
+                "Chamada ao %s falhou (HTTP %s, %s).",
+                rotulo,
                 code,
                 status or "sem_status",
             )
             raise GeminiErro(_mensagem_http(code, status)) from None
         except urllib.error.URLError as exc:
             if isinstance(getattr(exc, "reason", None), TimeoutError):
-                LOGGER.warning("Chamada ao laboratório de IA expirou.")
+                LOGGER.warning("Chamada ao %s expirou.", rotulo)
                 raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
             if attempt < MAX_ATTEMPTS:
                 LOGGER.warning(
@@ -100,9 +184,9 @@ def resumir_documento_pdf(pdf_bytes):
                 )
                 _sleep(_espera(attempt, None))
                 continue
-            LOGGER.warning("Chamada ao laboratório de IA sem conexão.")
+            LOGGER.warning("Chamada ao %s sem conexão.", rotulo)
             raise GeminiErro("Não foi possível conectar ao serviço de IA.") from None
-        return _texto_resposta(raw)
+        return raw
 
 
 def _api_key():
@@ -132,13 +216,13 @@ def _validar_pdf(pdf_bytes):
     return document
 
 
-def _request(document, key):
+def _request(document, key, prompt, schema=None):
     payload = {
         "contents": [
             {
                 "role": "user",
                 "parts": [
-                    {"text": PROMPT_RESUMO},
+                    {"text": prompt},
                     {
                         "inlineData": {
                             "mimeType": "application/pdf",
@@ -149,6 +233,11 @@ def _request(document, key):
             }
         ]
     }
+    if schema is not None:
+        payload["generationConfig"] = {
+            "responseMimeType": "application/json",
+            "responseSchema": schema,
+        }
     return urllib.request.Request(
         GEMINI_ENDPOINT,
         data=json.dumps(payload).encode("utf-8"),
@@ -243,6 +332,79 @@ def _texto_resposta(raw):
         LOGGER.warning("Resposta do laboratório de IA sem texto.")
         raise GeminiErro("A IA não retornou conteúdo.")
     return summary
+
+
+def _dados_oficio(text):
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        LOGGER.warning("Extração de ofício retornou estrutura inválida.")
+        raise GeminiErro(
+            "Não foi possível interpretar a resposta do serviço de IA."
+        ) from None
+    if not isinstance(data, dict):
+        LOGGER.warning("Extração de ofício retornou estrutura inválida.")
+        raise GeminiErro("Não foi possível interpretar a resposta do serviço de IA.")
+    result = dict(OFICIO_EXTRAIDO_VAZIO)
+    for field in (
+        "numero_externo",
+        "remetente",
+        "cargo_remetente",
+        "instituicao",
+        "assunto",
+        "processo",
+    ):
+        result[field] = _texto_oficio(data.get(field), _OFICIO_TEXTO)
+    for field in ("data", "prazo"):
+        result[field] = _data_oficio(data.get(field))
+    result["providencias_sugeridas"] = _providencias_oficio(
+        data.get("providencias_sugeridas")
+    )
+    return result
+
+
+def _texto_oficio(value, limit):
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())[:limit]
+
+
+def _data_oficio(value):
+    text = _texto_oficio(value, 32)
+    if not text:
+        return ""
+    for pattern in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            parsed = datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+        if 1000 <= parsed.year <= 2100:
+            return parsed.isoformat()
+    return ""
+
+
+def _providencias_oficio(value):
+    if not isinstance(value, list):
+        return []
+    found = []
+    for item in value:
+        text = _texto_oficio(item, _OFICIO_PROVIDENCIA)
+        if not text or _providencia_vazia(text):
+            continue
+        found.append(text)
+        if len(found) == 2:
+            break
+    return found
+
+
+def _providencia_vazia(text):
+    folded = unicodedata.normalize("NFKD", text)
+    plain = "".join(ch for ch in folded if not unicodedata.combining(ch)).lower()
+    return plain.startswith("nenhuma providencia especifica")
 
 
 def _status_from_error(exc):

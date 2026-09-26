@@ -3,6 +3,7 @@
 from contextlib import nullcontext
 from datetime import date, datetime
 import hashlib
+import logging
 import streamlit as st
 from services.oficios import (
     open_service,
@@ -36,6 +37,7 @@ from services.ui_theme import (
     status_tone,
 )
 
+LOGGER = logging.getLogger("mpc.ai")
 PREP_CREATE = "Criar ofício no sistema"
 PREP_ATTACH = "Anexar ofício pronto"
 _RECEBIDOS_HISTORICO_COLUMNS = ("instante", "anterior", "novo", "observacao")
@@ -580,10 +582,24 @@ def received_form(service, people):
                 "oficio_received_pdf_name",
                 "oficio_received_hash",
                 "oficio_received_data",
+                "oficio_received_prazo",
+                "oficio_received_ia",
+                "oficio_received_providencias",
                 *(f"oficio_received_{field}" for field, _ in RECEIVED_FIELDS),
             ):
                 st.session_state.pop(key, None)
-        if st.button("Analisar PDF"):
+        pdf_column, ai_column = st.columns(2)
+        with pdf_column:
+            analyze_pdf = st.button("Analisar PDF", key="oficio_received_analisar_pdf")
+        with ai_column:
+            analyze_ai = st.button(
+                "✨ Analisar com IA", key="oficio_received_analisar_ia"
+            )
+        st.caption(
+            "Analisar com IA substitui os campos do documento já preenchidos. "
+            "Data de recebimento, status, gabinete e observações permanecem."
+        )
+        if analyze_pdf:
             if pdf is None:
                 st.warning("Selecione um PDF para análise.")
             else:
@@ -610,16 +626,87 @@ def received_form(service, people):
                         date.fromisoformat(extracted) if extracted else None
                     )
                     st.rerun()
+        if analyze_ai:
+            if pdf is None:
+                st.warning("Selecione um PDF para análise.")
+            else:
+                content = pdf.getvalue()
+                try:
+                    validate_upload(pdf.name, content)
+                    from services.ai_service import (
+                        GeminiErro,
+                        GeminiNaoConfigurada,
+                        extrair_dados_oficio_pdf,
+                    )
+
+                    with st.spinner("Analisando Ofício com IA..."):
+                        meta = extrair_dados_oficio_pdf(content)
+                    if not isinstance(meta, dict):
+                        raise GeminiErro(
+                            "Não foi possível interpretar a resposta do serviço de IA."
+                        )
+                except (GeminiErro, GeminiNaoConfigurada, ValueError) as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    LOGGER.warning(
+                        "Extração de ofício falhou (%s).",
+                        type(exc).__name__,
+                    )
+                    st.error(
+                        "Não foi possível analisar o Ofício com IA. "
+                        "Preencha os dados manualmente."
+                    )
+                else:
+                    st.session_state["oficio_received_hash"] = digest
+                    st.session_state["oficio_received_pdf_bytes"] = content
+                    st.session_state["oficio_received_pdf_name"] = pdf.name
+                    for field, _title in RECEIVED_FIELDS:
+                        value = meta.get(field) or ""
+                        st.session_state["oficio_received_" + field] = (
+                            value if isinstance(value, str) else ""
+                        )
+                    for field in ("data", "prazo"):
+                        extracted = meta.get(field) or ""
+                        parsed = None
+                        if isinstance(extracted, str) and extracted:
+                            try:
+                                parsed = date.fromisoformat(extracted)
+                            except ValueError:
+                                parsed = None
+                        st.session_state["oficio_received_" + field] = parsed
+                    tips = meta.get("providencias_sugeridas")
+                    st.session_state["oficio_received_providencias"] = (
+                        [item for item in tips if isinstance(item, str)][:2]
+                        if isinstance(tips, list)
+                        else []
+                    )
+                    st.session_state["oficio_received_ia"] = True
+                    st.rerun()
         if st.session_state.get("oficio_received_ok"):
             st.success(
                 "✓ Documento analisado. Confira os dados preenchidos antes de registrar."
             )
-        elif st.session_state.get("oficio_received_hash") and not st.session_state.get(
+        elif "oficio_received_ok" in st.session_state and not st.session_state.get(
             "oficio_received_ok"
         ):
             st.warning(
                 "Não foi possível extrair texto deste PDF. O documento pode ser "
                 "digitalizado/escaneado. Preencha os dados manualmente."
+            )
+        if st.session_state.get("oficio_received_ia"):
+            st.success(
+                "✓ Ofício analisado com IA. Confira os dados antes de registrar."
+            )
+            tips = st.session_state.get("oficio_received_providencias") or []
+            st.markdown("**Sugestões de providências**")
+            if tips:
+                for index, item in enumerate(tips, start=1):
+                    st.text(f"{index}. {item}")
+            else:
+                st.text("Nenhuma providência específica foi identificada no documento.")
+            st.caption(
+                "Sugestões geradas por inteligência artificial a partir do documento "
+                "e sujeitas à avaliação do usuário."
             )
         extracted_text = st.session_state.get("oficio_received_text")
         if extracted_text:
@@ -637,7 +724,11 @@ def received_form(service, people):
                 "Data de recebimento", format="DD/MM/YYYY"
             ).isoformat()
             r["membros"] = [st.session_state["oficio_gabinete_member"]]
-            due = st.date_input("Prazo opcional", value=None, format="DD/MM/YYYY")
+            if "oficio_received_prazo" not in st.session_state:
+                st.session_state["oficio_received_prazo"] = None
+            due = st.date_input(
+                "Prazo opcional", format="DD/MM/YYYY", key="oficio_received_prazo"
+            )
             r["prazo"] = due.isoformat() if due else None
             r["status"] = st.selectbox("Status inicial", RECEIVED)
             r["observacoes"] = st.text_area("Observações do recebido")
@@ -696,8 +787,16 @@ def details(service, r, principal=None):
             (r["status"], status_tone(r["status"])),
         ),
         meta="Data: " + date.fromisoformat(r["data"]).strftime("%d/%m/%Y"),
-        accent=status_tone(r["status"]) if r["status"] in ("Cancelado", "Arquivado", "Concluído") else "brand",
-        surface=status_tone(r["status"]) if r["status"] in ("Cancelado", "Arquivado", "Concluído") else "neutral",
+        accent=(
+            status_tone(r["status"])
+            if r["status"] in ("Cancelado", "Arquivado", "Concluído")
+            else "brand"
+        ),
+        surface=(
+            status_tone(r["status"])
+            if r["status"] in ("Cancelado", "Arquivado", "Concluído")
+            else "neutral"
+        ),
     )
     definition_block(
         "Identificação",
@@ -727,7 +826,9 @@ def details(service, r, principal=None):
         ("cancelada", "Cancelamento"),
     ):
         if r.get(field):
-            tramitacao.append((title, date.fromisoformat(r[field][:10]).strftime("%d/%m/%Y")))
+            tramitacao.append(
+                (title, date.fromisoformat(r[field][:10]).strftime("%d/%m/%Y"))
+            )
     definition_block("Tramitação", tramitacao)
     if r.get("membros"):
         people = {p["id"]: p["nome"] for p in service.store.catalog("procuradores")}
@@ -736,7 +837,9 @@ def details(service, r, principal=None):
             [
                 (
                     "Membros",
-                    ", ".join(people.get(i, "Membro indisponível") for i in r["membros"]),
+                    ", ".join(
+                        people.get(i, "Membro indisponível") for i in r["membros"]
+                    ),
                 )
             ],
         )
@@ -779,7 +882,9 @@ def details(service, r, principal=None):
         section_label("Arquivo")
         for f in files:
             st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
-            if st.button("Preparar download: " + f["nome"], key="oficio_file_" + f["id"]):
+            if st.button(
+                "Preparar download: " + f["nome"], key="oficio_file_" + f["id"]
+            ):
                 audit_oficio(
                     "DOCUMENTO_BAIXADO",
                     "EXPORTAR",
@@ -875,7 +980,11 @@ def details(service, r, principal=None):
             evento = "OFICIO_CANCELADO" if status == "Cancelado" else "OFICIO_ALTERADO"
             audit_oficio(evento, "MOVIMENTAR", {**r, "status": status})
             done("Movimentação registrada.")
-    if r["direcao"] == "ENVIADO" and r.get("numero") is not None and r["status"] != "Cancelado":
+    if (
+        r["direcao"] == "ENVIADO"
+        and r.get("numero") is not None
+        and r["status"] != "Cancelado"
+    ):
         section_label("Resposta")
         with st.form("response_tracking_" + r["id"]):
             waiting = st.checkbox(
@@ -902,7 +1011,10 @@ def details(service, r, principal=None):
                 "OFICIO_ACOMPANHAMENTO_RESPOSTA",
                 "ALTERAR",
                 r,
-                extra={"aguarda_resposta": waiting, "possui_data_esperada": bool(expected)},
+                extra={
+                    "aguarda_resposta": waiting,
+                    "possui_data_esperada": bool(expected),
+                },
             )
             done("Acompanhamento de resposta atualizado.")
         if not r.get("responde_a"):
@@ -1022,7 +1134,11 @@ def render_filters(*, direction=None, tracking=False, submit_label=None):
                 [None, "ENVIADO", "RECEBIDO"],
                 format_func=lambda x: x or "Todas",
             )
-        submitted = st.button(submit_label, key="oficio_overview_search") if submit_label else False
+        submitted = (
+            st.button(submit_label, key="oficio_overview_search")
+            if submit_label
+            else False
+        )
     return {
         "direction": direction,
         "series": series,
@@ -1128,7 +1244,9 @@ def listing(
         else:
             accent = "brand"
         is_open = _oficio_detail_is_open(r["id"])
-        with card_container(index, f"of_{r['id']}", critical="vencido" in attention_text.casefold()):
+        with card_container(
+            index, f"of_{r['id']}", critical="vencido" in attention_text.casefold()
+        ):
             render_record(
                 label(r),
                 badges_html=marks,
@@ -1279,7 +1397,9 @@ def render(store=None, principal=None):
                 "Prazos próximos (7 dias)",
             ]
             tones = ("brand", "info", "warning", "warning", "danger", "warning")
-            for col, title, value, tone in zip(st.columns(3) * 2, labels, values.values(), tones):
+            for col, title, value, tone in zip(
+                st.columns(3) * 2, labels, values.values(), tones
+            ):
                 with col:
                     kpi_mark(tone)
                     st.metric(title, value)
