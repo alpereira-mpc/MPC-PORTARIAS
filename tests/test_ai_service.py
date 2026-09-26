@@ -535,7 +535,7 @@ def test_connection_succeeds_on_the_second_attempt(monkeypatch):
 
 
 def test_model_and_prompt_stay_in_the_service():
-    assert GEMINI_MODEL == "gemini-3.6-flash"
+    assert GEMINI_MODEL == "gemini-3.5-flash-lite"
     assert ai_service.GEMINI_ENDPOINT.count(GEMINI_MODEL) == 1
     services = ROOT / "services"
     model_hits = []

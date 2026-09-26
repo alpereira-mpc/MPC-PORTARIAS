@@ -16,7 +16,7 @@ import urllib.request
 
 LOGGER = logging.getLogger("mpc.ai")
 
-GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
 GEMINI_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     + GEMINI_MODEL
