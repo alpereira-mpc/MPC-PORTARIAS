@@ -4,6 +4,7 @@ import calendar
 from datetime import date, datetime, time, timedelta
 import hashlib
 import json
+import logging
 from zoneinfo import ZoneInfo
 import streamlit as st
 from database.agenda import AgendaStore
@@ -13,8 +14,10 @@ from services.agenda import (
     EVENT_TYPES,
     MEETING_WITH,
     LOCATIONS,
+    contexto_semana,
     institutional,
     conflicts,
+    leitura_semana_salva,
 )
 from services.afastamentos import MOTIVOS, eligible_substitutes, substitution_pending
 from services.ui_store import display_store
@@ -32,19 +35,46 @@ from services.ui_theme import (
 )
 
 
+LOGGER = logging.getLogger("mpc.ai")
+AVISO_SEMANA_IA = (
+    "Análise gerada por inteligência artificial a partir dos registros da Agenda. "
+    "Consulte os compromissos e afastamentos para conferência."
+)
+AVISO_SEMANA_ALTERADA = (
+    "A Agenda desta semana foi alterada desde a última análise. "
+    "Gere novamente para atualizar."
+)
+
+
 def display_datetime(value, date_only=False):
     """Brazilian presentation only; stored values remain ISO."""
     return format_date_br(value) if date_only else format_datetime_br(value)
 
 
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
-def read_agenda(key, start, end, member, kind, status, _agenda, offset=None, active=False):
+def read_agenda(
+    key, start, end, member, kind, status, _agenda, offset=None, active=False
+):
     if offset is not None:
-        return (_agenda.active_upcoming if active else _agenda.upcoming)(start, member, kind, status, offset)
-    return (_agenda.active if active else _agenda.list)(start, end, member, kind, status)
+        return (_agenda.active_upcoming if active else _agenda.upcoming)(
+            start, member, kind, status, offset
+        )
+    return (_agenda.active if active else _agenda.list)(
+        start, end, member, kind, status
+    )
 
 
-def records(agenda, start, end, member=None, kind=None, status=None, *, offset=None, active=False):
+def records(
+    agenda,
+    start,
+    end,
+    member=None,
+    kind=None,
+    status=None,
+    *,
+    offset=None,
+    active=False,
+):
     store = agenda.store
     key = (
         store.read_cache_key(("agenda_compromissos", "agenda_compromisso_procuradores"))
@@ -329,26 +359,47 @@ def editor(agenda, people, principal=None):
     record["observacoes"] = st.text_area(
         "Observações", value=old.get("observacoes", ""), key=prefix + "notes"
     )
-    existing_trips = agenda.trips_for_commitments([old["id"]]).get(old["id"], {}) if old.get("id") else {}
+    existing_trips = (
+        agenda.trips_for_commitments([old["id"]]).get(old["id"], {})
+        if old.get("id")
+        else {}
+    )
     trip_member = None
     trip = None
-    has_trip = st.checkbox("Possui viagem aérea", value=bool(existing_trips), key=prefix + "has_trip")
+    has_trip = st.checkbox(
+        "Possui viagem aérea", value=bool(existing_trips), key=prefix + "has_trip"
+    )
     if (has_trip or existing_trips) and members:
         trip_member = st.selectbox(
-            "Procurador participante com logística", members,
-            format_func=available.get, key=prefix + "trip_member",
+            "Procurador participante com logística",
+            members,
+            format_func=available.get,
+            key=prefix + "trip_member",
         )
         keep_trip = has_trip and st.checkbox(
             "Cadastrar/manter logística para este procurador",
-            value=not existing_trips or bool(existing_trips.get(trip_member)), key=prefix + "keep_trip",
+            value=not existing_trips or bool(existing_trips.get(trip_member)),
+            key=prefix + "keep_trip",
         )
         if keep_trip:
-            trip = trip_form(existing_trips.get(trip_member), prefix + f"trip_{trip_member}_", day, end_day)
-    removed_trip_members = [member for member in existing_trips if member not in members]
+            trip = trip_form(
+                existing_trips.get(trip_member),
+                prefix + f"trip_{trip_member}_",
+                day,
+                end_day,
+            )
+    removed_trip_members = [
+        member for member in existing_trips if member not in members
+    ]
     remove_orphan_trips = False
     if removed_trip_members:
-        st.warning("Há logística cadastrada para membro removido do compromisso. Remova-a explicitamente antes de salvar.")
-        remove_orphan_trips = st.checkbox("Confirmo a remoção da logística dos membros removidos", key=prefix + "remove_orphan_trips")
+        st.warning(
+            "Há logística cadastrada para membro removido do compromisso. Remova-a explicitamente antes de salvar."
+        )
+        remove_orphan_trips = st.checkbox(
+            "Confirmo a remoção da logística dos membros removidos",
+            key=prefix + "remove_orphan_trips",
+        )
     if st.button(
         "Salvar compromisso",
         type="primary",
@@ -366,21 +417,52 @@ def editor(agenda, people, principal=None):
             )
             if remove_orphan_trips:
                 for member in removed_trip_members:
-                    audit_agenda("VIAGEM_AEREA_REMOVIDA", "REMOVER", identifier, {"compromisso_id": identifier, "procurador_id": member}, "viagem_aerea")
+                    audit_agenda(
+                        "VIAGEM_AEREA_REMOVIDA",
+                        "REMOVER",
+                        identifier,
+                        {"compromisso_id": identifier, "procurador_id": member},
+                        "viagem_aerea",
+                    )
             if trip_member is not None and trip:
                 trip_old = existing_trips.get(trip_member)
-                agenda.upsert_commitment_trip(identifier, trip_member, trip, informed_by=getattr(principal, "email", None))
+                agenda.upsert_commitment_trip(
+                    identifier,
+                    trip_member,
+                    trip,
+                    informed_by=getattr(principal, "email", None),
+                )
                 audit_agenda(
                     "VIAGEM_AEREA_EDITADA" if trip_old else "VIAGEM_AEREA_CADASTRADA",
-                    "ALTERAR" if trip_old else "CRIAR", identifier,
-                    {"compromisso_id": identifier, "procurador_id": trip_member, "aeroporto_ida": trip.get("aeroporto_ida"), "aeroporto_volta": trip.get("aeroporto_volta")},
+                    "ALTERAR" if trip_old else "CRIAR",
+                    identifier,
+                    {
+                        "compromisso_id": identifier,
+                        "procurador_id": trip_member,
+                        "aeroporto_ida": trip.get("aeroporto_ida"),
+                        "aeroporto_volta": trip.get("aeroporto_volta"),
+                    },
                     "viagem_aerea",
                 )
-                if trip.get("motorista_informado") and not (trip_old or {}).get("motorista_informado"):
-                    audit_agenda("MOTORISTA_MARCADO_COMO_INFORMADO", "ALTERAR", identifier, {"compromisso_id": identifier, "procurador_id": trip_member}, "viagem_aerea")
+                if trip.get("motorista_informado") and not (trip_old or {}).get(
+                    "motorista_informado"
+                ):
+                    audit_agenda(
+                        "MOTORISTA_MARCADO_COMO_INFORMADO",
+                        "ALTERAR",
+                        identifier,
+                        {"compromisso_id": identifier, "procurador_id": trip_member},
+                        "viagem_aerea",
+                    )
             elif trip_member is not None and existing_trips.get(trip_member):
                 agenda.delete_commitment_trip(identifier, trip_member)
-                audit_agenda("VIAGEM_AEREA_REMOVIDA", "REMOVER", identifier, {"compromisso_id": identifier, "procurador_id": trip_member}, "viagem_aerea")
+                audit_agenda(
+                    "VIAGEM_AEREA_REMOVIDA",
+                    "REMOVER",
+                    identifier,
+                    {"compromisso_id": identifier, "procurador_id": trip_member},
+                    "viagem_aerea",
+                )
             audit_agenda(
                 "COMPROMISSO_ALTERADO" if old.get("id") else "COMPROMISSO_CRIADO",
                 "ALTERAR" if old.get("id") else "CRIAR",
@@ -411,7 +493,9 @@ def consume_pending_open_agenda(agenda):
             leave = agenda.get_leave(focus)
             if leave:
                 st.session_state["agenda_section"] = (
-                    "Histórico" if leave["status"] in ("ENCERRADO", "CANCELADO") else "Agenda"
+                    "Histórico"
+                    if leave["status"] in ("ENCERRADO", "CANCELADO")
+                    else "Agenda"
                 )
                 st.session_state["agenda_leave_edit"] = leave
     return focus
@@ -420,27 +504,59 @@ def consume_pending_open_agenda(agenda):
 def driver_message(name, trip, compromisso=None):
     def airport(leg):
         value = trip.get("aeroporto_" + leg) or trip.get("aeroporto")
-        return trip.get("aeroporto_" + leg + "_outro") or trip.get("aeroporto_outro") if value == "Outro" else value
+        return (
+            trip.get("aeroporto_" + leg + "_outro") or trip.get("aeroporto_outro")
+            if value == "Outro"
+            else value
+        )
+
     lines = ["Bom dia.", ""]
     if trip.get("ida_data"):
-        purpose = f" para {compromisso}" if compromisso else " para compromisso institucional"
-        lines.append(f"No dia {datetime.fromisoformat(trip['ida_data']).strftime('%d/%m')}, o(a) Procurador(a) {name} viajará{purpose}.")
-        if airport('ida'): lines.append(f"Saída pelo Aeroporto de {airport('ida')}," + (f" com voo previsto para {trip['ida_hora'].replace(':', 'h')}." if trip.get("ida_hora") else "."))
-        if trip.get("ida_motorista_hora"): lines.append(f"Horário combinado para saída: {trip['ida_motorista_hora'].replace(':', 'h')}.")
+        purpose = (
+            f" para {compromisso}" if compromisso else " para compromisso institucional"
+        )
+        lines.append(
+            f"No dia {datetime.fromisoformat(trip['ida_data']).strftime('%d/%m')}, o(a) Procurador(a) {name} viajará{purpose}."
+        )
+        if airport("ida"):
+            lines.append(
+                f"Saída pelo Aeroporto de {airport('ida')},"
+                + (
+                    f" com voo previsto para {trip['ida_hora'].replace(':', 'h')}."
+                    if trip.get("ida_hora")
+                    else "."
+                )
+            )
+        if trip.get("ida_motorista_hora"):
+            lines.append(
+                f"Horário combinado para saída: {trip['ida_motorista_hora'].replace(':', 'h')}."
+            )
     if trip.get("volta_data"):
-        text = f"O retorno será em {datetime.fromisoformat(trip['volta_data']).strftime('%d/%m')}" + (f" pelo Aeroporto de {airport('volta')}" if airport('volta') else "")
+        text = (
+            f"O retorno será em {datetime.fromisoformat(trip['volta_data']).strftime('%d/%m')}"
+            + (f" pelo Aeroporto de {airport('volta')}" if airport("volta") else "")
+        )
         if trip.get("volta_chegada_hora"):
             text += f", com chegada prevista às {trip['volta_chegada_hora'].replace(':', 'h')}"
         lines.extend(["", text + "."])
-        if trip.get("volta_motorista_hora"): lines.append(f"Horário combinado para busca no aeroporto: {trip['volta_motorista_hora'].replace(':', 'h')}.")
+        if trip.get("volta_motorista_hora"):
+            lines.append(
+                f"Horário combinado para busca no aeroporto: {trip['volta_motorista_hora'].replace(':', 'h')}."
+            )
     return "\n".join(lines)
 
 
 def render_trip_details(trip, name, *, key, compromisso=None):
     """Shared active/history display; no logistics field is required."""
+
     def airport(leg):
         value = trip.get("aeroporto_" + leg) or trip.get("aeroporto")
-        return trip.get("aeroporto_" + leg + "_outro") or trip.get("aeroporto_outro") if value == "Outro" else value
+        return (
+            trip.get("aeroporto_" + leg + "_outro") or trip.get("aeroporto_outro")
+            if value == "Outro"
+            else value
+        )
+
     render_html(trip_html("Viagem aérea"))
     st.caption("✈️ Viagem aérea")
     if trip.get("ida_data"):
@@ -449,85 +565,350 @@ def render_trip_details(trip, name, *, key, compromisso=None):
             text += " às " + trip["ida_hora"]
         st.write("Ida")
         st.write(text)
-        if airport("ida"): st.write("Aeroporto de", airport("ida"))
+        if airport("ida"):
+            st.write("Aeroporto de", airport("ida"))
         if trip.get("ida_motorista_hora"):
             st.write("Horário combinado para saída:", trip["ida_motorista_hora"])
     if trip.get("volta_data"):
-        text = "Volta: " + datetime.fromisoformat(trip["volta_data"]).strftime("%d/%m/%Y")
+        text = "Volta: " + datetime.fromisoformat(trip["volta_data"]).strftime(
+            "%d/%m/%Y"
+        )
         if trip.get("volta_chegada_hora"):
             text += " às " + trip["volta_chegada_hora"]
         st.write("Volta")
         st.write(text)
-        if airport("volta"): st.write("Aeroporto de", airport("volta"))
+        if airport("volta"):
+            st.write("Aeroporto de", airport("volta"))
         if trip.get("volta_motorista_hora"):
-            st.write("Horário combinado para busca no aeroporto:", trip["volta_motorista_hora"])
-    st.write("✅ Motorista informado" if trip.get("motorista_informado") else "⚠ Motorista ainda não informado")
-    st.text_area("Mensagem para o motorista", value=driver_message(name, trip, compromisso), height=180, key=key)
+            st.write(
+                "Horário combinado para busca no aeroporto:",
+                trip["volta_motorista_hora"],
+            )
+    st.write(
+        "✅ Motorista informado"
+        if trip.get("motorista_informado")
+        else "⚠ Motorista ainda não informado"
+    )
+    st.text_area(
+        "Mensagem para o motorista",
+        value=driver_message(name, trip, compromisso),
+        height=180,
+        key=key,
+    )
 
 
 def trip_form(old, prefix, default_ida, default_volta):
     """Editable logistics shared by every participating procurador."""
     old = old or {}
     with st.expander("Logística de viagem aérea", expanded=True):
-        has_ida = st.checkbox("Informar ida", value=bool(old.get("ida_data")), key=prefix + "has_ida")
-        has_return = st.checkbox("Informar volta", value=bool(old.get("volta_data")), key=prefix + "has_return")
+        has_ida = st.checkbox(
+            "Informar ida", value=bool(old.get("ida_data")), key=prefix + "has_ida"
+        )
+        has_return = st.checkbox(
+            "Informar volta",
+            value=bool(old.get("volta_data")),
+            key=prefix + "has_return",
+        )
         airport_ida = airport_ida_other = ida_date = ida_time = ida_driver = None
-        airport_volta = airport_volta_other = return_date = return_time = return_driver = None
+        airport_volta = airport_volta_other = return_date = return_time = (
+            return_driver
+        ) = None
         if has_ida:
-            airport_ida = st.selectbox("Aeroporto de ida", ("João Pessoa", "Recife", "Outro"), index=("João Pessoa", "Recife", "Outro").index(old.get("aeroporto_ida", "João Pessoa")) if old.get("aeroporto_ida", "João Pessoa") in ("João Pessoa", "Recife", "Outro") else 0, key=prefix + "airport_ida")
-            airport_ida_other = st.text_input("Outro aeroporto de ida", value=old.get("aeroporto_ida_outro") or "", key=prefix + "airport_ida_other") if airport_ida == "Outro" else None
+            airport_ida = st.selectbox(
+                "Aeroporto de ida",
+                ("João Pessoa", "Recife", "Outro"),
+                index=(
+                    ("João Pessoa", "Recife", "Outro").index(
+                        old.get("aeroporto_ida", "João Pessoa")
+                    )
+                    if old.get("aeroporto_ida", "João Pessoa")
+                    in ("João Pessoa", "Recife", "Outro")
+                    else 0
+                ),
+                key=prefix + "airport_ida",
+            )
+            airport_ida_other = (
+                st.text_input(
+                    "Outro aeroporto de ida",
+                    value=old.get("aeroporto_ida_outro") or "",
+                    key=prefix + "airport_ida_other",
+                )
+                if airport_ida == "Outro"
+                else None
+            )
             a, b, c = st.columns((1.2, 1, 1))
-            ida_date = a.date_input("Data do voo", value=date.fromisoformat(old["ida_data"]) if old.get("ida_data") else default_ida, format="DD/MM/YYYY", key=prefix + "ida_date")
-            ida_time = b.text_input("Horário do voo de ida", value=old.get("ida_hora") or "", key=prefix + "ida_time", placeholder="HH:MM")
-            ida_driver = c.text_input("Horário combinado para o motorista", value=old.get("ida_motorista_hora") or "", key=prefix + "ida_driver", placeholder="HH:MM")
+            ida_date = a.date_input(
+                "Data do voo",
+                value=(
+                    date.fromisoformat(old["ida_data"])
+                    if old.get("ida_data")
+                    else default_ida
+                ),
+                format="DD/MM/YYYY",
+                key=prefix + "ida_date",
+            )
+            ida_time = b.text_input(
+                "Horário do voo de ida",
+                value=old.get("ida_hora") or "",
+                key=prefix + "ida_time",
+                placeholder="HH:MM",
+            )
+            ida_driver = c.text_input(
+                "Horário combinado para o motorista",
+                value=old.get("ida_motorista_hora") or "",
+                key=prefix + "ida_driver",
+                placeholder="HH:MM",
+            )
         if has_return:
             return_airport = old.get("aeroporto_volta") or airport_ida or "João Pessoa"
-            airport_volta = st.selectbox("Aeroporto de volta", ("João Pessoa", "Recife", "Outro"), index=("João Pessoa", "Recife", "Outro").index(return_airport) if return_airport in ("João Pessoa", "Recife", "Outro") else 0, key=prefix + "airport_volta")
-            airport_volta_other = st.text_input("Outro aeroporto de volta", value=old.get("aeroporto_volta_outro") or "", key=prefix + "airport_volta_other") if airport_volta == "Outro" else None
+            airport_volta = st.selectbox(
+                "Aeroporto de volta",
+                ("João Pessoa", "Recife", "Outro"),
+                index=(
+                    ("João Pessoa", "Recife", "Outro").index(return_airport)
+                    if return_airport in ("João Pessoa", "Recife", "Outro")
+                    else 0
+                ),
+                key=prefix + "airport_volta",
+            )
+            airport_volta_other = (
+                st.text_input(
+                    "Outro aeroporto de volta",
+                    value=old.get("aeroporto_volta_outro") or "",
+                    key=prefix + "airport_volta_other",
+                )
+                if airport_volta == "Outro"
+                else None
+            )
             a, b, c = st.columns((1.2, 1, 1))
-            return_date = a.date_input("Data da volta", value=date.fromisoformat(old["volta_data"]) if old.get("volta_data") else default_volta, format="DD/MM/YYYY", key=prefix + "return_date")
-            return_time_key = prefix + "return_time"; return_driver_key = prefix + "return_driver"
+            return_date = a.date_input(
+                "Data da volta",
+                value=(
+                    date.fromisoformat(old["volta_data"])
+                    if old.get("volta_data")
+                    else default_volta
+                ),
+                format="DD/MM/YYYY",
+                key=prefix + "return_date",
+            )
+            return_time_key = prefix + "return_time"
+            return_driver_key = prefix + "return_driver"
+
             def default_return_driver():
-                if not st.session_state.get(return_driver_key): st.session_state[return_driver_key] = st.session_state.get(return_time_key, "")
-            return_time = b.text_input("Chegada prevista", value=old.get("volta_chegada_hora") or "", key=return_time_key, placeholder="HH:MM", on_change=default_return_driver)
-            return_driver = c.text_input("Horário combinado da volta", value=old.get("volta_motorista_hora") or old.get("volta_chegada_hora") or "", key=return_driver_key, placeholder="HH:MM")
-        return {"aeroporto_ida": airport_ida, "aeroporto_ida_outro": airport_ida_other, "ida_data": ida_date.isoformat() if ida_date else None, "ida_hora": ida_time or None, "ida_motorista_hora": ida_driver or None, "aeroporto_volta": airport_volta, "aeroporto_volta_outro": airport_volta_other, "volta_data": return_date.isoformat() if return_date else None, "volta_chegada_hora": return_time or None, "volta_motorista_hora": return_driver or None, "motorista_informado": st.checkbox("Motorista informado", value=bool(old.get("motorista_informado")), key=prefix + "driver_informed"), "observacao": st.text_area("Observação logística", value=old.get("observacao") or "", key=prefix + "notes")}
+                if not st.session_state.get(return_driver_key):
+                    st.session_state[return_driver_key] = st.session_state.get(
+                        return_time_key, ""
+                    )
+
+            return_time = b.text_input(
+                "Chegada prevista",
+                value=old.get("volta_chegada_hora") or "",
+                key=return_time_key,
+                placeholder="HH:MM",
+                on_change=default_return_driver,
+            )
+            return_driver = c.text_input(
+                "Horário combinado da volta",
+                value=old.get("volta_motorista_hora")
+                or old.get("volta_chegada_hora")
+                or "",
+                key=return_driver_key,
+                placeholder="HH:MM",
+            )
+        return {
+            "aeroporto_ida": airport_ida,
+            "aeroporto_ida_outro": airport_ida_other,
+            "ida_data": ida_date.isoformat() if ida_date else None,
+            "ida_hora": ida_time or None,
+            "ida_motorista_hora": ida_driver or None,
+            "aeroporto_volta": airport_volta,
+            "aeroporto_volta_outro": airport_volta_other,
+            "volta_data": return_date.isoformat() if return_date else None,
+            "volta_chegada_hora": return_time or None,
+            "volta_motorista_hora": return_driver or None,
+            "motorista_informado": st.checkbox(
+                "Motorista informado",
+                value=bool(old.get("motorista_informado")),
+                key=prefix + "driver_informed",
+            ),
+            "observacao": st.text_area(
+                "Observação logística",
+                value=old.get("observacao") or "",
+                key=prefix + "notes",
+            ),
+        }
 
 
 def leave_editor(agenda, people, principal):
     old = st.session_state["agenda_leave_edit"]
-    prefix = "agenda_leave_" + old.get("id", "new") + "_" + str(st.session_state.get("agenda_revision", 0))
+    prefix = (
+        "agenda_leave_"
+        + old.get("id", "new")
+        + "_"
+        + str(st.session_state.get("agenda_revision", 0))
+    )
     st.subheader("Editar afastamento" if old else "Cadastrar afastamento")
     available = [p for p in people if p["ativo"] or p["id"] == old.get("procurador_id")]
     ids = [p["id"] for p in available]
-    holder_id = st.selectbox("Procurador", ids, index=ids.index(old["procurador_id"]) if old.get("procurador_id") in ids else 0, format_func=lambda value: next(p["nome"] for p in available if p["id"] == value), key=prefix + "holder")
+    holder_id = st.selectbox(
+        "Procurador",
+        ids,
+        index=ids.index(old["procurador_id"]) if old.get("procurador_id") in ids else 0,
+        format_func=lambda value: next(
+            p["nome"] for p in available if p["id"] == value
+        ),
+        key=prefix + "holder",
+    )
     holder = next(p for p in available if p["id"] == holder_id)
-    motive = st.selectbox("Motivo", MOTIVOS, index=MOTIVOS.index(old.get("motivo", "Férias")), key=prefix + "motive")
-    other = st.text_input("Especifique o motivo", value=old.get("motivo_outro") or "", key=prefix + "other") if motive == "Outro" else ""
+    motive = st.selectbox(
+        "Motivo",
+        MOTIVOS,
+        index=MOTIVOS.index(old.get("motivo", "Férias")),
+        key=prefix + "motive",
+    )
+    other = (
+        st.text_input(
+            "Especifique o motivo",
+            value=old.get("motivo_outro") or "",
+            key=prefix + "other",
+        )
+        if motive == "Outro"
+        else ""
+    )
     left, right = st.columns(2)
-    start = left.date_input("Data inicial", value=date.fromisoformat(old["data_inicio"]) if old.get("data_inicio") else date.today(), format="DD/MM/YYYY", key=prefix + "start")
-    end = right.date_input("Data final", value=date.fromisoformat(old["data_fim"]) if old.get("data_fim") else start, format="DD/MM/YYYY", key=prefix + "end")
+    start = left.date_input(
+        "Data inicial",
+        value=(
+            date.fromisoformat(old["data_inicio"])
+            if old.get("data_inicio")
+            else date.today()
+        ),
+        format="DD/MM/YYYY",
+        key=prefix + "start",
+    )
+    end = right.date_input(
+        "Data final",
+        value=date.fromisoformat(old["data_fim"]) if old.get("data_fim") else start,
+        format="DD/MM/YYYY",
+        key=prefix + "end",
+    )
     candidates = eligible_substitutes(holder, people)
     substitute = None
     if candidates:
         candidate_ids = [p["id"] for p in candidates]
-        substitute = st.selectbox("Substituto", [None, *candidate_ids], index=([None, *candidate_ids].index(old.get("substituto_id")) if old.get("substituto_id") in candidate_ids else 0), format_func=lambda value: "Selecione" if value is None else next(p["nome"] for p in candidates if p["id"] == value), key=prefix + "substitute")
+        substitute = st.selectbox(
+            "Substituto",
+            [None, *candidate_ids],
+            index=(
+                [None, *candidate_ids].index(old.get("substituto_id"))
+                if old.get("substituto_id") in candidate_ids
+                else 0
+            ),
+            format_func=lambda value: (
+                "Selecione"
+                if value is None
+                else next(p["nome"] for p in candidates if p["id"] == value)
+            ),
+            key=prefix + "substitute",
+        )
         if substitute is None:
-            role = "Procurador-Geral" if holder.get("funcao") == "Procurador-Geral" else "Subprocurador-Geral"
-            st.warning(f"O afastamento do {role} pode ser salvo agora; a substituição ficará pendente.")
-    notes = st.text_area("Observação", value=old.get("observacao") or "", key=prefix + "notes")
-    record = {"id": old.get("id"), "procurador_id": holder_id, "motivo": motive, "motivo_outro": other, "data_inicio": start.isoformat(), "data_fim": end.isoformat(), "substituto_id": substitute, "observacao": notes}
-    if agenda.leave_substitute_warning(substitute, record["data_inicio"], record["data_fim"], record["id"]):
-        st.warning("Atenção: este procurador já está indicado como substituto em outro afastamento durante parte deste período.")
+            role = (
+                "Procurador-Geral"
+                if holder.get("funcao") == "Procurador-Geral"
+                else "Subprocurador-Geral"
+            )
+            st.warning(
+                f"O afastamento do {role} pode ser salvo agora; a substituição ficará pendente."
+            )
+    notes = st.text_area(
+        "Observação", value=old.get("observacao") or "", key=prefix + "notes"
+    )
+    record = {
+        "id": old.get("id"),
+        "procurador_id": holder_id,
+        "motivo": motive,
+        "motivo_outro": other,
+        "data_inicio": start.isoformat(),
+        "data_fim": end.isoformat(),
+        "substituto_id": substitute,
+        "observacao": notes,
+    }
+    if agenda.leave_substitute_warning(
+        substitute, record["data_inicio"], record["data_fim"], record["id"]
+    ):
+        st.warning(
+            "Atenção: este procurador já está indicado como substituto em outro afastamento durante parte deste período."
+        )
     if st.button("Salvar afastamento", type="primary", key=prefix + "save"):
         try:
-            identifier = agenda.save_leave(record, created_by=getattr(principal, "email", None))
-            audit_agenda("AFASTAMENTO_EDITADO" if old.get("id") else "AFASTAMENTO_CRIADO", "ALTERAR" if old.get("id") else "CRIAR", identifier, {"procurador": holder["nome"], "periodo": f"{record['data_inicio']} a {record['data_fim']}", "motivo": motive, "substituto": next((p["nome"] for p in people if p["id"] == substitute), None)}, "afastamento")
-            done("Afastamento salvo. Substituto ainda não definido." if substitution_pending(record, people) else "Afastamento salvo com sucesso.")
-        except ValueError as exc: st.error(str(exc))
+            identifier = agenda.save_leave(
+                record, created_by=getattr(principal, "email", None)
+            )
+            audit_agenda(
+                "AFASTAMENTO_EDITADO" if old.get("id") else "AFASTAMENTO_CRIADO",
+                "ALTERAR" if old.get("id") else "CRIAR",
+                identifier,
+                {
+                    "procurador": holder["nome"],
+                    "periodo": f"{record['data_inicio']} a {record['data_fim']}",
+                    "motivo": motive,
+                    "substituto": next(
+                        (p["nome"] for p in people if p["id"] == substitute), None
+                    ),
+                },
+                "afastamento",
+            )
+            done(
+                "Afastamento salvo. Substituto ainda não definido."
+                if substitution_pending(record, people)
+                else "Afastamento salvo com sucesso."
+            )
+        except ValueError as exc:
+            st.error(str(exc))
     if st.button("Voltar à agenda", key=prefix + "back"):
         st.session_state.pop("agenda_leave_edit", None)
         st.rerun()
+
+
+def render_week_analysis(start, end, appointments, leaves, names):
+    """Optional briefing for the week already shown. Gemini runs only on click."""
+    context, signature = contexto_semana(start, end, appointments, leaves, names)
+    period = context["periodo"]
+    stored = st.session_state.get("agenda_semana_ia")
+    text, stale = leitura_semana_salva(
+        stored, period["inicio"], period["fim"], signature
+    )
+    if st.button(
+        "↻ Atualizar análise" if text else "✨ Analisar semana com IA",
+        key="agenda_semana_analisar",
+    ):
+        try:
+            from services.ai_service import (
+                GeminiErro,
+                GeminiNaoConfigurada,
+                analisar_semana_agenda,
+            )
+
+            with st.spinner("Analisando a semana..."):
+                briefing = analisar_semana_agenda(context)
+        except (GeminiErro, GeminiNaoConfigurada) as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            LOGGER.warning("Análise da semana falhou (%s).", type(exc).__name__)
+            st.error("Não foi possível gerar a análise da semana no momento.")
+        else:
+            st.session_state["agenda_semana_ia"] = {
+                "inicio": period["inicio"],
+                "fim": period["fim"],
+                "assinatura": signature,
+                "texto": briefing,
+            }
+            st.rerun()
+    if stale:
+        st.caption(AVISO_SEMANA_ALTERADA)
+    if text:
+        st.markdown(text)
+        st.caption(AVISO_SEMANA_IA)
 
 
 def render(store=None, principal=None):
@@ -540,14 +921,10 @@ def render(store=None, principal=None):
     else:
         store = unwrap_store(store)
     existing = (
-        st.session_state["agenda_store"]
-        if "agenda_store" in st.session_state
-        else None
+        st.session_state["agenda_store"] if "agenda_store" in st.session_state else None
     )
     held = (
-        unwrap_store(getattr(existing, "store", None))
-        if existing is not None
-        else None
+        unwrap_store(getattr(existing, "store", None)) if existing is not None else None
     )
     if type(existing) is AgendaStore and held is store:
         agenda = existing
@@ -576,44 +953,120 @@ def render(store=None, principal=None):
         with st.container(border=True):
             filter_mark()
             a, b, c = st.columns(3)
-            history_member = a.selectbox("Procurador", [None, *names], format_func=lambda p: names.get(p, "Todos"), key="agenda_history_member")
-            history_scope = b.selectbox("Tipo de item", ("Todos", "Compromissos", "Afastamentos"), key="agenda_history_scope")
-            history_status = c.selectbox("Situação", [None, "Realizado", "Cancelado", "ENCERRADO", "CANCELADO"], format_func=lambda value: value or "Todas", key="agenda_history_status")
+            history_member = a.selectbox(
+                "Procurador",
+                [None, *names],
+                format_func=lambda p: names.get(p, "Todos"),
+                key="agenda_history_member",
+            )
+            history_scope = b.selectbox(
+                "Tipo de item",
+                ("Todos", "Compromissos", "Afastamentos"),
+                key="agenda_history_scope",
+            )
+            history_status = c.selectbox(
+                "Situação",
+                [None, "Realizado", "Cancelado", "ENCERRADO", "CANCELADO"],
+                format_func=lambda value: value or "Todas",
+                key="agenda_history_status",
+            )
             d, e, f = st.columns(3)
-            history_start = d.date_input("Período inicial", value=None, key="agenda_history_start", format="DD/MM/YYYY")
-            history_end = e.date_input("Período final", value=None, key="agenda_history_end", format="DD/MM/YYYY")
+            history_start = d.date_input(
+                "Período inicial",
+                value=None,
+                key="agenda_history_start",
+                format="DD/MM/YYYY",
+            )
+            history_end = e.date_input(
+                "Período final",
+                value=None,
+                key="agenda_history_end",
+                format="DD/MM/YYYY",
+            )
             history_search = f.text_input("Busca", key="agenda_history_search")
-        signature = (history_member, history_scope, history_status, history_start, history_end, history_search, st.session_state.get("agenda_revision", 0))
+        signature = (
+            history_member,
+            history_scope,
+            history_status,
+            history_start,
+            history_end,
+            history_search,
+            st.session_state.get("agenda_revision", 0),
+        )
         if st.session_state.get("agenda_history_filters") != signature:
-            st.session_state["agenda_history_offset"] = 0; st.session_state["agenda_history_filters"] = signature
+            st.session_state["agenda_history_offset"] = 0
+            st.session_state["agenda_history_filters"] = signature
         offset = st.session_state.get("agenda_history_offset", 0)
         start_iso = history_start.isoformat() if history_start else None
         end_iso = (history_end + timedelta(days=1)).isoformat() if history_end else None
-        appointments = agenda.history(member=history_member, status=history_status if history_status in ("Realizado", "Cancelado") else None, start=start_iso, end=end_iso, search=history_search or None, offset=offset) if history_scope != "Afastamentos" else []
-        leaves = agenda.history_leaves(member=history_member, status=history_status if history_status in ("ENCERRADO", "CANCELADO") else None, start=start_iso, end=end_iso, offset=offset) if history_scope != "Compromissos" else []
+        appointments = (
+            agenda.history(
+                member=history_member,
+                status=(
+                    history_status
+                    if history_status in ("Realizado", "Cancelado")
+                    else None
+                ),
+                start=start_iso,
+                end=end_iso,
+                search=history_search or None,
+                offset=offset,
+            )
+            if history_scope != "Afastamentos"
+            else []
+        )
+        leaves = (
+            agenda.history_leaves(
+                member=history_member,
+                status=(
+                    history_status
+                    if history_status in ("ENCERRADO", "CANCELADO")
+                    else None
+                ),
+                start=start_iso,
+                end=end_iso,
+                offset=offset,
+            )
+            if history_scope != "Compromissos"
+            else []
+        )
         for row in leaves:
-            row["inicio"] = row["data_fim"] + "T00:00:00"; row["afastamento"] = True
+            row["inicio"] = row["data_fim"] + "T00:00:00"
+            row["afastamento"] = True
         rows = [*appointments, *leaves]
         rows.sort(key=lambda row: (row["inicio"], row["id"]), reverse=True)
         has_next = len(appointments) > 30 or len(leaves) > 30
         rows = rows[:30]
-        trips = agenda.trips_for_commitments(row["id"] for row in rows if not row.get("afastamento"))
+        trips = agenda.trips_for_commitments(
+            row["id"] for row in rows if not row.get("afastamento")
+        )
         if not rows:
             empty_state("Nenhum item histórico para os filtros selecionados.")
         for index, row in enumerate(rows):
             with card_container(index, f"agh_{row['id']}"):
                 if row.get("afastamento"):
                     render_record(
-                        "AFASTAMENTO — " + str(names.get(row["procurador_id"], row["procurador_id"])),
+                        "AFASTAMENTO — "
+                        + str(names.get(row["procurador_id"], row["procurador_id"])),
                         badges_html=badges(
                             ("Afastamento", "neutral"),
                             (row["status"], status_tone(row["status"])),
                         ),
                         secondary=f"{row['motivo']} · {format_date_br(row['data_inicio'])} a {format_date_br(row['data_fim'])}",
-                        meta=("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"]))) if row.get("substituto_id") else (row.get("observacao") or ""),
+                        meta=(
+                            (
+                                "Substituto(a): "
+                                + names.get(
+                                    row["substituto_id"], str(row["substituto_id"])
+                                )
+                            )
+                            if row.get("substituto_id")
+                            else (row.get("observacao") or "")
+                        ),
                         accent="muted",
                     )
-                    if row.get("observacao") and row.get("substituto_id"): st.write(row["observacao"])
+                    if row.get("observacao") and row.get("substituto_id"):
+                        st.write(row["observacao"])
                     st.button(
                         "Abrir detalhes do afastamento",
                         key="agenda_history_leave_" + row["id"],
@@ -621,7 +1074,9 @@ def render(store=None, principal=None):
                         args=(agenda, row["id"]),
                     )
                 else:
-                    hour = "Dia inteiro" if row.get("sem_hora") else row["inicio"][11:16]
+                    hour = (
+                        "Dia inteiro" if row.get("sem_hora") else row["inicio"][11:16]
+                    )
                     title = row.get("titulo") or row.get("processo") or "Compromisso"
                     situation = row.get("situacao") or ""
                     render_record(
@@ -630,19 +1085,34 @@ def render(store=None, principal=None):
                             (TYPES[row["tipo"]], "brand"),
                             (situation, status_tone(situation)),
                         ),
-                        secondary=display_datetime(row["inicio"], row.get("sem_hora")) + " · " + hour,
+                        secondary=display_datetime(row["inicio"], row.get("sem_hora"))
+                        + " · "
+                        + hour,
                         meta=" · ".join(
-                            part for part in (
-                                " / ".join(names.get(p, str(p)) for p in row["procuradores"]),
+                            part
+                            for part in (
+                                " / ".join(
+                                    names.get(p, str(p)) for p in row["procuradores"]
+                                ),
                                 row.get("local") or "",
-                            ) if part
+                            )
+                            if part
                         ),
-                        accent="muted" if situation == "Cancelado" else "success" if situation == "Realizado" else "brand",
+                        accent=(
+                            "muted"
+                            if situation == "Cancelado"
+                            else "success" if situation == "Realizado" else "brand"
+                        ),
                     )
                     for procurador_id, trip in trips.get(row["id"], {}).items():
                         st.markdown("✈️ **Logística de viagem**")
                         st.write(names.get(procurador_id, str(procurador_id)))
-                        render_trip_details(trip, names.get(procurador_id, ""), key=f"agenda_history_trip_message_{row['id']}_{procurador_id}", compromisso=row.get("titulo") or row.get("processo"))
+                        render_trip_details(
+                            trip,
+                            names.get(procurador_id, ""),
+                            key=f"agenda_history_trip_message_{row['id']}_{procurador_id}",
+                            compromisso=row.get("titulo") or row.get("processo"),
+                        )
                     st.button(
                         "Abrir detalhes",
                         key="agenda_history_edit_" + row["id"],
@@ -658,16 +1128,33 @@ def render(store=None, principal=None):
                 if editing and editing.get("id") == row["id"]:
                     editor(agenda, people, principal)
         previous, following = st.columns(2)
-        previous.button("Anterior", disabled=offset == 0, key="agenda_history_previous", on_click=move_page, args=("agenda_history_offset", -30))
-        following.button("Próxima", disabled=not has_next, key="agenda_history_next", on_click=move_page, args=("agenda_history_offset", 30))
+        previous.button(
+            "Anterior",
+            disabled=offset == 0,
+            key="agenda_history_previous",
+            on_click=move_page,
+            args=("agenda_history_offset", -30),
+        )
+        following.button(
+            "Próxima",
+            disabled=not has_next,
+            key="agenda_history_next",
+            on_click=move_page,
+            args=("agenda_history_offset", 30),
+        )
         return
-    if "agenda_edit" not in st.session_state and "agenda_leave_edit" not in st.session_state:
+    if (
+        "agenda_edit" not in st.session_state
+        and "agenda_leave_edit" not in st.session_state
+    ):
         new, leave, _ = st.columns([1.6, 1.8, 4.8])
         if new.button("+ Novo compromisso", type="primary", key="agenda_new"):
             st.session_state.pop("agenda_leave_edit", None)
             st.session_state["agenda_edit"] = {}
             st.rerun()
-        if leave.button("Cadastrar afastamento", type="primary", key="agenda_new_leave"):
+        if leave.button(
+            "Cadastrar afastamento", type="primary", key="agenda_new_leave"
+        ):
             st.session_state.pop("agenda_edit", None)
             st.session_state["agenda_leave_edit"] = {}
             st.rerun()
@@ -724,7 +1211,11 @@ def render(store=None, principal=None):
         start = anchor.replace(day=1)
         end = start + timedelta(days=calendar.monthrange(anchor.year, anchor.month)[1])
     if view == "Próximos":
-        rows = records(agenda, today.isoformat(), None, member, kind, status, active=True) if show_appointments else []
+        rows = (
+            records(agenda, today.isoformat(), None, member, kind, status, active=True)
+            if show_appointments
+            else []
+        )
         leaves = (
             agenda.active_leaves(today.isoformat(), None, member, upcoming=True)
             if show_leaves
@@ -732,20 +1223,46 @@ def render(store=None, principal=None):
             else []
         )
     else:
-        rows = records(agenda, start.isoformat(), end.isoformat(), member, kind, status, active=True) if show_appointments else []
+        rows = (
+            records(
+                agenda,
+                start.isoformat(),
+                end.isoformat(),
+                member,
+                kind,
+                status,
+                active=True,
+            )
+            if show_appointments
+            else []
+        )
         leaves = (
-            agenda.active_leaves(start.isoformat(), (end - timedelta(days=1)).isoformat(), member)
+            agenda.active_leaves(
+                start.isoformat(), (end - timedelta(days=1)).isoformat(), member
+            )
             if show_leaves
             and (item_scope == "Somente afastamentos" or (not kind and not status))
             else []
         )
     if rows or leaves:
         st.caption(_listing_summary(len(rows), len(leaves)))
+    if view == "Semana":
+        render_week_analysis(start, end, rows, leaves, names)
     for leave_record in leaves:
-        leave_record["inicio"] = leave_record["data_inicio"] + "T00:00:00"; leave_record["afastamento"] = True
+        leave_record["inicio"] = leave_record["data_inicio"] + "T00:00:00"
+        leave_record["afastamento"] = True
     rows.extend(leaves)
-    rows.sort(key=lambda row: (row["inicio"][:10], bool(row.get("afastamento")), row["inicio"], row["id"]))
-    trips = agenda.trips_for_commitments(row["id"] for row in rows if not row.get("afastamento"))
+    rows.sort(
+        key=lambda row: (
+            row["inicio"][:10],
+            bool(row.get("afastamento")),
+            row["inicio"],
+            row["id"],
+        )
+    )
+    trips = agenda.trips_for_commitments(
+        row["id"] for row in rows if not row.get("afastamento")
+    )
     if not rows:
         empty_state("Nenhum compromisso no período selecionado.")
     current_day = current_group = None
@@ -761,13 +1278,21 @@ def render(store=None, principal=None):
         if row.get("afastamento"):
             with card_container(index, f"agl_{row['id']}"):
                 render_record(
-                    "AFASTAMENTO — " + str(names.get(row["procurador_id"], row["procurador_id"])),
+                    "AFASTAMENTO — "
+                    + str(names.get(row["procurador_id"], row["procurador_id"])),
                     badges_html=badges(
                         ("Afastamento", "neutral"),
                         (row["status"], status_tone(row["status"])),
                     ),
                     secondary=f"{row['motivo']}{' · ' + row['motivo_outro'] if row.get('motivo_outro') else ''} · {display_datetime(row['inicio'], True)} a {datetime.fromisoformat(row['data_fim']).strftime('%d/%m/%Y')}",
-                    meta=("Substituto(a): " + names.get(row["substituto_id"], str(row["substituto_id"]))) if row.get("substituto_id") else "",
+                    meta=(
+                        (
+                            "Substituto(a): "
+                            + names.get(row["substituto_id"], str(row["substituto_id"]))
+                        )
+                        if row.get("substituto_id")
+                        else ""
+                    ),
                     accent="muted",
                 )
                 if not row.get("substituto_id") and substitution_pending(row, people):
@@ -778,8 +1303,17 @@ def render(store=None, principal=None):
                     on_click=start_leave_edit,
                     args=(agenda, row["id"]),
                 )
-                if row["status"] != "CANCELADO" and st.button("Cancelar afastamento", key="agenda_leave_cancel_" + row["id"]):
-                    agenda.cancel_leave(row["id"]); audit_agenda("AFASTAMENTO_CANCELADO", "CANCELAR", row["id"], entity_type="afastamento"); done("Afastamento cancelado; registro preservado.")
+                if row["status"] != "CANCELADO" and st.button(
+                    "Cancelar afastamento", key="agenda_leave_cancel_" + row["id"]
+                ):
+                    agenda.cancel_leave(row["id"])
+                    audit_agenda(
+                        "AFASTAMENTO_CANCELADO",
+                        "CANCELAR",
+                        row["id"],
+                        entity_type="afastamento",
+                    )
+                    done("Afastamento cancelado; registro preservado.")
             editing = st.session_state.get("agenda_leave_edit")
             if editing and editing.get("id") == row["id"]:
                 leave_editor(agenda, people, principal)
@@ -787,7 +1321,10 @@ def render(store=None, principal=None):
         # From here down, every record is a compromisso and has its own fields.
         hour = "Dia inteiro" if row["sem_hora"] else row["inicio"][11:16]
         title = row.get("titulo") or row.get("processo")
-        past = row["situacao"] not in ("Realizado", "Cancelado") and date.fromisoformat(row["inicio"][:10]) < today
+        past = (
+            row["situacao"] not in ("Realizado", "Cancelado")
+            and date.fromisoformat(row["inicio"][:10]) < today
+        )
         situation = row["situacao"]
         accent = "muted" if situation == "Cancelado" else "warning" if past else "brand"
         with card_container(index, f"ag_{row['id']}"):
@@ -799,10 +1336,12 @@ def render(store=None, principal=None):
                 ),
                 secondary=f"{hour} · {TYPES[row['tipo']]}",
                 meta=" · ".join(
-                    part for part in (
+                    part
+                    for part in (
                         " / ".join(names.get(p, str(p)) for p in row["procuradores"]),
                         row.get("local") or "",
-                    ) if part
+                    )
+                    if part
                 ),
                 accent=accent,
             )
@@ -823,7 +1362,12 @@ def render(store=None, principal=None):
                 for procurador_id, trip in trips.get(row["id"], {}).items():
                     st.markdown("✈️ **Logística de viagem**")
                     st.write(names.get(procurador_id, str(procurador_id)))
-                    render_trip_details(trip, names.get(procurador_id, ""), key=f"agenda_trip_message_{row['id']}_{procurador_id}", compromisso=title)
+                    render_trip_details(
+                        trip,
+                        names.get(procurador_id, ""),
+                        key=f"agenda_trip_message_{row['id']}_{procurador_id}",
+                        compromisso=title,
+                    )
                 st.button(
                     "Editar",
                     key="agenda_edit_" + row["id"],
@@ -860,9 +1404,7 @@ def render(store=None, principal=None):
         item_scope,
         st.session_state.get("agenda_revision", 0),
     )
-    pdf_actions = st.container(
-        horizontal_alignment="center", key="agenda_pdf_actions"
-    )
+    pdf_actions = st.container(horizontal_alignment="center", key="agenda_pdf_actions")
     if pdf_actions.button(
         "📄 Gerar PDF da listagem",
         key="agenda_generate_pdf",

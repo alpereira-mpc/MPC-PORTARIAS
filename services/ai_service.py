@@ -170,6 +170,26 @@ _OFICIO_SCHEMA = {
 }
 _OFICIO_TEXTO = 500
 _OFICIO_PROVIDENCIA = 240
+MAX_SEMANA_BYTES = 80_000
+PROMPT_SEMANA_AGENDA = (
+    "Você recebe dados estruturados de uma semana da Agenda institucional.\n"
+    "Os fatos, contagens, sobreposições e coincidências já foram calculados pelo sistema.\n"
+    "Não recalcule esses fatos e não os contradiga.\n"
+    "Use apenas os dados fornecidos.\n"
+    "Não invente compromissos, conflitos, ausências, responsáveis, prioridades ou providências.\n"
+    "Produza um panorama executivo curto, institucional e objetivo.\n"
+    "Destaque a concentração de atividades nos dias indicados.\n"
+    "Mencione afastamentos relevantes que constem dos dados.\n"
+    "Mencione somente as sobreposições e coincidências já informadas.\n"
+    "Se não houver sobreposição nem coincidência, diga isso de forma simples.\n"
+    "Não decida cancelamento, reagendamento ou substituição.\n"
+    "Não indique substituto.\n"
+    "Não crie obrigação.\n"
+    "Não gere tarefa, pendência, notificação, encaminhamento ou alteração da agenda.\n"
+    "Pode dizer que um fato objetivo merece conferência.\n"
+    "Não use frases genéricas como organizar a agenda ou planejar-se.\n"
+    "Não transforme a resposta em lista extensa."
+)
 _STATUS_TOKEN = re.compile(r"[A-Z0-9_]{1,40}")
 
 
@@ -209,13 +229,34 @@ def extrair_dados_oficio_pdf(pdf_bytes):
     return _dados_oficio(text)
 
 
+def analisar_semana_agenda(contexto):
+    """Turn already calculated week facts into a short briefing. Nothing is stored."""
+    if not isinstance(contexto, dict):
+        raise GeminiErro("Não foi possível preparar a análise da semana.")
+    text = json.dumps(
+        contexto, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    if len(text.encode("utf-8")) > MAX_SEMANA_BYTES:
+        raise GeminiErro("Não foi possível preparar a análise da semana.")
+    return _texto_resposta(
+        _executar(
+            lambda key: _request_texto(text, key, PROMPT_SEMANA_AGENDA),
+            "análise da semana",
+        )
+    )
+
+
 def _consultar(document, prompt, rotulo, schema=None):
+    return _executar(lambda key: _request(document, key, prompt, schema), rotulo)
+
+
+def _executar(montar, rotulo):
     key = _api_key()
     if not key:
         raise GeminiNaoConfigurada()
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            raw = _post(_request(document, key, prompt, schema))
+            raw = _post(montar(key))
         except TimeoutError:
             # The call already waited TIMEOUT_SECONDS. Another round could
             # hold the page for several minutes, so this failure is final.
@@ -303,6 +344,26 @@ def _request(document, key, prompt, schema=None):
             "responseMimeType": "application/json",
             "responseSchema": schema,
         }
+    return urllib.request.Request(
+        GEMINI_ENDPOINT,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+        method="POST",
+    )
+
+
+def _request_texto(texto, key, prompt):
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": prompt + "\n\nDados:\n" + texto}],
+            }
+        ]
+    }
     return urllib.request.Request(
         GEMINI_ENDPOINT,
         data=json.dumps(payload).encode("utf-8"),

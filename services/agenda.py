@@ -1,6 +1,8 @@
 """Central catalogs and local institutional availability rules."""
 
 from datetime import datetime, time, timedelta
+import hashlib
+import json
 import unicodedata
 
 TYPES = {"EVENTO": "Evento", "REUNIAO": "Reunião", "DESPACHO": "Despacho"}
@@ -162,3 +164,202 @@ def validate(record):
     }[record["tipo"]]
     if any(not record.get(k, "").strip() for k in (*required, "local")):
         raise ValueError("Preencha os campos obrigatórios e os complementos de Outro.")
+
+
+def contexto_semana(start, end, compromissos, afastamentos, nomes):
+    """Facts for one visible week. The caller already loaded these records."""
+    last = end - timedelta(days=1)
+    items = [
+        row
+        for row in compromissos or []
+        if not row.get("afastamento")
+        and row.get("situacao") != "Cancelado"
+        and _no_periodo(row, start, end)
+    ]
+    leaves = [
+        row
+        for row in afastamentos or []
+        if not row.get("cancelado") and _afastamento_no_periodo(row, start, last)
+    ]
+    por_dia = {
+        (start + timedelta(days=offset)).isoformat(): 0
+        for offset in range((last - start).days + 1)
+    }
+    for row in items:
+        for day in _dias_compromisso(row):
+            if day.isoformat() in por_dia:
+                por_dia[day.isoformat()] += 1
+    busiest = max(por_dia, key=lambda day: (por_dia[day], day))
+    if por_dia[busiest] == 0:
+        busiest = None
+    context = {
+        "periodo": {"inicio": start.isoformat(), "fim": last.isoformat()},
+        "total_compromissos": len(items),
+        "total_afastamentos": len(leaves),
+        "compromissos_sem_horario": sum(1 for row in items if row.get("sem_hora")),
+        "quantidade_por_dia": por_dia,
+        "dia_mais_carregado": busiest,
+        "compromissos": [_compromisso_resumo(row, nomes) for row in items[:80]],
+        "afastamentos": [_afastamento_resumo(row, nomes) for row in leaves[:40]],
+        "sobreposicoes_compromissos": _sobreposicoes(items, nomes)[:30],
+        "coincidencias_afastamento_compromisso": _coincidencias(items, leaves, nomes)[
+            :30
+        ],
+    }
+    omitted = max(0, len(items) - 80) + max(0, len(leaves) - 40)
+    if omitted:
+        context["registros_omitidos"] = omitted
+    signature = hashlib.sha256(
+        json.dumps(context, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return context, signature
+
+
+def leitura_semana_salva(stored, inicio, fim, assinatura):
+    """Return the saved text for this period and whether the week changed."""
+    if not isinstance(stored, dict):
+        return None, False
+    if stored.get("inicio") != inicio or stored.get("fim") != fim:
+        return None, False
+    text = str(stored.get("texto") or "").strip()
+    if not text:
+        return None, False
+    return text, stored.get("assinatura") != assinatura
+
+
+def _no_periodo(row, start, end):
+    try:
+        begin = datetime.fromisoformat(row["inicio"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    finish = begin
+    if row.get("fim"):
+        try:
+            finish = datetime.fromisoformat(row["fim"])
+        except (TypeError, ValueError):
+            finish = begin
+    return begin < datetime.combine(end, time.min) and finish >= datetime.combine(
+        start, time.min
+    )
+
+
+def _afastamento_no_periodo(row, start, last):
+    try:
+        begin = datetime.fromisoformat(row["data_inicio"]).date()
+        end = datetime.fromisoformat(row["data_fim"]).date()
+    except (KeyError, TypeError, ValueError):
+        return False
+    return begin <= last and end >= start
+
+
+def _dias_compromisso(row):
+    start = datetime.fromisoformat(row["inicio"]).date()
+    if not row.get("fim"):
+        return [start]
+    finish = datetime.fromisoformat(row["fim"])
+    last = finish.date()
+    if not row.get("sem_hora") and finish.time() == time.min and last > start:
+        last -= timedelta(days=1)
+    if last < start:
+        last = start
+    days = []
+    current = start
+    while current <= last:
+        days.append(current)
+        current += timedelta(days=1)
+    return days
+
+
+def _hora(value, untimed):
+    if untimed or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).strftime("%H:%M")
+    except (TypeError, ValueError):
+        return None
+
+
+def _nomes(ids, nomes):
+    found = []
+    for identifier in ids or []:
+        name = (nomes or {}).get(identifier)
+        if name and name not in found:
+            found.append(str(name)[:80])
+    return ", ".join(found)
+
+
+def _titulo(row):
+    text = str(
+        row.get("titulo")
+        or row.get("processo")
+        or TYPES.get(row.get("tipo"), "Compromisso")
+    )
+    return " ".join(text.split())[:120]
+
+
+def _compromisso_resumo(row, nomes):
+    return {
+        "data": row["inicio"][:10],
+        "inicio": _hora(row.get("inicio"), row.get("sem_hora")),
+        "fim": _hora(row.get("fim"), row.get("sem_hora")),
+        "titulo": _titulo(row),
+        "responsavel": _nomes(row.get("procuradores"), nomes),
+        "tipo": TYPES.get(row.get("tipo"), ""),
+    }
+
+
+def _afastamento_resumo(row, nomes):
+    return {
+        "inicio": row.get("data_inicio"),
+        "fim": row.get("data_fim"),
+        "motivo": str(row.get("motivo") or "")[:80],
+        "responsavel": _nomes([row.get("procurador_id")], nomes),
+    }
+
+
+def _sobreposicoes(items, nomes):
+    timed = [row for row in items if not row.get("sem_hora")]
+    found = []
+    for index, left in enumerate(timed):
+        left_start, left_end = interval(left)
+        for right in timed[index + 1 :]:
+            if not (
+                set(left.get("procuradores") or [])
+                & set(right.get("procuradores") or [])
+            ):
+                continue
+            right_start, right_end = interval(right)
+            if left_start < right_end and right_start < left_end:
+                moment = max(left_start, right_start)
+                found.append(
+                    {
+                        "data": moment.date().isoformat(),
+                        "itens": [
+                            _compromisso_resumo(left, nomes),
+                            _compromisso_resumo(right, nomes),
+                        ],
+                    }
+                )
+    return found
+
+
+def _coincidencias(items, leaves, nomes):
+    found = []
+    for leave in leaves:
+        holder = leave.get("procurador_id")
+        try:
+            leave_start = datetime.fromisoformat(leave["data_inicio"]).date()
+            leave_end = datetime.fromisoformat(leave["data_fim"]).date()
+        except (KeyError, TypeError, ValueError):
+            continue
+        for row in items:
+            if holder not in (row.get("procuradores") or []):
+                continue
+            if any(leave_start <= day <= leave_end for day in _dias_compromisso(row)):
+                found.append(
+                    {
+                        "afastamento": _afastamento_resumo(leave, nomes),
+                        "compromisso": _compromisso_resumo(row, nomes),
+                    }
+                )
+    return found

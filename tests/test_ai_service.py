@@ -599,6 +599,7 @@ def test_stable_modules_do_not_reference_the_lab():
         "representacoes.py",
         "representacoes_ui.py",
         "oficios_ui.py",
+        "agenda_ui.py",
     }
     for name in (
         "representacoes.py",
