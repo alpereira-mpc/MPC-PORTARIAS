@@ -789,3 +789,87 @@ def test_oficio_extraction_retries_503_and_stops_on_timeout(monkeypatch, caplog)
     with pytest.raises(GeminiErro, match="não respondeu a tempo"):
         extrair_dados_oficio_pdf(PDF)
     assert attempts == [1]
+
+
+def test_oficio_prompt_describes_subject_and_conditional_actions():
+    prompt = ai_service.PROMPT_EXTRACAO_OFICIO
+    assert "Convite para Roda de Conversa sobre Saúde Mental" in prompt
+    assert 'não apenas "Convite"' in prompt
+    assert "Solicitação de informações sobre o Processo nº" in prompt
+    assert "já for descritivo, preserve-o" in prompt
+    assert "pelo menos uma sugestão" in prompt
+    assert "mesmo sem ordem" in prompt
+    assert "Avaliar a participação e, se for o caso, confirmar presença" in prompt
+    assert "Confirmar presença conforme solicitado" in prompt
+    assert "Agendar a reunião" in prompt
+    assert "no máximo duas" in prompt
+    assert "no prazo de 10 dias" in prompt
+    assert "Não calcule a data final" in prompt
+    assert "identificável com segurança" in prompt
+    for field in (
+        "numero_externo",
+        "remetente",
+        "cargo_remetente",
+        "instituicao",
+        "assunto",
+        "processo",
+        "data",
+        "prazo",
+        "providencias_sugeridas",
+    ):
+        assert field in prompt
+    assert "pedido cautelar" not in prompt
+    assert list(ai_service.OFICIO_EXTRAIDO_VAZIO) == [
+        "numero_externo",
+        "remetente",
+        "cargo_remetente",
+        "instituicao",
+        "assunto",
+        "processo",
+        "data",
+        "prazo",
+        "providencias_sugeridas",
+    ]
+
+
+def test_oficio_validation_keeps_a_descriptive_subject_and_a_relative_deadline(
+    monkeypatch,
+):
+    _key(monkeypatch)
+    descriptive = "Convite para Roda de Conversa sobre Saúde Mental – Setembro Amarelo"
+    already = "Solicitação de cópia integral do procedimento de tomada de contas"
+    monkeypatch.setattr(
+        ai_service,
+        "_post",
+        lambda request: _gemini_json(
+            {
+                "assunto": descriptive,
+                "prazo": "no prazo de 10 dias",
+                "numero_externo": "",
+                "remetente": 99,
+                "providencias_sugeridas": [
+                    "Comunicar a realização do evento aos possíveis interessados e avaliar a participação do MPC-PB.",
+                    "Caso haja interesse em participar, providenciar a confirmação pertinente e o registro interno do compromisso.",
+                    "Terceira sugestão descartada.",
+                ],
+            }
+        ),
+    )
+    data = extrair_dados_oficio_pdf(PDF)
+    assert data["assunto"] == descriptive
+    assert data["prazo"] == ""
+    assert data["numero_externo"] == ""
+    assert data["remetente"] == ""
+    assert len(data["providencias_sugeridas"]) == 2
+    assert "avaliar a participação" in data["providencias_sugeridas"][0]
+    assert set(data) == set(ai_service.OFICIO_EXTRAIDO_VAZIO)
+
+    monkeypatch.setattr(
+        ai_service,
+        "_post",
+        lambda request: _gemini_json({"assunto": already, "prazo": "10 dias"}),
+    )
+    kept = extrair_dados_oficio_pdf(PDF)
+    assert kept["assunto"] == already
+    assert kept["prazo"] == ""
+    assert kept["providencias_sugeridas"] == []
