@@ -832,6 +832,22 @@ def test_oficio_prompt_describes_subject_and_conditional_actions():
     ]
 
 
+def test_oficio_prompt_puts_an_express_request_ahead_of_inference():
+    prompt = ai_service.PROMPT_EXTRACAO_OFICIO
+    assert "ação expressamente solicitada, ela é a primeira sugestão" in prompt
+    assert "sem tratar o pedido como hipótese" in prompt
+    assert "11/09/2026, às 11h" in prompt
+    assert "videoconferência" in prompt
+    assert "Não os invente" in prompt
+    assert "vale somente para ação que o Ofício não determinou" in prompt
+    assert "sem pedir confirmação, não invente" in prompt
+    assert "Encaminhar as informações solicitadas até" in prompt
+    assert "Não suavize esse pedido" in prompt
+    assert "em caso de participação providenciar o registro" in prompt
+    assert "As sugestões são apenas texto" in prompt
+    assert "no máximo duas" in prompt
+
+
 def test_oficio_validation_keeps_a_descriptive_subject_and_a_relative_deadline(
     monkeypatch,
 ):
