@@ -166,39 +166,52 @@ def validate(record):
         raise ValueError("Preencha os campos obrigatórios e os complementos de Outro.")
 
 
-def contexto_semana(start, end, compromissos, afastamentos, nomes):
-    """Facts for one visible week. The caller already loaded these records."""
-    last = end - timedelta(days=1)
+MAX_DIAS_ANALISE = 31
+
+
+def validar_intervalo_analise(inicio, fim):
+    if fim < inicio:
+        raise ValueError("A data final não pode ser anterior à data inicial.")
+    if (fim - inicio).days + 1 > MAX_DIAS_ANALISE:
+        raise ValueError("O período analisado pode ter no máximo 31 dias.")
+
+
+def contexto_periodo(inicio, fim, compromissos, afastamentos, nomes):
+    """Facts for an inclusive date range. The caller already loaded these records."""
+    exclusive = fim + timedelta(days=1)
     items = [
         row
         for row in compromissos or []
         if not row.get("afastamento")
         and row.get("situacao") != "Cancelado"
-        and _no_periodo(row, start, end)
+        and _no_periodo(row, inicio, exclusive)
     ]
     leaves = [
         row
         for row in afastamentos or []
-        if not row.get("cancelado") and _afastamento_no_periodo(row, start, last)
+        if not row.get("cancelado") and _afastamento_no_periodo(row, inicio, fim)
     ]
     por_dia = {
-        (start + timedelta(days=offset)).isoformat(): 0
-        for offset in range((last - start).days + 1)
+        (inicio + timedelta(days=offset)).isoformat(): 0
+        for offset in range((fim - inicio).days + 1)
     }
     for row in items:
         for day in _dias_compromisso(row):
             if day.isoformat() in por_dia:
                 por_dia[day.isoformat()] += 1
-    busiest = max(por_dia, key=lambda day: (por_dia[day], day))
-    if por_dia[busiest] == 0:
-        busiest = None
+    for leave in leaves:
+        for day in _dias_afastamento(leave, inicio, fim):
+            por_dia[day.isoformat()] += 1
+    peak = max(por_dia.values(), default=0)
     context = {
-        "periodo": {"inicio": start.isoformat(), "fim": last.isoformat()},
+        "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
         "total_compromissos": len(items),
         "total_afastamentos": len(leaves),
         "compromissos_sem_horario": sum(1 for row in items if row.get("sem_hora")),
         "quantidade_por_dia": por_dia,
-        "dia_mais_carregado": busiest,
+        "dias_maior_concentracao": [
+            day for day, count in por_dia.items() if peak and count == peak
+        ],
         "compromissos": [_compromisso_resumo(row, nomes) for row in items[:80]],
         "afastamentos": [_afastamento_resumo(row, nomes) for row in leaves[:40]],
         "sobreposicoes_compromissos": _sobreposicoes(items, nomes)[:30],
@@ -215,8 +228,8 @@ def contexto_semana(start, end, compromissos, afastamentos, nomes):
     return context, signature
 
 
-def leitura_semana_salva(stored, inicio, fim, assinatura):
-    """Return the saved text for this period and whether the week changed."""
+def leitura_analise_salva(stored, inicio, fim, assinatura):
+    """Return the saved text for this period and whether its data changed."""
     if not isinstance(stored, dict):
         return None, False
     if stored.get("inicio") != inicio or stored.get("fim") != fim:
@@ -250,6 +263,21 @@ def _afastamento_no_periodo(row, start, last):
     except (KeyError, TypeError, ValueError):
         return False
     return begin <= last and end >= start
+
+
+def _dias_afastamento(row, inicio, fim):
+    try:
+        first = datetime.fromisoformat(row["data_inicio"]).date()
+        last = datetime.fromisoformat(row["data_fim"]).date()
+    except (KeyError, TypeError, ValueError):
+        return []
+    current = max(first, inicio)
+    end = min(last, fim)
+    days = []
+    while current <= end:
+        days.append(current)
+        current += timedelta(days=1)
+    return days
 
 
 def _dias_compromisso(row):

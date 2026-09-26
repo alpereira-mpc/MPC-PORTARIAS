@@ -83,7 +83,9 @@ def _assert_continuous(app, summary, present, absent=()):
     for title in absent:
         assert title not in shown
     dates = [item.value for item in app.subheader]
-    assert dates == sorted(dates, key=lambda value: datetime.strptime(value, "%d/%m/%Y"))
+    assert dates == sorted(
+        dates, key=lambda value: datetime.strptime(value, "%d/%m/%Y")
+    )
     assert len(dates) == len(set(dates))
 
 
@@ -117,7 +119,9 @@ def test_upcoming_ui_lists_every_record_without_pagination(store, monkeypatch):
     assert app.date_input
     app.radio(key="agenda_view").set_value("Próximos").run()
     app.selectbox(key="agenda_filter_member").set_value(3).run()
-    _assert_continuous(app, "1 compromisso · 0 afastamentos", ("Futuro 31",), ("Futuro 00",))
+    _assert_continuous(
+        app, "1 compromisso · 0 afastamentos", ("Futuro 31",), ("Futuro 00",)
+    )
     app.selectbox(key="agenda_filter_type").set_value("DESPACHO").run()
     assert not any(caption.startswith("Página ") for caption in _captions(app))
     assert "agenda_upcoming_next" not in {button.key for button in app.button}
@@ -195,14 +199,18 @@ def test_views_keep_mixed_dates_in_order_without_pagination(store, monkeypatch):
         assert not app.exception and not app.error
         _assert_continuous(app, summary, present, absent)
         assert [item.value for item in app.subheader] == dates
-    app.selectbox(key="agenda_filter_item_scope").set_value("Somente compromissos").run()
+    app.selectbox(key="agenda_filter_item_scope").set_value(
+        "Somente compromissos"
+    ).run()
     _assert_continuous(
         app,
         "4 compromissos · 0 afastamentos",
         ("Evento de hoje", "Evento da semana", "Evento do mês", "Evento futuro"),
     )
     assert sum(button.label == "Editar afastamento" for button in app.button) == 0
-    app.selectbox(key="agenda_filter_item_scope").set_value("Somente afastamentos").run()
+    app.selectbox(key="agenda_filter_item_scope").set_value(
+        "Somente afastamentos"
+    ).run()
     _assert_continuous(
         app, "0 compromissos · 2 afastamentos", (), ("Evento futuro", "Evento de hoje")
     )
@@ -267,6 +275,12 @@ def test_removed_list_selection_is_migrated(store, monkeypatch):
     app.session_state["agenda_view"] = "Lista"
     app.button(key="open_agenda").click().run()
     assert not app.exception
-    assert app.radio(key="agenda_view").options == ["Hoje", "Semana", "Mês", "Próximos"]
+    assert app.radio(key="agenda_view").options == [
+        "Hoje",
+        "Semana",
+        "Mês",
+        "Próximos",
+        "Análise com IA",
+    ]
     assert app.radio(key="agenda_view").value == "Hoje"
     assert not any(d.label == "Até" for d in app.date_input)

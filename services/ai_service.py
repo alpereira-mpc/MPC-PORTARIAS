@@ -170,23 +170,30 @@ _OFICIO_SCHEMA = {
 }
 _OFICIO_TEXTO = 500
 _OFICIO_PROVIDENCIA = 240
-MAX_SEMANA_BYTES = 80_000
-PROMPT_SEMANA_AGENDA = (
-    "Você recebe dados estruturados de uma semana da Agenda institucional.\n"
+MAX_ANALISE_AGENDA_BYTES = 80_000
+PROMPT_ANALISE_AGENDA = (
+    "Você recebe dados estruturados de um período da Agenda institucional.\n"
     "Os fatos, contagens, sobreposições e coincidências já foram calculados pelo sistema.\n"
     "Não recalcule esses fatos e não os contradiga.\n"
     "Use apenas os dados fornecidos.\n"
     "Não invente compromissos, conflitos, ausências, responsáveis, prioridades ou providências.\n"
     "Produza um panorama executivo curto, institucional e objetivo.\n"
-    "Destaque a concentração de atividades nos dias indicados.\n"
+    "Ao descrever a distribuição, fale em maior concentração de registros da Agenda.\n"
+    "Não use a expressão dia mais carregado.\n"
+    "Se dias_maior_concentracao tiver mais de um dia, mencione todos.\n"
     "Mencione afastamentos relevantes que constem dos dados.\n"
-    "Mencione somente as sobreposições e coincidências já informadas.\n"
-    "Se não houver sobreposição nem coincidência, diga isso de forma simples.\n"
+    "Mencione somente as sobreposições já informadas.\n"
+    "Coincidência entre afastamento e compromisso é apenas coincidência temporal.\n"
+    "O afastamento pode decorrer do próprio compromisso, de viagem, evento ou atividade registrada.\n"
+    "Não chame essa coincidência de conflito, inconsistência ou erro.\n"
+    "Não diga que a coincidência merece conferência sem elemento concreto de incompatibilidade nos dados.\n"
+    "Se os registros aparentarem ser coerentes, mencione a coincidência de forma informativa "
+    "ou não a destaque como ponto de atenção.\n"
+    "Não invente incompatibilidade.\n"
     "Não decida cancelamento, reagendamento ou substituição.\n"
     "Não indique substituto.\n"
     "Não crie obrigação.\n"
     "Não gere tarefa, pendência, notificação, encaminhamento ou alteração da agenda.\n"
-    "Pode dizer que um fato objetivo merece conferência.\n"
     "Não use frases genéricas como organizar a agenda ou planejar-se.\n"
     "Não transforme a resposta em lista extensa."
 )
@@ -229,19 +236,19 @@ def extrair_dados_oficio_pdf(pdf_bytes):
     return _dados_oficio(text)
 
 
-def analisar_semana_agenda(contexto):
-    """Turn already calculated week facts into a short briefing. Nothing is stored."""
+def analisar_periodo_agenda(contexto):
+    """Turn already calculated period facts into a short briefing. Nothing is stored."""
     if not isinstance(contexto, dict):
-        raise GeminiErro("Não foi possível preparar a análise da semana.")
+        raise GeminiErro("Não foi possível preparar a análise do período.")
     text = json.dumps(
         contexto, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
-    if len(text.encode("utf-8")) > MAX_SEMANA_BYTES:
-        raise GeminiErro("Não foi possível preparar a análise da semana.")
+    if len(text.encode("utf-8")) > MAX_ANALISE_AGENDA_BYTES:
+        raise GeminiErro("Não foi possível preparar a análise do período.")
     return _texto_resposta(
         _executar(
-            lambda key: _request_texto(text, key, PROMPT_SEMANA_AGENDA),
-            "análise da semana",
+            lambda key: _request_texto(text, key, PROMPT_ANALISE_AGENDA),
+            "análise da agenda",
         )
     )
 

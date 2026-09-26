@@ -14,10 +14,11 @@ from services.agenda import (
     EVENT_TYPES,
     MEETING_WITH,
     LOCATIONS,
-    contexto_semana,
+    contexto_periodo,
     institutional,
     conflicts,
-    leitura_semana_salva,
+    leitura_analise_salva,
+    validar_intervalo_analise,
 )
 from services.afastamentos import MOTIVOS, eligible_substitutes, substitution_pending
 from services.ui_store import display_store
@@ -36,12 +37,12 @@ from services.ui_theme import (
 
 
 LOGGER = logging.getLogger("mpc.ai")
-AVISO_SEMANA_IA = (
+AVISO_ANALISE_IA = (
     "Análise gerada por inteligência artificial a partir dos registros da Agenda. "
     "Consulte os compromissos e afastamentos para conferência."
 )
-AVISO_SEMANA_ALTERADA = (
-    "A Agenda desta semana foi alterada desde a última análise. "
+AVISO_ANALISE_ALTERADA = (
+    "A Agenda deste período foi alterada desde a última análise. "
     "Gere novamente para atualizar."
 )
 
@@ -870,34 +871,34 @@ def leave_editor(agenda, people, principal):
         st.rerun()
 
 
-def render_week_analysis(start, end, appointments, leaves, names):
-    """Optional briefing for the week already shown. Gemini runs only on click."""
-    context, signature = contexto_semana(start, end, appointments, leaves, names)
+def apresentar_analise_periodo(inicio, fim, appointments, leaves, names):
+    """Show the briefing for one inclusive period. Gemini runs only on click."""
+    context, signature = contexto_periodo(inicio, fim, appointments, leaves, names)
     period = context["periodo"]
-    stored = st.session_state.get("agenda_semana_ia")
-    text, stale = leitura_semana_salva(
+    stored = st.session_state.get("agenda_analise_ia")
+    text, stale = leitura_analise_salva(
         stored, period["inicio"], period["fim"], signature
     )
     if st.button(
-        "↻ Atualizar análise" if text else "✨ Analisar semana com IA",
-        key="agenda_semana_analisar",
+        "↻ Atualizar análise" if text else "✨ Analisar período com IA",
+        key="agenda_analise_ia_btn",
     ):
         try:
             from services.ai_service import (
                 GeminiErro,
                 GeminiNaoConfigurada,
-                analisar_semana_agenda,
+                analisar_periodo_agenda,
             )
 
-            with st.spinner("Analisando a semana..."):
-                briefing = analisar_semana_agenda(context)
+            with st.spinner("Analisando o período..."):
+                briefing = analisar_periodo_agenda(context)
         except (GeminiErro, GeminiNaoConfigurada) as exc:
             st.error(str(exc))
         except Exception as exc:
-            LOGGER.warning("Análise da semana falhou (%s).", type(exc).__name__)
-            st.error("Não foi possível gerar a análise da semana no momento.")
+            LOGGER.warning("Análise da agenda falhou (%s).", type(exc).__name__)
+            st.error("Não foi possível gerar a análise do período no momento.")
         else:
-            st.session_state["agenda_semana_ia"] = {
+            st.session_state["agenda_analise_ia"] = {
                 "inicio": period["inicio"],
                 "fim": period["fim"],
                 "assinatura": signature,
@@ -905,10 +906,58 @@ def render_week_analysis(start, end, appointments, leaves, names):
             }
             st.rerun()
     if stale:
-        st.caption(AVISO_SEMANA_ALTERADA)
+        st.caption(AVISO_ANALISE_ALTERADA)
     if text:
+        st.markdown(
+            "### Panorama Executivo ("
+            + format_date_br(period["inicio"])
+            + " a "
+            + format_date_br(period["fim"])
+            + ")"
+        )
         st.markdown(text)
-        st.caption(AVISO_SEMANA_IA)
+        st.caption(AVISO_ANALISE_IA)
+
+
+def render_period_analysis(
+    agenda, names, member, kind, status, show_appointments, show_leaves, item_scope
+):
+    """Date range for the executive briefing. Records load only on this view."""
+    st.subheader("Análise de Agenda com IA")
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    if "agenda_analise_inicio" not in st.session_state:
+        st.session_state["agenda_analise_inicio"] = today
+    if "agenda_analise_fim" not in st.session_state:
+        st.session_state["agenda_analise_fim"] = today + timedelta(days=6)
+    inicio = st.date_input(
+        "Data inicial", format="DD/MM/YYYY", key="agenda_analise_inicio"
+    )
+    fim = st.date_input("Data final", format="DD/MM/YYYY", key="agenda_analise_fim")
+    try:
+        validar_intervalo_analise(inicio, fim)
+    except ValueError as exc:
+        st.warning(str(exc))
+        return
+    rows = (
+        records(
+            agenda,
+            inicio.isoformat(),
+            (fim + timedelta(days=1)).isoformat(),
+            member,
+            kind,
+            status,
+            active=True,
+        )
+        if show_appointments
+        else []
+    )
+    leaves = (
+        agenda.active_leaves(inicio.isoformat(), fim.isoformat(), member)
+        if show_leaves
+        and (item_scope == "Somente afastamentos" or (not kind and not status))
+        else []
+    )
+    apresentar_analise_periodo(inicio, fim, rows, leaves, names)
 
 
 def render(store=None, principal=None):
@@ -1190,10 +1239,22 @@ def render(store=None, principal=None):
         st.session_state["agenda_view"] = "Hoje"
     view = st.radio(
         "Visualização",
-        ["Hoje", "Semana", "Mês", "Próximos"],
+        ["Hoje", "Semana", "Mês", "Próximos", "Análise com IA"],
         horizontal=True,
         key="agenda_view",
     )
+    if view == "Análise com IA":
+        render_period_analysis(
+            agenda,
+            names,
+            member,
+            kind,
+            status,
+            show_appointments,
+            show_leaves,
+            item_scope,
+        )
+        return
     today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     anchor = (
         today
@@ -1246,8 +1307,6 @@ def render(store=None, principal=None):
         )
     if rows or leaves:
         st.caption(_listing_summary(len(rows), len(leaves)))
-    if view == "Semana":
-        render_week_analysis(start, end, rows, leaves, names)
     for leave_record in leaves:
         leave_record["inicio"] = leave_record["data_inicio"] + "T00:00:00"
         leave_record["afastamento"] = True
