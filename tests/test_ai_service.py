@@ -31,17 +31,32 @@ def _key(monkeypatch, value=KEY):
     monkeypatch.setattr(st, "secrets", {"GEMINI_API_KEY": value})
 
 
-def _http_error(url, code, status, message="detalhe interno"):
+def _http_error(url, code, status, message="detalhe interno", retry_after=None):
     body = json.dumps(
         {"error": {"code": code, "status": status, "message": message + " " + KEY}}
     ).encode()
+    header = ""
+    if retry_after is not None:
+        header = "Retry-After: " + str(retry_after) + "\n"
     return urllib.error.HTTPError(
         url,
         code,
         "erro",
-        email.message_from_string(""),
+        email.message_from_string(header),
         io.BytesIO(body),
     )
+
+
+def _summary():
+    return json.dumps(
+        {"candidates": [{"content": {"parts": [{"text": "Objeto: exemplo."}]}}]}
+    ).encode()
+
+
+def _no_sleep(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(ai_service, "_sleep", lambda seconds: sleeps.append(seconds))
+    return sleeps
 
 
 def test_missing_key_does_not_call_the_network(monkeypatch):
@@ -174,9 +189,12 @@ def test_wrapped_timeout(monkeypatch):
 
 
 def test_connection_failure_hides_the_cause(monkeypatch, caplog):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
     _key(monkeypatch)
 
     def fail(request):
+        calls.append(1)
         raise urllib.error.URLError(
             ConnectionError("recusou " + KEY + " " + PDF.decode())
         )
@@ -185,10 +203,13 @@ def test_connection_failure_hides_the_cause(monkeypatch, caplog):
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(GeminiErro, match="Não foi possível conectar") as caught:
             resumir_documento_pdf(PDF)
+    assert calls == [1, 1, 1]
+    assert sleeps == [1, 2]
     assert KEY not in str(caught.value)
     assert "1 0 obj" not in str(caught.value)
     assert KEY not in caplog.text
     assert "1 0 obj" not in caplog.text
+    assert PROMPT_MARK not in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -203,43 +224,56 @@ def test_connection_failure_hides_the_cause(monkeypatch, caplog):
     ],
 )
 def test_http_errors_are_safe(monkeypatch, caplog, code, status, message):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
     _key(monkeypatch)
 
     def fail(request):
+        calls.append(1)
         raise _http_error(request.full_url, code, status)
 
     monkeypatch.setattr(ai_service, "_post", fail)
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(GeminiErro, match=message) as caught:
             resumir_documento_pdf(PDF)
+    assert len(calls) == (3 if code in {429, 503} else 1)
+    assert len(calls) <= ai_service.MAX_ATTEMPTS
+    assert sleeps == ([1, 2] if code in {429, 503} else [])
     assert KEY not in str(caught.value)
     assert KEY not in caplog.text
     assert "detalhe interno" not in str(caught.value)
     assert "detalhe interno" not in caplog.text
+    assert PROMPT_MARK not in caplog.text
 
 
 def test_empty_response(monkeypatch):
+    calls = []
     _key(monkeypatch)
-    monkeypatch.setattr(
-        ai_service,
-        "_post",
-        lambda request: json.dumps({"candidates": []}).encode(),
-    )
+
+    def post(request):
+        calls.append(1)
+        return json.dumps({"candidates": []}).encode()
+
+    monkeypatch.setattr(ai_service, "_post", post)
     with pytest.raises(GeminiErro, match="não retornou conteúdo"):
         resumir_documento_pdf(PDF)
+    assert calls == [1]
 
 
 def test_blocked_response(monkeypatch):
+    calls = []
     _key(monkeypatch)
-    monkeypatch.setattr(
-        ai_service,
-        "_post",
-        lambda request: json.dumps(
+
+    def post(request):
+        calls.append(1)
+        return json.dumps(
             {"candidates": [], "promptFeedback": {"blockReason": "SAFETY"}}
-        ).encode(),
-    )
+        ).encode()
+
+    monkeypatch.setattr(ai_service, "_post", post)
     with pytest.raises(GeminiErro, match="recusada pelo serviço"):
         resumir_documento_pdf(PDF)
+    assert calls == [1]
 
 
 def test_thought_parts_are_not_shown(monkeypatch):
@@ -292,6 +326,205 @@ def test_oversized_response(monkeypatch):
     monkeypatch.setattr(ai_service, "_post", lambda request: b'{"candidates":[]}')
     with pytest.raises(GeminiErro, match="interpretar a resposta"):
         resumir_documento_pdf(PDF)
+
+
+def test_503_then_success_retries_once(monkeypatch, caplog):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(request.full_url, 503, "UNAVAILABLE")
+        return _summary()
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with caplog.at_level(logging.DEBUG):
+        assert resumir_documento_pdf(PDF) == "Objeto: exemplo."
+    assert calls == [1, 1]
+    assert sleeps == [1]
+    assert KEY not in caplog.text
+    assert "1 0 obj" not in caplog.text
+
+
+def test_500_succeeds_on_the_third_attempt(monkeypatch):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        if len(calls) < 3:
+            raise _http_error(request.full_url, 500, "INTERNAL")
+        return _summary()
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    assert resumir_documento_pdf(PDF) == "Objeto: exemplo."
+    assert calls == [1, 1, 1]
+    assert sleeps == [1, 2]
+    assert len(calls) <= ai_service.MAX_ATTEMPTS
+
+
+def test_503_three_times_reports_unavailability(monkeypatch, caplog):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        raise _http_error(request.full_url, 503, "UNAVAILABLE")
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(GeminiErro, match="indisponível") as caught:
+            resumir_documento_pdf(PDF)
+    assert calls == [1, 1, 1]
+    assert sleeps == [1, 2]
+    assert "limite de uso" not in str(caught.value)
+    assert KEY not in str(caught.value)
+    assert KEY not in caplog.text
+    assert "detalhe interno" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "message"),
+    [
+        (400, "INVALID_ARGUMENT", "não conseguiu ler o PDF"),
+        (403, "PERMISSION_DENIED", "recusou a credencial"),
+        (404, "NOT_FOUND", "não está disponível"),
+    ],
+)
+def test_definitive_http_errors_do_not_retry(
+    monkeypatch, caplog, code, status, message
+):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        raise _http_error(request.full_url, code, status)
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(GeminiErro, match=message) as caught:
+            resumir_documento_pdf(PDF)
+    assert calls == [1]
+    assert sleeps == []
+    assert KEY not in str(caught.value)
+    assert KEY not in caplog.text
+
+
+def test_429_retries_then_succeeds_using_retry_after(monkeypatch, caplog):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(
+                request.full_url, 429, "RESOURCE_EXHAUSTED", retry_after=5
+            )
+        return _summary()
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with caplog.at_level(logging.DEBUG):
+        assert resumir_documento_pdf(PDF) == "Objeto: exemplo."
+    assert calls == [1, 1]
+    assert sleeps == [5]
+    assert KEY not in caplog.text
+
+
+def test_429_without_retry_after_uses_short_delays(monkeypatch):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(request.full_url, 429, "RESOURCE_EXHAUSTED")
+        return _summary()
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    assert resumir_documento_pdf(PDF) == "Objeto: exemplo."
+    assert sleeps == [1]
+    assert len(calls) == 2
+
+
+def test_429_three_times_keeps_the_quota_message(monkeypatch, caplog):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        raise _http_error(request.full_url, 429, "RESOURCE_EXHAUSTED", retry_after=8)
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(GeminiErro, match="limite de uso") as caught:
+            resumir_documento_pdf(PDF)
+    assert calls == [1, 1, 1]
+    assert sleeps == [8, 8]
+    assert "indisponível" not in str(caught.value)
+    assert KEY not in str(caught.value)
+    assert KEY not in caplog.text
+    assert "1 0 obj" not in caplog.text
+
+
+def test_large_or_dated_retry_after_falls_back_to_short_delays(monkeypatch):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        header = "3600" if len(calls) == 1 else "Wed, 21 Oct 2026 07:28:00 GMT"
+        raise _http_error(
+            request.full_url, 429, "RESOURCE_EXHAUSTED", retry_after=header
+        )
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with pytest.raises(GeminiErro, match="limite de uso"):
+        resumir_documento_pdf(PDF)
+    assert calls == [1, 1, 1]
+    assert sleeps == [1, 2]
+
+
+def test_timeout_is_not_retried(monkeypatch):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        raise TimeoutError()
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with pytest.raises(GeminiErro, match="não respondeu a tempo"):
+        resumir_documento_pdf(PDF)
+    assert calls == [1]
+    assert sleeps == []
+
+
+def test_connection_succeeds_on_the_second_attempt(monkeypatch):
+    sleeps = _no_sleep(monkeypatch)
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise urllib.error.URLError(ConnectionError("reset"))
+        return _summary()
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    assert resumir_documento_pdf(PDF) == "Objeto: exemplo."
+    assert calls == [1, 1]
+    assert sleeps == [1]
 
 
 def test_model_and_prompt_stay_in_the_service():

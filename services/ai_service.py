@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -20,6 +21,9 @@ GEMINI_ENDPOINT = (
     + ":generateContent"
 )
 TIMEOUT_SECONDS = 120
+MAX_ATTEMPTS = 3
+RETRY_DELAYS_SECONDS = (1, 2)
+RETRY_AFTER_MAX_SECONDS = 30
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_RESPONSE_BYTES = 1_000_000
 MENSAGEM_NAO_CONFIGURADA = "Gemini API não configurada neste ambiente."
@@ -61,28 +65,44 @@ def resumir_documento_pdf(pdf_bytes):
     key = _api_key()
     if not key:
         raise GeminiNaoConfigurada()
-    request = _request(document, key)
-    try:
-        raw = _post(request)
-    except TimeoutError:
-        LOGGER.warning("Chamada ao laboratório de IA expirou.")
-        raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
-    except urllib.error.HTTPError as exc:
-        status = _status_from_error(exc)
-        code = int(getattr(exc, "code", 0) or 0)
-        LOGGER.warning(
-            "Chamada ao laboratório de IA falhou (HTTP %s, %s).",
-            code,
-            status or "sem_status",
-        )
-        raise GeminiErro(_mensagem_http(code, status)) from None
-    except urllib.error.URLError as exc:
-        if isinstance(getattr(exc, "reason", None), TimeoutError):
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            raw = _post(_request(document, key))
+        except TimeoutError:
+            # The call already waited TIMEOUT_SECONDS. Another round could
+            # hold the page for several minutes, so this failure is final.
             LOGGER.warning("Chamada ao laboratório de IA expirou.")
             raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
-        LOGGER.warning("Chamada ao laboratório de IA sem conexão.")
-        raise GeminiErro("Não foi possível conectar ao serviço de IA.") from None
-    return _texto_resposta(raw)
+        except urllib.error.HTTPError as exc:
+            code, status, retry_after = _detalhe_http(exc)
+            if attempt < MAX_ATTEMPTS and _repetir_http(code, status):
+                LOGGER.warning(
+                    "Tentativa %s falhou com HTTP %s. Nova tentativa será realizada.",
+                    attempt,
+                    code,
+                )
+                _sleep(_espera(attempt, retry_after))
+                continue
+            LOGGER.warning(
+                "Chamada ao laboratório de IA falhou (HTTP %s, %s).",
+                code,
+                status or "sem_status",
+            )
+            raise GeminiErro(_mensagem_http(code, status)) from None
+        except urllib.error.URLError as exc:
+            if isinstance(getattr(exc, "reason", None), TimeoutError):
+                LOGGER.warning("Chamada ao laboratório de IA expirou.")
+                raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
+            if attempt < MAX_ATTEMPTS:
+                LOGGER.warning(
+                    "Tentativa %s falhou sem conexão. Nova tentativa será realizada.",
+                    attempt,
+                )
+                _sleep(_espera(attempt, None))
+                continue
+            LOGGER.warning("Chamada ao laboratório de IA sem conexão.")
+            raise GeminiErro("Não foi possível conectar ao serviço de IA.") from None
+        return _texto_resposta(raw)
 
 
 def _api_key():
@@ -137,6 +157,52 @@ def _request(document, key):
         },
         method="POST",
     )
+
+
+def _sleep(seconds):
+    time.sleep(seconds)
+
+
+def _espera(attempt, retry_after):
+    if retry_after is not None:
+        return retry_after
+    return RETRY_DELAYS_SECONDS[attempt - 1]
+
+
+def _repetir_http(code, status):
+    if code in {400, 401, 403, 404, 408, 413, 504}:
+        return False
+    if code == 429 or status == "RESOURCE_EXHAUSTED":
+        return True
+    return code in {500, 502, 503}
+
+
+def _detalhe_http(exc):
+    code = int(getattr(exc, "code", 0) or 0)
+    status = _status_from_error(exc)
+    retry_after = None
+    if code == 429 or status == "RESOURCE_EXHAUSTED":
+        retry_after = _retry_after_seconds(exc)
+    return code, status, retry_after
+
+
+def _retry_after_seconds(exc):
+    headers = getattr(exc, "headers", None)
+    if not headers:
+        return None
+    try:
+        raw = headers.get("Retry-After")
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text.isdigit():
+        return None
+    seconds = int(text)
+    if seconds > RETRY_AFTER_MAX_SECONDS:
+        return None
+    return seconds
 
 
 def _post(request):
