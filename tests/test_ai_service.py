@@ -114,8 +114,13 @@ def test_rejects_invalid_pdf_before_the_network(monkeypatch, payload, message):
 def test_rejects_pdf_above_the_prototype_limit(monkeypatch):
     _key(monkeypatch)
     monkeypatch.setattr(ai_service, "MAX_PDF_BYTES", 16)
-    with pytest.raises(GeminiErro, match="excede o limite"):
+    with pytest.raises(GeminiErro) as caught:
         resumir_documento_pdf(b"%PDF-1.4" + b"x" * 20)
+    assert (
+        str(caught.value)
+        == "O PDF excede o limite máximo de 10 MB para processamento por IA."
+    )
+    assert "deste teste" not in str(caught.value)
 
 
 def test_default_pdf_limit_is_ten_megabytes():
@@ -588,6 +593,7 @@ raise SystemExit(0 if not found else 1)
 
 def test_stable_modules_do_not_reference_the_lab():
     services = ROOT / "services"
+    integrated = {"representacoes.py", "representacoes_ui.py"}
     for name in (
         "representacoes.py",
         "representacoes_ui.py",
@@ -603,6 +609,14 @@ def test_stable_modules_do_not_reference_the_lab():
         "search_ui.py",
     ):
         text = (services / name).read_text(encoding="utf-8")
-        assert "ai_service" not in text
+        if name not in integrated:
+            assert "ai_service" not in text
         assert "ai_lab_ui" not in text
         assert "Laboratório de IA" not in text
+        for needle in (
+            "generativelanguage",
+            "x-goog-api-key",
+            "GEMINI_API_KEY",
+            "inlineData",
+        ):
+            assert needle not in text

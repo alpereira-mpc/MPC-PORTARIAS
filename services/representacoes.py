@@ -1,6 +1,7 @@
 """Business rules for Representações. No Streamlit and no BLOB listing."""
 
 from datetime import date
+import hashlib
 import logging
 import re
 
@@ -221,7 +222,10 @@ def reconcile_signatories(selected, allowed):
 
 def people_index(store):
     procuradores_map = {row["id"]: row["nome"] for row in store.catalog("procuradores")}
-    assessores_map = {row["id"]: row["nome"] for row in MemorandosStore(store).all_servers(include_inactive=True)}
+    assessores_map = {
+        row["id"]: row["nome"]
+        for row in MemorandosStore(store).all_servers(include_inactive=True)
+    }
     return procuradores_map, assessores_map
 
 
@@ -243,7 +247,9 @@ def people_context(store):
 
 
 def member_name(member, procuradores_map, assessores_map):
-    source = procuradores_map if member["membro_tipo"] == "PROCURADOR" else assessores_map
+    source = (
+        procuradores_map if member["membro_tipo"] == "PROCURADOR" else assessores_map
+    )
     return source.get(member["membro_id"]) or "—"
 
 
@@ -487,6 +493,55 @@ def download(store, file_id):
     return open_store(store).download(file_id)
 
 
+def pdf_oficial(store, identifier):
+    """Metadata of the latest protocolled PDF. Bytes stay out of this query."""
+    record = get(store, identifier)
+    if not is_protocolled(record):
+        return None
+    return open_store(store).pdf_oficial(identifier)
+
+
+def resumo_ia(store, identifier):
+    return open_store(store).resumo_ia(identifier)
+
+
+def hash_documento(store, file_id):
+    file = download(store, file_id)
+    return hashlib.sha256(file["conteudo"]).hexdigest()
+
+
+def resumo_desatualizado(resumo, sha256):
+    if not resumo or not str(resumo.get("texto") or "").strip():
+        return False
+    stored = str(resumo.get("sha256") or "")
+    if not stored or not sha256:
+        return False
+    return stored != sha256
+
+
+def atualizar_resumo_representacao(store, identifier, principal):
+    """Summarize the official PDF on demand and replace the stored text only on success."""
+    from database.store import now
+    from services.access import require_permission
+    from services.ai_service import GEMINI_MODEL, resumir_documento_pdf
+
+    require_permission(principal, "representacoes")
+    official = pdf_oficial(store, identifier)
+    if official is None:
+        raise ValueError("Não há PDF oficial protocolado para esta representação.")
+    file = download(store, official["id"])
+    digest = hashlib.sha256(file["conteudo"]).hexdigest()
+    texto = resumir_documento_pdf(file["conteudo"])
+    return open_store(store).save_resumo_ia(
+        identifier,
+        texto,
+        now(),
+        GEMINI_MODEL,
+        digest,
+        official["id"],
+    )
+
+
 def add_progress(store, identifier, values, principal):
     if get(store, identifier) is None:
         raise ValueError("Representação não encontrada.")
@@ -614,7 +669,9 @@ def set_status(store, identifier, situacao, principal, fase=None, note=""):
         "AGUARDANDO_PROTOCOLO",
         "ARQUIVADA",
     ):
-        raise ValueError("Após o protocolo, utilize a situação processual correspondente.")
+        raise ValueError(
+            "Após o protocolo, utilize a situação processual correspondente."
+        )
     text = note or ("Situação alterada para " + SITUACOES[situacao] + ".")
     updated = open_store(store).set_status(
         identifier, situacao, fase, actor_of(principal), text
@@ -680,7 +737,9 @@ def delete(store, identifier, principal=None):
         raise ValueError(
             "Representação protocolada não pode ser excluída. Utilize encerramento, cancelamento ou arquivamento."
         )
-    removed = open_store(store).delete(identifier, actor_of(principal) if principal else "")
+    removed = open_store(store).delete(
+        identifier, actor_of(principal) if principal else ""
+    )
     _audit(
         store,
         principal,

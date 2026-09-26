@@ -124,8 +124,9 @@ def _validar_pdf(pdf_bytes):
     if not document:
         raise GeminiErro("O arquivo PDF está vazio.")
     if len(document) > MAX_PDF_BYTES:
-        megabytes = MAX_PDF_BYTES // (1024 * 1024)
-        raise GeminiErro(f"O PDF excede o limite de {megabytes} MB deste teste.")
+        raise GeminiErro(
+            "O PDF excede o limite máximo de 10 MB para processamento por IA."
+        )
     if b"%PDF" not in document[:1024]:
         raise GeminiErro("O arquivo enviado não é um PDF válido.")
     return document

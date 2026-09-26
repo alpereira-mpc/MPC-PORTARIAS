@@ -89,7 +89,11 @@ def _server(store, name="Assessor Teste", setor="PROGE", ativo=1):
 
 def _payload(store, **changes):
     member = next(p["id"] for p in store.catalog("procuradores") if p.get("ativo"))
-    others = [p["id"] for p in store.catalog("procuradores") if p.get("ativo") and p["id"] != member][:2]
+    others = [
+        p["id"]
+        for p in store.catalog("procuradores")
+        if p.get("ativo") and p["id"] != member
+    ][:2]
     assessor = _server(store)
     data = {
         "titulo": "Representação sobre licitação",
@@ -156,8 +160,13 @@ def test_create_edit_team_protocol_phase_and_delete_rules(store):
     assert record["fase_processual"] is None
     roles = {(item["papel"], item["membro_id"]) for item in record["integrantes"]}
     assert ("PROCURADOR_RESPONSAVEL", responsible) in roles
-    assert {item[1] for item in roles if item[0] == "PROCURADOR_SIGNATARIO"} == set(signatories)
-    assert {item[1] for item in roles if item[0] == "ASSESSOR"} == {assessor, extra_assessor}
+    assert {item[1] for item in roles if item[0] == "PROCURADOR_SIGNATARIO"} == set(
+        signatories
+    )
+    assert {item[1] for item in roles if item[0] == "ASSESSOR"} == {
+        assessor,
+        extra_assessor,
+    }
     created_events = progress(store, record["id"])
     assert created_events[0]["tipo"] == "CRIADA"
     assert not (created_events[0].get("descricao") or "").strip()
@@ -172,7 +181,16 @@ def test_create_edit_team_protocol_phase_and_delete_rules(store):
     payload["procuradores_signatarios"] = signatories[:1]
     updated = update(store, record["id"], payload, principal)
     assert updated["titulo"] == "Título revisado"
-    assert len([item for item in updated["integrantes"] if item["papel"] == "PROCURADOR_SIGNATARIO"]) == 1
+    assert (
+        len(
+            [
+                item
+                for item in updated["integrantes"]
+                if item["papel"] == "PROCURADOR_SIGNATARIO"
+            ]
+        )
+        == 1
+    )
     listed = list_records(store, {"pesquisa": "revisado"})
     assert listed[0]["id"] == record["id"]
     assert "arquivo" not in (listed[0].get("ultimo_andamento") or {})
@@ -195,7 +213,9 @@ def test_create_edit_team_protocol_phase_and_delete_rules(store):
     assert protocolled["fase_processual"] == "INSTRUCAO"
     types = [item["tipo"] for item in progress(store, record["id"])]
     assert types.count("PROTOCOLADA") == 1
-    protocol_events = [item for item in progress(store, record["id"]) if item["tipo"] == "PROTOCOLADA"]
+    protocol_events = [
+        item for item in progress(store, record["id"]) if item["tipo"] == "PROTOCOLADA"
+    ]
     assert protocol_events[0]["descricao"].startswith("Representação protocolada.")
     assert kind_label(protocolled) == KIND_REPRESENTATION
     assert kind_label(get(store, record["id"])) == KIND_REPRESENTATION
@@ -228,7 +248,11 @@ def test_progress_documents_metadata_and_orphan_cleanup(store):
     add_document(
         store,
         record["id"],
-        {"tipo_documento": "MINUTA", "descricao": "Minuta inicial", "data_documento": "2026-09-10"},
+        {
+            "tipo_documento": "MINUTA",
+            "descricao": "Minuta inicial",
+            "data_documento": "2026-09-10",
+        },
         "minuta.pdf",
         _pdf(),
         principal,
@@ -254,18 +278,27 @@ def test_progress_documents_metadata_and_orphan_cleanup(store):
     delete(store, identifier)
     assert get(store, identifier) is None
     with store.connection(read_only=True) as c:
-        assert c.execute(
-            "SELECT COUNT(*) FROM representacao_integrantes WHERE representacao_id=?",
-            (identifier,),
-        ).fetchone()[0] == 0
-        assert c.execute(
-            "SELECT COUNT(*) FROM representacao_documentos WHERE representacao_id=?",
-            (identifier,),
-        ).fetchone()[0] == 0
-        assert c.execute(
-            "SELECT COUNT(*) FROM representacao_andamentos WHERE representacao_id=?",
-            (identifier,),
-        ).fetchone()[0] == 0
+        assert (
+            c.execute(
+                "SELECT COUNT(*) FROM representacao_integrantes WHERE representacao_id=?",
+                (identifier,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            c.execute(
+                "SELECT COUNT(*) FROM representacao_documentos WHERE representacao_id=?",
+                (identifier,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            c.execute(
+                "SELECT COUNT(*) FROM representacao_andamentos WHERE representacao_id=?",
+                (identifier,),
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_list_does_not_select_blob(store):
@@ -456,7 +489,11 @@ def test_relatores_and_medida_cautelar(store):
     )
     assert saved["possui_medida_cautelar"] is False
     assert saved["relator"] == RELATORES_SUBSTITUTOS[1]
-    stale = {"tipo": "CRIADA", "descricao": "Representação criada.", "data": "2026-09-01"}
+    stale = {
+        "tipo": "CRIADA",
+        "descricao": "Representação criada.",
+        "data": "2026-09-01",
+    }
     heading, extra = andamento_display(stale)
     assert heading == "Projeto de Representação criado"
     assert extra == ""
@@ -473,10 +510,13 @@ def test_project_can_be_deleted_but_protocolled_cannot(store):
     delete(store, identifier)
     assert get(store, identifier) is None
     with store.connection(read_only=True) as c:
-        assert c.execute(
-            "SELECT COUNT(*) FROM representacao_integrantes WHERE representacao_id=?",
-            (identifier,),
-        ).fetchone()[0] == 0
+        assert (
+            c.execute(
+                "SELECT COUNT(*) FROM representacao_integrantes WHERE representacao_id=?",
+                (identifier,),
+            ).fetchone()[0]
+            == 0
+        )
     again = create(store, payload, principal)
     protocolled = register_protocol(
         store,
@@ -550,7 +590,11 @@ def test_exclude_progress_keeps_the_row_and_hides_it(store, monkeypatch):
     add_progress(
         store,
         record["id"],
-        {"tipo": "MINUTA_PREPARADA", "data": "2026-09-10", "descricao": "Minuta válida."},
+        {
+            "tipo": "MINUTA_PREPARADA",
+            "data": "2026-09-10",
+            "descricao": "Minuta válida.",
+        },
         principal,
     )
     add_progress(
@@ -610,7 +654,8 @@ def test_exclude_progress_keeps_the_row_and_hides_it(store, monkeypatch):
             ("ANDAMENTO_EXCLUIDO",),
         ).fetchone()
         assert (
-            c.execute("SELECT COUNT(*) FROM notificacoes_email").fetchone()[0] == notices
+            c.execute("SELECT COUNT(*) FROM notificacoes_email").fetchone()[0]
+            == notices
         )
         assert (
             c.execute("SELECT COUNT(*) FROM notificacao_destinatarios").fetchone()[0]
@@ -706,8 +751,7 @@ def test_existing_progress_table_gains_exclusion_columns(tmp_path):
     legacy = Store(path)
     with legacy.connection(read_only=True) as c:
         names = {
-            row[1]
-            for row in c.execute("PRAGMA table_info(representacao_andamentos)")
+            row[1] for row in c.execute("PRAGMA table_info(representacao_andamentos)")
         }
         row = c.execute("SELECT * FROM representacao_andamentos WHERE id=7").fetchone()
     assert {"excluido", "excluido_em", "excluido_por", "motivo_exclusao"} <= names
@@ -720,6 +764,248 @@ def test_existing_progress_table_gains_exclusion_columns(tmp_path):
     assert not row["excluido_em"]
     assert row["excluido_por"] == ""
     assert row["motivo_exclusao"] == ""
+
+
+def _protocolled_with_pdf(store, principal, content=None, number="TC 077777/26"):
+    payload, *_ = _payload(store)
+    record = create(store, payload, principal)
+    register_protocol(
+        store,
+        record["id"],
+        {
+            "numero_processo": number,
+            "data_protocolo": "2026-09-18",
+            "relator": RELATORES[0],
+            "fase_processual": "INSTRUCAO",
+        },
+        principal,
+        ("representacao.pdf", content or _pdf()),
+    )
+    return record["id"]
+
+
+def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monkeypatch):
+    import services.ai_service as ai_service
+    from services.ai_service import GeminiErro
+    from services.representacoes import (
+        atualizar_resumo_representacao,
+        hash_documento,
+        pdf_oficial,
+        resumo_desatualizado,
+        resumo_ia,
+    )
+    from services.representacoes_ui import (
+        AVISO_PDF_ALTERADO,
+        AVISO_RESUMO_IA,
+        _detail_compact,
+        _render_official_document,
+    )
+
+    principal = _principal(store, email="resumo-rep@test.local")
+    calls = []
+
+    def fake_summary(pdf_bytes):
+        calls.append(pdf_bytes)
+        return "Objeto: resumo " + str(len(calls)) + "."
+
+    monkeypatch.setattr(ai_service, "resumir_documento_pdf", fake_summary)
+    payload, *_ = _payload(store)
+    bare = create(store, payload, principal)
+    assert pdf_oficial(store, bare["id"]) is None
+    assert resumo_ia(store, bare["id"]) is None
+    with pytest.raises(ValueError, match="Não há PDF oficial"):
+        atualizar_resumo_representacao(store, bare["id"], principal)
+    assert calls == []
+
+    first_pdf = _pdf()
+    identifier = _protocolled_with_pdf(store, principal, first_pdf, "TC 088888/26")
+    official = pdf_oficial(store, identifier)
+    assert official["tipo_documento"] == "REPRESENTACAO_FINAL"
+    assert official["nome_arquivo"] == "representacao.pdf"
+    assert "arquivo" not in official
+    assert download(store, official["id"])["conteudo"] == first_pdf
+    from services.representacoes_ui import _official_download_payload
+
+    delivered = _official_download_payload(
+        store, principal, get(store, identifier), official
+    )
+    assert delivered["conteudo"] == first_pdf
+    assert delivered["nome"] == official["nome_arquivo"]
+    with store.connection(read_only=True) as c:
+        audited = c.execute(
+            "SELECT COUNT(*) FROM auditoria_eventos WHERE evento=? AND entidade_id=?",
+            ("DOCUMENTO_BAIXADO", str(identifier)),
+        ).fetchone()[0]
+    assert audited == 1
+    assert resumo_ia(store, identifier) is None
+    assert "resumo_ia" not in get(store, identifier)
+    assert calls == []
+
+    saved = atualizar_resumo_representacao(store, identifier, principal)
+    assert saved["texto"] == "Objeto: resumo 1."
+    assert saved["sha256"] == hash_documento(store, official["id"])
+    assert saved["documento_id"] == official["id"]
+    assert saved["modelo"]
+    assert saved["gerado_em"]
+    assert len(calls) == 1
+    assert calls[0] == first_pdf
+    again = resumo_ia(store, identifier)
+    assert again["texto"] == saved["texto"]
+    assert len(calls) == 1
+    assert not resumo_desatualizado(again, again["sha256"])
+
+    updated = atualizar_resumo_representacao(store, identifier, principal)
+    assert updated["texto"] == "Objeto: resumo 2."
+    assert resumo_ia(store, identifier)["texto"] == "Objeto: resumo 2."
+    assert len(calls) == 2
+
+    def fail_summary(_pdf_bytes):
+        calls.append(b"falha")
+        raise GeminiErro("O serviço de IA está indisponível no momento.")
+
+    monkeypatch.setattr(ai_service, "resumir_documento_pdf", fail_summary)
+    with pytest.raises(GeminiErro, match="indisponível"):
+        atualizar_resumo_representacao(store, identifier, principal)
+    assert resumo_ia(store, identifier)["texto"] == "Objeto: resumo 2."
+
+    empty_id = _protocolled_with_pdf(store, principal, _pdf(), "TC 099999/26")
+    with pytest.raises(GeminiErro, match="indisponível"):
+        atualizar_resumo_representacao(store, empty_id, principal)
+    assert resumo_ia(store, empty_id) is None
+
+    replacement_writer = PdfWriter()
+    replacement_writer.add_blank_page(width=144, height=144)
+    replacement_buffer = BytesIO()
+    replacement_writer.write(replacement_buffer)
+    replacement = replacement_buffer.getvalue()
+    assert replacement != first_pdf
+    add_document(
+        store,
+        identifier,
+        {
+            "tipo_documento": "REPRESENTACAO_FINAL",
+            "descricao": "PDF substituído",
+            "data_documento": "2026-09-20",
+        },
+        "representacao-nova.pdf",
+        replacement,
+        principal,
+    )
+    current = pdf_oficial(store, identifier)
+    assert current["id"] != official["id"]
+    assert download(store, current["id"])["conteudo"] == replacement
+    assert download(store, official["id"])["conteudo"] == first_pdf
+    stored = resumo_ia(store, identifier)
+    assert stored["texto"] == "Objeto: resumo 2."
+    assert resumo_desatualizado(stored, hash_documento(store, current["id"]))
+    assert not resumo_desatualizado(stored, stored["sha256"])
+
+    denied = _principal(
+        store,
+        email="sem-rep@test.local",
+        representacoes=False,
+        registrar_protocolo=False,
+    )
+    with pytest.raises(ValueError, match="não autorizado"):
+        atualizar_resumo_representacao(store, identifier, denied)
+    assert resumo_ia(store, identifier)["texto"] == "Objeto: resumo 2."
+
+    screen = inspect.getsource(_render_official_document)
+    compact = inspect.getsource(_detail_compact)
+    assert screen.index("if summary_column.button") < screen.index(
+        "atualizar_resumo_representacao("
+    )
+    assert "resumir_documento_pdf" not in screen
+    assert "Baixar representação" in screen
+    assert 'on_click="ignore"' in screen
+    assert "_official_download_payload(" in screen
+    assert "Preparar download" not in screen
+    assert "rep_visao_prep_" not in screen
+    assert "✨ Gerar resumo com IA" in screen
+    assert "↻ Atualizar resumo" in screen
+    assert "### Resumo da representação — gerado por IA" in screen
+    assert "AVISO_RESUMO_IA" in screen
+    assert "AVISO_PDF_ALTERADO" in screen
+    assert "documento protocolado" in AVISO_RESUMO_IA
+    assert "documento oficial foi alterado" in AVISO_PDF_ALTERADO
+    assert "_render_official_document(" in compact
+    assert "Preparar download" in compact
+    assert 'download_button("Baixar"' in compact or "download_button(\n" in compact
+    assert "rep_dl_" in compact
+    assert "rep_prep_" in compact
+
+
+def test_new_database_creates_summary_columns(tmp_path):
+    fresh = Store(tmp_path / "novo.db")
+    with fresh.connection(read_only=True) as c:
+        names = {row[1] for row in c.execute("PRAGMA table_info(representacoes)")}
+    assert {
+        "resumo_ia",
+        "resumo_ia_em",
+        "resumo_ia_modelo",
+        "resumo_ia_sha256",
+        "resumo_ia_documento_id",
+    } <= names
+    source = inspect.getsource(RepresentacoesStore.ensure_schema)
+    assert source.index("resumo_ia TEXT") < source.index("_ensure_resumo_ia")
+
+
+def test_official_pdf_hash_cache_follows_the_document_id(monkeypatch):
+    import services.representacoes_ui as ui
+
+    calls = []
+
+    def fake_hash(_store, file_id):
+        calls.append(file_id)
+        return "sha-" + file_id
+
+    monkeypatch.setattr(ui, "hash_documento", fake_hash)
+    monkeypatch.setattr(ui.st, "session_state", {})
+    current = {"id": "doc-atual", "tamanho": 12, "criado_em": "2026-09-26T00:00:00"}
+    assert ui._official_sha256(None, current) == "sha-doc-atual"
+    assert ui._official_sha256(None, current) == "sha-doc-atual"
+    assert calls == ["doc-atual"]
+    replacement = {"id": "doc-novo", "tamanho": 12, "criado_em": "2026-09-26T00:00:00"}
+    assert ui._official_sha256(None, replacement) == "sha-doc-novo"
+    assert calls == ["doc-atual", "doc-novo"]
+
+
+def test_existing_representation_gains_summary_columns(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy-resumo.db"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE representacoes ("
+        "id INTEGER PRIMARY KEY, titulo TEXT NOT NULL, objeto TEXT NOT NULL DEFAULT '',"
+        "origem TEXT NOT NULL, data_abertura TEXT NOT NULL, representado TEXT NOT NULL DEFAULT '',"
+        "tema TEXT NOT NULL DEFAULT '', prioridade TEXT NOT NULL DEFAULT 'NORMAL',"
+        "situacao TEXT NOT NULL, fase_processual TEXT, numero_processo TEXT,"
+        "data_protocolo TEXT, relator TEXT, observacoes TEXT NOT NULL DEFAULT '',"
+        "criado_em TEXT NOT NULL, criado_por TEXT NOT NULL, atualizado_em TEXT NOT NULL,"
+        "atualizado_por TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO representacoes(id,titulo,origem,data_abertura,situacao,criado_em,"
+        "criado_por,atualizado_em,atualizado_por) VALUES(4,'Título legado','DE_OFICIO',"
+        "'2026-09-01','IDEIA','2026-09-01T00:00:00','autor@test.local',"
+        "'2026-09-01T00:00:00','autor@test.local')"
+    )
+    connection.commit()
+    connection.close()
+    legacy = Store(path)
+    with legacy.connection(read_only=True) as c:
+        names = {row[1] for row in c.execute("PRAGMA table_info(representacoes)")}
+        row = c.execute("SELECT * FROM representacoes WHERE id=4").fetchone()
+    assert {
+        "resumo_ia",
+        "resumo_ia_em",
+        "resumo_ia_modelo",
+        "resumo_ia_sha256",
+        "resumo_ia_documento_id",
+    } <= names
+    assert row["titulo"] == "Título legado"
+    assert row["resumo_ia"] is None
 
 
 def test_andamento_exclusion_is_offered_in_the_timeline():

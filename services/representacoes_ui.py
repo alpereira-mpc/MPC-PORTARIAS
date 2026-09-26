@@ -6,6 +6,14 @@ import logging
 import streamlit as st
 
 LOGGER = logging.getLogger("mpc.representacoes.ui")
+AVISO_RESUMO_IA = (
+    "Resumo gerado por inteligência artificial a partir do documento protocolado. "
+    "Consulte o documento original para conferência."
+)
+AVISO_PDF_ALTERADO = (
+    "O documento oficial foi alterado desde a geração deste resumo. "
+    "Gere novamente para atualizar."
+)
 
 from services.access import has_permission, require_permission
 from services.branding import module_title
@@ -27,9 +35,14 @@ from services.representacoes import (
     delete,
     delete_blocked_reason,
     exclude_progress,
+    atualizar_resumo_representacao,
     documents,
     download,
     get,
+    hash_documento,
+    pdf_oficial,
+    resumo_desatualizado,
+    resumo_ia,
     grouped_members,
     is_protocolled,
     kind_label,
@@ -103,7 +116,9 @@ def _filter_select(label, mapping, empty, key):
     chosen = st.selectbox(
         label,
         [_FILTER_ALL, *mapping],
-        format_func=lambda x, names=mapping, blank=empty: blank if x == _FILTER_ALL else names.get(x, str(x)),
+        format_func=lambda x, names=mapping, blank=empty: (
+            blank if x == _FILTER_ALL else names.get(x, str(x))
+        ),
         placeholder=empty,
         key=key,
     )
@@ -160,8 +175,12 @@ def _form(store, current=None):
         st.warning("Cadastre um Procurador ativo na base institucional.")
         return
     form_mark()
-    title = st.text_input("Título *", value=current.get("titulo") or "", key=prefix + "titulo")
-    objeto = st.text_area("Objeto/resumo", value=current.get("objeto") or "", key=prefix + "objeto")
+    title = st.text_input(
+        "Título *", value=current.get("titulo") or "", key=prefix + "titulo"
+    )
+    objeto = st.text_area(
+        "Objeto/resumo", value=current.get("objeto") or "", key=prefix + "objeto"
+    )
     left, right = st.columns(2)
     origem_keys = list(ORIGENS)
     origem = left.selectbox(
@@ -173,14 +192,22 @@ def _form(store, current=None):
     )
     opening = right.date_input(
         "Data de abertura",
-        date.fromisoformat(current["data_abertura"]) if current.get("data_abertura") else date.today(),
+        (
+            date.fromisoformat(current["data_abertura"])
+            if current.get("data_abertura")
+            else date.today()
+        ),
         format="DD/MM/YYYY",
         key=prefix + "abertura",
     )
     representado = st.text_input(
-        "Representado", value=current.get("representado") or "", key=prefix + "representado"
+        "Representado",
+        value=current.get("representado") or "",
+        key=prefix + "representado",
     )
-    tema = st.text_input("Tema/área", value=current.get("tema") or "", key=prefix + "tema")
+    tema = st.text_input(
+        "Tema/área", value=current.get("tema") or "", key=prefix + "tema"
+    )
     prioridade_keys = list(PRIORIDADES)
     prioridade = st.selectbox(
         "Prioridade",
@@ -190,11 +217,17 @@ def _form(store, current=None):
         key=prefix + "prioridade",
     )
     observacoes = st.text_area(
-        "Observações internas", value=current.get("observacoes") or "", key=prefix + "obs"
+        "Observações internas",
+        value=current.get("observacoes") or "",
+        key=prefix + "obs",
     )
     existing = current.get("integrantes") or []
     responsible = next(
-        (item["membro_id"] for item in existing if item["papel"] == "PROCURADOR_RESPONSAVEL"),
+        (
+            item["membro_id"]
+            for item in existing
+            if item["papel"] == "PROCURADOR_RESPONSAVEL"
+        ),
         next(iter(people), None),
     )
     signatories = [
@@ -296,7 +329,9 @@ def _filters():
     people, servers = st.session_state.get("_rep_people") or ({}, {})
     i, j = st.columns(2)
     with i:
-        procurador = _filter_select("Procurador responsável", people, "Todos", "rep_f_procud")
+        procurador = _filter_select(
+            "Procurador responsável", people, "Todos", "rep_f_procud"
+        )
     with j:
         assessor = _filter_select("Assessor", servers, "Todos", "rep_f_ass")
     filters = {
@@ -329,7 +364,12 @@ def _card(record, index, procuradores_map, assessores_map):
     secondary = "Representado: " + (record.get("representado") or "—")
     meta = (
         "Procuradores: "
-        + (", ".join(groups["PROCURADOR_RESPONSAVEL"] + groups["PROCURADOR_SIGNATARIO"]) or "—")
+        + (
+            ", ".join(
+                groups["PROCURADOR_RESPONSAVEL"] + groups["PROCURADOR_SIGNATARIO"]
+            )
+            or "—"
+        )
         + " · Assessores: "
         + (", ".join(groups["ASSESSOR"]) or "—")
     )
@@ -407,9 +447,13 @@ def _document_form(store, principal, identifier):
         format_func=DOCUMENTOS.get,
         key=prefix + "tipo",
     )
-    day = st.date_input("Data do documento", date.today(), format="DD/MM/YYYY", key=prefix + "data")
+    day = st.date_input(
+        "Data do documento", date.today(), format="DD/MM/YYYY", key=prefix + "data"
+    )
     descricao = st.text_input("Descrição", key=prefix + "desc")
-    uploaded = st.file_uploader("Arquivo (PDF ou DOCX, até 10 MB)", type=["pdf", "docx"], key=prefix + "file")
+    uploaded = st.file_uploader(
+        "Arquivo (PDF ou DOCX, até 10 MB)", type=["pdf", "docx"], key=prefix + "file"
+    )
     if st.button("Anexar", type="primary", key=prefix + "ok"):
         if uploaded is None:
             st.error("Selecione um arquivo.")
@@ -448,7 +492,9 @@ def _protocol_form(store, principal, identifier):
     )
     prefix = "rep_prot_" + str(identifier)
     number = st.text_input("Número do processo *", key=prefix + "num")
-    day = st.date_input("Data do protocolo", date.today(), format="DD/MM/YYYY", key=prefix + "data")
+    day = st.date_input(
+        "Data do protocolo", date.today(), format="DD/MM/YYYY", key=prefix + "data"
+    )
     relator = st.selectbox(
         "Relator *",
         [_FILTER_ALL, *RELATORES],
@@ -475,7 +521,9 @@ def _protocol_form(store, principal, identifier):
         key=prefix + "cautelar",
     )
     observacoes = st.text_area("Observações", key=prefix + "obs")
-    uploaded = st.file_uploader("PDF final da Representação", type=["pdf"], key=prefix + "pdf")
+    uploaded = st.file_uploader(
+        "PDF final da Representação", type=["pdf"], key=prefix + "pdf"
+    )
     if st.button("Confirmar protocolo", type="primary", key=prefix + "ok"):
         upload = None
         if uploaded is not None:
@@ -514,13 +562,18 @@ def _detail(store, principal, record):
 def _detail_summary(store, record):
     procuradores_map, assessores_map = people_index(store)
     groups = grouped_members(record, procuradores_map, assessores_map)
-    render_record(record["titulo"], badges_html=badges(*_badge_items(record)), boxed=True)
+    render_record(
+        record["titulo"], badges_html=badges(*_badge_items(record)), boxed=True
+    )
     summary = [
         ("Representado", record.get("representado")),
         ("Situação", label(SITUACOES, record.get("situacao"))),
         ("Fase processual", label(FASES, record.get("fase_processual"))),
         ("Processo", record.get("numero_processo")),
-        ("Relator", relator_label(record.get("relator")) if record.get("relator") else None),
+        (
+            "Relator",
+            relator_label(record.get("relator")) if record.get("relator") else None,
+        ),
         ("Responsável MPC", ", ".join(groups["PROCURADOR_RESPONSAVEL"]) or "—"),
     ]
     definition_block("Situação atual", summary)
@@ -571,6 +624,105 @@ def _render_progress_item(store, principal, record, item, pending):
         st.rerun()
 
 
+def _official_sha256(store, official):
+    token = (official["id"], official.get("tamanho"), official.get("criado_em"))
+    cached = st.session_state.get("_rep_pdf_sha")
+    if isinstance(cached, dict) and cached.get("token") == token:
+        return cached["sha256"]
+    digest = hash_documento(store, official["id"])
+    st.session_state["_rep_pdf_sha"] = {"token": token, "sha256": digest}
+    return digest
+
+
+def _official_download_payload(store, principal, record, official):
+    """Audit and return the stored protocol PDF. The file is not copied."""
+    from services.audit import registrar_download
+
+    registrar_download(
+        store,
+        modulo="representacoes",
+        entidade_tipo="representacao",
+        entidade_id=record["id"],
+        arquivo=official.get("nome_arquivo"),
+        formato=official.get("mime_type"),
+        rotulo=record.get("titulo"),
+        principal=principal,
+    )
+    return download(store, official["id"])
+
+
+def _render_official_document(store, principal, record):
+    """Shortcut for the protocol PDF already stored with the representation."""
+    official = pdf_oficial(store, record["id"])
+    if official is None:
+        return
+    saved = resumo_ia(store, record["id"])
+    download_column, summary_column = st.columns(2)
+
+    def _read_official_pdf():
+        return _official_download_payload(store, principal, record, official)[
+            "conteudo"
+        ]
+
+    # Streamlit runs the callable on click and does not rerun the page.
+    # The Documentos tab keeps its own prepare-then-download flow.
+    download_column.download_button(
+        "Baixar representação",
+        data=_read_official_pdf,
+        file_name=official.get("nome_arquivo") or "representacao.pdf",
+        mime=official.get("mime_type") or "application/pdf",
+        key="rep_visao_dl_" + official["id"],
+        on_click="ignore",
+    )
+    has_summary = bool(saved and str(saved.get("texto") or "").strip())
+    summary_label = "↻ Atualizar resumo" if has_summary else "✨ Gerar resumo com IA"
+    if summary_column.button(
+        summary_label, key="rep_visao_resumo_" + str(record["id"])
+    ):
+        from services.ai_service import GeminiErro, GeminiNaoConfigurada
+
+        try:
+            with st.spinner("Gerando resumo da representação..."):
+                saved = atualizar_resumo_representacao(store, record["id"], principal)
+        except GeminiNaoConfigurada as exc:
+            st.warning(str(exc))
+        except GeminiErro as exc:
+            st.error(str(exc))
+        except ValueError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            LOGGER.error(
+                "Falha ao concluir o resumo da representação (%s).",
+                type(exc).__name__,
+            )
+            if has_summary:
+                st.error(
+                    "Não foi possível salvar o resumo. O conteúdo anterior foi mantido."
+                )
+            else:
+                st.error("Não foi possível concluir o resumo da representação.")
+        else:
+            st.session_state["_rep_pdf_sha"] = {
+                "token": (
+                    official["id"],
+                    official.get("tamanho"),
+                    official.get("criado_em"),
+                ),
+                "sha256": saved.get("sha256"),
+            }
+    if not saved or not str(saved.get("texto") or "").strip():
+        return
+    try:
+        current_sha = _official_sha256(store, official)
+    except ValueError:
+        current_sha = None
+    if resumo_desatualizado(saved, current_sha):
+        st.caption(AVISO_PDF_ALTERADO)
+    st.markdown("### Resumo da representação — gerado por IA")
+    st.markdown(saved["texto"])
+    st.caption(AVISO_RESUMO_IA)
+
+
 def _detail_compact(store, principal, record):
     groups = _detail_summary(store, record)
     protocolled = is_protocolled(record)
@@ -598,7 +750,10 @@ def _detail_compact(store, principal, record):
         definition_block(
             "Equipe",
             (
-                ("Procurador responsável", ", ".join(groups["PROCURADOR_RESPONSAVEL"]) or "—"),
+                (
+                    "Procurador responsável",
+                    ", ".join(groups["PROCURADOR_RESPONSAVEL"]) or "—",
+                ),
                 ("Signatários", ", ".join(groups["PROCURADOR_SIGNATARIO"]) or "—"),
                 ("Assessores", ", ".join(groups["ASSESSOR"]) or "—"),
             ),
@@ -606,12 +761,28 @@ def _detail_compact(store, principal, record):
         if protocolled:
             definition_block(
                 "Processo",
-                (("Número", record.get("numero_processo")), ("Protocolo", format_date_br(record.get("data_protocolo"))),
-                 ("Relator", relator_label(record.get("relator")) if record.get("relator") else None),
-                 ("Pedido de medida cautelar", "Sim" if record.get("possui_medida_cautelar") else "Não")),
+                (
+                    ("Número", record.get("numero_processo")),
+                    ("Protocolo", format_date_br(record.get("data_protocolo"))),
+                    (
+                        "Relator",
+                        (
+                            relator_label(record.get("relator"))
+                            if record.get("relator")
+                            else None
+                        ),
+                    ),
+                    (
+                        "Pedido de medida cautelar",
+                        "Sim" if record.get("possui_medida_cautelar") else "Não",
+                    ),
+                ),
             )
+            _render_official_document(store, principal, record)
             with st.expander("Dados do projeto original"):
-                st.caption("Dados preservados do projeto que originou esta Representação.")
+                st.caption(
+                    "Dados preservados do projeto que originou esta Representação."
+                )
                 st.write(record.get("objeto") or "—")
             try:
                 from services.notification_ui import render_protocol_notice
@@ -638,7 +809,9 @@ def _detail_compact(store, principal, record):
         for item in timeline if show_all else timeline[:20]:
             _render_progress_item(store, principal, record, item, pending)
         if len(timeline) > 20:
-            st.caption(f"Exibidos {len(timeline) if show_all else 20} de {len(timeline)} andamentos.")
+            st.caption(
+                f"Exibidos {len(timeline) if show_all else 20} de {len(timeline)} andamentos."
+            )
     elif section == "Documentos":
         if st.button("Anexar documento", key="rep_dt_doc"):
             st.session_state["representacoes_file"] = record["id"]
@@ -654,7 +827,13 @@ def _detail_compact(store, principal, record):
             cols[2].caption(format_date_br(item.get("data_documento"), empty=""))
             if pending == item["id"]:
                 file = download(store, item["id"])
-                cols[3].download_button("Baixar", file["conteudo"], file["nome"], file["tipo"], key="rep_dl_" + item["id"])
+                cols[3].download_button(
+                    "Baixar",
+                    file["conteudo"],
+                    file["nome"],
+                    file["tipo"],
+                    key="rep_dl_" + item["id"],
+                )
             elif cols[3].button("Preparar download", key="rep_prep_" + item["id"]):
                 from services.audit import registrar_download
 
@@ -675,12 +854,19 @@ def _detail_compact(store, principal, record):
         from services.record_engagement_ui import render_origin_tools
 
         render_internal_collaboration(store, principal, "representacao", record["id"])
-        render_origin_tools(store, principal, "representacao", record["id"], record["titulo"])
+        render_origin_tools(
+            store, principal, "representacao", record["id"], record["titulo"]
+        )
     else:
         flow = _toolbar(
             "rep_toolbar_flow",
             [
-                ("Registrar protocolo", "rep_dt_prot", "primary") if not protocolled and has_permission(principal, "representacoes_registrar_protocolo") else None,
+                (
+                    ("Registrar protocolo", "rep_dt_prot", "primary")
+                    if not protocolled
+                    and has_permission(principal, "representacoes_registrar_protocolo")
+                    else None
+                ),
                 ("Editar", "rep_dt_ed", "secondary"),
             ],
         )
@@ -692,8 +878,23 @@ def _detail_compact(store, principal, record):
             st.rerun()
         if protocolled:
             fase_keys = list(FASES)
-            chosen = st.selectbox("Atualizar fase", fase_keys, index=fase_keys.index(record.get("fase_processual")) if record.get("fase_processual") in FASES else 0, format_func=FASES.get, key="rep_dt_fase")
-            situacao = st.selectbox("Situação institucional", ["EM_TRAMITACAO", "JULGADA", "ENCERRADA", "SUSPENSA", "CANCELADA"], format_func=SITUACOES.get, key="rep_dt_sit")
+            chosen = st.selectbox(
+                "Atualizar fase",
+                fase_keys,
+                index=(
+                    fase_keys.index(record.get("fase_processual"))
+                    if record.get("fase_processual") in FASES
+                    else 0
+                ),
+                format_func=FASES.get,
+                key="rep_dt_fase",
+            )
+            situacao = st.selectbox(
+                "Situação institucional",
+                ["EM_TRAMITACAO", "JULGADA", "ENCERRADA", "SUSPENSA", "CANCELADA"],
+                format_func=SITUACOES.get,
+                key="rep_dt_sit",
+            )
             if st.button("Salvar fase", key="rep_dt_fase_ok"):
                 set_phase(store, record["id"], chosen, principal)
                 _done("Fase processual atualizada.")
@@ -710,7 +911,9 @@ def _detail_compact(store, principal, record):
             st.session_state["representacoes_confirm_delete"] = record["id"]
             st.rerun()
         if st.session_state.get("representacoes_confirm_delete") == record["id"]:
-            st.warning("Tem certeza de que deseja excluir definitivamente este Projeto de Representação?")
+            st.warning(
+                "Tem certeza de que deseja excluir definitivamente este Projeto de Representação?"
+            )
             if st.button("Confirmar exclusão", type="primary", key="rep_del_yes"):
                 delete(store, record["id"], principal)
                 _clear_forms()
@@ -760,7 +963,10 @@ def _detail_body(store, principal, record):
     definition_block(
         "Equipe",
         (
-            ("Procurador responsável", ", ".join(groups["PROCURADOR_RESPONSAVEL"]) or "—"),
+            (
+                "Procurador responsável",
+                ", ".join(groups["PROCURADOR_RESPONSAVEL"]) or "—",
+            ),
             ("Signatários", ", ".join(groups["PROCURADOR_SIGNATARIO"]) or "—"),
             ("Assessores", ", ".join(groups["ASSESSOR"]) or "—"),
         ),
@@ -771,8 +977,18 @@ def _detail_body(store, principal, record):
             (
                 ("Número", record.get("numero_processo")),
                 ("Protocolo", format_date_br(record.get("data_protocolo"))),
-                ("Relator", relator_label(record.get("relator")) if record.get("relator") else None),
-                ("Pedido de medida cautelar", "Sim" if record.get("possui_medida_cautelar") else "Não"),
+                (
+                    "Relator",
+                    (
+                        relator_label(record.get("relator"))
+                        if record.get("relator")
+                        else None
+                    ),
+                ),
+                (
+                    "Pedido de medida cautelar",
+                    "Sim" if record.get("possui_medida_cautelar") else "Não",
+                ),
                 ("Situação", label(SITUACOES, record["situacao"])),
                 ("Fase", label(FASES, record.get("fase_processual"))),
             ),
@@ -828,12 +1044,19 @@ def _detail_body(store, principal, record):
     render_internal_collaboration(store, principal, "representacao", record["id"])
     from services.record_engagement_ui import render_origin_tools
 
-    render_origin_tools(store, principal, "representacao", record["id"], record["titulo"])
+    render_origin_tools(
+        store, principal, "representacao", record["id"], record["titulo"]
+    )
     protocolled = is_protocolled(record)
     flow = _toolbar(
         "rep_toolbar_flow",
         [
-            ("Registrar protocolo", "rep_dt_prot", "primary") if not protocolled and has_permission(principal, "representacoes_registrar_protocolo") else None,
+            (
+                ("Registrar protocolo", "rep_dt_prot", "primary")
+                if not protocolled
+                and has_permission(principal, "representacoes_registrar_protocolo")
+                else None
+            ),
             ("Andamento", "rep_dt_prg", "secondary"),
             ("Anexar documento", "rep_dt_doc", "secondary"),
             ("Editar", "rep_dt_ed", "secondary"),
@@ -857,7 +1080,11 @@ def _detail_body(store, principal, record):
         chosen = st.selectbox(
             "Atualizar fase",
             fase_keys,
-            index=fase_keys.index(record["fase_processual"]) if record.get("fase_processual") in FASES else 0,
+            index=(
+                fase_keys.index(record["fase_processual"])
+                if record.get("fase_processual") in FASES
+                else 0
+            ),
             format_func=FASES.get,
             key="rep_dt_fase",
         )
@@ -898,9 +1125,7 @@ def _detail_body(store, principal, record):
             "Esta ação não poderá ser desfeita."
         )
         if record.get("origem") == "OUVIDORIA":
-            warning += (
-                " O vínculo com a Notícia de Fato será removido, mas a Notícia de Fato permanecerá cadastrada."
-            )
+            warning += " O vínculo com a Notícia de Fato será removido, mas a Notícia de Fato permanecerá cadastrada."
         st.warning(warning)
         confirm = _toolbar(
             "rep_toolbar_confirm",
@@ -923,9 +1148,12 @@ def _detail_body(store, principal, record):
     extra = _toolbar(
         "rep_toolbar_more",
         [
-            None
-            if reason or st.session_state.get("representacoes_confirm_delete") == record["id"]
-            else ("Excluir definitivamente", "rep_del", "secondary"),
+            (
+                None
+                if reason
+                or st.session_state.get("representacoes_confirm_delete") == record["id"]
+                else ("Excluir definitivamente", "rep_del", "secondary")
+            ),
             ("Voltar", "rep_dt_back", "secondary"),
         ],
     )
@@ -974,7 +1202,10 @@ def render(store, principal):
             try:
                 if current:
                     saved = update(store, current["id"], payload, principal)
-                    if payload.get("situacao") and payload["situacao"] != current["situacao"]:
+                    if (
+                        payload.get("situacao")
+                        and payload["situacao"] != current["situacao"]
+                    ):
                         set_status(store, current["id"], payload["situacao"], principal)
                 else:
                     saved = create(store, payload, principal)

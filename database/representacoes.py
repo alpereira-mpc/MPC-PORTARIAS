@@ -19,6 +19,13 @@ PROGRESS_EXCLUSION_COLUMNS = (
     ("excluido_por", "TEXT NOT NULL DEFAULT ''"),
     ("motivo_exclusao", "TEXT NOT NULL DEFAULT ''"),
 )
+RESUMO_IA_COLUMNS = (
+    ("resumo_ia", "TEXT"),
+    ("resumo_ia_em", "TEXT"),
+    ("resumo_ia_modelo", "TEXT"),
+    ("resumo_ia_sha256", "TEXT"),
+    ("resumo_ia_documento_id", "TEXT"),
+)
 DOCUMENT_META = (
     "id,representacao_id,andamento_id,tipo_documento,descricao,data_documento,"
     "nome_arquivo,mime_type,tamanho,criado_em,criado_por"
@@ -63,7 +70,12 @@ class RepresentacoesStore:
                 "criado_em TEXT NOT NULL,"
                 "criado_por TEXT NOT NULL,"
                 "atualizado_em TEXT NOT NULL,"
-                "atualizado_por TEXT NOT NULL)"
+                "atualizado_por TEXT NOT NULL,"
+                "resumo_ia TEXT,"
+                "resumo_ia_em TEXT,"
+                "resumo_ia_modelo TEXT,"
+                "resumo_ia_sha256 TEXT,"
+                "resumo_ia_documento_id TEXT)"
             )
             c.execute(
                 f"CREATE TABLE IF NOT EXISTS representacao_integrantes ("
@@ -137,13 +149,16 @@ class RepresentacoesStore:
                     )
                 }
             else:
-                existing = {r[1] for r in c.execute("PRAGMA table_info(representacoes)")}
+                existing = {
+                    r[1] for r in c.execute("PRAGMA table_info(representacoes)")
+                }
             if "possui_medida_cautelar" not in existing:
                 c.execute(
                     "ALTER TABLE representacoes ADD COLUMN possui_medida_cautelar "
                     "INTEGER NOT NULL DEFAULT 0"
                 )
             self._ensure_progress_exclusion(c)
+            self._ensure_resumo_ia(c)
             c.execute(
                 "INSERT INTO configuracoes(chave,valor) VALUES(?,?) ON CONFLICT(chave) DO NOTHING",
                 (MARKER, "1"),
@@ -421,7 +436,9 @@ class RepresentacoesStore:
             if not row:
                 return None
             record = dict(row)
-            record["possui_medida_cautelar"] = bool(record.get("possui_medida_cautelar"))
+            record["possui_medida_cautelar"] = bool(
+                record.get("possui_medida_cautelar")
+            )
             record["integrantes"] = [
                 dict(item)
                 for item in c.execute(
@@ -491,7 +508,9 @@ class RepresentacoesStore:
             ).fetchall()
             records = [dict(row) for row in rows]
             for record in records:
-                record["possui_medida_cautelar"] = bool(record.get("possui_medida_cautelar"))
+                record["possui_medida_cautelar"] = bool(
+                    record.get("possui_medida_cautelar")
+                )
             ids = [row["id"] for row in records]
             members = {}
             latest = {}
@@ -562,6 +581,53 @@ class RepresentacoesStore:
                     (identifier,),
                 )
             ]
+
+    def pdf_oficial(self, identifier):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                f"SELECT {DOCUMENT_META} FROM representacao_documentos "
+                "WHERE representacao_id=? AND tipo_documento=? AND mime_type=? "
+                "ORDER BY criado_em DESC, id DESC LIMIT 1",
+                (identifier, "REPRESENTACAO_FINAL", "application/pdf"),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def resumo_ia(self, identifier):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT resumo_ia,resumo_ia_em,resumo_ia_modelo,resumo_ia_sha256,"
+                "resumo_ia_documento_id FROM representacoes WHERE id=?",
+                (identifier,),
+            ).fetchone()
+        if not row or not str(row["resumo_ia"] or "").strip():
+            return None
+        return {
+            "texto": row["resumo_ia"],
+            "gerado_em": row["resumo_ia_em"],
+            "modelo": row["resumo_ia_modelo"],
+            "sha256": row["resumo_ia_sha256"],
+            "documento_id": row["resumo_ia_documento_id"],
+        }
+
+    def save_resumo_ia(
+        self, identifier, texto, gerado_em, modelo, sha256, documento_id
+    ):
+        cleaned = str(texto or "").strip()
+        if not cleaned:
+            raise ValueError("O resumo está vazio.")
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            found = c.execute(
+                "SELECT id FROM representacoes WHERE id=?", (identifier,)
+            ).fetchone()
+            if not found:
+                raise ValueError("Representação não encontrada.")
+            c.execute(
+                "UPDATE representacoes SET resumo_ia=?,resumo_ia_em=?,resumo_ia_modelo=?,"
+                "resumo_ia_sha256=?,resumo_ia_documento_id=? WHERE id=?",
+                (cleaned, gerado_em, modelo, sha256, documento_id, identifier),
+            )
+        return self.resumo_ia(identifier)
 
     def download(self, file_id):
         with self.store.connection(read_only=True) as c:
@@ -638,9 +704,7 @@ class RepresentacoesStore:
         else:
             present = {
                 row[1]
-                for row in c.execute(
-                    "PRAGMA table_info(representacao_andamentos)"
-                )
+                for row in c.execute("PRAGMA table_info(representacao_andamentos)")
             }
         for name, definition in PROGRESS_EXCLUSION_COLUMNS:
             if name not in present:
@@ -648,6 +712,21 @@ class RepresentacoesStore:
                     "ALTER TABLE representacao_andamentos "
                     f"ADD COLUMN {name} {definition}"
                 )
+
+    def _ensure_resumo_ia(self, c):
+        if self.store.backend == "postgresql":
+            present = {
+                row[0]
+                for row in c.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() AND table_name='representacoes'"
+                )
+            }
+        else:
+            present = {row[1] for row in c.execute("PRAGMA table_info(representacoes)")}
+        for name, definition in RESUMO_IA_COLUMNS:
+            if name not in present:
+                c.execute(f"ALTER TABLE representacoes ADD COLUMN {name} {definition}")
 
     def _add_progress(self, c, identifier, data, tipo, descricao, stamp, actor):
         c.execute(
