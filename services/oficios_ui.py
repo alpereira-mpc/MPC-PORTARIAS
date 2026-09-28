@@ -560,10 +560,27 @@ def clear_received_import():
             st.session_state.pop(key, None)
 
 
+def _keep_received_panel_open():
+    """The analysis button lives inside the panel, so that click leaves it open."""
+    st.session_state["oficio_received_panel"] = True
+
+
+def _reopen_received_panel():
+    """Ask the next rerun to restore the panel the user already had open."""
+    st.session_state["oficio_received_reopen"] = True
+    st.rerun()
+
+
 def received_form(service, people):
     if st.session_state.pop("oficio_received_reset", False):
         clear_received_import()
-    with st.expander("Registrar ofício recebido"):
+    if st.session_state.pop("oficio_received_reopen", False):
+        st.session_state["oficio_received_panel"] = True
+    with st.expander(
+        "Registrar ofício recebido",
+        key="oficio_received_panel",
+        on_change="rerun",
+    ):
         st.markdown("**Importar PDF e preencher automaticamente**")
         pdf = st.file_uploader(
             "PDF para análise — um arquivo",
@@ -590,10 +607,16 @@ def received_form(service, people):
                 st.session_state.pop(key, None)
         pdf_column, ai_column = st.columns(2)
         with pdf_column:
-            analyze_pdf = st.button("Analisar PDF", key="oficio_received_analisar_pdf")
+            analyze_pdf = st.button(
+                "Analisar PDF",
+                key="oficio_received_analisar_pdf",
+                on_click=_keep_received_panel_open,
+            )
         with ai_column:
             analyze_ai = st.button(
-                "✨ Analisar com IA", key="oficio_received_analisar_ia"
+                "✨ Analisar com IA",
+                key="oficio_received_analisar_ia",
+                on_click=_keep_received_panel_open,
             )
         st.caption(
             "Analisar com IA substitui os campos do documento já preenchidos. "
@@ -625,7 +648,7 @@ def received_form(service, people):
                     st.session_state["oficio_received_data"] = (
                         date.fromisoformat(extracted) if extracted else None
                     )
-                    st.rerun()
+                    _reopen_received_panel()
         if analyze_ai:
             if pdf is None:
                 st.warning("Selecione um PDF para análise.")
@@ -681,7 +704,7 @@ def received_form(service, people):
                         else []
                     )
                     st.session_state["oficio_received_ia"] = True
-                    st.rerun()
+                    _reopen_received_panel()
         if st.session_state.get("oficio_received_ok"):
             st.success(
                 "✓ Documento analisado. Confira os dados preenchidos antes de registrar."

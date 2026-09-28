@@ -113,6 +113,7 @@ def test_unreadable_pdf_still_asks_for_manual_entry(monkeypatch):
     app = _upload(_form(), _blank_pdf())
     app.button(key="oficio_received_analisar_pdf").click()
     app = app.run()
+    assert _received_panel(app).proto.expanded is True
     assert any("digitalizado" in item.value for item in app.warning)
     assert "saved_record" not in app.session_state
 
@@ -125,6 +126,7 @@ def test_current_pdf_analyzer_still_fills_the_form(monkeypatch):
     app = _upload(_form())
     app.button(key="oficio_received_analisar_pdf").click()
     app = app.run()
+    assert _received_panel(app).proto.expanded is True
     assert "123/2026" in app.text_input(key="oficio_received_numero_externo").value
     assert "Solicitacao" in app.text_input(key="oficio_received_assunto").value
     assert any("Documento analisado" in item.value for item in app.success)
@@ -317,3 +319,66 @@ def test_ai_handler_does_not_persist_or_call_other_modules():
     service = Path("services/oficios.py").read_text(encoding="utf-8")
     assert "ai_service" not in service
     assert "extrair_dados_oficio_pdf" not in service
+
+
+def _received_panel(app):
+    for item in app.expander:
+        if item.label == "Registrar ofício recebido":
+            return item
+    raise AssertionError("Registrar ofício recebido")
+
+
+def test_received_panel_starts_closed():
+    app = _form()
+    assert _received_panel(app).proto.expanded is False
+    assert "oficio_received_reopen" not in app.session_state
+
+
+def test_ai_analysis_keeps_the_open_panel_without_another_call(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        ai_service,
+        "extrair_dados_oficio_pdf",
+        lambda pdf: calls.append(pdf) or dict(FILLED),
+    )
+    app = _upload(_form())
+    assert _received_panel(app).proto.expanded is False
+    app.session_state["oficio_received_panel"] = True
+    app = app.run()
+    assert _received_panel(app).proto.expanded is True
+    assert calls == []
+    app.button(key="oficio_received_analisar_ia").click()
+    app = app.run()
+    assert len(calls) == 1
+    assert _received_panel(app).proto.expanded is True
+    assert any("analisado com IA" in item.value for item in app.success)
+    app.run()
+    assert len(calls) == 1
+    assert _received_panel(app).proto.expanded is True
+    app.session_state["oficio_received_panel"] = False
+    app = app.run()
+    assert _received_panel(app).proto.expanded is False
+    assert len(calls) == 1
+    assert "saved_record" not in app.session_state
+
+
+def test_ai_failure_keeps_the_open_panel(monkeypatch):
+    calls = []
+
+    def fail(_pdf):
+        calls.append(1)
+        raise GeminiErro("O modelo de IA está temporariamente sobrecarregado.")
+
+    monkeypatch.setattr(ai_service, "extrair_dados_oficio_pdf", fail)
+    app = _upload(_form())
+    app.session_state["oficio_received_panel"] = True
+    app = app.run()
+    app.button(key="oficio_received_analisar_ia").click()
+    app = app.run()
+    assert calls == [1]
+    assert _received_panel(app).proto.expanded is True
+    assert any("sobrecarregado" in item.value for item in app.error)
+    app.run()
+    assert calls == [1]
+    assert _received_panel(app).proto.expanded is True
+    assert "saved_record" not in app.session_state
