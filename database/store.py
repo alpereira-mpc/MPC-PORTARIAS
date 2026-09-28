@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import logging
 import os
 import sqlite3
 import uuid
@@ -83,6 +84,14 @@ def ensure_addon_schemas(store):
     from database.notifications import NotificationsStore
 
     NotificationsStore(store)
+    try:
+        from database.ia_telemetria import ensure_schema as ensure_ia_telemetria
+
+        ensure_ia_telemetria(store)
+    except Exception as exc:
+        logging.getLogger("mpc.ia").warning(
+            "Telemetria de IA não foi preparada (%s).", type(exc).__name__
+        )
 
 
 class Store:

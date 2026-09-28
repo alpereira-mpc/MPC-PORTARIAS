@@ -48,6 +48,11 @@ def isolate_database_secrets(monkeypatch):
 
     record_engagement._READY.clear()
     tarefas._READY.clear()
+    import database.ia_telemetria as ia_telemetria
+    import services.ai_service as ai_service
+
+    ia_telemetria._READY.clear()
+    monkeypatch.setattr(ai_service, "_gravar_telemetria", lambda evento: None)
     import services.pending as pending
 
     pending._TABLES.clear()

@@ -72,6 +72,8 @@ INTERNAL_COLLABORATION_TABLES = (
 
 RECORD_ENGAGEMENT_TABLES = ("registros_seguidos", "avisos_usuario")
 
+IA_TABLES = ("ia_telemetria",)
+
 POSTGRES_ONLY_TABLES = ("schema_migrations", "backup_snapshots")
 
 APPLICATION_TABLES = (
@@ -85,6 +87,7 @@ APPLICATION_TABLES = (
     + AUDIT_TABLES
     + INTERNAL_COLLABORATION_TABLES
     + RECORD_ENGAGEMENT_TABLES
+    + IA_TABLES
     + POSTGRES_ONLY_TABLES
 )
 
@@ -99,6 +102,7 @@ ESSENTIAL_TABLES = (
     + AUDIT_TABLES
     + INTERNAL_COLLABORATION_TABLES
     + RECORD_ENGAGEMENT_TABLES
+    + IA_TABLES
 )
 
 SCHEMA_MARKERS = (
@@ -114,11 +118,30 @@ SCHEMA_MARKERS = (
     "record_engagement_schema_v1",
     "representacoes_schema_v1",
     "ouvidoria_schema_v1",
+    "ia_telemetria_schema_v1",
 )
 
 ESSENTIAL_COLUMNS = {
-    "usuarios_acesso": ("email", "perfil", "pode_admin", "pode_memorandos", "pode_representacoes", "pode_ouvidoria", "pode_representacoes_registrar_protocolo", "pode_representacoes_enviar_comunicacao", "pode_comunicacoes_configurar_destinatarios", "pode_comunicacoes_enviar_teste", "protegido", "tema"),
-    "ouvidoria_manifestacoes": ("numero_interno", "situacao", "classificacao_acesso", "representacao_id"),
+    "usuarios_acesso": (
+        "email",
+        "perfil",
+        "pode_admin",
+        "pode_memorandos",
+        "pode_representacoes",
+        "pode_ouvidoria",
+        "pode_representacoes_registrar_protocolo",
+        "pode_representacoes_enviar_comunicacao",
+        "pode_comunicacoes_configurar_destinatarios",
+        "pode_comunicacoes_enviar_teste",
+        "protegido",
+        "tema",
+    ),
+    "ouvidoria_manifestacoes": (
+        "numero_interno",
+        "situacao",
+        "classificacao_acesso",
+        "representacao_id",
+    ),
     "usuario_gabinetes": ("usuario_id", "gabinete"),
     "access_requests": ("nome", "email", "gabinete", "status", "created_at"),
     "auditoria_eventos": ("evento", "modulo", "resultado", "criado_em"),
@@ -150,6 +173,7 @@ ESSENTIAL_COLUMNS = {
         "lembrar_em",
         "status",
     ),
+    "ia_telemetria": ("criado_em", "modulo", "operacao", "sucesso", "duracao_ms"),
     "oficio_arquivos": ("nome", "tipo", "conteudo"),
     "agenda_compromissos": ("tipo", "inicio", "payload"),
     "sequencias": ("ano", "ultimo"),
@@ -193,7 +217,5 @@ def backup_tables(backend, existing):
     return tuple(
         table
         for table in APPLICATION_TABLES
-        if table in wanted
-        and table in existing
-        and table not in BACKUP_EXCLUDED_TABLES
+        if table in wanted and table in existing and table not in BACKUP_EXCLUDED_TABLES
     )

@@ -531,7 +531,7 @@ def atualizar_resumo_representacao(store, identifier, principal):
         raise ValueError("Não há PDF oficial protocolado para esta representação.")
     file = download(store, official["id"])
     digest = hashlib.sha256(file["conteudo"]).hexdigest()
-    texto = resumir_documento_pdf(file["conteudo"])
+    texto = resumir_documento_pdf(file["conteudo"], operacao="representacao_resumo")
     modelo = getattr(texto, "modelo", None) or GEMINI_MODEL
     return open_store(store).save_resumo_ia(
         identifier,

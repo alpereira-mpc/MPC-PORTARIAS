@@ -8,6 +8,7 @@ import base64
 from datetime import datetime
 import json
 import logging
+import random
 import re
 import time
 import unicodedata
@@ -30,7 +31,10 @@ GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 GEMINI_ENDPOINT = _endpoint(GEMINI_MODEL)
 TIMEOUT_SECONDS = 120
 MAX_ATTEMPTS = 3
+SERVER_ATTEMPTS = 4
 RETRY_DELAYS_SECONDS = (1, 2)
+SERVER_RETRY_DELAYS_SECONDS = (1, 2, 4)
+JITTER_MAX_SECONDS = 0.25
 RETRY_AFTER_MAX_SECONDS = 30
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_RESPONSE_BYTES = 1_000_000
@@ -43,6 +47,17 @@ MENSAGEM_COTA_DIARIA = (
     "A cota diária disponível para processamento por IA foi atingida. "
     "Tente novamente após a renovação das cotas."
 )
+MENSAGEM_SOBRECARGA = (
+    "O modelo de IA está temporariamente sobrecarregado. "
+    "Tente novamente em alguns minutos."
+)
+_MODULO_OPERACAO = {
+    "laboratorio_resumo": "laboratorio",
+    "representacao_resumo": "representacoes",
+    "oficio_extracao": "oficios",
+    "agenda_analise": "agenda",
+    "tarefas_analise": "tarefas",
+}
 PROMPT_RESUMO = (
     "Analise exclusivamente o documento PDF fornecido.\n"
     "\n"
@@ -253,10 +268,12 @@ def gemini_disponivel():
     return bool(_api_key())
 
 
-def resumir_documento_pdf(pdf_bytes):
+def resumir_documento_pdf(pdf_bytes, *, operacao="laboratorio_resumo"):
     """Send one PDF and the fixed prompt to Gemini. Nothing is stored."""
     document = _validar_pdf(pdf_bytes)
-    raw, modelo = _consultar(document, PROMPT_RESUMO, "laboratório de IA")
+    raw, modelo = _consultar(
+        document, PROMPT_RESUMO, "laboratório de IA", operacao=operacao
+    )
     return _TextoModelo(_texto_resposta(raw), modelo)
 
 
@@ -271,6 +288,7 @@ def extrair_dados_oficio_pdf(pdf_bytes):
         PROMPT_EXTRACAO_OFICIO,
         "extração de ofício",
         _OFICIO_SCHEMA,
+        operacao="oficio_extracao",
     )
     return _dados_oficio(_texto_resposta(raw))
 
@@ -287,6 +305,7 @@ def analisar_periodo_agenda(contexto):
     raw, _modelo = _executar(
         lambda key, model: _request_texto(text, key, PROMPT_ANALISE_AGENDA, model),
         "análise da agenda",
+        operacao="agenda_analise",
     )
     return _texto_resposta(raw)
 
@@ -305,53 +324,93 @@ def analisar_tarefas_ativas(contexto):
     raw, _modelo = _executar(
         lambda key, model: _request_texto(text, key, PROMPT_ANALISE_TAREFAS, model),
         "análise das tarefas",
+        operacao="tarefas_analise",
     )
     return _texto_resposta(raw)
 
 
-def _consultar(document, prompt, rotulo, schema=None):
+def _consultar(document, prompt, rotulo, schema=None, operacao="laboratorio_resumo"):
     return _executar(
         lambda key, model: _request(document, key, prompt, schema, model),
         rotulo,
+        operacao=operacao,
     )
 
 
-def _executar(montar, rotulo):
+def _executar(montar, rotulo, operacao):
+    inicio = time.perf_counter()
+    estado = {
+        "operacao": operacao,
+        "tentativas": 0,
+        "fallback": False,
+        "via_quota": False,
+        "via_503": False,
+        "http_status": None,
+        "viu_429": False,
+        "viu_500": False,
+        "viu_503": False,
+        "modelo": GEMINI_MODEL,
+    }
     key = _api_key()
     if not key:
+        _registrar_operacao(inicio, estado, False, "nao_configurada")
         raise GeminiNaoConfigurada()
     modelo = GEMINI_MODEL
     attempt = 1
-    while attempt <= MAX_ATTEMPTS:
+    while True:
+        estado["tentativas"] += 1
+        estado["modelo"] = modelo
         try:
             raw = _post(montar(key, modelo))
         except TimeoutError:
             # The call already waited TIMEOUT_SECONDS. Another round could
             # hold the page for several minutes, so this failure is final.
             LOGGER.warning("Chamada ao %s expirou.", rotulo)
+            _registrar_operacao(inicio, estado, False, "timeout")
             raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
         except urllib.error.HTTPError as exc:
             code, status, retry_after, cota_diaria = _detalhe_http(exc)
-            if cota_diaria and modelo == GEMINI_MODEL:
+            estado["http_status"] = code
+            if code == 429:
+                estado["viu_429"] = True
+            elif code == 500:
+                estado["viu_500"] = True
+            elif code == 503:
+                estado["viu_503"] = True
+            if cota_diaria and modelo == GEMINI_MODEL and not estado["via_quota"]:
                 LOGGER.warning(
                     "Gemini 3.5 Flash-Lite: cota diária esgotada. "
                     "Tentando modelo reserva."
                 )
                 LOGGER.warning("Fallback Gemini utilizado: %s.", GEMINI_FALLBACK_MODEL)
                 modelo = GEMINI_FALLBACK_MODEL
+                estado["fallback"] = True
+                estado["via_quota"] = True
                 attempt = 1
                 continue
             if cota_diaria:
                 LOGGER.warning("Cota diária esgotada no modelo %s.", modelo)
+                _registrar_operacao(inicio, estado, False, "quota_diaria")
                 raise GeminiErro(MENSAGEM_COTA_DIARIA) from None
-            if attempt < MAX_ATTEMPTS and _repetir_http(code, status):
+            if _deve_repetir(code, status, attempt, estado):
                 LOGGER.warning(
                     "Tentativa %s falhou com HTTP %s. Nova tentativa será realizada.",
                     attempt,
                     code,
                 )
-                _sleep(_espera(attempt, retry_after))
+                _sleep(_espera(attempt, retry_after, servidor=_erro_servidor(code)))
                 attempt += 1
+                continue
+            if _fallback_503(code, modelo, estado):
+                LOGGER.warning(
+                    "HTTP 503 persistente no modelo principal. "
+                    "Uma tentativa usará o modelo reserva."
+                )
+                LOGGER.warning("Fallback Gemini utilizado: %s.", GEMINI_FALLBACK_MODEL)
+                modelo = GEMINI_FALLBACK_MODEL
+                estado["fallback"] = True
+                estado["via_503"] = True
+                attempt = 1
                 continue
             LOGGER.warning(
                 "Chamada ao %s falhou (HTTP %s, %s).",
@@ -359,12 +418,16 @@ def _executar(montar, rotulo):
                 code,
                 status or "sem_status",
             )
+            _registrar_operacao(
+                inicio, estado, False, _categoria_http(code, cota_diaria)
+            )
             raise GeminiErro(_mensagem_http(code, status)) from None
         except urllib.error.URLError as exc:
             if isinstance(getattr(exc, "reason", None), TimeoutError):
                 LOGGER.warning("Chamada ao %s expirou.", rotulo)
+                _registrar_operacao(inicio, estado, False, "timeout")
                 raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
-            if attempt < MAX_ATTEMPTS:
+            if attempt < MAX_ATTEMPTS and not estado["via_503"]:
                 LOGGER.warning(
                     "Tentativa %s falhou sem conexão. Nova tentativa será realizada.",
                     attempt,
@@ -373,7 +436,9 @@ def _executar(montar, rotulo):
                 attempt += 1
                 continue
             LOGGER.warning("Chamada ao %s sem conexão.", rotulo)
+            _registrar_operacao(inicio, estado, False, "conexao")
             raise GeminiErro("Não foi possível conectar ao serviço de IA.") from None
+        _registrar_operacao(inicio, estado, True, "")
         return raw, modelo
 
 
@@ -461,10 +526,86 @@ def _sleep(seconds):
     time.sleep(seconds)
 
 
-def _espera(attempt, retry_after):
+def _jitter(base):
+    """Small spread so retries do not land on the same provider instant."""
+    if not base:
+        return 0.0
+    return random.uniform(0, JITTER_MAX_SECONDS)
+
+
+def _espera(attempt, retry_after, *, servidor=False):
     if retry_after is not None:
         return retry_after
+    if servidor:
+        base = SERVER_RETRY_DELAYS_SECONDS[attempt - 1]
+        return base + _jitter(base)
     return RETRY_DELAYS_SECONDS[attempt - 1]
+
+
+def _erro_servidor(code):
+    return code in {500, 502, 503}
+
+
+def _deve_repetir(code, status, attempt, estado):
+    if not _repetir_http(code, status):
+        return False
+    if estado["via_503"]:
+        return False
+    if _erro_servidor(code) and not estado["via_quota"]:
+        return attempt < SERVER_ATTEMPTS
+    return attempt < MAX_ATTEMPTS
+
+
+def _fallback_503(code, modelo, estado):
+    return (
+        code == 503
+        and modelo == GEMINI_MODEL
+        and not estado["via_quota"]
+        and not estado["via_503"]
+    )
+
+
+def _categoria_http(code, cota_diaria):
+    if cota_diaria:
+        return "quota_diaria"
+    if code in {400, 401, 403, 404, 408, 413, 429, 500, 502, 503, 504}:
+        return "http_" + str(code)
+    return "outro"
+
+
+def _registrar_operacao(inicio, estado, sucesso, categoria):
+    duracao_ms = int((time.perf_counter() - inicio) * 1000)
+    operacao = estado["operacao"]
+    evento = {
+        "modulo": _MODULO_OPERACAO.get(operacao, "desconhecido"),
+        "operacao": operacao,
+        "modelo_principal": GEMINI_MODEL,
+        "modelo_final": estado["modelo"],
+        "tentativas": estado["tentativas"],
+        "retry": estado["tentativas"] > 1,
+        "fallback": estado["fallback"],
+        "sucesso": sucesso,
+        "http_status": 200 if sucesso else estado["http_status"],
+        "categoria_erro": "" if sucesso else categoria,
+        "duracao_ms": duracao_ms,
+        "viu_429": estado["viu_429"],
+        "viu_500": estado["viu_500"],
+        "viu_503": estado["viu_503"],
+    }
+    try:
+        _gravar_telemetria(evento)
+    except Exception as exc:
+        LOGGER.warning("Telemetria de IA não foi gravada (%s).", type(exc).__name__)
+
+
+def _gravar_telemetria(evento):
+    try:
+        from database.ia_telemetria import registrar
+        from database.store import Store
+
+        registrar(Store(), evento)
+    except Exception as exc:
+        LOGGER.warning("Telemetria de IA não foi gravada (%s).", type(exc).__name__)
 
 
 def _repetir_http(code, status):
@@ -697,6 +838,8 @@ def _mensagem_http(code, status):
         return "O serviço de IA não conseguiu ler o PDF enviado."
     if code in {408, 504} or status == "DEADLINE_EXCEEDED":
         return "O serviço de IA não respondeu a tempo."
-    if code in {500, 502, 503} or status in {"UNAVAILABLE", "INTERNAL"}:
+    if code == 503 or status == "UNAVAILABLE":
+        return MENSAGEM_SOBRECARGA
+    if code in {500, 502} or status == "INTERNAL":
         return "O serviço de IA está indisponível no momento."
     return "O serviço de IA recusou a solicitação."

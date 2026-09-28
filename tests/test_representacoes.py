@@ -804,7 +804,7 @@ def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monke
     principal = _principal(store, email="resumo-rep@test.local")
     calls = []
 
-    def fake_summary(pdf_bytes):
+    def fake_summary(pdf_bytes, **_ignored):
         calls.append(pdf_bytes)
         return "Objeto: resumo " + str(len(calls)) + "."
 
@@ -859,7 +859,7 @@ def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monke
     assert resumo_ia(store, identifier)["texto"] == "Objeto: resumo 2."
     assert len(calls) == 2
 
-    def fail_summary(_pdf_bytes):
+    def fail_summary(_pdf_bytes, **_ignored):
         calls.append(b"falha")
         raise GeminiErro("O serviço de IA está indisponível no momento.")
 

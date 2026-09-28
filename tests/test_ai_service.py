@@ -62,6 +62,7 @@ def _summary():
 def _no_sleep(monkeypatch):
     sleeps = []
     monkeypatch.setattr(ai_service, "_sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(ai_service, "_jitter", lambda base: 0)
     return sleeps
 
 
@@ -231,7 +232,7 @@ def test_connection_failure_hides_the_cause(monkeypatch, caplog):
         (404, "NOT_FOUND", "não está disponível"),
         (403, "PERMISSION_DENIED", "recusou a credencial"),
         (400, "INVALID_ARGUMENT", "não conseguiu ler o PDF"),
-        (503, "UNAVAILABLE", "indisponível"),
+        (503, "UNAVAILABLE", "sobrecarregado"),
         (418, "WEIRD", "recusou a solicitação"),
     ],
 )
@@ -248,9 +249,15 @@ def test_http_errors_are_safe(monkeypatch, caplog, code, status, message):
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(GeminiErro, match=message) as caught:
             resumir_documento_pdf(PDF)
-    assert len(calls) == (3 if code in {429, 503} else 1)
-    assert len(calls) <= ai_service.MAX_ATTEMPTS
-    assert sleeps == ([1, 2] if code in {429, 503} else [])
+    if code == 503:
+        assert len(calls) == 5
+        assert sleeps == [1, 2, 4]
+    elif code == 429:
+        assert len(calls) == 3
+        assert sleeps == [1, 2]
+    else:
+        assert len(calls) == 1
+        assert sleeps == []
     assert KEY not in str(caught.value)
     assert KEY not in caplog.text
     assert "detalhe interno" not in str(caught.value)
@@ -389,10 +396,10 @@ def test_503_three_times_reports_unavailability(monkeypatch, caplog):
 
     monkeypatch.setattr(ai_service, "_post", post)
     with caplog.at_level(logging.DEBUG):
-        with pytest.raises(GeminiErro, match="indisponível") as caught:
+        with pytest.raises(GeminiErro, match="sobrecarregado") as caught:
             resumir_documento_pdf(PDF)
-    assert calls == [1, 1, 1]
-    assert sleeps == [1, 2]
+    assert calls == [1, 1, 1, 1, 1]
+    assert sleeps == [1, 2, 4]
     assert "limite de uso" not in str(caught.value)
     assert KEY not in str(caught.value)
     assert KEY not in caplog.text
@@ -960,14 +967,12 @@ def test_503_retries_on_the_primary_model(monkeypatch):
         raise _http_error(request.full_url, 503, "UNAVAILABLE")
 
     calls, sleeps = _install(monkeypatch, fail)
-    with pytest.raises(GeminiErro, match="indisponível"):
+    with pytest.raises(GeminiErro, match="sobrecarregado"):
         resumir_documento_pdf(PDF)
-    assert calls == [
-        ai_service.GEMINI_ENDPOINT,
-        ai_service.GEMINI_ENDPOINT,
-        ai_service.GEMINI_ENDPOINT,
+    assert calls == [ai_service.GEMINI_ENDPOINT] * 4 + [
+        ai_service._endpoint(GEMINI_FALLBACK_MODEL)
     ]
-    assert sleeps == [1, 2]
+    assert sleeps == [1, 2, 4]
 
 
 def test_temporary_429_does_not_call_the_reserve(monkeypatch):

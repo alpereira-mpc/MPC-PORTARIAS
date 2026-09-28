@@ -87,7 +87,9 @@ def render_health(store, principal):
         )
         if database.get("latency_ms") is not None:
             st.caption(f"Latência aproximada: {database['latency_ms']} ms")
-        st.caption("Horário da verificação: " + format_local(database.get("checked_at")))
+        st.caption(
+            "Horário da verificação: " + format_local(database.get("checked_at"))
+        )
     with b, st.container(border=True):
         st.markdown("**Schema**")
         _badge(schema["status"], schema["summary"].split(" — ", 1)[-1])
@@ -151,12 +153,15 @@ def render_health(store, principal):
         st.caption(f"Build: {application.get('build')}")
         st.caption(f"Ambiente: {application.get('environment')}")
         st.caption(
-            "Horário do servidor (America/Recife): " + application.get("server_time", "—")
+            "Horário do servidor (America/Recife): "
+            + application.get("server_time", "—")
         )
 
     with st.container(border=True):
         st.markdown("**Atividade**")
-        st.write("Último acesso registrado: " + _event_line(activity.get("last_access")))
+        st.write(
+            "Último acesso registrado: " + _event_line(activity.get("last_access"))
+        )
         st.write(
             "Último documento finalizado: " + _event_line(activity.get("last_document"))
         )
@@ -164,14 +169,22 @@ def render_health(store, principal):
             "Última alteração administrativa: "
             + _event_line(activity.get("last_admin"))
         )
-        st.write("Última atividade do sistema: " + _event_line(activity.get("last_activity")))
+        st.write(
+            "Última atividade do sistema: " + _event_line(activity.get("last_activity"))
+        )
 
     with st.container(border=True):
         st.markdown("**Erros recentes**")
-        st.caption("Registros históricos da Auditoria; não indicam falha atual por si só.")
+        st.caption(
+            "Registros históricos da Auditoria; não indicam falha atual por si só."
+        )
         errors = audit.get("errors_24h") or 0
         if errors:
-            label = "erro operacional registrado" if errors == 1 else "erros operacionais registrados"
+            label = (
+                "erro operacional registrado"
+                if errors == 1
+                else "erros operacionais registrados"
+            )
             st.write(f"{errors} {label} nas últimas 24 horas")
             if st.button("Ver na Auditoria", key="sistema_goto_audit"):
                 from services.access_ui import request_admin_navigation
@@ -208,8 +221,7 @@ def render_backup(store, principal):
     previous = st.session_state.get(BACKUP_RESULT)
     if previous:
         empty_state(
-            "Último backup gerado nesta sessão: "
-            + previous.get("gerado_em_local", "—")
+            "Último backup gerado nesta sessão: " + previous.get("gerado_em_local", "—")
         )
     running = bool(st.session_state.get(BACKUP_RUNNING))
     generate = st.button(
@@ -223,6 +235,7 @@ def render_backup(store, principal):
         path = unique_backup_path()
         try:
             with st.status("Gerando backup…", expanded=True) as status:
+
                 def progress(message):
                     status.write(message)
 
@@ -253,7 +266,9 @@ def render_backup(store, principal):
         return
     path = Path(result["caminho"])
     if not path.is_file():
-        st.warning("O arquivo temporário deste backup não está mais disponível. Gere novamente.")
+        st.warning(
+            "O arquivo temporário deste backup não está mais disponível. Gere novamente."
+        )
         st.session_state.pop(BACKUP_RESULT, None)
         return
     st.success("Backup pronto para download.")
@@ -296,12 +311,44 @@ def render_backup(store, principal):
         st.caption("O download foi solicitado neste navegador.")
 
 
+def render_ai_health(store, principal):
+    """Compact availability of the shared IA layer. Administrators only."""
+    require_permission(principal, "admin")
+    from database.ia_telemetria import resumo
+
+    st.subheader("Saúde da IA")
+    st.caption(
+        "Cada linha resume uma operação solicitada pelo usuário. "
+        "Prompts, respostas e documentos não são armazenados."
+    )
+    for title, hours in (
+        ("Últimas 24 horas", 24),
+        ("Últimos 7 dias", 24 * 7),
+        ("Últimos 30 dias", 24 * 30),
+    ):
+        item = resumo(store, hours)
+        st.markdown("**" + title + "**")
+        if item["total"] == 0:
+            st.caption("Nenhuma operação de IA neste período.")
+            continue
+        metrics = st.columns(4)
+        metrics[0].metric("Operações", item["total"])
+        metrics[1].metric("Sucesso", str(item["taxa_sucesso"]) + "%")
+        metrics[2].metric("Na primeira tentativa", item["primeira_tentativa"])
+        metrics[3].metric("Com retry", item["retry"])
+        extra = st.columns(4)
+        extra[0].metric("Com fallback", item["fallback"])
+        extra[1].metric("Falhas definitivas", item["falhas"])
+        extra[2].metric("Operações com 503", item["viu_503"])
+        extra[3].metric("Tempo médio", str(item["duracao_media_ms"]) + " ms")
+
+
 def render(store, principal):
     require_permission(principal, "admin")
     st.subheader("Sistema")
     area = st.radio(
         "Sistema",
-        ["Saúde", "Backup", "Comunicações"],
+        ["Saúde", "Saúde da IA", "Backup", "Comunicações"],
         horizontal=True,
         key="admin_sistema_aba",
     )
@@ -312,5 +359,8 @@ def render(store, principal):
         from services.notification_ui import render_admin_recipients
 
         render_admin_recipients(store, principal)
+        return
+    if area == "Saúde da IA":
+        render_ai_health(store, principal)
         return
     render_health(store, principal)
