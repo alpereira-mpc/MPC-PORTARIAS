@@ -238,14 +238,34 @@ def test_recent_failure_keeps_the_aggregate_cards(store, monkeypatch):
 
     app = AppTest.from_function(page, default_timeout=30).run()
     assert not app.exception
-    visible = " ".join(
-        item.value for item in list(app.markdown) + list(app.caption)
-    )
+    visible = " ".join(item.value for item in list(app.markdown) + list(app.caption))
     assert "Últimas 24 horas" in visible
     assert "Últimos 30 dias" in visible
     assert "não puderam ser carregadas" in visible
     assert "prompt secreto" not in visible
     assert "Traceback" not in visible
+
+
+def _pagina_saude():
+    from services.system_ui import render_ai_health
+    from tests.test_ia_saude import _HOLD
+
+    render_ai_health(_HOLD["store"], _HOLD["principal"])
+
+
+def test_average_time_uses_the_recent_operations_format(store):
+    _HOLD.clear()
+    _HOLD.update(store=store, principal=_admin())
+    for milissegundos, esperado in ((27346, "27,3 s"), (820, "820 ms")):
+        with store.connection() as connection:
+            connection.execute("DELETE FROM ia_telemetria")
+        _inserir(store, _momento(1), duracao_ms=milissegundos)
+        app = AppTest.from_function(_pagina_saude, default_timeout=30).run()
+        assert not app.exception
+        tempos = [
+            metric.value for metric in app.metric if metric.label == "Tempo médio"
+        ]
+        assert tempos == [esperado, esperado, esperado]
 
 
 def test_recent_table_stays_behind_the_admin_permission(store):

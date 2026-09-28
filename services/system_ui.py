@@ -428,7 +428,7 @@ def render_ai_health(store, principal):
         extra[0].metric("Com fallback", item["fallback"])
         extra[1].metric("Falhas definitivas", item["falhas"])
         extra[2].metric("Operações com 503", item["viu_503"])
-        extra[3].metric("Tempo médio", str(item["duracao_media_ms"]) + " ms")
+        extra[3].metric("Tempo médio", rotulo_duracao(item["duracao_media_ms"]))
     _render_operacoes_recentes(store)
 
 
