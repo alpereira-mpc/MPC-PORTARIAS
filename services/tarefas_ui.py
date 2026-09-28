@@ -7,6 +7,7 @@ import streamlit as st
 from database.tarefas import ACTIVE, HISTORY, TarefasStore, effective_deadline
 from services.audit import INSTITUTIONAL_TZ, registrar_evento
 from services.branding import module_title
+from services.tarefas import contexto_analise_tarefas, leitura_analise_tarefas_salva
 from services.ui_theme import (
     actions_mark,
     badge,
@@ -31,6 +32,13 @@ REMINDER_TIMES = tuple(
     for minute in (0, 30)
 ) + ("23:00",)
 ACTIVE_PAGE_SIZE = 20
+AVISO_ANALISE_IA = (
+    "Análise gerada por inteligência artificial a partir das tarefas ativas. "
+    "Consulte os registros para conferência."
+)
+AVISO_ANALISE_ALTERADA = (
+    "As tarefas foram alteradas desde a última análise. Atualize-a quando desejar."
+)
 
 
 def _remember(message, *, clear_edit=True):
@@ -428,6 +436,57 @@ def _move_page(key, delta):
     st.session_state[key] = max(0, st.session_state.get(key, 0) + delta)
 
 
+def apresentar_analise_tarefas(repo, principal):
+    """Render a read-only briefing; Gemini is called only by this button."""
+    section_label("Análise com IA")
+    rows = repo.list_active_for_analysis(principal.id)
+    context, signature = contexto_analise_tarefas(rows)
+    with st.container(border=True, key="tarefas_analise_ia"):
+        if not context["tarefas"]:
+            st.session_state.pop("tarefas_analise_ia_resultado", None)
+            st.info("Não há tarefas ativas para análise no momento.")
+            return
+        stored = st.session_state.get("tarefas_analise_ia_resultado")
+        text, stale = leitura_analise_tarefas_salva(
+            stored, principal.id, signature
+        )
+        if st.button(
+            "↻ Atualizar análise" if text else "✨ Analisar com IA",
+            key="tarefas_analise_ia_btn",
+        ):
+            try:
+                from services.ai_service import (
+                    GeminiErro,
+                    GeminiNaoConfigurada,
+                    analisar_tarefas_ativas,
+                )
+
+                with st.spinner("Analisando as tarefas ativas..."):
+                    briefing = analisar_tarefas_ativas(context)
+            except (GeminiErro, GeminiNaoConfigurada) as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                import logging
+
+                logging.getLogger("mpc.ai").warning(
+                    "Análise das tarefas falhou (%s).", type(exc).__name__
+                )
+                st.error("Não foi possível gerar a análise das tarefas no momento.")
+            else:
+                st.session_state["tarefas_analise_ia_resultado"] = {
+                    "owner_user_id": principal.id,
+                    "assinatura": signature,
+                    "texto": briefing,
+                }
+                st.rerun()
+        if stale:
+            st.caption(AVISO_ANALISE_ALTERADA)
+        if text:
+            st.markdown("#### Briefing operacional")
+            st.markdown(text)
+            st.caption(AVISO_ANALISE_IA)
+
+
 def _active_tasks(repo, store, principal):
     section_label("Filtros")
     with st.container(border=True, key="tarefas_filters"):
@@ -563,5 +622,6 @@ def render(store, principal):
             with col:
                 kpi_mark(tone)
                 st.metric(label,counts[key])
+    apresentar_analise_tarefas(repo, principal)
     _active_tasks(repo, store, principal)
     _task_history(repo, store, principal)

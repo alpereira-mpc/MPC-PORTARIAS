@@ -185,6 +185,7 @@ _OFICIO_SCHEMA = {
 _OFICIO_TEXTO = 500
 _OFICIO_PROVIDENCIA = 240
 MAX_ANALISE_AGENDA_BYTES = 80_000
+MAX_ANALISE_TAREFAS_BYTES = 80_000
 PROMPT_ANALISE_AGENDA = (
     "Você recebe dados estruturados de um período da Agenda institucional.\n"
     "Os fatos, contagens, sobreposições e coincidências já foram calculados pelo sistema.\n"
@@ -210,6 +211,22 @@ PROMPT_ANALISE_AGENDA = (
     "Não gere tarefa, pendência, notificação, encaminhamento ou alteração da agenda.\n"
     "Não use frases genéricas como organizar a agenda ou planejar-se.\n"
     "Não transforme a resposta em lista extensa."
+)
+PROMPT_ANALISE_TAREFAS = (
+    "Você recebe dados estruturados das tarefas ativas de um único usuário do MPC-PB.\n"
+    "Use exclusivamente os dados fornecidos pelo sistema e as contagens já calculadas.\n"
+    "Não recalcule fatos simples nem contradiga os dados.\n"
+    "Não invente fatos, tarefas, prazos, responsáveis, prioridades, status, módulos ou agrupamentos.\n"
+    "Uma tarefa só merece urgência quando a situação do prazo, a prioridade ou o conteúdo fornecido der base objetiva para isso.\n"
+    "Não afirme que uma providência é juridicamente obrigatória sem informação suficiente.\n"
+    "A análise é somente informativa: não marque tarefa como concluída, não altere status ou prioridade, não crie tarefa, não modifique dados, não dispare lembrete, notificação ou e-mail.\n"
+    "Diferencie fatos registrados de eventuais sugestões de organização.\n"
+    "Produza um briefing operacional curto, objetivo, profissional e adequado ao ambiente institucional.\n"
+    "Estruture a resposta, quando houver dados para tanto, em Panorama geral, Prioridades imediatas, Prazos e pontos de atenção, Organização das pendências e Próximas ações.\n"
+    "Em Panorama geral, use as contagens fornecidas.\n"
+    "Em Prioridades imediatas e Próximas ações, destaque apenas tarefas com base objetiva nos dados.\n"
+    "Em Organização das pendências, agrupe apenas quando houver relação clara por assunto, módulo ou natureza da providência.\n"
+    "Não transforme sugestões em comandos administrativos ou decisões automáticas."
 )
 _STATUS_TOKEN = re.compile(r"[A-Z0-9_]{1,40}")
 
@@ -270,6 +287,24 @@ def analisar_periodo_agenda(contexto):
     raw, _modelo = _executar(
         lambda key, model: _request_texto(text, key, PROMPT_ANALISE_AGENDA, model),
         "análise da agenda",
+    )
+    return _texto_resposta(raw)
+
+
+def analisar_tarefas_ativas(contexto):
+    """Turn pre-filtered active-task facts into a briefing without persistence."""
+    if not isinstance(contexto, dict) or not isinstance(contexto.get("tarefas"), list):
+        raise GeminiErro("Não foi possível preparar a análise das tarefas.")
+    if not contexto["tarefas"]:
+        raise GeminiErro("Não há tarefas ativas para análise no momento.")
+    text = json.dumps(
+        contexto, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    if len(text.encode("utf-8")) > MAX_ANALISE_TAREFAS_BYTES:
+        raise GeminiErro("Há muitas informações para analisar de uma só vez.")
+    raw, _modelo = _executar(
+        lambda key, model: _request_texto(text, key, PROMPT_ANALISE_TAREFAS, model),
+        "análise das tarefas",
     )
     return _texto_resposta(raw)
 

@@ -228,6 +228,43 @@ class TarefasStore:
         return records
     def list_active(self, owner, filters=None, limit=100, offset=0): return self._list(owner,ACTIVE,filters,limit,offset)
     def list_history(self, owner, filters=None, limit=30, offset=0): return self._list(owner,HISTORY,filters,limit,offset)
+
+    def list_active_for_analysis(self, owner_user_id):
+        """Return every active task owned by one user, with its reminders.
+
+        This is deliberately separate from the paginated card listing: an IA
+        briefing must use the complete private active set, never the current
+        page or the UI filters.
+        """
+        placeholders = ",".join("?" * len(ACTIVE))
+        with self.store.connection(read_only=True) as c:
+            rows = c.execute(
+                "SELECT t.* FROM tarefas t WHERE t.owner_user_id=? "
+                f"AND t.status IN ({placeholders}) "
+                "ORDER BY CASE WHEN t.prazo_data IS NULL THEN 1 ELSE 0 END, "
+                "t.prazo_data,t.prazo_hora,t.criado_em DESC",
+                (owner_user_id, *ACTIVE),
+            ).fetchall()
+            reminders = c.execute(
+                "SELECT tl.tarefa_id,tl.lembrar_em FROM tarefas_lembretes tl "
+                "JOIN tarefas t ON t.id=tl.tarefa_id "
+                "WHERE t.owner_user_id=? "
+                f"AND t.status IN ({placeholders}) "
+                "ORDER BY tl.tarefa_id,tl.lembrar_em,tl.id",
+                (owner_user_id, *ACTIVE),
+            ).fetchall()
+        by_task = {}
+        for reminder in reminders:
+            by_task.setdefault(reminder["tarefa_id"], []).append(
+                reminder["lembrar_em"]
+            )
+        result = []
+        for row in rows:
+            record = dict(row)
+            record["lembretes"] = by_task.get(record["id"], [])
+            result.append(record)
+        return result
+
     def alert_window(self, owner, now_local):
         horizon = (now_local.date().fromordinal(now_local.date().toordinal() + 7)).isoformat()
         with self.store.connection(read_only=True) as c:
