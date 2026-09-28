@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import logging
+import re
 
 import streamlit as st
 
@@ -311,6 +312,93 @@ def render_backup(store, principal):
         st.caption("O download foi solicitado neste navegador.")
 
 
+_OPERACAO_ROTULO = {
+    "agenda_analise": "Agenda",
+    "tarefas_analise": "Tarefas",
+    "oficio_extracao": "Ofícios",
+    "representacao_resumo": "Representações",
+    "laboratorio_resumo": "Laboratório",
+}
+_MODELO_ROTULO = {
+    "gemini-3.5-flash-lite": "Gemini 3.5 Flash Lite",
+    "gemini-3.1-flash-lite": "Gemini 3.1 Flash Lite",
+}
+_TOKEN_SEGURO = re.compile(r"[A-Za-z0-9_.-]{1,80}")
+
+
+def rotulo_operacao(codigo):
+    texto = str(codigo or "")
+    if texto in _OPERACAO_ROTULO:
+        return _OPERACAO_ROTULO[texto]
+    if _TOKEN_SEGURO.fullmatch(texto):
+        return texto
+    return "—"
+
+
+def rotulo_modelo(codigo):
+    texto = str(codigo or "")
+    if not texto:
+        return "—"
+    if texto in _MODELO_ROTULO:
+        return _MODELO_ROTULO[texto]
+    if _TOKEN_SEGURO.fullmatch(texto):
+        return texto
+    return "—"
+
+
+def rotulo_duracao(milissegundos):
+    if milissegundos is None:
+        return "—"
+    try:
+        valor = int(milissegundos)
+    except (TypeError, ValueError):
+        return "—"
+    if valor < 0:
+        return "—"
+    if valor < 1000:
+        return f"{valor} ms"
+    return f"{valor / 1000:.1f}".replace(".", ",") + " s"
+
+
+def rotulo_horario(valor, agora=None):
+    from datetime import datetime, timezone
+
+    from services.audit import INSTITUTIONAL_TZ
+
+    if not valor:
+        return "—"
+    try:
+        momento = datetime.fromisoformat(str(valor))
+    except ValueError:
+        return "—"
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=timezone.utc)
+    local = momento.astimezone(INSTITUTIONAL_TZ)
+    referencia = agora or datetime.now(INSTITUTIONAL_TZ)
+    if referencia.tzinfo is None:
+        referencia = referencia.replace(tzinfo=INSTITUTIONAL_TZ)
+    else:
+        referencia = referencia.astimezone(INSTITUTIONAL_TZ)
+    if local.date() == referencia.date():
+        return local.strftime("%H:%M:%S")
+    return local.strftime("%d/%m/%Y %H:%M")
+
+
+def linha_operacao_recente(row, agora=None):
+    http = row.get("http_status")
+    return {
+        "Horário": rotulo_horario(row.get("criado_em"), agora),
+        "Operação": rotulo_operacao(row.get("operacao")),
+        "Resultado": "Sucesso" if row.get("sucesso") else "Falha",
+        "Tentativas": int(row.get("tentativas") or 0),
+        "Retry": "Sim" if row.get("retry") else "Não",
+        "Fallback": "Sim" if row.get("fallback") else "Não",
+        "Modelo final": rotulo_modelo(row.get("modelo_final")),
+        "Tempo": rotulo_duracao(row.get("duracao_ms")),
+        "HTTP": "—" if http is None else str(int(http)),
+    }
+
+
 def render_ai_health(store, principal):
     """Compact availability of the shared IA layer. Administrators only."""
     require_permission(principal, "admin")
@@ -341,6 +429,27 @@ def render_ai_health(store, principal):
         extra[1].metric("Falhas definitivas", item["falhas"])
         extra[2].metric("Operações com 503", item["viu_503"])
         extra[3].metric("Tempo médio", str(item["duracao_media_ms"]) + " ms")
+    _render_operacoes_recentes(store)
+
+
+def _render_operacoes_recentes(store):
+    from database.ia_telemetria import recentes
+
+    st.markdown("**Operações recentes**")
+    st.caption("Últimas operações registradas pela camada de IA.")
+    try:
+        rows = recentes(store)
+        tabela = [linha_operacao_recente(row) for row in rows]
+    except Exception as exc:
+        LOGGER.warning(
+            "Operações recentes da IA não foram carregadas (%s).", type(exc).__name__
+        )
+        st.caption("As operações recentes não puderam ser carregadas.")
+        return
+    if not tabela:
+        st.caption("Nenhuma operação registrada.")
+        return
+    st.dataframe(tabela, hide_index=True, use_container_width=True)
 
 
 def render(store, principal):

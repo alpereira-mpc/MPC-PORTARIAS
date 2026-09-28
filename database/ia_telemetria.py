@@ -5,6 +5,18 @@ from datetime import datetime, timedelta, timezone
 from database.store import now, schema_key_of, unwrap_store
 
 MARKER = "ia_telemetria_schema_v1"
+LIMITE_RECENTES = 20
+_COLUNAS_RECENTES = (
+    "criado_em",
+    "operacao",
+    "sucesso",
+    "tentativas",
+    "retry",
+    "fallback",
+    "modelo_final",
+    "duracao_ms",
+    "http_status",
+)
 _READY = set()
 _CAMPOS = (
     "modulo",
@@ -118,6 +130,22 @@ def resumo(store, horas):
         "viu_503": int(row[6] or 0),
         "duracao_media_ms": None if total == 0 else int(row[7] or 0),
     }
+
+
+def recentes(store, limite=LIMITE_RECENTES):
+    """Return the newest technical rows. One bounded query, no related tables."""
+    store = unwrap_store(store)
+    ensure_schema(store)
+    quantidade = _inteiro(limite) or LIMITE_RECENTES
+    if quantidade < 1 or quantidade > LIMITE_RECENTES:
+        quantidade = LIMITE_RECENTES
+    columns = ", ".join(_COLUNAS_RECENTES)
+    with store.connection(read_only=True) as connection:
+        rows = connection.execute(
+            f"SELECT {columns} FROM ia_telemetria " "ORDER BY criado_em DESC LIMIT ?",
+            (quantidade,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def _texto(value, limit):
