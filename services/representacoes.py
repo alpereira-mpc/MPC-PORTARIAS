@@ -532,11 +532,12 @@ def atualizar_resumo_representacao(store, identifier, principal):
     file = download(store, official["id"])
     digest = hashlib.sha256(file["conteudo"]).hexdigest()
     texto = resumir_documento_pdf(file["conteudo"])
+    modelo = getattr(texto, "modelo", None) or GEMINI_MODEL
     return open_store(store).save_resumo_ia(
         identifier,
         texto,
         now(),
-        GEMINI_MODEL,
+        modelo,
         digest,
         official["id"],
     )

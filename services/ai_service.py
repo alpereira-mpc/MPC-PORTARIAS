@@ -16,12 +16,18 @@ import urllib.request
 
 LOGGER = logging.getLogger("mpc.ai")
 
+
+def _endpoint(model):
+    return (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        + model
+        + ":generateContent"
+    )
+
+
 GEMINI_MODEL = "gemini-3.5-flash-lite"
-GEMINI_ENDPOINT = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    + GEMINI_MODEL
-    + ":generateContent"
-)
+GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite"
+GEMINI_ENDPOINT = _endpoint(GEMINI_MODEL)
 TIMEOUT_SECONDS = 120
 MAX_ATTEMPTS = 3
 RETRY_DELAYS_SECONDS = (1, 2)
@@ -29,6 +35,14 @@ RETRY_AFTER_MAX_SECONDS = 30
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_RESPONSE_BYTES = 1_000_000
 MENSAGEM_NAO_CONFIGURADA = "Gemini API não configurada neste ambiente."
+MENSAGEM_LIMITE_TEMPORARIO = (
+    "O serviço de IA está temporariamente com muitas solicitações. "
+    "Tente novamente em instantes."
+)
+MENSAGEM_COTA_DIARIA = (
+    "A cota diária disponível para processamento por IA foi atingida. "
+    "Tente novamente após a renovação das cotas."
+)
 PROMPT_RESUMO = (
     "Analise exclusivamente o documento PDF fornecido.\n"
     "\n"
@@ -209,6 +223,15 @@ class GeminiErro(RuntimeError):
     """Message is already safe to show to an administrator."""
 
 
+class _TextoModelo(str):
+    """Summary text that also records the model which produced it."""
+
+    def __new__(cls, texto, modelo):
+        value = str.__new__(cls, texto)
+        value.modelo = modelo
+        return value
+
+
 def gemini_disponivel():
     return bool(_api_key())
 
@@ -216,7 +239,8 @@ def gemini_disponivel():
 def resumir_documento_pdf(pdf_bytes):
     """Send one PDF and the fixed prompt to Gemini. Nothing is stored."""
     document = _validar_pdf(pdf_bytes)
-    return _texto_resposta(_consultar(document, PROMPT_RESUMO, "laboratório de IA"))
+    raw, modelo = _consultar(document, PROMPT_RESUMO, "laboratório de IA")
+    return _TextoModelo(_texto_resposta(raw), modelo)
 
 
 def extrair_dados_oficio_pdf(pdf_bytes):
@@ -225,15 +249,13 @@ def extrair_dados_oficio_pdf(pdf_bytes):
     Nothing is stored. Administrative fields are not part of the result.
     """
     document = _validar_pdf(pdf_bytes)
-    text = _texto_resposta(
-        _consultar(
-            document,
-            PROMPT_EXTRACAO_OFICIO,
-            "extração de ofício",
-            _OFICIO_SCHEMA,
-        )
+    raw, _modelo = _consultar(
+        document,
+        PROMPT_EXTRACAO_OFICIO,
+        "extração de ofício",
+        _OFICIO_SCHEMA,
     )
-    return _dados_oficio(text)
+    return _dados_oficio(_texto_resposta(raw))
 
 
 def analisar_periodo_agenda(contexto):
@@ -245,32 +267,48 @@ def analisar_periodo_agenda(contexto):
     )
     if len(text.encode("utf-8")) > MAX_ANALISE_AGENDA_BYTES:
         raise GeminiErro("Não foi possível preparar a análise do período.")
-    return _texto_resposta(
-        _executar(
-            lambda key: _request_texto(text, key, PROMPT_ANALISE_AGENDA),
-            "análise da agenda",
-        )
+    raw, _modelo = _executar(
+        lambda key, model: _request_texto(text, key, PROMPT_ANALISE_AGENDA, model),
+        "análise da agenda",
     )
+    return _texto_resposta(raw)
 
 
 def _consultar(document, prompt, rotulo, schema=None):
-    return _executar(lambda key: _request(document, key, prompt, schema), rotulo)
+    return _executar(
+        lambda key, model: _request(document, key, prompt, schema, model),
+        rotulo,
+    )
 
 
 def _executar(montar, rotulo):
     key = _api_key()
     if not key:
         raise GeminiNaoConfigurada()
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    modelo = GEMINI_MODEL
+    attempt = 1
+    while attempt <= MAX_ATTEMPTS:
         try:
-            raw = _post(montar(key))
+            raw = _post(montar(key, modelo))
         except TimeoutError:
             # The call already waited TIMEOUT_SECONDS. Another round could
             # hold the page for several minutes, so this failure is final.
             LOGGER.warning("Chamada ao %s expirou.", rotulo)
             raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
         except urllib.error.HTTPError as exc:
-            code, status, retry_after = _detalhe_http(exc)
+            code, status, retry_after, cota_diaria = _detalhe_http(exc)
+            if cota_diaria and modelo == GEMINI_MODEL:
+                LOGGER.warning(
+                    "Gemini 3.5 Flash-Lite: cota diária esgotada. "
+                    "Tentando modelo reserva."
+                )
+                LOGGER.warning("Fallback Gemini utilizado: %s.", GEMINI_FALLBACK_MODEL)
+                modelo = GEMINI_FALLBACK_MODEL
+                attempt = 1
+                continue
+            if cota_diaria:
+                LOGGER.warning("Cota diária esgotada no modelo %s.", modelo)
+                raise GeminiErro(MENSAGEM_COTA_DIARIA) from None
             if attempt < MAX_ATTEMPTS and _repetir_http(code, status):
                 LOGGER.warning(
                     "Tentativa %s falhou com HTTP %s. Nova tentativa será realizada.",
@@ -278,6 +316,7 @@ def _executar(montar, rotulo):
                     code,
                 )
                 _sleep(_espera(attempt, retry_after))
+                attempt += 1
                 continue
             LOGGER.warning(
                 "Chamada ao %s falhou (HTTP %s, %s).",
@@ -296,10 +335,11 @@ def _executar(montar, rotulo):
                     attempt,
                 )
                 _sleep(_espera(attempt, None))
+                attempt += 1
                 continue
             LOGGER.warning("Chamada ao %s sem conexão.", rotulo)
             raise GeminiErro("Não foi possível conectar ao serviço de IA.") from None
-        return raw
+        return raw, modelo
 
 
 def _api_key():
@@ -329,7 +369,7 @@ def _validar_pdf(pdf_bytes):
     return document
 
 
-def _request(document, key, prompt, schema=None):
+def _request(document, key, prompt, schema=None, model=GEMINI_MODEL):
     payload = {
         "contents": [
             {
@@ -352,7 +392,7 @@ def _request(document, key, prompt, schema=None):
             "responseSchema": schema,
         }
     return urllib.request.Request(
-        GEMINI_ENDPOINT,
+        _endpoint(model),
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -362,7 +402,7 @@ def _request(document, key, prompt, schema=None):
     )
 
 
-def _request_texto(texto, key, prompt):
+def _request_texto(texto, key, prompt, model=GEMINI_MODEL):
     payload = {
         "contents": [
             {
@@ -372,7 +412,7 @@ def _request_texto(texto, key, prompt):
         ]
     }
     return urllib.request.Request(
-        GEMINI_ENDPOINT,
+        _endpoint(model),
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -402,11 +442,16 @@ def _repetir_http(code, status):
 
 def _detalhe_http(exc):
     code = int(getattr(exc, "code", 0) or 0)
-    status = _status_from_error(exc)
+    error = _corpo_erro(exc)
+    status = ""
+    if isinstance(error, dict):
+        raw_status = str(error.get("status") or "")
+        if _STATUS_TOKEN.fullmatch(raw_status):
+            status = raw_status
     retry_after = None
     if code == 429 or status == "RESOURCE_EXHAUSTED":
         retry_after = _retry_after_seconds(exc)
-    return code, status, retry_after
+    return code, status, retry_after, _cota_diaria(error)
 
 
 def _retry_after_seconds(exc):
@@ -540,29 +585,75 @@ def _providencia_vazia(text):
     return plain.startswith("nenhuma providencia especifica")
 
 
-def _status_from_error(exc):
+def _corpo_erro(exc):
     try:
-        raw = exc.read(4096)
+        raw = exc.read(16384)
     except Exception:
-        return ""
+        return {}
     if not raw:
-        return ""
+        return {}
     try:
         payload = json.loads(raw.decode("utf-8", errors="replace"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return ""
+        return {}
     error = payload.get("error") if isinstance(payload, dict) else None
     if not isinstance(error, dict):
-        return ""
-    status = str(error.get("status") or "")
-    if _STATUS_TOKEN.fullmatch(status):
-        return status
-    return ""
+        return {}
+    return error
+
+
+def _cota_diaria(error):
+    """True only when structured quota metadata identifies a daily request cap."""
+    if not isinstance(error, dict):
+        return False
+    details = error.get("details")
+    if not isinstance(details, list):
+        return False
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        kind = str(detail.get("@type") or "")
+        if kind.endswith("QuotaFailure"):
+            violations = detail.get("violations")
+            if not isinstance(violations, list):
+                continue
+            for violation in violations:
+                if isinstance(violation, dict) and _identificador_rpd(
+                    violation.get("quotaId"), violation.get("quotaMetric")
+                ):
+                    return True
+        elif kind.endswith("ErrorInfo"):
+            meta = detail.get("metadata")
+            if not isinstance(meta, dict):
+                continue
+            if _identificador_rpd(
+                meta.get("quota_limit") or meta.get("quotaId"),
+                meta.get("quota_metric") or meta.get("quotaMetric"),
+            ):
+                return True
+    return False
+
+
+def _identificador_rpd(quota_id, quota_metric):
+    ident = re.sub(r"[^A-Za-z0-9]", "", str(quota_id or ""))
+    if not ident or not re.search(r"perday", ident, re.I):
+        return False
+    if re.search(r"minute|second|hour|token", ident, re.I):
+        return False
+    if not re.search(r"request", ident, re.I):
+        return False
+    metric = str(quota_metric or "").strip()
+    if not metric:
+        return True
+    compact = re.sub(r"[^A-Za-z0-9]", "", metric)
+    if re.search(r"token", compact, re.I):
+        return False
+    return re.search(r"request", compact, re.I) is not None
 
 
 def _mensagem_http(code, status):
     if code == 429 or status == "RESOURCE_EXHAUSTED":
-        return "O limite de uso da Gemini API foi atingido."
+        return MENSAGEM_LIMITE_TEMPORARIO
     if code == 404 or status in {"NOT_FOUND", "UNIMPLEMENTED"}:
         return "O modelo de IA não está disponível neste ambiente."
     if code in {401, 403} or status in {"UNAUTHENTICATED", "PERMISSION_DENIED"}:

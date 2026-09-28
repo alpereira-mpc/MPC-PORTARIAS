@@ -935,6 +935,115 @@ def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monke
     assert "rep_prep_" in compact
 
 
+def test_summary_persists_the_model_that_answered(store, monkeypatch):
+    import email
+    import io
+    import json
+    import urllib.error
+
+    import streamlit as st
+
+    import services.ai_service as ai_service
+    from database.store import now
+    from services.ai_service import (
+        GEMINI_FALLBACK_MODEL,
+        GEMINI_MODEL,
+        GeminiErro,
+    )
+    from services.representacoes import (
+        atualizar_resumo_representacao,
+        open_store,
+        pdf_oficial,
+        resumo_ia,
+    )
+
+    monkeypatch.setattr(st, "secrets", {"GEMINI_API_KEY": "chave-de-teste"})
+    monkeypatch.setattr(ai_service, "_sleep", lambda seconds: None)
+    principal = _principal(store, email="modelo-efetivo@test.local")
+    primary_id = _protocolled_with_pdf(store, principal, _pdf(), "TC 055551/26")
+    legacy_id = _protocolled_with_pdf(store, principal, _pdf(), "TC 055552/26")
+    legacy_document = pdf_oficial(store, legacy_id)
+
+    def answer(text):
+        return json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+        ).encode()
+
+    def primary_only(request):
+        assert GEMINI_MODEL in request.full_url
+        assert GEMINI_FALLBACK_MODEL not in request.full_url
+        return answer("Objeto: principal.")
+
+    monkeypatch.setattr(ai_service, "_post", primary_only)
+    saved = atualizar_resumo_representacao(store, primary_id, principal)
+    assert saved["texto"] == "Objeto: principal."
+    assert saved["modelo"] == "gemini-3.5-flash-lite"
+
+    open_store(store).save_resumo_ia(
+        legacy_id,
+        "Resumo anterior.",
+        now(),
+        "gemini-3.6-flash",
+        "legado",
+        legacy_document["id"],
+    )
+
+    def expire(_request):
+        raise TimeoutError()
+
+    monkeypatch.setattr(ai_service, "_post", expire)
+    with pytest.raises(GeminiErro, match="não respondeu a tempo"):
+        atualizar_resumo_representacao(store, legacy_id, principal)
+    kept = resumo_ia(store, legacy_id)
+    assert kept["texto"] == "Resumo anterior."
+    assert kept["modelo"] == "gemini-3.6-flash"
+
+    def reserve(request):
+        if GEMINI_FALLBACK_MODEL in request.full_url:
+            return answer("Objeto: reserva.")
+        body = json.dumps(
+            {
+                "error": {
+                    "code": 429,
+                    "status": "RESOURCE_EXHAUSTED",
+                    "message": "quota",
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                            "violations": [
+                                {
+                                    "quotaMetric": (
+                                        "generativelanguage.googleapis.com/"
+                                        "generate_content_free_tier_requests"
+                                    ),
+                                    "quotaId": (
+                                        "GenerateRequestsPerDayPerProjectPerModel"
+                                        "-FreeTier"
+                                    ),
+                                    "quotaValue": "500",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        ).encode()
+        raise urllib.error.HTTPError(
+            request.full_url,
+            429,
+            "erro",
+            email.message_from_string(""),
+            io.BytesIO(body),
+        )
+
+    monkeypatch.setattr(ai_service, "_post", reserve)
+    updated = atualizar_resumo_representacao(store, primary_id, principal)
+    assert updated["texto"] == "Objeto: reserva."
+    assert updated["modelo"] == "gemini-3.1-flash-lite"
+    assert resumo_ia(store, legacy_id)["modelo"] == "gemini-3.6-flash"
+    assert resumo_ia(store, legacy_id)["texto"] == "Resumo anterior."
+
+
 def test_new_database_creates_summary_columns(tmp_path):
     fresh = Store(tmp_path / "novo.db")
     with fresh.connection(read_only=True) as c:

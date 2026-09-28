@@ -12,9 +12,11 @@ import pytest
 
 import services.ai_service as ai_service
 from services.ai_service import (
+    GEMINI_FALLBACK_MODEL,
     GEMINI_MODEL,
     GeminiErro,
     GeminiNaoConfigurada,
+    analisar_periodo_agenda,
     extrair_dados_oficio_pdf,
     gemini_disponivel,
     resumir_documento_pdf,
@@ -32,10 +34,13 @@ def _key(monkeypatch, value=KEY):
     monkeypatch.setattr(st, "secrets", {"GEMINI_API_KEY": value})
 
 
-def _http_error(url, code, status, message="detalhe interno", retry_after=None):
-    body = json.dumps(
-        {"error": {"code": code, "status": status, "message": message + " " + KEY}}
-    ).encode()
+def _http_error(
+    url, code, status, message="detalhe interno", retry_after=None, details=None
+):
+    error = {"code": code, "status": status, "message": message + " " + KEY}
+    if details is not None:
+        error["details"] = details
+    body = json.dumps({"error": error}).encode()
     header = ""
     if retry_after is not None:
         header = "Retry-After: " + str(retry_after) + "\n"
@@ -222,7 +227,7 @@ def test_connection_failure_hides_the_cause(monkeypatch, caplog):
 @pytest.mark.parametrize(
     ("code", "status", "message"),
     [
-        (429, "RESOURCE_EXHAUSTED", "limite de uso"),
+        (429, "RESOURCE_EXHAUSTED", "muitas solicitações"),
         (404, "NOT_FOUND", "não está disponível"),
         (403, "PERMISSION_DENIED", "recusou a credencial"),
         (400, "INVALID_ARGUMENT", "não conseguiu ler o PDF"),
@@ -472,7 +477,7 @@ def test_429_three_times_keeps_the_quota_message(monkeypatch, caplog):
 
     monkeypatch.setattr(ai_service, "_post", post)
     with caplog.at_level(logging.DEBUG):
-        with pytest.raises(GeminiErro, match="limite de uso") as caught:
+        with pytest.raises(GeminiErro, match="muitas solicitações") as caught:
             resumir_documento_pdf(PDF)
     assert calls == [1, 1, 1]
     assert sleeps == [8, 8]
@@ -495,7 +500,7 @@ def test_large_or_dated_retry_after_falls_back_to_short_delays(monkeypatch):
         )
 
     monkeypatch.setattr(ai_service, "_post", post)
-    with pytest.raises(GeminiErro, match="limite de uso"):
+    with pytest.raises(GeminiErro, match="muitas solicitações"):
         resumir_documento_pdf(PDF)
     assert calls == [1, 1, 1]
     assert sleeps == [1, 2]
@@ -536,7 +541,9 @@ def test_connection_succeeds_on_the_second_attempt(monkeypatch):
 
 def test_model_and_prompt_stay_in_the_service():
     assert GEMINI_MODEL == "gemini-3.5-flash-lite"
+    assert GEMINI_FALLBACK_MODEL == "gemini-3.1-flash-lite"
     assert ai_service.GEMINI_ENDPOINT.count(GEMINI_MODEL) == 1
+    assert GEMINI_FALLBACK_MODEL not in ai_service.GEMINI_ENDPOINT
     services = ROOT / "services"
     model_hits = []
     prompt_hits = []
@@ -544,7 +551,7 @@ def test_model_and_prompt_stay_in_the_service():
         if path.name == "ai_service.py":
             continue
         text = path.read_text(encoding="utf-8")
-        if GEMINI_MODEL in text:
+        if GEMINI_MODEL in text or GEMINI_FALLBACK_MODEL in text:
             model_hits.append(path.name)
         if "pedido cautelar" in text:
             prompt_hits.append(path.name)
@@ -890,3 +897,333 @@ def test_oficio_validation_keeps_a_descriptive_subject_and_a_relative_deadline(
     assert kept["assunto"] == already
     assert kept["prazo"] == ""
     assert kept["providencias_sugeridas"] == []
+
+
+def _quota(quota_id, quota_metric, quota_value="500"):
+    return [
+        {
+            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            "violations": [
+                {
+                    "quotaMetric": quota_metric,
+                    "quotaId": quota_id,
+                    "quotaValue": quota_value,
+                }
+            ],
+        }
+    ]
+
+
+RPD_DETAILS = _quota(
+    "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+    "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+)
+RPM_DETAILS = _quota(
+    "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+    "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+    "15",
+)
+TOKEN_DETAILS = _quota(
+    "GenerateContentInputTokensPerModelPerMinute-FreeTier",
+    "generativelanguage.googleapis.com/generate_content_free_tier_input_token_count",
+    "250000",
+)
+
+
+def _install(monkeypatch, handler):
+    calls = []
+    _key(monkeypatch)
+    sleeps = _no_sleep(monkeypatch)
+
+    def post(request):
+        calls.append(request.full_url)
+        return handler(request, len(calls))
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    return calls, sleeps
+
+
+def _primary(url):
+    return GEMINI_MODEL in url and GEMINI_FALLBACK_MODEL not in url
+
+
+def test_success_on_the_primary_does_not_call_the_reserve(monkeypatch):
+    calls, _sleeps = _install(monkeypatch, lambda request, index: _summary())
+    summary = resumir_documento_pdf(PDF)
+    assert summary == "Objeto: exemplo."
+    assert summary.modelo == GEMINI_MODEL
+    assert calls == [ai_service.GEMINI_ENDPOINT]
+
+
+def test_503_retries_on_the_primary_model(monkeypatch):
+    def fail(request, index):
+        raise _http_error(request.full_url, 503, "UNAVAILABLE")
+
+    calls, sleeps = _install(monkeypatch, fail)
+    with pytest.raises(GeminiErro, match="indisponível"):
+        resumir_documento_pdf(PDF)
+    assert calls == [
+        ai_service.GEMINI_ENDPOINT,
+        ai_service.GEMINI_ENDPOINT,
+        ai_service.GEMINI_ENDPOINT,
+    ]
+    assert sleeps == [1, 2]
+
+
+def test_temporary_429_does_not_call_the_reserve(monkeypatch):
+    def post(request, index):
+        if index == 1:
+            raise _http_error(
+                request.full_url,
+                429,
+                "RESOURCE_EXHAUSTED",
+                details=RPM_DETAILS,
+                retry_after=5,
+            )
+        return _summary()
+
+    calls, sleeps = _install(monkeypatch, post)
+    summary = resumir_documento_pdf(PDF)
+    assert summary.modelo == GEMINI_MODEL
+    assert calls == [ai_service.GEMINI_ENDPOINT, ai_service.GEMINI_ENDPOINT]
+    assert sleeps == [5]
+
+
+def test_token_limit_and_message_only_429_stay_on_the_primary(monkeypatch):
+    def tokens(request, index):
+        raise _http_error(
+            request.full_url, 429, "RESOURCE_EXHAUSTED", details=TOKEN_DETAILS
+        )
+
+    calls, sleeps = _install(monkeypatch, tokens)
+    with pytest.raises(GeminiErro, match="muitas solicitações"):
+        resumir_documento_pdf(PDF)
+    assert calls == [ai_service.GEMINI_ENDPOINT] * 3
+    assert sleeps == [1, 2]
+
+    def wording(request, index):
+        raise _http_error(
+            request.full_url,
+            429,
+            "RESOURCE_EXHAUSTED",
+            message="Quota exceeded per day limit 500",
+        )
+
+    calls, sleeps = _install(monkeypatch, wording)
+    with pytest.raises(GeminiErro, match="muitas solicitações") as caught:
+        resumir_documento_pdf(PDF)
+    assert calls == [ai_service.GEMINI_ENDPOINT] * 3
+    assert "cota diária" not in str(caught.value)
+
+
+def test_daily_request_quota_uses_the_reserve_once(monkeypatch, caplog):
+    def post(request, index):
+        if _primary(request.full_url):
+            raise _http_error(
+                request.full_url, 429, "RESOURCE_EXHAUSTED", details=RPD_DETAILS
+            )
+        body = json.loads(request.data.decode("utf-8"))
+        assert body["contents"][0]["parts"][0]["text"] == ai_service.PROMPT_RESUMO
+        return _summary()
+
+    calls, sleeps = _install(monkeypatch, post)
+    with caplog.at_level(logging.DEBUG):
+        summary = resumir_documento_pdf(PDF)
+    assert summary == "Objeto: exemplo."
+    assert summary.modelo == GEMINI_FALLBACK_MODEL
+    assert len(calls) == 2
+    assert _primary(calls[0])
+    assert GEMINI_FALLBACK_MODEL in calls[1]
+    assert sleeps == []
+    assert "Tentando modelo reserva." in caplog.text
+    assert "Fallback Gemini utilizado: " + GEMINI_FALLBACK_MODEL in caplog.text
+    assert PROMPT_MARK not in caplog.text
+    assert KEY not in caplog.text
+    assert "1 0 obj" not in caplog.text
+
+
+def test_errorinfo_daily_quota_uses_the_reserve(monkeypatch):
+    details = [
+        {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "RATE_LIMIT_EXCEEDED",
+            "metadata": {
+                "quota_limit": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+                "quota_metric": (
+                    "generativelanguage.googleapis.com/generate_content_free_tier_requests"
+                ),
+                "quota_limit_value": "500",
+            },
+        }
+    ]
+
+    def post(request, index):
+        if _primary(request.full_url):
+            raise _http_error(
+                request.full_url, 429, "RESOURCE_EXHAUSTED", details=details
+            )
+        return _summary()
+
+    calls, _sleeps = _install(monkeypatch, post)
+    summary = resumir_documento_pdf(PDF)
+    assert summary.modelo == GEMINI_FALLBACK_MODEL
+    assert len(calls) == 2
+    assert GEMINI_FALLBACK_MODEL in calls[1]
+
+
+def test_functional_http_errors_do_not_call_the_reserve(monkeypatch):
+    cases = (
+        (400, "INVALID_ARGUMENT", "não conseguiu ler o PDF"),
+        (401, "UNAUTHENTICATED", "recusou a credencial"),
+        (403, "PERMISSION_DENIED", "recusou a credencial"),
+    )
+    for code, status, message in cases:
+
+        def fail(request, index, code=code, status=status):
+            raise _http_error(request.full_url, code, status)
+
+        calls, sleeps = _install(monkeypatch, fail)
+        with pytest.raises(GeminiErro, match=message):
+            resumir_documento_pdf(PDF)
+        assert calls == [ai_service.GEMINI_ENDPOINT]
+        assert sleeps == []
+
+
+def test_invalid_pdf_and_timeout_do_not_call_the_reserve(monkeypatch):
+    calls, sleeps = _install(monkeypatch, lambda request, index: _summary())
+    with pytest.raises(GeminiErro, match="não é um PDF válido"):
+        resumir_documento_pdf(b"apenas texto")
+    assert calls == []
+    assert sleeps == []
+
+    def expire(request, index):
+        raise TimeoutError()
+
+    calls, sleeps = _install(monkeypatch, expire)
+    with pytest.raises(GeminiErro, match="não respondeu a tempo"):
+        resumir_documento_pdf(PDF)
+    assert calls == [ai_service.GEMINI_ENDPOINT]
+    assert sleeps == []
+
+
+def test_invalid_json_does_not_call_the_reserve(monkeypatch):
+    calls, _sleeps = _install(monkeypatch, lambda request, index: b"nao-json")
+    with pytest.raises(GeminiErro, match="interpretar"):
+        resumir_documento_pdf(PDF)
+    assert calls == [ai_service.GEMINI_ENDPOINT]
+
+    def bad_oficio(request, index):
+        return json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": "nao e json"}]}}]}
+        ).encode()
+
+    calls, _sleeps = _install(monkeypatch, bad_oficio)
+    with pytest.raises(GeminiErro, match="interpretar"):
+        extrair_dados_oficio_pdf(PDF)
+    assert calls == [ai_service.GEMINI_ENDPOINT]
+
+
+def test_both_daily_quotas_stop_without_a_third_model(monkeypatch, caplog):
+    def fail(request, index):
+        raise _http_error(
+            request.full_url, 429, "RESOURCE_EXHAUSTED", details=RPD_DETAILS
+        )
+
+    calls, sleeps = _install(monkeypatch, fail)
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(GeminiErro, match="cota diária") as caught:
+            resumir_documento_pdf(PDF)
+    assert str(caught.value) == ai_service.MENSAGEM_COTA_DIARIA
+    assert "GenerateRequests" not in str(caught.value)
+    assert len(calls) == 2
+    assert _primary(calls[0])
+    assert GEMINI_FALLBACK_MODEL in calls[1]
+    assert sleeps == []
+    assert "Gemini 3.5 Flash-Lite: cota diária esgotada." in caplog.text
+    assert GEMINI_FALLBACK_MODEL in caplog.text
+    assert PROMPT_MARK not in caplog.text
+    assert KEY not in caplog.text
+
+
+def test_reserve_retries_a_temporary_failure_without_returning_to_the_primary(
+    monkeypatch,
+):
+    def post(request, index):
+        if _primary(request.full_url):
+            raise _http_error(
+                request.full_url, 429, "RESOURCE_EXHAUSTED", details=RPD_DETAILS
+            )
+        if index < 4:
+            raise _http_error(request.full_url, 503, "UNAVAILABLE")
+        return _summary()
+
+    calls, sleeps = _install(monkeypatch, post)
+    summary = resumir_documento_pdf(PDF)
+    assert summary.modelo == GEMINI_FALLBACK_MODEL
+    assert len(calls) == 4
+    assert _primary(calls[0])
+    assert all(GEMINI_FALLBACK_MODEL in url for url in calls[1:])
+    assert sleeps == [1, 2]
+
+
+def test_reserve_temporary_429_does_not_loop_back_to_the_primary(monkeypatch):
+    def post(request, index):
+        if _primary(request.full_url):
+            raise _http_error(
+                request.full_url, 429, "RESOURCE_EXHAUSTED", details=RPD_DETAILS
+            )
+        raise _http_error(
+            request.full_url, 429, "RESOURCE_EXHAUSTED", details=RPM_DETAILS
+        )
+
+    calls, sleeps = _install(monkeypatch, post)
+    with pytest.raises(GeminiErro, match="muitas solicitações"):
+        resumir_documento_pdf(PDF)
+    assert len(calls) == 4
+    assert _primary(calls[0])
+    assert all(GEMINI_FALLBACK_MODEL in url for url in calls[1:])
+    assert sleeps == [1, 2]
+
+
+def test_oficio_and_agenda_use_the_same_fallback(monkeypatch):
+    def oficio(request, index):
+        if _primary(request.full_url):
+            raise _http_error(
+                request.full_url, 429, "RESOURCE_EXHAUSTED", details=RPD_DETAILS
+            )
+        body = json.loads(request.data.decode("utf-8"))
+        assert (
+            body["contents"][0]["parts"][0]["text"] == ai_service.PROMPT_EXTRACAO_OFICIO
+        )
+        assert body["generationConfig"]["responseMimeType"] == "application/json"
+        return _gemini_json(OFICIO)
+
+    calls, _sleeps = _install(monkeypatch, oficio)
+    data = extrair_dados_oficio_pdf(PDF)
+    assert data["numero_externo"] == OFICIO["numero_externo"]
+    assert len(calls) == 2
+    assert GEMINI_FALLBACK_MODEL in calls[1]
+
+    def agenda(request, index):
+        if _primary(request.full_url):
+            raise _http_error(
+                request.full_url, 429, "RESOURCE_EXHAUSTED", details=RPD_DETAILS
+            )
+        body = json.loads(request.data.decode("utf-8"))
+        assert (
+            ai_service.PROMPT_ANALISE_AGENDA in body["contents"][0]["parts"][0]["text"]
+        )
+        assert "inlineData" not in json.dumps(body)
+        return _summary()
+
+    calls, _sleeps = _install(monkeypatch, agenda)
+    text = analisar_periodo_agenda({"total_compromissos": 1})
+    assert text == "Objeto: exemplo."
+    assert len(calls) == 2
+    assert GEMINI_FALLBACK_MODEL in calls[1]
+
+
+def test_lab_uses_the_shared_summary_function():
+    import services.ai_lab_ui as ai_lab_ui
+
+    assert ai_lab_ui.resumir_documento_pdf is resumir_documento_pdf

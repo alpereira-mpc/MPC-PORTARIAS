@@ -109,6 +109,50 @@ def institutional(member_ids, kind, day, bindings):
     ]
 
 
+def fase_temporal(inicio, fim, agora, *, dia_inteiro=False):
+    """Return futuro, em_andamento or passado for a closed period.
+
+    All-day and date-only periods compare calendar days and keep the end day
+    in progress until the next day. Timed periods compare the full instant and
+    include the end instant. An appointment without an end is classified by
+    fase_compromisso and does not pass through this function.
+    """
+    if dia_inteiro:
+        inicio = inicio.date() if isinstance(inicio, datetime) else inicio
+        fim = fim.date() if isinstance(fim, datetime) else fim
+        agora = agora.date() if isinstance(agora, datetime) else agora
+    if agora < inicio:
+        return "futuro"
+    if agora > fim:
+        return "passado"
+    return "em_andamento"
+
+
+def fase_compromisso(record, agora):
+    """Temporal phase of one appointment. It does not read or change situacao.
+
+    Without an explicit end, the appointment stays in progress from its start
+    until an administrative close. No default duration is invented.
+    """
+    inicio = datetime.fromisoformat(record["inicio"])
+    bruto = record.get("fim")
+    if not bruto:
+        if record.get("sem_hora"):
+            dia = agora.date() if isinstance(agora, datetime) else agora
+            if dia < inicio.date():
+                return "futuro"
+            return "em_andamento"
+        if agora < inicio:
+            return "futuro"
+        return "em_andamento"
+    return fase_temporal(
+        inicio,
+        datetime.fromisoformat(bruto),
+        agora,
+        dia_inteiro=bool(record.get("sem_hora")),
+    )
+
+
 def interval(record):
     start = datetime.fromisoformat(record["inicio"])
     end = datetime.fromisoformat(record["fim"]) if record.get("fim") else start

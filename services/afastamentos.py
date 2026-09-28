@@ -3,6 +3,8 @@
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from services.agenda import fase_temporal
+
 MOTIVOS = ("Férias", "Licença especial", "Licença para tratamento de saúde", "Outro")
 RECIFE = ZoneInfo("America/Recife")
 
@@ -11,19 +13,33 @@ def status(record, today=None):
     if record.get("cancelado"):
         return "CANCELADO"
     today = today or datetime.now(RECIFE).date()
-    start = date.fromisoformat(record["data_inicio"])
-    end = date.fromisoformat(record["data_fim"])
-    return "AGENDADO" if start > today else "ENCERRADO" if end < today else "EM ANDAMENTO"
+    phase = fase_temporal(
+        date.fromisoformat(record["data_inicio"]),
+        date.fromisoformat(record["data_fim"]),
+        today,
+        dia_inteiro=True,
+    )
+    if phase == "futuro":
+        return "AGENDADO"
+    if phase == "passado":
+        return "ENCERRADO"
+    return "EM ANDAMENTO"
 
 
 def eligible_substitutes(holder, people):
     role = holder.get("funcao")
     if role == "Procurador-Geral":
-        return [p for p in people if p.get("ativo") and p.get("funcao") == "Subprocurador-Geral"]
+        return [
+            p
+            for p in people
+            if p.get("ativo") and p.get("funcao") == "Subprocurador-Geral"
+        ]
     if role == "Subprocurador-Geral":
         return [
-            p for p in people
-            if p.get("ativo") and p.get("funcao") not in ("Procurador-Geral", "Subprocurador-Geral")
+            p
+            for p in people
+            if p.get("ativo")
+            and p.get("funcao") not in ("Procurador-Geral", "Subprocurador-Geral")
         ]
     return []
 
@@ -57,13 +73,18 @@ def accepted_substitute(selected_id, eligible_ids):
 def substitution_pending(record, people):
     """Presentation-only institutional pending state; it is never persisted."""
     holder = next((p for p in people if p["id"] == record.get("procurador_id")), None)
-    return bool(holder and requires_substitute(holder) and not record.get("substituto_id"))
+    return bool(
+        holder and requires_substitute(holder) and not record.get("substituto_id")
+    )
 
 
 def validate(record, people, *, holder_conflict=False, substitute_absent=False):
     if record.get("motivo") not in MOTIVOS:
         raise ValueError("Motivo de afastamento inválido.")
-    if record.get("motivo") == "Outro" and not (record.get("motivo_outro") or "").strip():
+    if (
+        record.get("motivo") == "Outro"
+        and not (record.get("motivo_outro") or "").strip()
+    ):
         raise ValueError("Especifique o motivo do afastamento.")
     try:
         start = date.fromisoformat(record["data_inicio"])
@@ -81,8 +102,14 @@ def validate(record, people, *, holder_conflict=False, substitute_absent=False):
         if substitute_id == holder["id"]:
             raise ValueError("O procurador afastado não pode substituir a si mesmo.")
         if substitute_id not in {p["id"] for p in eligible_substitutes(holder, people)}:
-            raise ValueError("O substituto selecionado não é elegível para o cargo institucional.")
+            raise ValueError(
+                "O substituto selecionado não é elegível para o cargo institucional."
+            )
     if holder_conflict:
-        raise ValueError("Já existe afastamento deste procurador que coincide total ou parcialmente com o período informado.")
+        raise ValueError(
+            "Já existe afastamento deste procurador que coincide total ou parcialmente com o período informado."
+        )
     if substitute_absent:
-        raise ValueError("O procurador selecionado como substituto possui afastamento no período informado.")
+        raise ValueError(
+            "O procurador selecionado como substituto possui afastamento no período informado."
+        )

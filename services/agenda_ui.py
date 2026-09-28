@@ -15,6 +15,7 @@ from services.agenda import (
     MEETING_WITH,
     LOCATIONS,
     contexto_periodo,
+    fase_compromisso,
     institutional,
     conflicts,
     leitura_analise_salva,
@@ -50,6 +51,28 @@ AVISO_ANALISE_ALTERADA = (
 def display_datetime(value, date_only=False):
     """Brazilian presentation only; stored values remain ISO."""
     return format_date_br(value) if date_only else format_datetime_br(value)
+
+
+def _agora():
+    """Agenda wall clock. Stored appointment times are naive in this same zone."""
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).replace(tzinfo=None)
+
+
+def apresentacao_temporal(row, agora):
+    """Badges plus whether the open appointment is already past its end.
+
+    situacao stays administrative. EM ANDAMENTO is only the current period.
+    """
+    situation = row.get("situacao") or ""
+    phase = fase_compromisso(row, agora)
+    aberto = situation not in ("Realizado", "Cancelado")
+    marcas = [
+        (TYPES[row["tipo"]], "brand"),
+        (situation, status_tone(situation)),
+    ]
+    if aberto and phase == "em_andamento":
+        marcas.append(("EM ANDAMENTO", status_tone("EM ANDAMENTO")))
+    return marcas, aberto and phase == "passado"
 
 
 @st.cache_data(ttl=30, max_entries=128, show_spinner=False)
@@ -1380,19 +1403,13 @@ def render(store=None, principal=None):
         # From here down, every record is a compromisso and has its own fields.
         hour = "Dia inteiro" if row["sem_hora"] else row["inicio"][11:16]
         title = row.get("titulo") or row.get("processo")
-        past = (
-            row["situacao"] not in ("Realizado", "Cancelado")
-            and date.fromisoformat(row["inicio"][:10]) < today
-        )
+        marcas, past = apresentacao_temporal(row, _agora())
         situation = row["situacao"]
         accent = "muted" if situation == "Cancelado" else "warning" if past else "brand"
         with card_container(index, f"ag_{row['id']}"):
             render_record(
                 title or "Compromisso",
-                badges_html=badges(
-                    (TYPES[row["tipo"]], "brand"),
-                    (situation, status_tone(situation)),
-                ),
+                badges_html=badges(*marcas),
                 secondary=f"{hour} · {TYPES[row['tipo']]}",
                 meta=" · ".join(
                     part
