@@ -9,6 +9,7 @@ from scripts.backfill_representacoes_2026 import (
     SOURCES,
     run,
     validate_backfill_pdf,
+    resolve_procuradores,
 )
 from services.oficios import MAX_FILE
 
@@ -29,6 +30,14 @@ def _sources(tmp_path):
 def _sized_pdf(size):
     content = _pdf()
     return content + b"\0" * (size - len(content))
+
+
+def test_historical_manoel_alias_resolves_to_existing_catalog_record():
+    resolved, missing = resolve_procuradores(
+        [{"id": 17, "nome": "Manoel Antônio dos Santos"}]
+    )
+    assert "Manoel Antônio dos Santos Neto" not in missing
+    assert resolved["Manoel Antônio dos Santos Neto"] == 17
 
 
 def test_dry_run_does_not_write_and_apply_is_idempotent(store, tmp_path, monkeypatch):

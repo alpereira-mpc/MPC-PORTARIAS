@@ -55,6 +55,9 @@ def render(store, principal):
     rows = current[1]
     table = [{"Processo": row[0].numero, "Existe?": bool(row[3]), "Ação": row[4], "Situação": row[0].situacao, "Fase": row[0].fase, "Procurador(es)": ", ".join(row[0].procuradores), "Relator": row[0].relator, "PDF": row[1].name, "Alertas": "; ".join(row[5]) or "—"} for row in rows]
     st.dataframe(table, hide_index=True, use_container_width=True)
+    for row in rows:
+        if row[5]:
+            st.error(row[0].numero + ": " + "; ".join(row[5]))
     blocked = any(row[4] in {"CONFLICT", "ERROR"} for row in rows)
     confirmation = st.text_input("Digite IMPORTAR 2026 para confirmar", key="backfill_rep_2026_confirmation")
     if st.button("Importar 8 representações", disabled=blocked or confirmation != "IMPORTAR 2026", key="backfill_rep_2026_apply"):

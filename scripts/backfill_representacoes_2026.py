@@ -11,6 +11,7 @@ import argparse
 from contextlib import contextmanager
 import sqlite3
 import uuid
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,6 +47,10 @@ SOURCES = (
 )
 BACKFILL_MAX_FILE = 25 * 1024 * 1024
 LARGE_PDF_PROCESS = "04022/26"
+# Historical nomenclature only; never creates or alters a catalog record.
+PROCURADOR_ALIASES = {
+    "Manoel Antônio dos Santos Neto": ("Manoel Antônio dos Santos",),
+}
 
 
 class ReadonlySqliteStore:
@@ -68,6 +73,33 @@ class ReadonlySqliteStore:
 
 def normalized_number(value: str) -> str:
     return "".join(char for char in (value or "") if char.isdigit())
+
+
+def normalized_name(value: str) -> str:
+    folded = unicodedata.normalize("NFKD", value or "")
+    return " ".join(
+        "".join(char for char in folded if not unicodedata.combining(char)).casefold().split()
+    )
+
+
+def resolve_procuradores(rows):
+    catalog = {}
+    for row in rows:
+        key = normalized_name(row["nome"])
+        if key in catalog:
+            catalog[key] = None
+        else:
+            catalog[key] = row
+    resolved, missing = {}, []
+    for source in SOURCES:
+        for requested in source.procuradores:
+            candidates = (requested, *PROCURADOR_ALIASES.get(requested, ()))
+            match = next((catalog.get(normalized_name(item)) for item in candidates if catalog.get(normalized_name(item))), None)
+            if match is None:
+                missing.append(requested)
+            else:
+                resolved[requested] = match["id"]
+    return resolved, sorted(set(missing))
 
 
 def validate_backfill_pdf(source: Source, content: bytes) -> tuple[str, str]:
@@ -104,12 +136,7 @@ def compatible(record, members, has_pdf, source, people):
 
 def plan(store: Store, pdf_dir: Path):
     with store.connection(read_only=True) as connection:
-        people = {
-            row["nome"]: row["id"]
-            for row in connection.execute(
-                "SELECT id,nome FROM procuradores WHERE ativo=1"
-            )
-        }
+        people, unresolved = resolve_procuradores(list(connection.execute("SELECT id,nome FROM procuradores WHERE ativo=1")))
         records = [
             dict(row)
             for row in connection.execute(
