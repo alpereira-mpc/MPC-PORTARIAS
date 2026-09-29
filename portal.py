@@ -54,6 +54,146 @@ PORTAL_NAV_STATE_KEYS = frozenset(
         "portaria_open_id",
     }
 )
+# Module actually drawn on the previous full script run. Fragment reruns do not
+# update it, so an internal interaction is not treated as a new entry.
+PORTAL_LAST_MODULE = "_portal_last_module"
+# Widget filters are dropped by Streamlit when their module is not drawn.
+# This plain dict keeps those values across that cleanup.
+PORTAL_LISTING_STATE = "_portal_listing_state"
+MODULE_LISTING_KEYS = {
+    "Tarefas": (
+        "tarefas_q",
+        "tarefas_priority",
+        "tarefas_deadline",
+        "tarefas_active_page",
+        "tarefas_active_filters",
+        "tarefas_history_q",
+        "tarefas_history_priority",
+        "tarefas_history_status",
+    ),
+    "Representações": (
+        "rep_f_sit",
+        "rep_f_fase",
+        "rep_f_year",
+        "rep_f_q",
+        "rep_f_rep",
+        "rep_f_tema",
+        "rep_f_rel",
+        "rep_f_proc",
+        "rep_f_procud",
+        "rep_f_ass",
+    ),
+    "Ouvidoria": (
+        "ouvi_fs",
+        "ouvi_fr",
+        "ouvi_ft",
+        "ouvi_ff",
+        "ouvi_fyear",
+        "ouvi_fc",
+        "ouvi_frep",
+        "ouvi_fq",
+        "ouvi_fresp",
+        "ouvi_fpart",
+        "ouvi_fass",
+    ),
+    "Agenda": (
+        "agenda_filter_member",
+        "agenda_filter_type",
+        "agenda_filter_status",
+        "agenda_filter_item_scope",
+        "agenda_anchor",
+        "agenda_history_member",
+        "agenda_history_scope",
+        "agenda_history_status",
+        "agenda_history_start",
+        "agenda_history_end",
+        "agenda_history_search",
+        "agenda_history_offset",
+        "agenda_history_filters",
+    ),
+    "Pendências": (
+        "pending_period",
+        "pending_module",
+        "pending_gabinete",
+        "pending_urgency",
+        "pending_q",
+        "pending_page",
+    ),
+    "Alertas": (
+        "alerts_period",
+        "alerts_module",
+        "alerts_gabinete",
+        "alerts_severity",
+    ),
+    "Portarias": (
+        "history_year",
+        "history_person",
+        "history_page",
+        "history_filters",
+    ),
+    "Relatórios e Indicadores": (
+        "rel_prod_procurador",
+        "rel_stock_procurador",
+    ),
+}
+# Explicit navigation screens. Widget drafts, filters and caches stay out of here.
+MODULE_NAVIGATION_RESET = {
+    "Tarefas": (
+        "tarefas_edit",
+        "tarefas_open_id",
+        "tarefas_new_origin",
+    ),
+    "Representações": (
+        "representacoes_view",
+        "representacoes_edit",
+        "representacoes_protocol",
+        "representacoes_progress",
+        "representacoes_file",
+        "representacoes_confirm_delete",
+        "representacoes_exclude_progress",
+        "representacoes_download",
+    ),
+    "Ouvidoria": (
+        "ouvidoria_view",
+        "ouvidoria_edit",
+        "ouvidoria_progress",
+        "ouvidoria_action",
+        "ouvidoria_action_edit",
+        "ouvidoria_file",
+        "ouvidoria_to_rep",
+        "ouvidoria_confirm_delete",
+        "ouvidoria_download",
+        "ouvidoria_open_id",
+    ),
+    "Agenda": (
+        "agenda_edit",
+        "agenda_leave_edit",
+        "pending_open_agenda",
+    ),
+    "Ofícios": (
+        "oficio_detail",
+        "oficio_open_ids",
+        "oficio_edit",
+        "oficio_preview",
+        "oficio_final",
+        "oficio_prep_mode",
+        "pending_open_oficio",
+    ),
+    "Memorandos": (
+        "memo_engagement_open",
+        "memo_hard_delete_id",
+        "memo_server_edit_open",
+        "pending_focus_memorando",
+        "pending_open_memorando",
+    ),
+    "Portarias": (
+        "history_open",
+        "next_nav",
+        "portaria_open_id",
+        "last_finalized",
+    ),
+    "Administração": ("pending_open_admin",),
+}
 
 
 def _session_get(key, default=None):
@@ -232,6 +372,93 @@ def apply_portal_navigation(allowed):
         if key in PORTAL_NAV_STATE_KEYS:
             st.session_state[key] = value
     return module
+
+
+def _pending_navigation(allowed):
+    """Read a queued module change without consuming it."""
+    request = _session_get(PORTAL_NAV_REQUEST)
+    if isinstance(request, str):
+        module, extra = request, {}
+    elif isinstance(request, dict):
+        module = request.get("module")
+        extra = request.get("state") or {}
+    else:
+        return None, {}
+    if module not in allowed or not isinstance(extra, dict):
+        return None, {}
+    nav_state = {
+        key: value for key, value in extra.items() if key in PORTAL_NAV_STATE_KEYS
+    }
+    return module, nav_state
+
+
+def _normalize_module_entry(module, nav_state):
+    """Return radios to the module home. Deep-link keys are applied afterwards."""
+    if module == "Agenda" and "pending_open_agenda" not in nav_state:
+        st.session_state["agenda_section"] = "Agenda"
+        st.session_state["agenda_view"] = "Hoje"
+    elif module == "Ofícios":
+        st.session_state["oficio_page"] = "Visão Geral"
+    elif module == "Memorandos" and "memorandos_nav" not in nav_state:
+        st.session_state["memorandos_nav"] = "Visão Geral"
+    elif module == "Portarias" and "nav" not in nav_state:
+        st.session_state["nav"] = "Nova Portaria"
+    elif module == "Administração" and "pending_open_admin" not in nav_state:
+        st.session_state["admin_secao"] = "Usuários"
+
+
+def _reset_module_navigation(module, nav_state):
+    for key in MODULE_NAVIGATION_RESET.get(module, ()):
+        st.session_state.pop(key, None)
+    _normalize_module_entry(module, nav_state)
+
+
+def _stash_listing(module):
+    keys = MODULE_LISTING_KEYS.get(module)
+    if not keys:
+        return
+    bucket = dict(_session_get(PORTAL_LISTING_STATE) or {})
+    saved = dict(bucket.get(module) or {})
+    for key in keys:
+        if key in st.session_state:
+            saved[key] = st.session_state[key]
+    bucket[module] = saved
+    st.session_state[PORTAL_LISTING_STATE] = bucket
+
+
+def _restore_listing(module):
+    saved = (_session_get(PORTAL_LISTING_STATE) or {}).get(module) or {}
+    for key, value in saved.items():
+        st.session_state[key] = value
+
+
+def enter_portal_module(allowed):
+    """Clear the destination's transient screens, then apply a queued deep link.
+
+    A sidebar return changes ``portal_module`` before this runs. A deep link
+    keeps its destination keys because they are written after the reset, including
+    when the user is already inside that module. Listing widgets are copied to a
+    plain dict first: Streamlit removes a widget key when that widget is not drawn.
+    """
+    requested, nav_state = _pending_navigation(allowed)
+    current = _session_get("portal_module")
+    if current not in allowed:
+        current = "Início"
+    target = requested if requested is not None else current
+    previous = _session_get(PORTAL_LAST_MODULE)
+    if previous is not None:
+        _stash_listing(previous)
+    _stash_listing("Alertas")
+    module_changed = previous is not None and previous != target
+    if module_changed or nav_state:
+        _reset_module_navigation(target, nav_state)
+    _restore_listing(target)
+    if (
+        _session_get(PORTAL_ALERTS_REQUEST)
+        or _session_get(PORTAL_SPECIAL_VIEW) == ALERTS_VIEW
+    ):
+        _restore_listing("Alertas")
+    return apply_portal_navigation(allowed)
 
 
 def clear_alerts_overlay():
@@ -616,6 +843,8 @@ def _logout():
         "_alerts_bell_intent",
         "_reports_read_cache",
         "_tramita_previews",
+        PORTAL_LAST_MODULE,
+        PORTAL_LISTING_STATE,
     ):
         st.session_state.pop(key, None)
     for key in list(st.session_state):
@@ -824,7 +1053,7 @@ def render_portal(sidebar_context=None):
         options.append("Ouvidoria")
     if has_permission(principal, "admin"):
         options.append("Administração")
-    apply_portal_navigation(options)
+    enter_portal_module(options)
     if _session_get("portal_module") not in options:
         st.session_state["portal_module"] = "Início"
     apply_alerts_view_request()
@@ -860,6 +1089,7 @@ def render_portal(sidebar_context=None):
             ),
             on_change=_mark_mobile_sidebar_collapse,
         )
+        st.session_state[PORTAL_LAST_MODULE] = selected
         if (
             selected == "Portarias"
             and sidebar_context is not None
