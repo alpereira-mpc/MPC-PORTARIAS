@@ -32,7 +32,7 @@ def test_pdf_download_does_not_retain_session_bytes(tmp_path, monkeypatch, fails
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
     app.session_state["old_recordfilepdf"] = ("old.pdf", output)
-    app.sidebar.radio(key="nav").set_value("Histórico").run()
+    app.radio(key="nav").set_value("Histórico").run()
     next(x for x in app.selectbox if x.label == "Abrir Portaria").set_value(
         identifier
     ).run()
@@ -65,7 +65,7 @@ def test_ui_administrative_deletion_confirmation(tmp_path, monkeypatch):
     enable_login(monkeypatch, store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
-    app.sidebar.radio(key="nav").set_value("Histórico").run()
+    app.radio(key="nav").set_value("Histórico").run()
     next(x for x in app.selectbox if x.label == "Abrir Portaria").set_value(
         identifier
     ).run()
@@ -123,7 +123,7 @@ def test_ui_draft_delete_and_natural_legacy_reason(tmp_path, monkeypatch):
     enable_login(monkeypatch, store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
-    app.sidebar.radio(key="nav").set_value("Histórico").run()
+    app.radio(key="nav").set_value("Histórico").run()
     assert "da titular" in app.dataframe[0].value.iloc[0]["Motivo"]
     next(
         x for x in app.checkbox if x.label == "Confirmo a exclusão deste rascunho"
@@ -153,7 +153,7 @@ def test_member_editor_preserves_custom_seat(tmp_path, monkeypatch):
     enable_login(monkeypatch, store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
-    app.sidebar.radio(key="nav").set_value("Procuradores").run()
+    app.radio(key="nav").set_value("Procuradores").run()
     next(x for x in app.selectbox if x.label == "Editar cadastro").set_value(6).run()
     next(x for x in app.button if x.label == "Salvar procurador").click().run()
     assert not app.error
@@ -172,7 +172,7 @@ def test_history_displays_feminine_role_and_draft(tmp_path, monkeypatch):
     enable_login(monkeypatch, store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
-    app.sidebar.radio(key="nav").set_value("Histórico").run()
+    app.radio(key="nav").set_value("Histórico").run()
     assert not app.error
     row = app.dataframe[0].value.iloc[0]
     assert row["Função"] == "Subprocuradora-Geral"
@@ -197,7 +197,7 @@ def test_all_screens(tmp_path, monkeypatch):
         x.label == "Procurador substituto" and x.value is None for x in app.selectbox
     )
     for screen in ["Histórico", "Procuradores", "Configurações", "Nova Portaria"]:
-        app.sidebar.radio(key="nav").set_value(screen).run()
+        app.radio(key="nav").set_value(screen).run()
         assert not app.exception, screen
         assert not app.error, screen
 
@@ -229,6 +229,6 @@ def test_ui_finalize(tmp_path, monkeypatch):
     assert not app.error
     assert s.history()[0]["status"] == "Finalizada"
     assert s.next_number(2026) == 10
-    app.sidebar.radio(key="nav").set_value("Histórico").run()
+    app.radio(key="nav").set_value("Histórico").run()
     assert not app.exception
     assert not app.error

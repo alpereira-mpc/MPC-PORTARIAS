@@ -136,9 +136,9 @@ def test_portal_navigation_and_lazy_return(store, pg_store, monkeypatch, backend
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert calls
     app.button(key="open_portarias").click().run()
-    assert app.sidebar.radio(key="nav").value == "Nova Portaria"
+    assert app.radio(key="nav").value == "Nova Portaria"
     for page in ("Histórico", "Procuradores", "Configurações", "Nova Portaria"):
-        app.sidebar.radio(key="nav").set_value(page).run()
+        app.radio(key="nav").set_value(page).run()
         assert not app.exception and not app.error
     seed = sample(database)
     app.session_state["editor_seed"] = seed
@@ -159,8 +159,16 @@ def test_portarias_sidebar_initializes_navigation_from_fresh_or_legacy_state(
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.sidebar.radio(key="portal_module").set_value("Portarias").run()
     assert not app.exception
-    assert app.sidebar.radio(key="nav").value == "Nova Portaria"
-    assert len([radio for radio in app.sidebar.radio if radio.key == "nav"]) == 1
+    section = app.radio(key="nav")
+    assert section.label == "Seção"
+    assert list(section.options) == [
+        "Nova Portaria",
+        "Histórico",
+        "Procuradores",
+        "Configurações",
+    ]
+    assert section.value == "Nova Portaria"
+    assert not any(radio.key == "nav" for radio in app.sidebar.radio)
     assert len([box for box in app.sidebar.selectbox if box.label == "Tema"]) == 1
     assert "Nova Portaria" in _visible_text(app)
 
@@ -168,7 +176,18 @@ def test_portarias_sidebar_initializes_navigation_from_fresh_or_legacy_state(
     app.session_state["nav"] = "Página legada"
     app.sidebar.radio(key="portal_module").set_value("Portarias").run()
     assert not app.exception
-    assert app.sidebar.radio(key="nav").value == "Nova Portaria"
+    assert app.radio(key="nav").value == "Nova Portaria"
+    from portal import PORTAL_NAV_REQUEST
+
+    app.session_state[PORTAL_NAV_REQUEST] = {
+        "module": "Portarias",
+        "state": {"nav": "Histórico", "portaria_open_id": "p1"},
+    }
+    app.run()
+    assert not app.exception
+    assert app.sidebar.radio(key="portal_module").value == "Portarias"
+    assert app.radio(key="nav").value == "Histórico"
+    assert not any(radio.key == "nav" for radio in app.sidebar.radio)
 
 
 def test_home_shows_only_authorized_modules(store, monkeypatch):
@@ -717,10 +736,10 @@ def test_mobile_sidebar_collapses_only_after_an_effective_module_selection(
             assert _collapse_scripts(app) == []
             assert app.sidebar.radio(key="portal_module").value == "Busca Global"
         if module == "Portarias":
-            app.sidebar.radio(key="nav").set_value("Histórico").run()
+            app.radio(key="nav").set_value("Histórico").run()
             assert not app.exception
             assert _collapse_scripts(app) == []
-            assert app.sidebar.radio(key="nav").value == "Histórico"
+            assert app.radio(key="nav").value == "Histórico"
             assert app.sidebar.radio(key="portal_module").value == "Portarias"
 
     theme = next(item for item in app.sidebar.selectbox if item.label == "Tema")

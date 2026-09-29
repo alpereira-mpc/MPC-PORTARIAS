@@ -163,7 +163,7 @@ def test_warm_pages_and_editor_fields_execute_zero_queries(pg_store, monkeypatch
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_portarias").click().run()
     for screen in ("Histórico", "Procuradores", "Configurações", "Nova Portaria"):
-        app.sidebar.radio(key="nav").set_value(screen).run()
+        app.radio(key="nav").set_value(screen).run()
         assert not app.exception and not app.error
 
     def no_queries(*args, **kwargs):
@@ -171,7 +171,7 @@ def test_warm_pages_and_editor_fields_execute_zero_queries(pg_store, monkeypatch
 
     monkeypatch.setattr(psycopg.Connection, "execute", no_queries)
     for screen in ("Histórico", "Procuradores", "Configurações", "Nova Portaria"):
-        app.sidebar.radio(key="nav").set_value(screen).run()
+        app.radio(key="nav").set_value(screen).run()
         assert not app.exception and not app.error
     next(x for x in app.selectbox if x.label == "Procurador titular").set_value(2).run()
     next(x for x in app.selectbox if x.label == "Procurador substituto").set_value(
@@ -195,7 +195,7 @@ def test_fragment_preview_finalize_and_lazy_download(pg_store, monkeypatch):
     next(x for x in app.button if x.label == "FINALIZAR PORTARIA").click().run()
     assert not app.exception and not app.error
     assert pg_store.next_number(2026) == 10
-    app.sidebar.radio(key="nav").set_value("Histórico").run()
+    app.radio(key="nav").set_value("Histórico").run()
     assert not app.exception and not app.error
     assert not app.get("download_button")
     assert not any(x.label == "Carregar arquivos para download" for x in app.checkbox)

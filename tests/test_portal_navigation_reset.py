@@ -466,19 +466,19 @@ def test_sidebar_return_opens_ouvidoria_listing(store, monkeypatch):
 def test_sidebar_return_opens_nova_portaria(store, monkeypatch):
     app = _app(store, monkeypatch)
     app.sidebar.radio(key="portal_module").set_value("Portarias").run()
-    app.sidebar.radio(key="nav").set_value("Histórico").run()
+    app.radio(key="nav").set_value("Histórico").run()
     app.session_state["history_open"] = "port-1"
     app.session_state["history_year"] = 2026
     app.session_state["editor_seed"] = {"data": "2026-02-02"}
     app.session_state["last_finalized"] = "port-1"
     app = _away_and_back(app, "Portarias")
-    assert app.sidebar.radio(key="nav").value == "Nova Portaria"
+    assert app.radio(key="nav").value == "Nova Portaria"
     assert "history_open" not in app.session_state
     assert "last_finalized" not in app.session_state
     assert app.session_state["history_year"] == 2026
     assert app.session_state["editor_seed"]["data"] == "2026-02-02"
-    app.sidebar.radio(key="nav").set_value("Histórico").run()
-    assert app.sidebar.radio(key="nav").value == "Histórico"
+    app.radio(key="nav").set_value("Histórico").run()
+    assert app.radio(key="nav").value == "Histórico"
     assert "history_open" not in app.session_state
 
 

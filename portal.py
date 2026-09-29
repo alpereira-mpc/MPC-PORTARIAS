@@ -967,7 +967,7 @@ def _emit_mobile_sidebar_collapse():
         )
 
 
-def render_portal(sidebar_context=None):
+def render_portal():
     from services.access import (
         current_user,
         has_permission,
@@ -1090,12 +1090,6 @@ def render_portal(sidebar_context=None):
             on_change=_mark_mobile_sidebar_collapse,
         )
         st.session_state[PORTAL_LAST_MODULE] = selected
-        if (
-            selected == "Portarias"
-            and sidebar_context is not None
-            and not alerts_overlay_active(selected)
-        ):
-            portarias_menu = sidebar_context()
         theme_key = f"portal_theme_select_{principal.id}"
         active_theme = _active_theme(identity)
         if st.session_state.get(theme_key) != active_theme:
@@ -1215,4 +1209,4 @@ def render_portal(sidebar_context=None):
         )
         st.error(str(exc))
         st.stop()
-    return portarias_menu
+    return None

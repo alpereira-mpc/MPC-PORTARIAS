@@ -2,20 +2,14 @@
 
 from portal import render_portal
 
+PORTARIAS_SECTIONS = (
+    "Nova Portaria",
+    "Histórico",
+    "Procuradores",
+    "Configurações",
+)
 
-def render_portarias_sidebar():
-    import streamlit as st
-
-    options = ["Nova Portaria", "Histórico", "Procuradores", "Configurações"]
-    if "next_nav" in st.session_state:
-        st.session_state["nav"] = st.session_state.pop("next_nav")
-    if st.session_state.get("nav", options[0]) not in options:
-        st.session_state["nav"] = options[0]
-    st.markdown("**Portarias**")
-    return st.radio("Navegação", options, key="nav")
-
-
-portarias_menu = render_portal(sidebar_context=render_portarias_sidebar)
+render_portal()
 
 from copy import deepcopy
 from datetime import date, datetime
@@ -35,7 +29,16 @@ from services.placeholders import assert_docx_clean
 from services.deletion import REASONS
 from services.branding import module_title
 from services.date_format import format_date_br
-from services.ui_theme import badges, empty_state, form_mark, operational_card_mark, render_html, render_record, section_label, status_tone
+from services.ui_theme import (
+    badges,
+    empty_state,
+    form_mark,
+    operational_card_mark,
+    render_html,
+    render_record,
+    section_label,
+    status_tone,
+)
 from services.versioning import APP_VERSION
 
 raw_store = unwrap_store(
@@ -57,6 +60,15 @@ for cached_key in list(st.session_state):
 def navigate(page):
     st.session_state["next_nav"] = page
     st.rerun()
+
+
+def portarias_section():
+    """In-page section radio. Consumes next_nav before the widget exists."""
+    if "next_nav" in st.session_state:
+        st.session_state["nav"] = st.session_state.pop("next_nav")
+    if st.session_state.get("nav", PORTARIAS_SECTIONS[0]) not in PORTARIAS_SECTIONS:
+        st.session_state["nav"] = PORTARIAS_SECTIONS[0]
+    return st.radio("Seção", PORTARIAS_SECTIONS, horizontal=True, key="nav")
 
 
 def reset_editor(payload=None, identifier=None):
@@ -678,7 +690,9 @@ def history():
                     ),
                     "Assento": s["assento"],
                     "Substituto": (s.get("substituto") or {}).get("nome", ""),
-                    "Período": format_date_br(s["inicio"]) + " a " + format_date_br(s["fim"]),
+                    "Período": format_date_br(s["inicio"])
+                    + " a "
+                    + format_date_br(s["fim"]),
                     "Motivo": reason_text(s),
                     "Signatário": (p.get("signatario") or {}).get("nome", ""),
                     "Status": r["status"],
@@ -1056,7 +1070,10 @@ def new_portaria():
         if signer_id:
             st.caption(
                 "Cargo na assinatura: "
-                + (custom_quality or role("Procurador-Geral", people[signer_id]["genero"]))
+                + (
+                    custom_quality
+                    or role("Procurador-Geral", people[signer_id]["genero"])
+                )
                 + (" em exercício" if quality == "Em exercício" else "")
             )
     section_label("Substituição")
@@ -1292,8 +1309,8 @@ def new_portaria():
             error(exc)
 
 
-menu = portarias_menu
 st.markdown("### " + module_title("portarias", "Gerador de Portarias PROGE"))
+menu = portarias_section()
 try:
     if menu == "Nova Portaria":
         if store.backend == "postgresql":

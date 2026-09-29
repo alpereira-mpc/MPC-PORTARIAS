@@ -277,7 +277,11 @@ def test_schema_ssl_foreign_keys_and_indexes(pg_store):
                 "SELECT indexname FROM pg_catalog.pg_indexes WHERE schemaname=current_schema()"
             )
         }
-        assert {"exportacoes_portaria_idx", "audit_arquivos_audit_idx", "auditoria_eventos_criado_em_idx"} <= indexes
+        assert {
+            "exportacoes_portaria_idx",
+            "audit_arquivos_audit_idx",
+            "auditoria_eventos_criado_em_idx",
+        } <= indexes
     with pytest.raises(DatabaseUnavailable, match="23503"):
         with pg_store.connection() as c:
             c.execute(
@@ -405,7 +409,7 @@ def test_postgres_streamlit_screens_and_backup(pg_store, monkeypatch):
     app.button(key="open_portarias").click().run()
     assert not app.exception and not app.error
     for screen in ("Histórico", "Procuradores", "Configurações"):
-        app.sidebar.radio(key="nav").set_value(screen).run()
+        app.radio(key="nav").set_value(screen).run()
         assert not app.exception and not app.error
     next(x for x in app.button if x.label == "Criar backup do banco").click().run()
     assert not app.exception and not app.error
