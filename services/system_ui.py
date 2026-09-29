@@ -455,9 +455,20 @@ def _render_operacoes_recentes(store):
 def render(store, principal):
     require_permission(principal, "admin")
     st.subheader("Sistema")
+    areas = ["Saúde", "Saúde da IA", "Backup", "Comunicações"]
+    if st.session_state.get("admin_sistema_aba") not in areas:
+        st.session_state.pop("admin_sistema_aba", None)
+    for obsolete in (
+        "backfill_rep_2026_files",
+        "backfill_rep_2026_plan",
+        "backfill_rep_2026_confirmation",
+        "backfill_rep_2026_simulate",
+        "backfill_rep_2026_apply",
+    ):
+        st.session_state.pop(obsolete, None)
     area = st.radio(
         "Sistema",
-        ["Saúde", "Saúde da IA", "Backup", "Comunicações", "Importação 2026"],
+        areas,
         horizontal=True,
         key="admin_sistema_aba",
     )
@@ -471,10 +482,5 @@ def render(store, principal):
         return
     if area == "Saúde da IA":
         render_ai_health(store, principal)
-        return
-    if area == "Importação 2026":
-        from services.backfill_representacoes_ui import render as render_backfill
-
-        render_backfill(store, principal)
         return
     render_health(store, principal)

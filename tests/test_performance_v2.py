@@ -21,10 +21,15 @@ def reports_store(request):
 
 def movement(**changes):
     return {
-        "protocolo": "00001/26", "tipo": "Processo", "subcategoria": "Denúncia",
-        "origem": "Origem", "data_realizacao": "2026-08-03 09:00",
-        "procurador": "Pessoa A", "motivo_distribuicao": "Ao Procurador",
-        "data_devolucao": "2026-08-05 21:00", "motivo_devolucao": " Análisado  COM parecer ",
+        "protocolo": "00001/26",
+        "tipo": "Processo",
+        "subcategoria": "Denúncia",
+        "origem": "Origem",
+        "data_realizacao": "2026-08-03 09:00",
+        "procurador": "Pessoa A",
+        "motivo_distribuicao": "Ao Procurador",
+        "data_devolucao": "2026-08-05 21:00",
+        "motivo_devolucao": " Análisado  COM parecer ",
         **changes,
     }
 
@@ -32,10 +37,33 @@ def movement(**changes):
 def test_production_aggregation_and_pagination(reports_store):
     repo = TramitaReportsStore(reports_store)
     rows = [movement(protocolo=f"{i:05}/26") for i in range(105)]
-    repo.import_rows(kind="ENTRADAS", file_name="a.xls", file_hash="a", actor="test", competence="2026-08", rows=rows)
-    repo.import_rows(kind="SAIDAS", file_name="b.xls", file_hash="b", actor="test", competence="2026-08", rows=[movement(), movement(procurador="Pessoa B", motivo_devolucao="Analisado Com Cota", data_devolucao=None)])
+    repo.import_rows(
+        kind="ENTRADAS",
+        file_name="a.xls",
+        file_hash="a",
+        actor="test",
+        competence="2026-08",
+        rows=rows,
+    )
+    repo.import_rows(
+        kind="SAIDAS",
+        file_name="b.xls",
+        file_hash="b",
+        actor="test",
+        competence="2026-08",
+        rows=[
+            movement(),
+            movement(
+                procurador="Pessoa B",
+                motivo_devolucao="Analisado Com Cota",
+                data_devolucao=None,
+            ),
+        ],
+    )
     summary = repo.production_summary("2026-08")
-    assert summary["Pessoa A"] == dict(entries=105, exits=1, opinions=1, quotas=0, days=2.5, timed=1)
+    assert summary["Pessoa A"] == dict(
+        entries=105, exits=1, opinions=1, quotas=0, days=2.5, timed=1
+    )
     assert summary["Pessoa B"]["quotas"] == 1
     assert summary["Pessoa B"]["timed"] == 0
     filters = {"procurador": "Pessoa A", "tipo_movimentacao": "ENTRADA"}
@@ -51,12 +79,40 @@ def test_production_aggregation_and_pagination(reports_store):
 def test_stock_aggregation_matches_aging_and_cascading_filters(reports_store):
     repo = TramitaReportsStore(reports_store)
     values = [None, 0, 7, 8, 15, 16, 30, 31, 60, 61, 90, 91]
-    rows = [dict(protocolo=f"{i:05}/26", tipo="Processo", digital="Sim", subcategoria="Denúncia",
-                 jurisdicionado="Origem", fase="Fase A", procurador="Pessoa A", dias_com_procurador=value,
-                 assistente="Assistente", dias_com_assistente=None, dias_no_mpc=100, prescricao="")
-            for i, value in enumerate(values)]
-    rows.append({**rows[0], "protocolo": "99999/26", "procurador": "Pessoa B", "subcategoria": "Recurso", "fase": "Fase B"})
-    repo.import_rows(kind="ESTOQUE", file_name="e.xls", file_hash="e", actor="test", snapshot_date="2026-08-31", rows=rows)
+    rows = [
+        dict(
+            protocolo=f"{i:05}/26",
+            tipo="Processo",
+            digital="Sim",
+            subcategoria="Denúncia",
+            jurisdicionado="Origem",
+            fase="Fase A",
+            procurador="Pessoa A",
+            dias_com_procurador=value,
+            assistente="Assistente",
+            dias_com_assistente=None,
+            dias_no_mpc=100,
+            prescricao="",
+        )
+        for i, value in enumerate(values)
+    ]
+    rows.append(
+        {
+            **rows[0],
+            "protocolo": "99999/26",
+            "procurador": "Pessoa B",
+            "subcategoria": "Recurso",
+            "fase": "Fase B",
+        }
+    )
+    repo.import_rows(
+        kind="ESTOQUE",
+        file_name="e.xls",
+        file_hash="e",
+        actor="test",
+        snapshot_date="2026-08-31",
+        rows=rows,
+    )
     summary = {r["procurador"]: r for r in repo.stock_summary("2026-08-31")}
     assert summary["Pessoa A"]["n"] == 12
     assert summary["Pessoa A"]["over30"] == 5
@@ -64,7 +120,9 @@ def test_stock_aggregation_matches_aging_and_cascading_filters(reports_store):
     assert summary["Pessoa A"]["days"] == sum(v for v in values if v is not None)
     options = repo.stock_options("2026-08-31", {"procurador": "Pessoa B"})
     assert {r["value"] for r in options if r["field"] == "fase"} == {"Fase B"}
-    bands, details = repo.stock_details("2026-08-31", {"procurador": "Pessoa A"}, "31–60 dias")
+    bands, details = repo.stock_details(
+        "2026-08-31", {"procurador": "Pessoa A"}, "31–60 dias"
+    )
     assert bands == [{"faixa": "31–60 dias", "n": 2}]
     assert [r["dias_com_procurador"] for r in details] == [60, 31]
 
@@ -85,14 +143,18 @@ def test_report_schema_ready_only_after_successful_commit(store, monkeypatch):
     assert not getattr(store, "_tramita_schema_ready", False)
     monkeypatch.setattr(store, "connection", original)
     TramitaReportsStore(store)
-    monkeypatch.setattr(store, "connection", lambda **kwargs: pytest.fail("DDL repetido"))
+    monkeypatch.setattr(
+        store, "connection", lambda **kwargs: pytest.fail("DDL repetido")
+    )
     TramitaReportsStore(store)
 
 
 def test_history_participants_are_batched_and_page_limited(store, monkeypatch):
     repo = AgendaStore(store)
     for index in range(35):
-        record = draft(members=[1, 2], day=(date(2026, 8, 1) + timedelta(days=index)).isoformat())
+        record = draft(
+            members=[1, 2], day=(date(2026, 8, 1) + timedelta(days=index)).isoformat()
+        )
         record["situacao"] = "Realizado"
         repo.save(record, institutional_confirmed=True, conflict_confirmed=True)
     original = store.connection
@@ -115,7 +177,9 @@ def test_trip_collector_not_called_without_agenda_permission(store, monkeypatch)
     from services import alerts
 
     principal = replace(_principal(1), pode_oficios=True, pode_agenda=False)
-    monkeypatch.setattr(alerts, "trip_alerts", lambda *args: pytest.fail("Coleta não autorizada"))
+    monkeypatch.setattr(
+        alerts, "trip_alerts", lambda *args: pytest.fail("Coleta não autorizada")
+    )
     items, _, _ = alerts.collect_alerts(store, principal, modules=("agenda",))
     assert items == []
 
@@ -126,9 +190,20 @@ def test_upcoming_leaves_have_bounded_pages_without_losing_records(store):
     identifiers = []
     for index in range(35):
         day = (today + timedelta(days=index + 1)).isoformat()
-        identifiers.append(repo.save_leave({"procurador_id": 1, "motivo": "Férias", "data_inicio": day, "data_fim": day}))
+        identifiers.append(
+            repo.save_leave(
+                {
+                    "procurador_id": 1,
+                    "motivo": "Férias",
+                    "data_inicio": day,
+                    "data_fim": day,
+                }
+            )
+        )
     first = repo.active_leaves(today.isoformat(), None, upcoming=True, limit=30)
-    second = repo.active_leaves(today.isoformat(), None, upcoming=True, limit=30, offset=30)
+    second = repo.active_leaves(
+        today.isoformat(), None, upcoming=True, limit=30, offset=30
+    )
     assert len(first) == 31 and len(second) == 5
     assert [row["id"] for row in first[:30] + second] == identifiers
 
@@ -163,7 +238,9 @@ def test_report_renderer_logs_failure_and_shows_friendly_message(monkeypatch, ca
 
     ui._render_indicators("produção mensal", unavailable, object(), object())
 
-    assert errors == ["Não foi possível carregar os indicadores neste momento. Tente novamente mais tarde."]
+    assert errors == [
+        "Não foi possível carregar os indicadores neste momento. Tente novamente mais tarde."
+    ]
     assert "Falha ao carregar indicadores de produção mensal" in caplog.text
 
 
@@ -172,7 +249,9 @@ def test_upload_preview_parses_once_per_file_and_account(monkeypatch):
 
     calls = []
     monkeypatch.setattr(ui.st, "session_state", {})
-    monkeypatch.setattr(ui, "parse_stock", lambda content: calls.append(content) or ([], []))
+    monkeypatch.setattr(
+        ui, "parse_stock", lambda content: calls.append(content) or ([], [])
+    )
     uploaded = SimpleNamespace(getvalue=lambda: b"xls-one")
     ui._uploaded_preview("ESTOQUE", uploaded, _principal(1))
     ui._uploaded_preview("ESTOQUE", uploaded, _principal(1))
@@ -187,7 +266,9 @@ def test_bell_cache_tracks_account_permissions_and_revision(store, monkeypatch):
 
     state, calls = {}, []
     monkeypatch.setattr(ui.st, "session_state", state)
-    monkeypatch.setattr(ui, "get_alert_summary", lambda *a, **k: calls.append(1) or {"total": 0})
+    monkeypatch.setattr(
+        ui, "get_alert_summary", lambda *a, **k: calls.append(1) or {"total": 0}
+    )
     user = _principal(1)
     ui.load_bell_summary(store, user)
     ui.load_bell_summary(store, user)
@@ -203,12 +284,39 @@ def test_bell_cache_tracks_account_permissions_and_revision(store, monkeypatch):
 def test_alert_order_accepts_mixed_modules_with_same_severity():
     from services.alerts import AlertItem, ALTO, _sort_key
 
-    common = dict(gabinete="—", severity=ALTO, description="Teste", date=date(2026, 9, 17),
-                  datetime=None, source_status="Agendado", navigation_target="Agenda")
+    common = dict(
+        gabinete="—",
+        severity=ALTO,
+        description="Teste",
+        date=date(2026, 9, 17),
+        datetime=None,
+        source_status="Agendado",
+        navigation_target="Agenda",
+    )
     items = [
-        AlertItem(source_module="agenda", source_id="a", category="agenda_hoje", title="Compromisso", **common),
-        AlertItem(source_module="agenda", source_id="v", category="viagem_ida", title="Viagem", metadata={"trip_rank": 0}, **common),
-        AlertItem(source_module="tarefas", source_id="t", category="tarefa_atrasada", title="Tarefa", metadata={"task_alert_rank": 0, "task_priority_rank": 1}, **common),
+        AlertItem(
+            source_module="agenda",
+            source_id="a",
+            category="agenda_hoje",
+            title="Compromisso",
+            **common,
+        ),
+        AlertItem(
+            source_module="agenda",
+            source_id="v",
+            category="viagem_ida",
+            title="Viagem",
+            metadata={"trip_rank": 0},
+            **common,
+        ),
+        AlertItem(
+            source_module="tarefas",
+            source_id="t",
+            category="tarefa_atrasada",
+            title="Tarefa",
+            metadata={"task_alert_rank": 0, "task_priority_rank": 1},
+            **common,
+        ),
     ]
     ordered = sorted(items, key=_sort_key)
     assert {item.source_id for item in ordered} == {"a", "v", "t"}
@@ -221,7 +329,10 @@ def test_task_page_loads_active_and_collapsed_history(monkeypatch):
 
     calls = []
     repo = SimpleNamespace(
-        situation_counts=lambda owner: dict(atrasadas=0, hoje=0, proximas=0, andamento=0, aguardando=0),
+        situation_counts=lambda owner: dict(
+            atrasadas=0, hoje=0, proximas=0, andamento=0, aguardando=0
+        ),
+        list_active_for_analysis=lambda owner: calls.append("analysis") or [],
         list_active=lambda *a, **k: calls.append("active") or [],
         list_history=lambda *a, **k: calls.append("history") or [],
     )
@@ -231,7 +342,7 @@ def test_task_page_loads_active_and_collapsed_history(monkeypatch):
         "from tests.test_tarefas import _principal\n"
         "render(None, _principal(1))\n"
     ).run()
-    assert not app.exception and calls == ["active", "history"]
+    assert not app.exception and calls == ["analysis", "active", "history"]
     assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (0)"
 
 
@@ -268,4 +379,6 @@ def test_postgres_batch_commits_revisions_and_rolls_back(pg_store):
             )
     assert pg_store.read_cache_key(("configuracoes",)) == committed
     with pg_store.connection(read_only=True) as connection:
-        assert not connection.execute("SELECT 1 FROM configuracoes WHERE chave=?", ("perf_v2_rollback",)).fetchone()
+        assert not connection.execute(
+            "SELECT 1 FROM configuracoes WHERE chave=?", ("perf_v2_rollback",)
+        ).fetchone()

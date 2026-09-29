@@ -97,9 +97,9 @@ def _inserir(store, criado_em, **campos):
 
 
 def _momento(offset):
-    return (
-        datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc) + timedelta(seconds=offset)
-    ).isoformat()
+    """One hour before the real UTC clock, so moving windows still include it."""
+    base = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=1)
+    return (base + timedelta(seconds=offset)).isoformat()
 
 
 def test_recent_operations_are_newest_first_and_capped_at_twenty(store):

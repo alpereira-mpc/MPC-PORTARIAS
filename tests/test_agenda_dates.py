@@ -1,5 +1,4 @@
-from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, timedelta
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -19,11 +18,13 @@ def test_date_presentation():
 @pytest.mark.parametrize("kind", ["EVENTO", "REUNIAO", "DESPACHO"])
 def test_date_inputs_and_edit_preserve_iso(store, monkeypatch, kind):
     from tests.access_testing import enable_login
+    import services.agenda_ui as ui
 
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
+    monkeypatch.setattr(ui, "datetime", FixedDatetime)
     agenda = AgendaStore(store)
-    day = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    day = FixedDatetime.now().date()
     record = draft(kind, members=[3], day=day.isoformat())
     identifier = agenda.save(record)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()

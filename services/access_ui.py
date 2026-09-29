@@ -18,7 +18,6 @@ ADMIN_SECTIONS = (
     "Funções Institucionais",
     "Acessos e Auditoria",
     "Sistema",
-    "Laboratório de IA",
 )
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
 AUDIT_TABS = ("Visão Geral", "Acessos", "Auditoria")
@@ -79,9 +78,7 @@ def style_user_table(rows, theme_name="vermelho"):
             color, weight = DANGER, "700"
         else:
             color, weight = foreground, "600"
-        return (
-            f"background-color: {background}; color: {color}; font-weight: {weight}"
-        )
+        return f"background-color: {background}; color: {color}; font-weight: {weight}"
 
     styler = frame.style.map(paint)
     styler.set_table_styles(
@@ -111,27 +108,75 @@ def institutional_functions(store, principal):
     functions = InstitutionalFunctions(store)
     people = [p for p in store.catalog("procuradores") if p["ativo"]]
     names = {p["id"]: p["nome"] for p in people}
-    st.caption("A alteração passa a afetar regras institucionais do sistema a partir da nova vigência.")
+    st.caption(
+        "A alteração passa a afetar regras institucionais do sistema a partir da nova vigência."
+    )
     current = functions.current_all()
     st.dataframe(
-        [{"Função": FUNCTIONS[code], "Titular atual": row["nome"] if row else "—", "Desde": date.fromisoformat(row["data_inicio"]) if row else None} for code, row in current.items()],
-        column_config={"Desde": st.column_config.DateColumn("Desde", format="DD/MM/YYYY")},
+        [
+            {
+                "Função": FUNCTIONS[code],
+                "Titular atual": row["nome"] if row else "—",
+                "Desde": date.fromisoformat(row["data_inicio"]) if row else None,
+            }
+            for code, row in current.items()
+        ],
+        column_config={
+            "Desde": st.column_config.DateColumn("Desde", format="DD/MM/YYYY")
+        },
         hide_index=True,
         use_container_width=True,
     )
-    code = st.selectbox("Função institucional", list(FUNCTIONS), format_func=FUNCTIONS.get)
+    code = st.selectbox(
+        "Função institucional", list(FUNCTIONS), format_func=FUNCTIONS.get
+    )
     with st.expander("Alterar titular"):
-        holder = st.selectbox("Novo titular", list(names), format_func=names.get, key="funcao_institucional_holder")
-        start = st.date_input("Início da vigência", value=date.today(), format="DD/MM/YYYY")
+        holder = st.selectbox(
+            "Novo titular",
+            list(names),
+            format_func=names.get,
+            key="funcao_institucional_holder",
+        )
+        start = st.date_input(
+            "Início da vigência", value=date.today(), format="DD/MM/YYYY"
+        )
         confirmed = st.checkbox("Confirmo a alteração da função institucional.")
         if st.button("Salvar alteração", disabled=not confirmed):
-            old, identifier = functions.change(code, holder, start, getattr(principal, "email", ""))
-            registrar_evento(store, evento="FUNCAO_INSTITUCIONAL_ALTERADA", modulo="admin", acao="ALTERAR", principal=principal, entidade_tipo="funcao_institucional", entidade_id=identifier, detalhes={"funcao": code, "titular_anterior": old["procurador_id"] if old else None, "novo_titular": holder, "inicio": start.isoformat()})
-            st.success("Titular alterado; a vigência anterior foi preservada no histórico.")
+            old, identifier = functions.change(
+                code, holder, start, getattr(principal, "email", "")
+            )
+            registrar_evento(
+                store,
+                evento="FUNCAO_INSTITUCIONAL_ALTERADA",
+                modulo="admin",
+                acao="ALTERAR",
+                principal=principal,
+                entidade_tipo="funcao_institucional",
+                entidade_id=identifier,
+                detalhes={
+                    "funcao": code,
+                    "titular_anterior": old["procurador_id"] if old else None,
+                    "novo_titular": holder,
+                    "inicio": start.isoformat(),
+                },
+            )
+            st.success(
+                "Titular alterado; a vigência anterior foi preservada no histórico."
+            )
             st.rerun()
     with st.expander("Histórico das funções"):
         st.dataframe(
-            [{"Função": FUNCTIONS[row["funcao"]], "Procurador": row["nome"], "Início": date.fromisoformat(row["data_inicio"]), "Fim": date.fromisoformat(row["data_fim"]) if row["data_fim"] else None} for row in functions.history()],
+            [
+                {
+                    "Função": FUNCTIONS[row["funcao"]],
+                    "Procurador": row["nome"],
+                    "Início": date.fromisoformat(row["data_inicio"]),
+                    "Fim": (
+                        date.fromisoformat(row["data_fim"]) if row["data_fim"] else None
+                    ),
+                }
+                for row in functions.history()
+            ],
             column_config={
                 "Início": st.column_config.DateColumn("Início", format="DD/MM/YYYY"),
                 "Fim": st.column_config.DateColumn("Fim", format="DD/MM/YYYY"),
@@ -335,6 +380,10 @@ def consume_pending_open_admin():
 def render(store, principal):
     require_permission(principal, "admin")
     consume_pending_open_admin()
+    if st.session_state.get("admin_secao") not in ADMIN_SECTIONS:
+        st.session_state.pop("admin_secao", None)
+    st.session_state.pop("ai_lab_pdf", None)
+    st.session_state.pop("ai_lab_gerar", None)
     st.subheader(module_title("admin", "ADMINISTRAÇÃO — Usuários e Acessos"))
     pending_count = None
     try:
@@ -373,11 +422,6 @@ def render(store, principal):
         from services.system_ui import render as render_system
 
         render_system(store, principal)
-        return
-    if area == "Laboratório de IA":
-        from services.ai_lab_ui import render as render_ai_lab
-
-        render_ai_lab(principal)
         return
     access = AccessStore(store)
     users = access.list_users()
@@ -461,7 +505,9 @@ def render(store, principal):
             "Perfil",
             profile_options,
             index=profile_options.index(
-                current["perfil"] if current["perfil"] in profile_options else profile_options[0]
+                current["perfil"]
+                if current["perfil"] in profile_options
+                else profile_options[0]
             ),
             key=prefix + "perfil",
             disabled=protected,
@@ -602,7 +648,9 @@ def render(store, principal):
             with st.container(border=True):
                 render_html('<div class="mpc-danger-zone" hidden></div>')
                 st.error("Exclusão definitiva")
-                st.write("Será excluído: **" + current["nome"] + "** · " + current["email"])
+                st.write(
+                    "Será excluído: **" + current["nome"] + "** · " + current["email"]
+                )
                 confirmed = st.checkbox(
                     "Confirmo a exclusão definitiva",
                     key="acesso_delete_confirm_" + str(selected),

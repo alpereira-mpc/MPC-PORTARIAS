@@ -554,25 +554,32 @@ def test_model_and_prompt_stay_in_the_service():
     services = ROOT / "services"
     model_hits = []
     prompt_hits = []
+    display_hits = []
     for path in services.rglob("*.py"):
         if path.name == "ai_service.py":
             continue
         text = path.read_text(encoding="utf-8")
-        if GEMINI_MODEL in text or GEMINI_FALLBACK_MODEL in text:
-            model_hits.append(path.name)
         if "pedido cautelar" in text:
             prompt_hits.append(path.name)
+        mentions_model = GEMINI_MODEL in text or GEMINI_FALLBACK_MODEL in text
+        if not mentions_model:
+            continue
+        if path.name == "system_ui.py":
+            display_hits.append(path.name)
+            assert GEMINI_MODEL in text and GEMINI_FALLBACK_MODEL in text
+            for needle in (
+                "generativelanguage",
+                "GEMINI_ENDPOINT",
+                "x-goog-api-key",
+                "GEMINI_API_KEY",
+                "pedido cautelar",
+            ):
+                assert needle not in text
+            continue
+        model_hits.append(path.name)
     assert model_hits == []
     assert prompt_hits == []
-    ui = (services / "ai_lab_ui.py").read_text(encoding="utf-8")
-    for needle in (
-        "generativelanguage",
-        "x-goog-api-key",
-        "GEMINI_API_KEY",
-        "inlineData",
-        GEMINI_MODEL,
-    ):
-        assert needle not in ui
+    assert display_hits == ["system_ui.py"]
 
 
 def test_example_secrets_do_not_assign_a_key():
@@ -1226,9 +1233,3 @@ def test_oficio_and_agenda_use_the_same_fallback(monkeypatch):
     assert text == "Objeto: exemplo."
     assert len(calls) == 2
     assert GEMINI_FALLBACK_MODEL in calls[1]
-
-
-def test_lab_uses_the_shared_summary_function():
-    import services.ai_lab_ui as ai_lab_ui
-
-    assert ai_lab_ui.resumir_documento_pdf is resumir_documento_pdf
