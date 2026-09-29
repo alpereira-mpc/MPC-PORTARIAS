@@ -457,7 +457,7 @@ def render(store, principal):
     st.subheader("Sistema")
     area = st.radio(
         "Sistema",
-        ["Saúde", "Saúde da IA", "Backup", "Comunicações"],
+        ["Saúde", "Saúde da IA", "Backup", "Comunicações", "Importação 2026"],
         horizontal=True,
         key="admin_sistema_aba",
     )
@@ -471,5 +471,10 @@ def render(store, principal):
         return
     if area == "Saúde da IA":
         render_ai_health(store, principal)
+        return
+    if area == "Importação 2026":
+        from services.backfill_representacoes_ui import render as render_backfill
+
+        render_backfill(store, principal)
         return
     render_health(store, principal)
