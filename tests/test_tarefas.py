@@ -429,7 +429,7 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
         "Em andamento",
         "Aguardando",
     ]
-    assert app.expander[0].label == "Tarefas concluídas e canceladas (2)"
+    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (2)"
     assert app.expander[0].proto.expanded is False
     assert app.button(key=f"task_finish_{first['id']}")
     assert app.button(key=f"task_finish_{second['id']}")
@@ -461,13 +461,13 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
     app.button(key=f"task_cancel_{to_cancel['id']}").click().run()
     assert not app.exception
     assert repo.get(to_cancel["id"], owner["id"])["status"] == "CANCELADA"
-    assert app.expander[0].label == "Tarefas concluídas e canceladas (3)"
+    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (3)"
 
     app.button(key=f"task_finish_{first['id']}").click().run()
 
     assert not app.exception
     assert repo.get(first["id"], owner["id"])["status"] == "CONCLUIDA"
-    assert app.expander[0].label == "Tarefas concluídas e canceladas (4)"
+    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (4)"
     assert not any(
         button.key == f"task_finish_{first['id']}" for button in app.button
     )

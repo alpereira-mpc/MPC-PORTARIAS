@@ -232,7 +232,7 @@ def test_task_page_loads_active_and_collapsed_history(monkeypatch):
         "render(None, _principal(1))\n"
     ).run()
     assert not app.exception and calls == ["active", "history"]
-    assert app.expander[0].label == "Tarefas concluídas e canceladas (0)"
+    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (0)"
 
 
 def test_phase2_fragment_boundaries_are_explicit():

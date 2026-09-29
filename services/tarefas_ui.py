@@ -569,7 +569,7 @@ def _task_history(repo, store, principal):
     }
     history_rows = repo.list_history(principal.id, history_filters, limit=30)
     with st.expander(
-        f"Tarefas concluídas e canceladas ({len(history_rows)})",
+        f"Tarefas concluídas e/ou canceladas ({len(history_rows)})",
         expanded=False,
     ):
         with st.container(border=True, key="tarefas_history_filters"):
