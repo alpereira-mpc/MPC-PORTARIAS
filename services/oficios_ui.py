@@ -29,6 +29,7 @@ from services.ui_theme import (
     empty_state,
     filter_mark,
     form_mark,
+    guidance_note,
     html_text,
     kpi_mark,
     render_html,
@@ -570,6 +571,50 @@ def _keep_received_panel_open():
     st.session_state["oficio_received_panel"] = True
 
 
+def _remember_received_pdf(pdf):
+    """Keep the selected principal PDF across reruns. Analysis fields reset only when it changes."""
+    if pdf is None:
+        return
+    content = pdf.getvalue()
+    digest = hashlib.sha256(content).hexdigest()
+    previous = st.session_state.get("oficio_received_hash")
+    if previous and previous != digest:
+        for key in (
+            "oficio_received_ok",
+            "oficio_received_text",
+            "oficio_received_data",
+            "oficio_received_prazo",
+            "oficio_received_ia",
+            "oficio_received_providencias",
+            *(f"oficio_received_{field}" for field, _title in RECEIVED_FIELDS),
+        ):
+            st.session_state.pop(key, None)
+    st.session_state["oficio_received_hash"] = digest
+    st.session_state["oficio_received_pdf_bytes"] = content
+    st.session_state["oficio_received_pdf_name"] = pdf.name
+
+
+def _arquivos_recebidos(principal, extras):
+    """Principal document first, then additions. Same content is stored once."""
+    files = []
+    seen = set()
+
+    def add(name, content):
+        if not name or not content:
+            return
+        digest = hashlib.sha256(content).hexdigest()
+        if digest in seen:
+            return
+        seen.add(digest)
+        files.append((name, content))
+
+    if principal:
+        add(principal[0], principal[1])
+    for name, content in extras or ():
+        add(name, content)
+    return files
+
+
 def _reopen_received_panel():
     """Ask the next rerun to restore the panel the user already had open."""
     st.session_state["oficio_received_reopen"] = True
@@ -588,28 +633,12 @@ def received_form(service, people):
     ):
         st.markdown("**Importar PDF e preencher automaticamente**")
         pdf = st.file_uploader(
-            "PDF para análise — um arquivo",
+            "Documento principal do ofício",
             type=["pdf"],
             accept_multiple_files=False,
             key="oficio_received_uploader",
         )
-        digest = hashlib.sha256(pdf.getvalue()).hexdigest() if pdf is not None else None
-        if st.session_state.get(
-            "oficio_received_hash"
-        ) and digest != st.session_state.get("oficio_received_hash"):
-            for key in (
-                "oficio_received_ok",
-                "oficio_received_text",
-                "oficio_received_pdf_bytes",
-                "oficio_received_pdf_name",
-                "oficio_received_hash",
-                "oficio_received_data",
-                "oficio_received_prazo",
-                "oficio_received_ia",
-                "oficio_received_providencias",
-                *(f"oficio_received_{field}" for field, _ in RECEIVED_FIELDS),
-            ):
-                st.session_state.pop(key, None)
+        _remember_received_pdf(pdf)
         pdf_column, ai_column = st.columns(2)
         with pdf_column:
             analyze_pdf = st.button(
@@ -640,7 +669,6 @@ def received_form(service, people):
                 except ValueError as exc:
                     st.error(str(exc))
                 else:
-                    st.session_state["oficio_received_hash"] = digest
                     st.session_state["oficio_received_pdf_bytes"] = content
                     st.session_state["oficio_received_pdf_name"] = pdf.name
                     st.session_state["oficio_received_text"] = meta["texto_extraido"]
@@ -685,7 +713,6 @@ def received_form(service, people):
                         "Preencha os dados manualmente."
                     )
                 else:
-                    st.session_state["oficio_received_hash"] = digest
                     st.session_state["oficio_received_pdf_bytes"] = content
                     st.session_state["oficio_received_pdf_name"] = pdf.name
                     for field, _title in RECEIVED_FIELDS:
@@ -761,26 +788,25 @@ def received_form(service, people):
             r["status"] = st.selectbox("Status inicial", RECEIVED)
             r["observacoes"] = st.text_area("Observações do recebido")
             uploads = st.file_uploader(
-                "Originais PDF/DOCX — até 10 MB por arquivo",
+                "Documentos adicionais — PDF/DOCX",
                 type=["pdf", "docx"],
                 accept_multiple_files=True,
+                key="oficio_received_extras",
             )
             submit = st.form_submit_button("Registrar recebido")
         if submit:
-            files = [(f.name, f.getvalue()) for f in uploads]
+            principal = None
             if pdf is not None:
-                content = pdf.getvalue()
-                if all(item[1] != content for item in files):
-                    files.insert(0, (pdf.name, content))
+                principal = (pdf.name, pdf.getvalue())
             else:
                 imported = st.session_state.get("oficio_received_pdf_bytes")
                 imported_name = st.session_state.get("oficio_received_pdf_name")
-                if (
-                    imported
-                    and imported_name
-                    and all(item[1] != imported for item in files)
-                ):
-                    files.insert(0, (imported_name, imported))
+                if imported and imported_name:
+                    principal = (imported_name, imported)
+            files = _arquivos_recebidos(
+                principal,
+                [(item.name, item.getvalue()) for item in (uploads or [])],
+            )
             saved = service.save(r, uploads=files)
             audit_oficio(
                 "OFICIO_RECEBIDO",
@@ -1241,7 +1267,7 @@ def listing(
         offset=(page - 1) * 50,
     )
     if not rows:
-        empty_state("Nenhum ofício nesta página para os filtros selecionados.")
+        guidance_note("Nenhum ofício nesta página para os filtros selecionados.")
         return
     drawn = detail_drawn if detail_drawn is not None else set()
     for index, r in enumerate(rows):
@@ -1348,7 +1374,7 @@ def render(store=None, principal=None):
                 '<p class="oficios-gabinete-prompt">Selecione o gabinete:</p>'
                 "<style>"
                 "section[data-testid='stMain'] .oficios-gabinete-prompt{"
-                "margin:1.25rem 0 0 0;"
+                "margin:1.25rem 0 .75rem 0;"
                 "}"
                 "section[data-testid='stMain'] div[class*='st-key-gabinete_']{"
                 "display:flex;justify-content:center;max-width:100%;"

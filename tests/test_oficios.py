@@ -704,3 +704,16 @@ def test_ultimas_movimentacoes_show_brazilian_dates():
     )
     assert "29/09/2026" in markup
     assert "2026-09-29" not in markup
+
+
+def test_empty_oficio_listing_uses_the_themed_notice():
+    from inspect import getsource
+
+    from services.oficios_ui import listing
+
+    source = getsource(listing)
+    assert (
+        'guidance_note("Nenhum ofício nesta página para os filtros selecionados.")'
+        in source
+    )
+    assert "empty_state(" not in source

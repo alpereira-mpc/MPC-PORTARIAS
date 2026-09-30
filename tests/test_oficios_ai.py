@@ -382,3 +382,70 @@ def test_ai_failure_keeps_the_open_panel(monkeypatch):
     assert calls == [1]
     assert _received_panel(app).proto.expanded is True
     assert "saved_record" not in app.session_state
+
+
+def test_principal_pdf_is_saved_once_without_analysis():
+    app = _upload(_form())
+    app.text_input(key="oficio_received_numero_externo").set_value("9/2026")
+    app = app.run()
+    assert app.session_state["oficio_received_pdf_name"] == "oficio.pdf"
+    assert app.session_state["oficio_received_pdf_bytes"].startswith(b"%PDF-")
+    labels = [item.label for item in app.file_uploader]
+    assert "Documento principal do ofício" in labels
+    assert "Documentos adicionais — PDF/DOCX" in labels
+    app = app.run()
+    assert app.session_state["oficio_received_pdf_name"] == "oficio.pdf"
+    app = _submit(app)
+    saved = app.session_state["saved_files"]
+    assert [name for name, _content in saved] == ["oficio.pdf"]
+    assert saved[0][1].startswith(b"%PDF-")
+
+
+def test_failed_analysis_keeps_the_principal_for_registration(monkeypatch):
+    monkeypatch.setattr(
+        ai_service,
+        "extrair_dados_oficio_pdf",
+        lambda _pdf: (_ for _ in ()).throw(
+            GeminiErro("O serviço de IA está indisponível no momento.")
+        ),
+    )
+    app = _upload(_form())
+    app.button(key="oficio_received_analisar_ia").click()
+    app = app.run()
+    assert any("indisponível" in item.value for item in app.error)
+    assert app.session_state["oficio_received_pdf_bytes"].startswith(b"%PDF-")
+    app.text_input(key="oficio_received_assunto").set_value("Manual")
+    app = app.run()
+    app = _submit(app)
+    assert app.session_state["saved_record"]["assunto"] == "Manual"
+    assert [name for name, _content in app.session_state["saved_files"]] == [
+        "oficio.pdf"
+    ]
+
+
+def test_additional_docx_is_kept_and_the_same_pdf_is_not_duplicated():
+    from services.oficios_ui import _arquivos_recebidos
+
+    pdf = _pdf(SAMPLE)
+    merged = _arquivos_recebidos(
+        ("oficio.pdf", pdf),
+        [("oficio_526.pdf", pdf), ("anexo.docx", b"PK documento adicional")],
+    )
+    assert merged == [
+        ("oficio.pdf", pdf),
+        ("anexo.docx", b"PK documento adicional"),
+    ]
+    app = _upload(_form(), pdf)
+    app.file_uploader(key="oficio_received_extras").set_value(
+        [
+            ("oficio_526.pdf", pdf, "application/pdf"),
+            (
+                "anexo.docx",
+                b"PK documento adicional",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        ]
+    )
+    app = app.run()
+    app = _submit(app)
+    assert app.session_state["saved_files"] == merged

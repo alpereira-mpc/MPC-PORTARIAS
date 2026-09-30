@@ -133,3 +133,29 @@ def test_other_admin_sections_remain():
     )
     for section in ADMIN_SECTIONS:
         assert section in source or section == "Usuários"
+
+
+def test_protocol_notice_table_reuses_theme_stripes():
+    from services.notification_ui import render_admin_recipients
+    from services.ui_theme import style_striped_table
+
+    source = inspect.getsource(render_admin_recipients)
+    assert "style_striped_table(" in source
+    assert "Comunicação de protocolo" in source
+    rows = [
+        {"Nome": "Ana", "Função": "Ouvidora", "E-mail": "ana@mpc.pb.gov.br", "Recebe aviso": "Sim"},
+        {"Nome": "Bruno", "Função": "Corregedor", "E-mail": "bruno@mpc.pb.gov.br", "Recebe aviso": "Não"},
+    ]
+    for name, tokens in THEMES.items():
+        styler = style_striped_table(rows, name)
+        assert list(styler.data.columns) == ["Nome", "Função", "E-mail", "Recebe aviso"]
+        assert list(styler.data["Recebe aviso"]) == ["Sim", "Não"]
+        html = styler.to_html().lower()
+        base = tokens["themed_table_bg"].lower()
+        stripe = tokens["themed_table_stripe_bg"].lower()
+        first = html[html.find("row0_col0") : html.find("}", html.find("row0_col0"))]
+        second = html[html.find("row1_col0") : html.find("}", html.find("row1_col0"))]
+        assert base in first and stripe not in first
+        assert stripe in second and base not in second
+        assert tokens["themed_table_fg"].lower() in html
+        assert not styler.table_styles

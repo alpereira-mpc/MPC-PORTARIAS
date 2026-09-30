@@ -6,10 +6,16 @@ import streamlit as st
 
 from services.access import has_permission
 from services.email_transport import NOT_CONFIGURED, NotConfigured
-from services.ui_theme import definition_block, section_label
+from services.themes import valid_theme
+from services.ui_theme import definition_block, section_label, style_striped_table
 
 LOGGER = logging.getLogger("mpc.notifications.ui")
 _PREVIEW = "representacoes_mail_preview"
+
+
+def _theme_name():
+    cached = st.session_state.get("_portal_theme") or {}
+    return valid_theme(cached.get("name"))
 
 
 def _when(value):
@@ -119,15 +125,18 @@ def render_admin_recipients(store, principal):
     current = list_recipients(store)
     if current:
         st.dataframe(
-            [
-                {
-                    "Nome": item.get("nome") or "—",
-                    "Função": item.get("cargo") or "—",
-                    "E-mail": item.get("email") or "—",
-                    "Recebe aviso": "Sim" if item.get("ativo") else "Não",
-                }
-                for item in current
-            ],
+            style_striped_table(
+                [
+                    {
+                        "Nome": item.get("nome") or "—",
+                        "Função": item.get("cargo") or "—",
+                        "E-mail": item.get("email") or "—",
+                        "Recebe aviso": "Sim" if item.get("ativo") else "Não",
+                    }
+                    for item in current
+                ],
+                _theme_name(),
+            ),
             hide_index=True,
             use_container_width=True,
         )
