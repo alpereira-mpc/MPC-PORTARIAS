@@ -530,10 +530,26 @@ def apresentar_analise_tarefas(repo, principal):
         text, stale = leitura_analise_tarefas_salva(
             stored, principal.id, signature
         )
-        if st.button(
-            "↻ Atualizar análise" if text else "✨ Analisar com IA",
-            key="tarefas_analise_ia_btn",
-        ):
+        hidden_key = "tarefas_analise_ia_oculta"
+        hidden = bool(st.session_state.get(hidden_key))
+        analyze_requested = False
+        if text and hidden:
+            if st.button("Exibir última análise", key="tarefas_analise_ia_show"):
+                st.session_state[hidden_key] = False
+                st.rerun()
+        elif text:
+            update_column, hide_column, _ = st.columns([1.35, 1.25, 3])
+            analyze_requested = update_column.button(
+                "↻ Atualizar análise", key="tarefas_analise_ia_btn"
+            )
+            if hide_column.button("Ocultar análise", key="tarefas_analise_ia_hide"):
+                st.session_state[hidden_key] = True
+                st.rerun()
+        else:
+            analyze_requested = st.button(
+                "✨ Analisar com IA", key="tarefas_analise_ia_btn"
+            )
+        if analyze_requested:
             try:
                 from services.ai_service import (
                     GeminiErro,
@@ -558,10 +574,11 @@ def apresentar_analise_tarefas(repo, principal):
                     "assinatura": signature,
                     "texto": briefing,
                 }
+                st.session_state[hidden_key] = False
                 st.rerun()
         if stale:
             st.caption(AVISO_ANALISE_ALTERADA)
-        if text:
+        if text and not hidden:
             st.markdown("#### Briefing operacional")
             st.markdown(text)
             st.caption(AVISO_ANALISE_IA)

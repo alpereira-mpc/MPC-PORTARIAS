@@ -334,6 +334,41 @@ def test_period_button_calls_gemini_once_and_hides_another_interval(monkeypatch)
     assert app.button(key="agenda_analise_ia_btn").label == "✨ Analisar período com IA"
 
 
+def test_period_analysis_can_be_hidden_without_calling_gemini(monkeypatch):
+    calls = []
+
+    def fake(context):
+        calls.append(context["periodo"])
+        return "Panorama ocultável."
+
+    monkeypatch.setattr(ai_service, "analisar_periodo_agenda", fake)
+    _HOLD.clear()
+    _HOLD.update(start=START, end=END, rows=_week(), leaves=_leaves(), names=NAMES)
+
+    def page():
+        from services.agenda_ui import apresentar_analise_periodo
+        from tests.test_agenda_analise_ia import _HOLD
+
+        apresentar_analise_periodo(
+            _HOLD["start"], _HOLD["end"], _HOLD["rows"], _HOLD["leaves"], _HOLD["names"]
+        )
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key="agenda_analise_ia_btn").click().run()
+    assert len(calls) == 1
+    app.button(key="agenda_analise_ia_hide").click().run()
+    assert len(calls) == 1
+    assert not any("Panorama ocultável." in item.value for item in app.markdown)
+    app.run()
+    assert len(calls) == 1
+    app.button(key="agenda_analise_ia_show").click().run()
+    assert len(calls) == 1
+    assert any("Panorama ocultável." in item.value for item in app.markdown)
+    app.button(key="agenda_analise_ia_btn").click().run()
+    assert len(calls) == 2
+    assert any("Panorama ocultável." in item.value for item in app.markdown)
+
+
 def test_invalid_interval_does_not_call_gemini(monkeypatch):
     calls = []
     monkeypatch.setattr(

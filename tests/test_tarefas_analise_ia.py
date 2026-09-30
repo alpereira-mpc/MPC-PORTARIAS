@@ -199,6 +199,16 @@ def test_successful_analysis_is_explicit_and_survives_reruns(store, monkeypatch)
     app.run()
     assert len(calls) == 1
     assert app.button(key="tarefas_analise_ia_btn").label == "↻ Atualizar análise"
+    app.button(key="tarefas_analise_ia_hide").click().run()
+    assert len(calls) == 1
+    assert not any("Briefing das tarefas ativas." in item.value for item in app.markdown)
+    assert app.button(key="tarefas_analise_ia_show").label == "Exibir última análise"
+    app.run()
+    assert len(calls) == 1
+    assert app.button(key="tarefas_analise_ia_show")
+    app.button(key="tarefas_analise_ia_show").click().run()
+    assert len(calls) == 1
+    assert any("Briefing das tarefas ativas." in item.value for item in app.markdown)
 
 
 def test_ai_failure_never_writes_tasks(store, monkeypatch):

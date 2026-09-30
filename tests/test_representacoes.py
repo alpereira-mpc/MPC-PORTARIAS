@@ -3,6 +3,7 @@ import inspect
 
 import pytest
 from pypdf import PdfWriter
+from streamlit.testing.v1 import AppTest
 
 from database.access import AccessStore
 from database.representacoes import DOCUMENT_META, RepresentacoesStore
@@ -44,6 +45,8 @@ from services.representacoes import (
     update,
 )
 from tests.access_testing import seed_access
+
+_UI_HOLD = {}
 
 
 def _pdf():
@@ -933,6 +936,51 @@ def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monke
     assert 'download_button("Baixar"' in compact or "download_button(\n" in compact
     assert "rep_dl_" in compact
     assert "rep_prep_" in compact
+
+
+def test_representation_summary_can_be_hidden_without_regeneration(store, monkeypatch):
+    from database.representacoes import RepresentacoesStore
+    from services.representacoes import pdf_oficial, resumo_ia
+    import services.representacoes_ui as ui
+
+    principal = _principal(store, email="resumo-oculto@test.local")
+    identifier = _protocolled_with_pdf(store, principal, number="TC 066666/26")
+    official = pdf_oficial(store, identifier)
+    RepresentacoesStore(store).save_resumo_ia(
+        identifier, "Resumo preservado.", "2026-09-30T12:00:00", "mock",
+        "abc", official["id"],
+    )
+    calls = []
+
+    def update(*_args):
+        calls.append(True)
+        return resumo_ia(store, identifier)
+
+    monkeypatch.setattr(ui, "atualizar_resumo_representacao", update)
+    _UI_HOLD.clear()
+    _UI_HOLD.update(ui=ui, store=store, principal=principal, record=get(store, identifier))
+
+    def page():
+        from tests.test_representacoes import _UI_HOLD
+
+        _UI_HOLD["ui"]._render_official_document(
+            _UI_HOLD["store"], _UI_HOLD["principal"], _UI_HOLD["record"]
+        )
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert any("Resumo preservado." in item.value for item in app.markdown)
+    app.button(key="rep_visao_resumo_hide_" + str(identifier)).click().run()
+    assert calls == []
+    assert not any("Resumo preservado." in item.value for item in app.markdown)
+    app.run()
+    assert calls == []
+    app.button(key="rep_visao_resumo_show_" + str(identifier)).click().run()
+    assert calls == []
+    assert any("Resumo preservado." in item.value for item in app.markdown)
+    app.button(key="rep_visao_resumo_" + str(identifier)).click().run()
+    assert calls == [True]
+    assert any("Resumo preservado." in item.value for item in app.markdown)
+    assert "representacoes_resumo_ia_oculto_" + str(identifier) not in app.session_state
 
 
 def test_summary_persists_the_model_that_answered(store, monkeypatch):

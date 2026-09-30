@@ -902,10 +902,27 @@ def apresentar_analise_periodo(inicio, fim, appointments, leaves, names):
     text, stale = leitura_analise_salva(
         stored, period["inicio"], period["fim"], signature
     )
-    if st.button(
-        "↻ Atualizar análise" if text else "✨ Analisar período com IA",
-        key="agenda_analise_ia_btn",
-    ):
+    hidden_key = "agenda_analise_ia_oculta"
+    hidden_for = (period["inicio"], period["fim"], signature)
+    hidden = st.session_state.get(hidden_key) == hidden_for
+    analyze_requested = False
+    if text and hidden:
+        if st.button("Exibir última análise", key="agenda_analise_ia_show"):
+            st.session_state.pop(hidden_key, None)
+            st.rerun()
+    elif text:
+        update_column, hide_column, _ = st.columns([1.35, 1.25, 3])
+        analyze_requested = update_column.button(
+            "↻ Atualizar análise", key="agenda_analise_ia_btn"
+        )
+        if hide_column.button("Ocultar análise", key="agenda_analise_ia_hide"):
+            st.session_state[hidden_key] = hidden_for
+            st.rerun()
+    else:
+        analyze_requested = st.button(
+            "✨ Analisar período com IA", key="agenda_analise_ia_btn"
+        )
+    if analyze_requested:
         try:
             from services.ai_service import (
                 GeminiErro,
@@ -927,10 +944,11 @@ def apresentar_analise_periodo(inicio, fim, appointments, leaves, names):
                 "assinatura": signature,
                 "texto": briefing,
             }
+            st.session_state.pop(hidden_key, None)
             st.rerun()
     if stale:
         st.caption(AVISO_ANALISE_ALTERADA)
-    if text:
+    if text and not hidden:
         st.markdown(
             "### Panorama Executivo ("
             + format_date_br(period["inicio"])

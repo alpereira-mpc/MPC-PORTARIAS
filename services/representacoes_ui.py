@@ -657,7 +657,10 @@ def _render_official_document(store, principal, record):
     if official is None:
         return
     saved = resumo_ia(store, record["id"])
-    download_column, summary_column = st.columns(2)
+    hidden_key = "representacoes_resumo_ia_oculto_" + str(record["id"])
+    has_summary = bool(saved and str(saved.get("texto") or "").strip())
+    hidden = bool(st.session_state.get(hidden_key))
+    download_column, summary_column, hide_column = st.columns([2, 1.45, 1.25])
 
     def _read_official_pdf():
         return _official_download_payload(store, principal, record, official)[
@@ -674,11 +677,24 @@ def _render_official_document(store, principal, record):
         key="rep_visao_dl_" + official["id"],
         on_click="ignore",
     )
-    has_summary = bool(saved and str(saved.get("texto") or "").strip())
     summary_label = "↻ Atualizar resumo" if has_summary else "✨ Gerar resumo com IA"
-    if summary_column.button(
-        summary_label, key="rep_visao_resumo_" + str(record["id"])
-    ):
+    update_requested = False
+    if has_summary and hidden:
+        if summary_column.button(
+            "Exibir último resumo", key="rep_visao_resumo_show_" + str(record["id"])
+        ):
+            st.session_state.pop(hidden_key, None)
+            st.rerun()
+    else:
+        update_requested = summary_column.button(
+            summary_label, key="rep_visao_resumo_" + str(record["id"])
+        )
+        if has_summary and hide_column.button(
+            "Ocultar resumo", key="rep_visao_resumo_hide_" + str(record["id"])
+        ):
+            st.session_state[hidden_key] = True
+            st.rerun()
+    if update_requested:
         from services.ai_service import GeminiErro, GeminiNaoConfigurada
 
         try:
@@ -710,6 +726,7 @@ def _render_official_document(store, principal, record):
                 ),
                 "sha256": saved.get("sha256"),
             }
+            st.session_state.pop(hidden_key, None)
     if not saved or not str(saved.get("texto") or "").strip():
         return
     try:
@@ -718,9 +735,10 @@ def _render_official_document(store, principal, record):
         current_sha = None
     if resumo_desatualizado(saved, current_sha):
         st.caption(AVISO_PDF_ALTERADO)
-    st.markdown("### Resumo da representação — gerado por IA")
-    st.markdown(saved["texto"])
-    st.caption(AVISO_RESUMO_IA)
+    if not hidden:
+        st.markdown("### Resumo da representação — gerado por IA")
+        st.markdown(saved["texto"])
+        st.caption(AVISO_RESUMO_IA)
 
 
 def _detail_compact(store, principal, record):
