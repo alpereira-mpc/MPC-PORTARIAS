@@ -103,3 +103,19 @@ def test_conclusion_with_pending_request_is_allowed_and_audited(store):
     conclude(store,record["id"],"Resultado excepcional.",principal)
     assert PeticoesStore(store).get(record["id"])["situacao"] == "CONCLUIDA"
     with store.connection(read_only=True) as c: assert c.execute("SELECT 1 FROM auditoria_eventos WHERE evento='PETICAO_CONCLUIDA'").fetchone()
+
+
+def test_child_failure_rolls_back_and_tramita_can_be_reused(store, monkeypatch):
+    principal = _principal(store)
+    original = PeticoesStore._replace_relations
+
+    def fail_after_parent_insert(self, connection, identifier, data, stamp):
+        raise RuntimeError("falha filha simulada")
+
+    monkeypatch.setattr(PeticoesStore, "_replace_relations", fail_after_parent_insert)
+    with pytest.raises(RuntimeError, match="falha filha"):
+        create(store, _payload(store), principal, ("peticao.pdf", "application/pdf", _pdf()))
+    with store.connection(read_only=True) as c:
+        assert c.execute("SELECT COUNT(*) FROM peticoes WHERE numero_tramita='116439/26'").fetchone()[0] == 0
+    monkeypatch.setattr(PeticoesStore, "_replace_relations", original)
+    assert create(store, _payload(store), principal, ("peticao.pdf", "application/pdf", _pdf()))["numero_tramita"] == "116439/26"

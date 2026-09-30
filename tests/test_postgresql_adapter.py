@@ -1,4 +1,4 @@
-from database.postgresql import Cursor
+from database.postgresql import Connection, Cursor
 
 
 class _RawCursor:
@@ -16,3 +16,21 @@ def test_cursor_preserves_inserted_identity_value():
 
 def test_cursor_accepts_insert_select_with_no_returned_rows():
     assert Cursor(_RawCursor(None), returning_id=True).lastrowid is None
+
+
+class _RawConnection:
+    def __init__(self):
+        self.statement = None
+
+    def execute(self, statement, values):
+        self.statement = statement
+        return _RawCursor((41,), rowcount=1)
+
+
+def test_peticoes_insert_returns_its_postgresql_identity():
+    raw = _RawConnection()
+    cursor = Connection(raw).execute(
+        "INSERT INTO peticoes(numero_tramita) VALUES(?)", ("116439/26",)
+    )
+    assert "RETURNING id" in raw.statement
+    assert cursor.lastrowid == 41
