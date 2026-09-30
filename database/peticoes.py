@@ -28,9 +28,36 @@ class PeticoesStore:
             for sql in ("CREATE INDEX IF NOT EXISTS peticoes_lista_idx ON peticoes(situacao,data_protocolo DESC,id DESC)","CREATE INDEX IF NOT EXISTS peticoes_andamentos_idx ON peticoes_andamentos(peticao_id,data DESC,id DESC)","CREATE INDEX IF NOT EXISTS peticoes_pedidos_idx ON peticoes_pedidos(peticao_id,ordem)"): c.execute(sql)
         _READY.add(key)
 
-    def _replace_relations(self,c,identifier,data,stamp):
-        c.execute("DELETE FROM peticoes_signatarios WHERE peticao_id=?",(identifier,)); c.executemany("INSERT INTO peticoes_signatarios VALUES(?,?)",[(identifier,x) for x in data['signatarios']])
-        offset=(c.execute("SELECT COALESCE(MAX(ordem),0) FROM peticoes_pedidos WHERE peticao_id=?",(identifier,)).fetchone()[0] or 0)+10000; c.execute("UPDATE peticoes_pedidos SET ordem=ordem+?,excluido=1,excluido_em=?,excluido_por='sistema',motivo_exclusao='Substituído na edição da Petição.',atualizado_em=? WHERE peticao_id=? AND excluido=0",(offset,stamp,stamp,identifier)); c.executemany("INSERT INTO peticoes_pedidos(peticao_id,descricao,ordem,criado_em,atualizado_em) VALUES(?,?,?,?,?)",[(identifier,x,n,stamp,stamp) for n,x in enumerate(data['pedidos'],1)])
+    def _replace_relations(self, c, identifier, data, stamp, actor="sistema"):
+        c.execute("DELETE FROM peticoes_signatarios WHERE peticao_id=?", (identifier,))
+        c.executemany(
+            "INSERT INTO peticoes_signatarios VALUES(?,?)",
+            [(identifier, x) for x in data["signatarios"]],
+        )
+        previous = [
+            row[0]
+            for row in c.execute(
+                "SELECT id FROM peticoes_pedidos WHERE peticao_id=? AND excluido=0",
+                (identifier,),
+            )
+        ]
+        if previous:
+            offset = (
+                c.execute(
+                    "SELECT COALESCE(MAX(ordem),0) FROM peticoes_pedidos WHERE peticao_id=?",
+                    (identifier,),
+                ).fetchone()[0]
+                or 0
+            ) + 10000
+            c.execute(
+                "UPDATE peticoes_pedidos SET ordem=ordem+?,excluido=1,excluido_em=?,excluido_por=?,motivo_exclusao='Substituído na edição da Petição.',atualizado_em=? WHERE peticao_id=? AND excluido=0",
+                (offset, stamp, actor, stamp, identifier),
+            )
+        c.executemany(
+            "INSERT INTO peticoes_pedidos(peticao_id,descricao,ordem,criado_em,atualizado_em) VALUES(?,?,?,?,?)",
+            [(identifier, text, order, stamp, stamp) for order, text in enumerate(data["pedidos"], 1)],
+        )
+        return previous
 
     def create(self,data,actor,upload):
         stamp=now()
@@ -55,11 +82,18 @@ class PeticoesStore:
             if not getattr(result,'rowcount',1): raise ValueError('Petição não encontrada.')
             if "signatarios" in data:
                 c.execute("DELETE FROM peticoes_signatarios WHERE peticao_id=?",(identifier,)); c.executemany("INSERT INTO peticoes_signatarios VALUES(?,?)",[(identifier,x) for x in data['signatarios']])
+            removed = []
             if "pedidos" in data:
-                self._replace_relations(c,identifier,{"signatarios": data.get("signatarios", [x[0] for x in c.execute("SELECT procurador_id FROM peticoes_signatarios WHERE peticao_id=?",(identifier,))]),"pedidos":data["pedidos"]},stamp)
+                signers = data.get(
+                    "signatarios",
+                    [x[0] for x in c.execute("SELECT procurador_id FROM peticoes_signatarios WHERE peticao_id=?", (identifier,))],
+                )
+                removed = self._replace_relations(
+                    c, identifier, {"signatarios": signers, "pedidos": data["pedidos"]}, stamp, actor
+                )
             if upload:
                 name,mime,content=upload; c.execute("DELETE FROM peticoes_documentos WHERE peticao_id=?",(identifier,)); c.execute("INSERT INTO peticoes_documentos VALUES(?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,identifier,name,mime,len(content),content,stamp,actor))
-        return self.get(identifier)
+        return self.get(identifier), removed
 
     def get(self,identifier):
         with self.store.connection(read_only=True) as c:
@@ -72,6 +106,92 @@ class PeticoesStore:
             sql="SELECT id,numero_tramita,data_protocolo,destinatario,natureza,assunto,situacao,resultado_global FROM peticoes"; args=()
             if situacao:sql+=" WHERE situacao=?";args=(situacao,)
             return [dict(x) for x in c.execute(sql+" ORDER BY data_protocolo DESC,id DESC LIMIT 100",args)]
+
+    def list_resumo(self, *, situacoes=None, texto="", signatario_id=None, limit=15, offset=0):
+        """Page of petition cards. One connection, no PDF bytes and no full timeline."""
+        clauses, args = [], []
+        if situacoes:
+            clauses.append("situacao IN (" + ",".join("?" * len(situacoes)) + ")")
+            args.extend(situacoes)
+        term = str(texto or "").strip()
+        if term:
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
+            clauses.append(
+                "(numero_tramita LIKE ? ESCAPE '\\' OR assunto LIKE ? ESCAPE '\\' "
+                "OR objeto LIKE ? ESCAPE '\\' OR destinatario LIKE ? ESCAPE '\\' "
+                "OR origem LIKE ? ESCAPE '\\' OR processo_tc LIKE ? ESCAPE '\\')"
+            )
+            args.extend([like] * 6)
+        if signatario_id:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM peticoes_signatarios s "
+                "WHERE s.peticao_id=peticoes.id AND s.procurador_id=?)"
+            )
+            args.append(signatario_id)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        columns = (
+            "id,numero_tramita,data_protocolo,destinatario_tipo,destinatario,natureza,"
+            "assunto,objeto,origem,processo_tc,situacao,resultado_global"
+        )
+        with self.store.connection(read_only=True) as c:
+            rows = c.execute(
+                f"SELECT {columns} FROM peticoes{where} "
+                "ORDER BY data_protocolo DESC, id DESC LIMIT ? OFFSET ?",
+                (*args, limit, offset),
+            ).fetchall()
+            records = [dict(row) for row in rows]
+            ids = [row["id"] for row in records]
+            signers, latest, requests = {}, {}, {}
+            if ids:
+                placeholders = ",".join("?" * len(ids))
+                for item in c.execute(
+                    "SELECT s.peticao_id, p.id AS procurador_id, p.nome "
+                    "FROM peticoes_signatarios s JOIN procuradores p ON p.id=s.procurador_id "
+                    f"WHERE s.peticao_id IN ({placeholders}) ORDER BY p.nome",
+                    ids,
+                ):
+                    signers.setdefault(item["peticao_id"], []).append(
+                        {"id": item["procurador_id"], "nome": item["nome"]}
+                    )
+                for item in c.execute(
+                    "SELECT peticao_id, data, descricao FROM ("
+                    "SELECT peticao_id, data, descricao, "
+                    "ROW_NUMBER() OVER (PARTITION BY peticao_id ORDER BY data DESC, id DESC) AS rn "
+                    "FROM peticoes_andamentos "
+                    f"WHERE peticao_id IN ({placeholders}) AND excluido=0"
+                    ") ranked WHERE rn=1",
+                    ids,
+                ):
+                    latest[item["peticao_id"]] = {
+                        "data": item["data"],
+                        "descricao": item["descricao"],
+                    }
+                for item in c.execute(
+                    "SELECT peticao_id, id, descricao, ordem, situacao_resultado, resultado, "
+                    "data_resultado, excluido FROM peticoes_pedidos "
+                    f"WHERE peticao_id IN ({placeholders}) AND ("
+                    "excluido=0 OR situacao_resultado!='PENDENTE' OR resultado!=''"
+                    ") ORDER BY peticao_id, excluido, ordem",
+                    ids,
+                ):
+                    bucket = requests.setdefault(
+                        item["peticao_id"], {"ativos": [], "anteriores": []}
+                    )
+                    payload = dict(item)
+                    if not payload["excluido"]:
+                        bucket["ativos"].append(payload)
+                    if payload["situacao_resultado"] != "PENDENTE" or str(
+                        payload["resultado"] or ""
+                    ).strip():
+                        bucket["anteriores"].append(payload)
+            for record in records:
+                grouped = requests.get(record["id"], {"ativos": [], "anteriores": []})
+                record["signatarios"] = signers.get(record["id"], [])
+                record["ultimo_andamento"] = latest.get(record["id"])
+                record["pedidos"] = grouped["ativos"]
+                record["resultados_anteriores"] = grouped["anteriores"]
+            return records
     def progress(self,identifier):
         with self.store.connection(read_only=True) as c:return [dict(x) for x in c.execute("SELECT id,data,descricao,criado_em,criado_por FROM peticoes_andamentos WHERE peticao_id=? AND excluido=0 ORDER BY data DESC,id DESC",(identifier,))]
     def add_progress(self,identifier,data,description,actor):
@@ -107,6 +227,30 @@ class PeticoesStore:
     def conclude(self,identifier,result,actor):
         stamp=now()
         with self.store.connection() as c:c.execute("BEGIN IMMEDIATE");c.execute("UPDATE peticoes SET situacao='CONCLUIDA',resultado_global=?,concluida_em=?,atualizado_em=?,atualizado_por=? WHERE id=?",(result,stamp[:10],stamp,actor,identifier))
+
+    def save_resultado(self, identifier, result, actor):
+        stamp = now()
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            updated = c.execute(
+                "UPDATE peticoes SET resultado_global=?,atualizado_em=?,atualizado_por=? WHERE id=?",
+                (result or "", stamp, actor, identifier),
+            )
+            if not getattr(updated, "rowcount", 1):
+                raise ValueError("Petição não encontrada.")
+
+    def resultados_anteriores(self, identifier):
+        with self.store.connection(read_only=True) as c:
+            return [
+                dict(row)
+                for row in c.execute(
+                    "SELECT descricao,ordem,situacao_resultado,resultado,data_resultado,excluido "
+                    "FROM peticoes_pedidos WHERE peticao_id=? AND ("
+                    "situacao_resultado!='PENDENTE' OR resultado!='') "
+                    "ORDER BY excluido, ordem, id",
+                    (identifier,),
+                )
+            ]
     def document(self,identifier):
         with self.store.connection(read_only=True) as c:
             row=c.execute("SELECT nome,mime_type,arquivo FROM peticoes_documentos WHERE peticao_id=? ORDER BY criado_em LIMIT 1",(identifier,)).fetchone();return dict(row) if row else None

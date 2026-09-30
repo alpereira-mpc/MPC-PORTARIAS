@@ -195,6 +195,10 @@ MODULE_NAVIGATION_RESET = {
         "last_finalized",
     ),
     "Administração": ("pending_open_admin",),
+    "Petições": (
+        "peticoes_edit_id",
+        "peticoes_painel",
+    ),
 }
 
 
@@ -315,7 +319,14 @@ MODULES = (
         MODULE_ICONS["representacoes"],
         True,
     ),
-    Module("peticoes", "Petições", "Petições", "Acompanhamento de manifestações institucionais protocoladas no TRAMITA.", MODULE_ICONS["peticoes"], True),
+    Module(
+        "peticoes",
+        "Petições",
+        "Petições",
+        "Acompanhamento de manifestações institucionais protocoladas no TRAMITA.",
+        MODULE_ICONS["peticoes"],
+        True,
+    ),
     Module(
         "ouvidoria",
         "Ouvidoria",
@@ -408,6 +419,8 @@ def _normalize_module_entry(module, nav_state):
         st.session_state["nav"] = "Nova Portaria"
     elif module == "Administração" and "pending_open_admin" not in nav_state:
         st.session_state["admin_secao"] = "Usuários"
+    elif module == "Petições":
+        st.session_state["peticoes_secao"] = "Acompanhamento"
 
 
 def _reset_module_navigation(module, nav_state):
@@ -554,6 +567,7 @@ def open_relatorios():
 
 def open_representacoes():
     queue_portal_navigation("Representações")
+
 
 def open_peticoes():
     queue_portal_navigation("Petições")
@@ -1194,6 +1208,7 @@ def render_portal():
         if selected == "Petições":
             require_permission(principal, "peticoes")
             from services.peticoes_ui import render
+
             _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Ouvidoria":
