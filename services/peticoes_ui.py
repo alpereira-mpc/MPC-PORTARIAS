@@ -1,11 +1,30 @@
 """UI for Petições, using only peticoes-prefixed session keys."""
 from datetime import date
+import hashlib
+import unicodedata
 import streamlit as st
 from database.peticoes import PeticoesStore
 from services.access import has_permission, require_permission
 from services.branding import module_title
 from services.date_format import format_date_br
 from services.peticoes import NATUREZAS, RESULTADOS, SITUACOES, add_progress, conclude, create, remove_progress, save_requests, update, update_request_result
+
+def _apply_ai_prefill(store):
+    data=st.session_state.pop('peticoes_ai_pending',None)
+    if not data:return
+    mapping={'numero_tramita':'peticoes_new_numero','destinatario':'peticoes_new_destinatario','natureza':'peticoes_new_natureza','assunto':'peticoes_new_assunto','objeto':'peticoes_new_objeto','origem':'peticoes_new_origem','processo_tc':'peticoes_new_processo'}
+    for source,target in mapping.items():
+        if source == 'natureza' and data.get(source) not in NATUREZAS: continue
+        if data.get(source) and not st.session_state.get(target): st.session_state[target]=data[source]
+    if data.get('data_protocolo') and not st.session_state.get('peticoes_new_data'):
+        st.session_state['peticoes_new_data']=date.fromisoformat(data['data_protocolo'])
+    def normalized(value):
+        decomposed=unicodedata.normalize('NFKD', value or '')
+        return " ".join(''.join(char for char in decomposed if not unicodedata.combining(char)).casefold().split())
+    people={normalized(p['nome']):p['id'] for p in store.catalog('procuradores') if p.get('ativo')}
+    matched=[people.get(normalized(name)) for name in data.get('signatarios',[])]; matched=[value for value in matched if value]
+    if matched and not st.session_state.get('peticoes_new_signatarios'):st.session_state['peticoes_new_signatarios']=matched
+    if data.get('pedidos') and not st.session_state.get('peticoes_new_pedidos'):st.session_state['peticoes_new_pedidos']='\n'.join(item['descricao'] for item in data['pedidos'])
 
 def _data_form(store, record=None):
     record=record or {}; people=[p for p in store.catalog('procuradores') if p.get('ativo')]
@@ -39,6 +58,7 @@ def _request_editor(store,principal,record):
 
 def render(store,principal):
     require_permission(principal,'peticoes'); db=PeticoesStore(store); st.title(module_title('peticoes','PETIÇÕES'))
+    _apply_ai_prefill(store)
     if st.session_state.get('peticoes_edit_id'):
         if not has_permission(principal,'peticoes_editar'): raise ValueError('Acesso não autorizado a esta ação.')
         record=db.get(st.session_state['peticoes_edit_id']); st.subheader('Editar Petição')
@@ -54,7 +74,17 @@ def render(store,principal):
     if section=='Cadastrar Petição':
         if not has_permission(principal,'peticoes_cadastrar'): st.info('Sua conta possui somente permissão de visualização.'); return
         with st.form('peticoes_form_open'):
-            data=_data_form(store); requests=st.text_area('Pedidos * (um por linha)',key='peticoes_new_pedidos'); upload=st.file_uploader('PDF protocolado *',type=['pdf'],key='peticoes_new_pdf'); submitted=st.form_submit_button('Cadastrar Petição',type='primary')
+            data=_data_form(store); requests=st.text_area('Pedidos * (um por linha)',key='peticoes_new_pedidos'); upload=st.file_uploader('PDF protocolado *',type=['pdf'],key='peticoes_new_pdf'); analyze=st.form_submit_button('✨ Preencher com IA'); submitted=st.form_submit_button('Cadastrar Petição',type='primary')
+        if analyze:
+            if not upload: st.warning('Selecione o PDF protocolado antes de solicitar a análise.')
+            else:
+                content=upload.getvalue(); file_hash=hashlib.sha256(content).hexdigest()
+                try:
+                    from services.ai_service import analisar_peticao_pdf
+                    result=analisar_peticao_pdf(content)
+                except RuntimeError as exc: st.error(str(exc))
+                else:
+                    st.session_state['peticoes_ai_result_'+file_hash]=result;st.session_state['peticoes_ai_pending']=result;st.success('Campos preenchidos com IA. Revise as informações antes de cadastrar a Petição.');st.rerun()
         if submitted:
             data['pedidos']=[x.strip() for x in requests.splitlines() if x.strip()]
             try:create(store,data,principal,(upload.name,upload.type or 'application/pdf',upload.getvalue()) if upload else None)

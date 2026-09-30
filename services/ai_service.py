@@ -57,7 +57,19 @@ _MODULO_OPERACAO = {
     "oficio_extracao": "oficios",
     "agenda_analise": "agenda",
     "tarefas_analise": "tarefas",
+    "peticoes_extracao": "peticoes",
 }
+PROMPT_EXTRACAO_PETICAO = (
+    "Analise exclusivamente o conteúdo do PDF da própria Petição fornecida. "
+    "Não use conhecimento externo, não complete lacunas e não invente números, datas, nomes, processos, destinatários, signatários ou pedidos. "
+    "Diferencie dados da Petição de documentos, processos e datas apenas citados no corpo. "
+    "Identifique pedidos prioritariamente na seção final de requerimentos. "
+    "Retorne somente JSON com: numero_tramita, data_protocolo (AAAA-MM-DD ou vazio), destinatario, natureza, assunto, objeto, origem, processo_tc, signatarios (lista de nomes) e pedidos (lista de objetos com descricao). "
+    "natureza deve ser exatamente uma de: PROVIDENCIAS, FISCALIZACAO, NOTA_RECOMENDATORIA, REPRESENTACAO, INCIDENTAL, INSTITUCIONAL, OUTROS. "
+    "Quando não houver identificação segura, use string vazia ou lista vazia."
+)
+PETICAO_EXTRAIDA_VAZIA = {"numero_tramita":"","data_protocolo":"","destinatario":"","natureza":"","assunto":"","objeto":"","origem":"","processo_tc":"","signatarios":[],"pedidos":[]}
+_PETICAO_SCHEMA = {"type":"OBJECT","properties":{"numero_tramita":{"type":"STRING"},"data_protocolo":{"type":"STRING"},"destinatario":{"type":"STRING"},"natureza":{"type":"STRING"},"assunto":{"type":"STRING"},"objeto":{"type":"STRING"},"origem":{"type":"STRING"},"processo_tc":{"type":"STRING"},"signatarios":{"type":"ARRAY","items":{"type":"STRING"}},"pedidos":{"type":"ARRAY","items":{"type":"OBJECT","properties":{"descricao":{"type":"STRING"}},"required":["descricao"]}}},"required":list(PETICAO_EXTRAIDA_VAZIA)}
 PROMPT_RESUMO = (
     "Analise exclusivamente o documento PDF fornecido.\n"
     "\n"
@@ -296,6 +308,13 @@ def extrair_dados_oficio_pdf(pdf_bytes):
         operacao="oficio_extracao",
     )
     return _dados_oficio(_texto_resposta(raw))
+
+
+def analisar_peticao_pdf(pdf_bytes):
+    """Extract Petição form suggestions from one PDF; never persists data."""
+    document = _validar_pdf(pdf_bytes)
+    raw, _modelo = _consultar(document, PROMPT_EXTRACAO_PETICAO, "extração de Petição", _PETICAO_SCHEMA, operacao="peticoes_extracao")
+    return _dados_peticao(_texto_resposta(raw))
 
 
 def analisar_periodo_agenda(contexto):
@@ -723,6 +742,29 @@ def _dados_oficio(text):
     result["providencias_sugeridas"] = _providencias_oficio(
         data.get("providencias_sugeridas")
     )
+    return result
+
+
+def _dados_peticao(text):
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        raise GeminiErro("Não foi possível interpretar a resposta do serviço de IA.") from None
+    if not isinstance(data, dict):
+        raise GeminiErro("Não foi possível interpretar a resposta do serviço de IA.")
+    result = dict(PETICAO_EXTRAIDA_VAZIA)
+    for field in ("numero_tramita", "destinatario", "assunto", "objeto", "origem", "processo_tc"):
+        result[field] = _texto_oficio(data.get(field), 2000 if field == "objeto" else 300)
+    result["data_protocolo"] = _data_oficio(data.get("data_protocolo"))
+    nature = _texto_oficio(data.get("natureza"), 40).upper()
+    result["natureza"] = nature if nature in {"PROVIDENCIAS","FISCALIZACAO","NOTA_RECOMENDATORIA","REPRESENTACAO","INCIDENTAL","INSTITUCIONAL","OUTROS"} else ""
+    result["signatarios"] = [_texto_oficio(item, 160) for item in data.get("signatarios", []) if _texto_oficio(item, 160)] if isinstance(data.get("signatarios"), list) else []
+    if isinstance(data.get("pedidos"), list):
+        result["pedidos"] = [{"descricao": _texto_oficio(item.get("descricao"), 1500)} for item in data["pedidos"] if isinstance(item, dict) and _texto_oficio(item.get("descricao"), 1500)]
     return result
 
 
