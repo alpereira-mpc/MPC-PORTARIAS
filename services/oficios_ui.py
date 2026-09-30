@@ -1146,12 +1146,24 @@ def details(service, r, principal=None):
         )
         from services.record_engagement_ui import render_origin_tools
 
+        source_pdf = next(
+            (item for item in files if item.get("tipo") == "application/pdf"), None
+        )
+
         render_origin_tools(
             service.store,
             principal,
             "oficio_enviado" if r["direcao"] == "ENVIADO" else "oficio_recebido",
             r["id"],
             label(r),
+            pdf_supplier=(lambda: service.download(source_pdf["id"])) if source_pdf else None,
+            ai_context={
+                "tipo": "Ofício " + r["direcao"].lower(),
+                "numero": str(r.get("numero_externo") or r.get("numero") or ""),
+                "assunto": r.get("assunto") or "",
+                "origem": r.get("remetente") or "",
+                "identificacao": label(r),
+            },
         )
 
 

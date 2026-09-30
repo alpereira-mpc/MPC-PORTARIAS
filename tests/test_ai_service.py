@@ -656,6 +656,35 @@ def _gemini_json(payload):
     ).encode()
 
 
+def test_task_suggestion_pdf_returns_only_validated_fields(monkeypatch):
+    response = {
+        "titulo": "Solicitar informações à Prefeitura de Ingá",
+        "descricao": "O Ofício solicita informações sobre o contrato.",
+        "providencia": "Preparar a resposta com as informações solicitadas.",
+        "prioridade": "NORMAL",
+        "prazo": {"identificado": True, "quantidade": 10, "unidade": "dias", "tipo_dias": None, "data_explicita": None, "fundamento": "manifestar-se no prazo de 10 dias"},
+        "observacoes": "Há referência ao processo TC 1/2026.",
+        "origem_resumida": "Ofício recebido.",
+    }
+    monkeypatch.setattr(ai_service, "_consultar", lambda *_args, **_kwargs: (_gemini_json(response), "mock"))
+
+    result = ai_service.gerar_sugestao_tarefa_pdf(PDF, {"tipo": "Ofício recebido", "assunto": "Informações"})
+
+    assert result["titulo"] == response["titulo"]
+    assert result["prazo"]["quantidade"] == 10
+    assert result["prazo"]["tipo_dias"] is None
+
+
+def test_task_suggestion_rejects_invalid_json_and_invalid_priority(monkeypatch):
+    monkeypatch.setattr(ai_service, "_consultar", lambda *_args, **_kwargs: (b'{"candidates":[{"content":{"parts":[{"text":"not-json"}]}}]}', "mock"))
+    with pytest.raises(GeminiErro, match="interpretar"):
+        ai_service.gerar_sugestao_tarefa_pdf(PDF)
+
+    response = {**ai_service.SUGESTAO_TAREFA_VAZIA, "titulo": "Preparar resposta", "prioridade": "CRÍTICA"}
+    monkeypatch.setattr(ai_service, "_consultar", lambda *_args, **_kwargs: (_gemini_json(response), "mock"))
+    assert ai_service.gerar_sugestao_tarefa_pdf(PDF)["prioridade"] == ""
+
+
 OFICIO = {
     "numero_externo": "Ofício n. 15/2026",
     "remetente": "João da Silva",

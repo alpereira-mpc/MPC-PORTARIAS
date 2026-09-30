@@ -98,6 +98,81 @@ def _begin_new_task():
     st.session_state["tarefas_edit"] = {}
 
 
+def _clear_editor_widgets(prefix="tarefas_form_new"):
+    for key in list(st.session_state):
+        if str(key).startswith(prefix):
+            st.session_state.pop(key, None)
+
+
+def _open_ai_suggestion(suggestion, origin=None):
+    """Open the existing task editor with an unpersisted, editable suggestion."""
+    deadline = suggestion.get("prazo") or {}
+    notes = suggestion.get("observacoes") or ""
+    if suggestion.get("providencia"):
+        notes = ("Providência sugerida: " + suggestion["providencia"] + ("\n\n" + notes if notes else ""))
+    if deadline.get("identificado"):
+        detail = []
+        if deadline.get("quantidade"):
+            detail.append(f"{deadline['quantidade']} {deadline.get('unidade') or 'dias'}")
+        if deadline.get("tipo_dias"):
+            detail.append(deadline["tipo_dias"])
+        if deadline.get("fundamento"):
+            detail.append("Fundamento: " + deadline["fundamento"])
+        deadline_note = "Prazo identificado: " + (" — ".join(detail) or "conforme documento")
+        notes = notes + ("\n\n" if notes else "") + deadline_note
+    payload = {
+        "titulo": suggestion.get("titulo") or "",
+        "descricao": suggestion.get("descricao") or "",
+        "prioridade": suggestion.get("prioridade") or "NORMAL",
+        "prazo_data": deadline.get("data_explicita") if deadline.get("identificado") else None,
+        "observacoes": notes,
+        "sugerida_por_ia": True,
+    }
+    if origin:
+        payload.update(origin)
+    _clear_editor_widgets()
+    st.session_state["tarefas_edit"] = payload
+    st.session_state["tarefas_ia_sugestao"] = suggestion
+    st.session_state["tarefas_ia_open"] = False
+
+
+def _ai_task_creator():
+    """On-demand PDF analysis. The uploaded bytes are never stored by the app."""
+    if st.button("✨ Criar tarefa com IA", key="tarefas_ia_new"):
+        st.session_state["tarefas_ia_open"] = True
+    if not st.session_state.get("tarefas_ia_open"):
+        return
+    with st.container(border=True, key="tarefas_ia_creator"):
+        st.caption("Envie um PDF de até 10 MB. A IA apenas sugere campos; nada será salvo sem sua confirmação.")
+        uploaded = st.file_uploader("Documento PDF", type=["pdf"], key="tarefas_ia_pdf")
+        left, right = st.columns([1.3, 4])
+        if left.button("Analisar com IA", type="primary", key="tarefas_ia_analyze"):
+            if uploaded is None:
+                st.warning("Selecione um documento PDF para análise.")
+            else:
+                try:
+                    from services.ai_service import gerar_sugestao_tarefa_pdf
+
+                    with st.spinner("Analisando documento com IA..."):
+                        suggestion = gerar_sugestao_tarefa_pdf(uploaded.getvalue())
+                except RuntimeError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    import logging
+
+                    logging.getLogger("mpc.ai").warning(
+                        "Sugestão de tarefa falhou (%s).", type(exc).__name__
+                    )
+                    st.error("Não foi possível analisar o documento neste momento. Tente novamente.")
+                else:
+                    _open_ai_suggestion(suggestion)
+                    st.rerun()
+        if right.button("Cancelar análise", key="tarefas_ia_cancel"):
+            st.session_state["tarefas_ia_open"] = False
+            st.session_state.pop("tarefas_ia_sugestao", None)
+            st.rerun()
+
+
 def _drop_reminder_slot(state_key, slot):
     slots = list(st.session_state.get(state_key) or [])
     if slot in slots:
@@ -174,6 +249,8 @@ def _save_editor(repo, store, principal, prefix, old):
         event = (
             "TAREFA_EDITADA"
             if editing
+            else "TAREFA_CRIADA_IA"
+            if old.get("sugerida_por_ia")
             else "TAREFA_VINCULADA_CRIADA"
             if record.get("origem_modulo")
             else "TAREFA_CRIADA"
@@ -189,6 +266,7 @@ def _save_editor(repo, store, principal, prefix, old):
             for key in list(st.session_state):
                 if str(key).startswith(prefix):
                     st.session_state.pop(key, None)
+            st.session_state.pop("tarefas_ia_sugestao", None)
         _remember("Tarefa salva.")
     except ValueError as exc:
         st.session_state["tarefas_form_error"] = str(exc)
@@ -231,6 +309,8 @@ def _editor(repo, store, principal):
     )
     prefix = "tarefas_form_" + str(form_identity)
     st.subheader("Editar tarefa" if editing else "Nova tarefa")
+    if old.get("sugerida_por_ia"):
+        st.info("Sugeridos por IA — revise antes de salvar.")
     if old.get("origem_modulo"):
         from services.record_engagement_ui import render_task_origin
 
@@ -598,12 +678,18 @@ def render(store, principal):
     repo=TarefasStore(store)
     st.title(module_title("tarefas", "TAREFAS")); st.caption("Organização pessoal de demandas, prazos e prioridades")
     if st.session_state.pop("tarefas_message",None): st.success("Alteração realizada.")
+    pending_ai_origin = st.session_state.pop("tarefas_ia_origem_pendente", None)
+    if pending_ai_origin:
+        _open_ai_suggestion(
+            pending_ai_origin.get("sugestao") or {}, pending_ai_origin.get("origem")
+        )
     st.button(
         "+ Nova tarefa",
         type="primary",
         key="tarefas_new",
         on_click=_begin_new_task,
     )
+    _ai_task_creator()
     linked = st.session_state.pop("tarefas_new_origin", None)
     if linked:
         st.session_state["tarefas_edit"] = linked

@@ -854,8 +854,23 @@ def _detail_compact(store, principal, record):
         from services.record_engagement_ui import render_origin_tools
 
         render_internal_collaboration(store, principal, "representacao", record["id"])
+        official = pdf_oficial(store, record["id"])
         render_origin_tools(
-            store, principal, "representacao", record["id"], record["titulo"]
+            store,
+            principal,
+            "representacao",
+            record["id"],
+            record["titulo"],
+            pdf_supplier=(lambda: download(store, official["id"])["conteudo"])
+            if official else None,
+            ai_context={
+                "tipo": "Representação",
+                "numero": record.get("numero") or "",
+                "assunto": record.get("titulo") or "",
+                "objeto": record.get("objeto") or "",
+                "origem": record.get("origem") or "",
+                "identificacao": record.get("titulo") or "",
+            },
         )
     else:
         flow = _toolbar(
@@ -1044,8 +1059,23 @@ def _detail_body(store, principal, record):
     render_internal_collaboration(store, principal, "representacao", record["id"])
     from services.record_engagement_ui import render_origin_tools
 
+    official = pdf_oficial(store, record["id"])
     render_origin_tools(
-        store, principal, "representacao", record["id"], record["titulo"]
+        store,
+        principal,
+        "representacao",
+        record["id"],
+        record["titulo"],
+        pdf_supplier=(lambda: download(store, official["id"])["conteudo"])
+        if official else None,
+        ai_context={
+            "tipo": "Representação",
+            "numero": record.get("numero") or "",
+            "assunto": record.get("titulo") or "",
+            "objeto": record.get("objeto") or "",
+            "origem": record.get("origem") or "",
+            "identificacao": record.get("titulo") or "",
+        },
     )
     protocolled = is_protocolled(record)
     flow = _toolbar(

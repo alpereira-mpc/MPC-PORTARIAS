@@ -58,6 +58,7 @@ _MODULO_OPERACAO = {
     "agenda_analise": "agenda",
     "tarefas_analise": "tarefas",
     "peticoes_extracao": "peticoes",
+    "tarefas_sugestao": "tarefas",
 }
 PROMPT_EXTRACAO_PETICAO = (
     "Analise exclusivamente o conteúdo do PDF da própria Petição fornecida. "
@@ -260,6 +261,44 @@ PROMPT_ANALISE_TAREFAS = (
     "Nunca exponha identificadores técnicos, slugs, nomes de campos ou chaves internas. "
     "Nomes de módulos devem ser escritos como texto comum, sem crases, backticks ou formatação de código Markdown."
 )
+PROMPT_SUGESTAO_TAREFA = (
+    "Você é assistente administrativo do Ministério Público de Contas. Analise "
+    "exclusivamente o PDF e o contexto administrativo mínimo fornecido. Proponha "
+    "uma tarefa para revisão humana; nunca crie tarefa, não decida responsável, "
+    "não emita decisão ou parecer jurídico e não invente fatos, fundamentos, "
+    "prazos ou prioridades. Use linguagem institucional clara e concisa. "
+    "O título deve ser curto, operacional e específico quando o documento permitir; "
+    "evite títulos genéricos. Descrição e providência devem ser objetivas e apoiadas "
+    "no documento. Só identifique prazo se houver fundamento textual suficiente: "
+    "data de emissão, data apenas mencionada e evento futuro não são prazo. Não "
+    "calcule prazo relativo. prioridade deve ser BAIXA, NORMAL, ALTA, URGENTE ou "
+    "vazia quando não houver base. Retorne somente JSON com as chaves titulo, "
+    "descricao, providencia, prioridade, prazo, observacoes e origem_resumida. "
+    "prazo é objeto com identificado (boolean), quantidade (inteiro ou null), unidade "
+    "(string ou null), tipo_dias (string ou null), data_explicita (AAAA-MM-DD ou null) "
+    "e fundamento (string ou null). Quando não houver informação suficiente, use "
+    "string vazia ou null; prazo.identificado deve ser false."
+)
+SUGESTAO_TAREFA_VAZIA = {
+    "titulo": "", "descricao": "", "providencia": "", "prioridade": "",
+    "prazo": {"identificado": False, "quantidade": None, "unidade": None,
+              "tipo_dias": None, "data_explicita": None, "fundamento": None},
+    "observacoes": "", "origem_resumida": "",
+}
+_SUGESTAO_TAREFA_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "titulo": {"type": "STRING"}, "descricao": {"type": "STRING"},
+        "providencia": {"type": "STRING"}, "prioridade": {"type": "STRING"},
+        "prazo": {"type": "OBJECT", "properties": {
+            "identificado": {"type": "BOOLEAN"}, "quantidade": {"type": "INTEGER", "nullable": True},
+            "unidade": {"type": "STRING", "nullable": True}, "tipo_dias": {"type": "STRING", "nullable": True},
+            "data_explicita": {"type": "STRING", "nullable": True}, "fundamento": {"type": "STRING", "nullable": True},
+        }, "required": ["identificado", "quantidade", "unidade", "tipo_dias", "data_explicita", "fundamento"]},
+        "observacoes": {"type": "STRING"}, "origem_resumida": {"type": "STRING"},
+    },
+    "required": list(SUGESTAO_TAREFA_VAZIA),
+}
 _STATUS_TOKEN = re.compile(r"[A-Z0-9_]{1,40}")
 
 
@@ -315,6 +354,22 @@ def analisar_peticao_pdf(pdf_bytes):
     document = _validar_pdf(pdf_bytes)
     raw, _modelo = _consultar(document, PROMPT_EXTRACAO_PETICAO, "extração de Petição", _PETICAO_SCHEMA, operacao="peticoes_extracao")
     return _dados_peticao(_texto_resposta(raw))
+
+
+def gerar_sugestao_tarefa_pdf(pdf_bytes, contexto=None):
+    """Return a validated task suggestion from a PDF; never persists anything."""
+    document = _validar_pdf(pdf_bytes)
+    context = _contexto_sugestao_tarefa(contexto)
+    prompt = PROMPT_SUGESTAO_TAREFA
+    if context:
+        prompt += "\n\nContexto administrativo autorizado:\n" + json.dumps(
+            context, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+    raw, _modelo = _consultar(
+        document, prompt, "sugestão de tarefa", _SUGESTAO_TAREFA_SCHEMA,
+        operacao="tarefas_sugestao",
+    )
+    return _dados_sugestao_tarefa(_texto_resposta(raw))
 
 
 def analisar_periodo_agenda(contexto):
@@ -765,6 +820,59 @@ def _dados_peticao(text):
     result["signatarios"] = [_texto_oficio(item, 160) for item in data.get("signatarios", []) if _texto_oficio(item, 160)] if isinstance(data.get("signatarios"), list) else []
     if isinstance(data.get("pedidos"), list):
         result["pedidos"] = [{"descricao": _texto_oficio(item.get("descricao"), 1500)} for item in data["pedidos"] if isinstance(item, dict) and _texto_oficio(item.get("descricao"), 1500)]
+    return result
+
+
+def _contexto_sugestao_tarefa(contexto):
+    """Whitelist short, already-authorized record metadata for the model."""
+    if contexto is None:
+        return {}
+    if not isinstance(contexto, dict):
+        raise GeminiErro("Não foi possível preparar a sugestão de tarefa.")
+    allowed = ("tipo", "numero", "assunto", "objeto", "origem", "identificacao")
+    result = {}
+    for key in allowed:
+        value = _texto_oficio(contexto.get(key), 800)
+        if value:
+            result[key] = value
+    return result
+
+
+def _dados_sugestao_tarefa(text):
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        raise GeminiErro("Não foi possível interpretar a resposta do serviço de IA.") from None
+    if not isinstance(data, dict):
+        raise GeminiErro("Não foi possível interpretar a resposta do serviço de IA.")
+    result = dict(SUGESTAO_TAREFA_VAZIA)
+    for field, limit in (
+        ("titulo", 240), ("descricao", 4000), ("providencia", 1200),
+        ("observacoes", 2000), ("origem_resumida", 1000),
+    ):
+        result[field] = _texto_oficio(data.get(field), limit)
+    priority = _texto_oficio(data.get("prioridade"), 20).upper()
+    result["prioridade"] = priority if priority in {"BAIXA", "NORMAL", "ALTA", "URGENTE"} else ""
+    raw_deadline = data.get("prazo")
+    deadline = dict(SUGESTAO_TAREFA_VAZIA["prazo"])
+    if isinstance(raw_deadline, dict):
+        deadline["identificado"] = raw_deadline.get("identificado") is True
+        quantity = raw_deadline.get("quantidade")
+        deadline["quantidade"] = quantity if isinstance(quantity, int) and quantity > 0 else None
+        deadline["unidade"] = _texto_oficio(raw_deadline.get("unidade"), 20) or None
+        deadline["tipo_dias"] = _texto_oficio(raw_deadline.get("tipo_dias"), 30) or None
+        deadline["fundamento"] = _texto_oficio(raw_deadline.get("fundamento"), 500) or None
+        explicit = _data_oficio(raw_deadline.get("data_explicita"))
+        deadline["data_explicita"] = explicit or None
+    if not deadline["identificado"]:
+        deadline = dict(SUGESTAO_TAREFA_VAZIA["prazo"])
+    result["prazo"] = deadline
+    if not any(result[field] for field in ("titulo", "descricao", "providencia")):
+        raise GeminiErro("A IA não conseguiu identificar informações suficientes para sugerir uma tarefa.")
     return result
 
 

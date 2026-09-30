@@ -142,13 +142,42 @@ def _reminders(repo, store, principal, module, identifier, prefix):
                 st.rerun()
 
 
-def render_origin_tools(store, principal, module, identifier, title):
+def _create_ai_task_from_origin(pdf_supplier, origin, context):
+    try:
+        from services.ai_service import gerar_sugestao_tarefa_pdf
+
+        with st.spinner("Analisando documento com IA..."):
+            suggestion = gerar_sugestao_tarefa_pdf(pdf_supplier(), context)
+    except RuntimeError as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:
+        import logging
+
+        logging.getLogger("mpc.ai").warning(
+            "Sugestão de tarefa vinculada falhou (%s).", type(exc).__name__
+        )
+        st.error("Não foi possível analisar o documento neste momento. Tente novamente.")
+        return
+    st.session_state["tarefas_ia_origem_pendente"] = {
+        "sugestao": suggestion,
+        "origem": origin,
+    }
+    from portal import request_portal_navigation
+
+    request_portal_navigation("Tarefas")
+
+
+def render_origin_tools(store, principal, module, identifier, title, *, pdf_supplier=None, ai_context=None):
     """Render only from an already-open record detail."""
     prefix = f"eng_{module}_{identifier}"
     repo = RecordEngagementStore(store)
     section_label("Organização pessoal")
     actions_mark()
-    left, middle, _spacer = st.columns([1.15, 1.25, 2.6])
+    from services.access import has_permission
+
+    columns = st.columns([1.15, 1.45, 1.25, 2.0] if pdf_supplier and has_permission(principal, "tarefas") else [1.15, 1.25, 2.6])
+    left, middle = columns[0], columns[1]
     if left.button("Criar tarefa", key=prefix + "_task"):
         _create_task(module, identifier, title)
     following = repo.is_following(principal.id, module, identifier)
@@ -162,6 +191,13 @@ def render_origin_tools(store, principal, module, identifier, title):
             event, action = "REGISTRO_SEGUIDO", "VINCULAR"
         _audit(store, principal, event, action, module, identifier)
         st.rerun()
+    if pdf_supplier and has_permission(principal, "tarefas"):
+        if columns[2].button("✨ Criar tarefa com IA", key=prefix + "_task_ai"):
+            _create_ai_task_from_origin(
+                pdf_supplier,
+                {"origem_modulo": module, "origem_id": str(identifier)},
+                ai_context or {"tipo": ORIGIN_LABELS.get(module, module), "identificacao": title},
+            )
     _reminder_editor(repo, store, principal, module, identifier, prefix)
     _reminders(repo, store, principal, module, identifier, prefix)
 
