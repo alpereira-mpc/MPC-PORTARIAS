@@ -136,6 +136,10 @@ def open_origin(item, store=None, principal=None, *, rerun=True):
         identifier = int(source_id) if str(source_id).isdigit() else source_id
         navigate("Representações", representacoes_view=identifier)
         return
+    if module == "peticoes":
+        identifier = int(source_id) if str(source_id).isdigit() else source_id
+        navigate("Petições", peticoes_view=identifier)
+        return
     if module == "ouvidoria":
         identifier = int(source_id) if str(source_id).isdigit() else source_id
         navigate("Ouvidoria", ouvidoria_open_id=identifier)

@@ -34,6 +34,7 @@ MODULE_LABELS = {
     "memorandos": "Memorandos",
     "tarefas": "Tarefas",
     "representacoes": "Representações",
+    "peticoes": "Petições",
     "ouvidoria": "Ouvidoria",
     "admin": "Administração",
 }
@@ -833,6 +834,75 @@ def search_ouvidoria(connection, store, principal, term, *, limit):
     return items
 
 
+def search_peticoes(connection, store, principal, term, *, limit):
+    """One petition per hit, from structured columns only."""
+    if not has_permission(principal, "peticoes"):
+        return []
+    if not _has_table(store, "peticoes", connection):
+        return []
+    from services.peticoes import NATUREZAS, SITUACOES
+
+    like = _folded_like(term)
+    body = _text_sql(
+        "p.numero_tramita",
+        "p.assunto",
+        "p.objeto",
+        "p.destinatario",
+        "p.origem",
+        "p.processo_tc",
+        "p.resultado_global",
+        "p.natureza",
+        "p.situacao",
+        _label_sql("p.natureza", NATUREZAS),
+        _label_sql("p.situacao", SITUACOES),
+    )
+    rows = connection.execute(
+        "SELECT p.id, p.numero_tramita, p.assunto, p.objeto, p.situacao, "
+        "p.data_protocolo, p.origem FROM peticoes p WHERE "
+        + _normalized_like_sql(body)
+        + " OR EXISTS (SELECT 1 FROM peticoes_pedidos d WHERE d.peticao_id=p.id "
+        "AND d.excluido=0 AND "
+        + _normalized_like_sql("d.descricao")
+        + ") OR EXISTS (SELECT 1 FROM peticoes_andamentos a WHERE a.peticao_id=p.id "
+        "AND a.excluido=0 AND "
+        + _normalized_like_sql("a.descricao")
+        + ") OR EXISTS (SELECT 1 FROM peticoes_signatarios s "
+        "JOIN procuradores pr ON pr.id=s.procurador_id WHERE s.peticao_id=p.id AND "
+        + _normalized_like_sql("pr.nome")
+        + ") ORDER BY p.data_protocolo DESC, p.id DESC LIMIT ?",
+        (like, like, like, like, limit),
+    ).fetchall()
+    items = []
+    for row in rows:
+        number = row["numero_tramita"] or ""
+        subject = row["assunto"] or ""
+        title = f"{number} — {subject}".strip(" —") or "Petição"
+        objeto = row["objeto"] or ""
+        items.append(
+            SearchHit(
+                source_module="peticoes",
+                source_id=str(row["id"]),
+                gabinete="—",
+                title=title[:80],
+                subtitle=objeto[:80],
+                description=(row["origem"] or "")[:80],
+                date=_parse_date(row["data_protocolo"]),
+                status=SITUACOES.get(row["situacao"], row["situacao"] or ""),
+                score=_score(
+                    term,
+                    code=number,
+                    title=f"{number} {subject}",
+                    extra=" ".join(
+                        part for part in (objeto, row["origem"] or "") if part
+                    ),
+                ),
+                navigation="Petições",
+                metadata={},
+            )
+        )
+    return items
+
+
 def search_admin(connection, store, principal, term, *, limit):
     if not has_permission(principal, "admin"):
         return []
@@ -895,6 +965,7 @@ SOURCES = (
     "memorandos",
     "tarefas",
     "representacoes",
+    "peticoes",
     "ouvidoria",
     "admin",
 )
@@ -905,6 +976,7 @@ LOADERS = {
     "memorandos": search_memorandos,
     "tarefas": search_tarefas,
     "representacoes": search_representacoes,
+    "peticoes": search_peticoes,
     "ouvidoria": search_ouvidoria,
     "admin": search_admin,
 }

@@ -84,7 +84,6 @@ MODULE_LISTING_KEYS = {
         "rep_f_procud",
         "rep_f_ass",
     ),
-    "Petições": ("peticoes_view",),
     "Ouvidoria": (
         "ouvi_fs",
         "ouvi_fr",
@@ -198,6 +197,8 @@ MODULE_NAVIGATION_RESET = {
     "Petições": (
         "peticoes_edit_id",
         "peticoes_painel",
+        "peticoes_view",
+        "peticoes_view_ready",
     ),
 }
 

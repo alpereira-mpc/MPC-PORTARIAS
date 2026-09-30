@@ -28,6 +28,7 @@ OPEN_LABELS = {
     "memorandos": "Ver em Memorandos",
     "tarefas": "Ver em Tarefas",
     "representacoes": "Ver em Representações",
+    "peticoes": "Ver em Petições",
     "ouvidoria": "Ver na Ouvidoria",
     "admin": "Ver em Administração",
 }
@@ -114,8 +115,8 @@ def render_home_search(store, principal):
     _prepare_home_search()
     section_label("Busca global")
     st.caption(
-        "Localize Ofícios, Portarias, Agenda, Representações, Notícias de Fato "
-        "e outros registros permitidos."
+        "Localize Ofícios, Portarias, Agenda, Petições, Representações, "
+        "Notícias de Fato e outros registros permitidos."
     )
     input_version = int(st.session_state.get(HOME_SEARCH_INPUT_VERSION, 0))
     input_key = (

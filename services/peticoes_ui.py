@@ -543,6 +543,47 @@ def _card(store, db, principal, record, index, *, acompanhar):
                 st.warning("PDF protocolado não encontrado.")
 
 
+def _section_shows_focus(record, acompanhar):
+    """Keep a deep-linked petition on Acompanhamento or Histórico, not both."""
+    concluded = record.get("situacao") == "CONCLUIDA"
+    return (not acompanhar) if concluded else bool(acompanhar)
+
+
+def _prepare_search_focus(db):
+    """Open the petition chosen in Busca Global once, without locking the section."""
+    raw = st.session_state.get("peticoes_view")
+    if raw in (None, ""):
+        return None
+    try:
+        identifier = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if st.session_state.get("peticoes_view_ready") == identifier:
+        return identifier
+    record = db.get(identifier)
+    if record is None:
+        st.session_state.pop("peticoes_view", None)
+        return None
+    st.session_state["peticoes_secao"] = (
+        "Histórico" if record["situacao"] == "CONCLUIDA" else "Acompanhamento"
+    )
+    panel = dict(_painel())
+    panel.setdefault("d" + str(identifier), True)
+    st.session_state["peticoes_painel"] = panel
+    st.session_state["peticoes_view_ready"] = identifier
+    return identifier
+
+
+def _focused_card(db, identifier):
+    record = db.get(identifier)
+    if not record:
+        return None
+    rows = db.list_resumo(
+        situacoes=None, texto=record["numero_tramita"], limit=5, offset=0
+    )
+    return next((row for row in rows if row["id"] == identifier), None)
+
+
 def _filters(store, prefix, default):
     people = [person for person in store.catalog("procuradores") if person.get("ativo")]
     labels = ["Todos"] + [person["nome"] for person in people]
@@ -560,7 +601,9 @@ def _filters(store, prefix, default):
     return texto, FILTROS_SITUACAO[chosen], signatario
 
 
-def _render_lista(store, db, principal, *, prefix, default, acompanhar, empty):
+def _render_lista(
+    store, db, principal, *, prefix, default, acompanhar, empty, focus_id=None
+):
     texto, situacoes, signatario = _filters(store, prefix, default)
     signature = (texto, situacoes, signatario)
     signature_key = prefix + "signature"
@@ -578,9 +621,21 @@ def _render_lista(store, db, principal, *, prefix, default, acompanhar, empty):
     )
     has_next = len(rows) > PAGE_SIZE
     rows = rows[:PAGE_SIZE]
-    if not rows:
+    pinned = _focused_card(db, focus_id) if focus_id else None
+    if pinned and not _section_shows_focus(pinned, acompanhar):
+        pinned = None
+    visible = []
+    seen = set()
+    if pinned:
+        visible.append(pinned)
+        seen.add(pinned["id"])
+    for record in rows:
+        if record["id"] in seen:
+            continue
+        visible.append(record)
+    if not visible:
         empty_state(empty)
-    for index, record in enumerate(rows):
+    for index, record in enumerate(visible):
         _card(
             store,
             db,
@@ -603,6 +658,7 @@ def _render_lista(store, db, principal, *, prefix, default, acompanhar, empty):
 def render(store, principal):
     require_permission(principal, "peticoes")
     db = PeticoesStore(store)
+    focus_id = _prepare_search_focus(db)
     st.title(module_title("peticoes", "PETIÇÕES"))
     if st.session_state.get("peticoes_edit_id"):
         _render_editor(store, db, principal)
@@ -620,6 +676,7 @@ def render(store, principal):
             default="Concluída",
             acompanhar=False,
             empty="Nenhuma petição encontrada para os filtros selecionados.",
+            focus_id=focus_id,
         )
         return
     _render_lista(
@@ -630,4 +687,5 @@ def render(store, principal):
         default="Em aberto",
         acompanhar=True,
         empty="Nenhuma petição em acompanhamento para os filtros selecionados.",
+        focus_id=focus_id,
     )
