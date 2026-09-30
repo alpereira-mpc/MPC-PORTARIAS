@@ -341,10 +341,11 @@ def test_future_modules_have_no_routes_or_side_effects():
         "tarefas",
         "relatorios",
         "representacoes",
+        "peticoes",
         "ouvidoria",
     ]
     assert [module.key for module in MODULES if not module.active] == []
-    assert len({module.key for module in MODULES}) == 8
+    assert len({module.key for module in MODULES}) == 9
 
 
 def test_home_card_icons_are_complete_material_names():
@@ -479,6 +480,7 @@ def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
         "TAREFAS",
         "RELATÓRIOS",
         "REPRESENTAÇÕES",
+        "PETIÇÕES",
         "OUVIDORIA",
         "ADMINISTRAÇÃO",
     ]
@@ -489,8 +491,11 @@ def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
     assert keys.index("open_memorandos") < keys.index("open_oficios")
     assert keys.index("open_oficios") < keys.index("open_agenda")
     assert "open_representacoes" in keys
+    assert "open_peticoes" in keys
     assert "open_ouvidoria" in keys
     assert keys.index("open_representacoes") < keys.index("open_ouvidoria")
+    assert keys.index("open_representacoes") < keys.index("open_peticoes")
+    assert keys.index("open_peticoes") < keys.index("open_ouvidoria")
     assert keys.index("open_ouvidoria") < keys.index("open_admin")
 
 

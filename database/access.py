@@ -16,9 +16,9 @@ _READY = set()
 GABINETE_LIST = ",".join("'" + code + "'" for code in GABINETES)
 USER_COLUMNS = (
     "id,nome,email,perfil,ativo,pode_portarias,pode_agenda,pode_oficios,pode_memorandos,pode_relatorios,"
-    "pode_representacoes,pode_ouvidoria,pode_representacoes_registrar_protocolo,"
+    "pode_representacoes,pode_peticoes,pode_ouvidoria,pode_representacoes_registrar_protocolo,"
     "pode_representacoes_enviar_comunicacao,pode_comunicacoes_configurar_destinatarios,"
-    "pode_comunicacoes_enviar_teste,pode_admin,protegido,criado_em,atualizado_em"
+    "pode_comunicacoes_enviar_teste,pode_peticoes_cadastrar,pode_peticoes_editar,pode_peticoes_registrar_andamento,pode_peticoes_registrar_resultado,pode_peticoes_concluir,pode_admin,protegido,criado_em,atualizado_em"
 )
 
 
@@ -76,6 +76,7 @@ class AccessStore:
                         "UPDATE usuarios_acesso SET pode_ouvidoria=1 WHERE perfil='ADMINISTRADOR'"
                     )
             for column in (
+                "pode_peticoes", "pode_peticoes_cadastrar", "pode_peticoes_editar", "pode_peticoes_registrar_andamento", "pode_peticoes_registrar_resultado", "pode_peticoes_concluir",
                 "pode_representacoes_registrar_protocolo",
                 "pode_representacoes_enviar_comunicacao",
                 "pode_comunicacoes_configurar_destinatarios",
@@ -117,11 +118,17 @@ class AccessStore:
                 "pode_memorandos INTEGER NOT NULL DEFAULT 0 CHECK(pode_memorandos IN (0,1)),"
                 "pode_relatorios INTEGER NOT NULL DEFAULT 0 CHECK(pode_relatorios IN (0,1)),"
                 "pode_representacoes INTEGER NOT NULL DEFAULT 0 CHECK(pode_representacoes IN (0,1)),"
+                "pode_peticoes INTEGER NOT NULL DEFAULT 0 CHECK(pode_peticoes IN (0,1)),"
                 "pode_ouvidoria INTEGER NOT NULL DEFAULT 0 CHECK(pode_ouvidoria IN (0,1)),"
                 "pode_representacoes_registrar_protocolo INTEGER NOT NULL DEFAULT 0 CHECK(pode_representacoes_registrar_protocolo IN (0,1)),"
                 "pode_representacoes_enviar_comunicacao INTEGER NOT NULL DEFAULT 0 CHECK(pode_representacoes_enviar_comunicacao IN (0,1)),"
                 "pode_comunicacoes_configurar_destinatarios INTEGER NOT NULL DEFAULT 0 CHECK(pode_comunicacoes_configurar_destinatarios IN (0,1)),"
                 "pode_comunicacoes_enviar_teste INTEGER NOT NULL DEFAULT 0 CHECK(pode_comunicacoes_enviar_teste IN (0,1)),"
+                "pode_peticoes_cadastrar INTEGER NOT NULL DEFAULT 0 CHECK(pode_peticoes_cadastrar IN (0,1)),"
+                "pode_peticoes_editar INTEGER NOT NULL DEFAULT 0 CHECK(pode_peticoes_editar IN (0,1)),"
+                "pode_peticoes_registrar_andamento INTEGER NOT NULL DEFAULT 0 CHECK(pode_peticoes_registrar_andamento IN (0,1)),"
+                "pode_peticoes_registrar_resultado INTEGER NOT NULL DEFAULT 0 CHECK(pode_peticoes_registrar_resultado IN (0,1)),"
+                "pode_peticoes_concluir INTEGER NOT NULL DEFAULT 0 CHECK(pode_peticoes_concluir IN (0,1)),"
                 "pode_admin INTEGER NOT NULL DEFAULT 0 CHECK(pode_admin IN (0,1)),"
                 "protegido INTEGER NOT NULL DEFAULT 0 CHECK(protegido IN (0,1)),"
                 "tema TEXT NOT NULL DEFAULT 'vermelho',"
@@ -156,6 +163,7 @@ class AccessStore:
                     "ALTER TABLE usuarios_acesso ADD COLUMN pode_ouvidoria INTEGER NOT NULL DEFAULT 0"
                 )
             for column in (
+                "pode_peticoes", "pode_peticoes_cadastrar", "pode_peticoes_editar", "pode_peticoes_registrar_andamento", "pode_peticoes_registrar_resultado", "pode_peticoes_concluir",
                 "pode_representacoes_registrar_protocolo",
                 "pode_representacoes_enviar_comunicacao",
                 "pode_comunicacoes_configurar_destinatarios",
@@ -176,6 +184,7 @@ class AccessStore:
             c.execute(
                 "UPDATE usuarios_acesso SET pode_memorandos=1, pode_relatorios=1, "
                 "pode_representacoes=1, pode_ouvidoria=1, "
+                "pode_peticoes=1, pode_peticoes_cadastrar=1, pode_peticoes_editar=1, pode_peticoes_registrar_andamento=1, pode_peticoes_registrar_resultado=1, pode_peticoes_concluir=1, "
                 "pode_representacoes_registrar_protocolo=1, "
                 "pode_representacoes_enviar_comunicacao=1, "
                 "pode_comunicacoes_configurar_destinatarios=1, "
@@ -216,7 +225,8 @@ class AccessStore:
         c.execute(
             "UPDATE usuarios_acesso SET protegido=1, perfil='ADMINISTRADOR', ativo=1, "
             "pode_admin=1, pode_portarias=1, pode_agenda=1, pode_oficios=1, pode_memorandos=1, "
-            "pode_relatorios=1, pode_representacoes=1, pode_ouvidoria=1 "
+            "pode_relatorios=1, pode_representacoes=1, pode_peticoes=1, pode_ouvidoria=1, "
+            "pode_peticoes_cadastrar=1, pode_peticoes_editar=1, pode_peticoes_registrar_andamento=1, pode_peticoes_registrar_resultado=1, pode_peticoes_concluir=1 "
             ",pode_representacoes_registrar_protocolo=1, "
             "pode_representacoes_enviar_comunicacao=1, "
             "pode_comunicacoes_configurar_destinatarios=1, "
@@ -312,6 +322,7 @@ class AccessStore:
                     "pode_memorandos",
                     "pode_relatorios",
                     "pode_representacoes",
+                    "pode_peticoes", "pode_peticoes_cadastrar", "pode_peticoes_editar", "pode_peticoes_registrar_andamento", "pode_peticoes_registrar_resultado", "pode_peticoes_concluir",
                     "pode_ouvidoria",
                     "pode_representacoes_registrar_protocolo",
                     "pode_representacoes_enviar_comunicacao",
@@ -409,6 +420,18 @@ class AccessStore:
                     self._mark_protected_admin(c)
                 action = "acesso_atualizar_usuario"
             c.execute("DELETE FROM usuario_gabinetes WHERE usuario_id=?", (identifier,))
+            # Module visibility and each institutional action remain independent.
+            peticoes = 1 if perfil == "ADMINISTRADOR" or payload.get("pode_peticoes") else 0
+            actions = [
+                1 if perfil == "ADMINISTRADOR" or payload.get(name) else 0
+                for name in ("pode_peticoes_cadastrar", "pode_peticoes_editar", "pode_peticoes_registrar_andamento", "pode_peticoes_registrar_resultado", "pode_peticoes_concluir")
+            ]
+            c.execute(
+                "UPDATE usuarios_acesso SET pode_peticoes=?,pode_peticoes_cadastrar=?,"
+                "pode_peticoes_editar=?,pode_peticoes_registrar_andamento=?,"
+                "pode_peticoes_registrar_resultado=?,pode_peticoes_concluir=? WHERE id=?",
+                (peticoes, *actions, identifier),
+            )
             c.executemany(
                 "INSERT INTO usuario_gabinetes VALUES(?,?)",
                 [(identifier, code) for code in gabinetes],
@@ -520,7 +543,7 @@ class AccessStore:
     def _hydrate(self, c, row):
         record = dict(row)
         record["ativo"] = bool(record["ativo"])
-        for key in ("pode_portarias", "pode_agenda", "pode_oficios", "pode_memorandos", "pode_relatorios", "pode_representacoes", "pode_ouvidoria", "pode_representacoes_registrar_protocolo", "pode_representacoes_enviar_comunicacao", "pode_comunicacoes_configurar_destinatarios", "pode_comunicacoes_enviar_teste", "pode_admin", "protegido"):
+        for key in ("pode_portarias", "pode_agenda", "pode_oficios", "pode_memorandos", "pode_relatorios", "pode_representacoes", "pode_peticoes", "pode_ouvidoria", "pode_representacoes_registrar_protocolo", "pode_representacoes_enviar_comunicacao", "pode_comunicacoes_configurar_destinatarios", "pode_comunicacoes_enviar_teste", "pode_peticoes_cadastrar", "pode_peticoes_editar", "pode_peticoes_registrar_andamento", "pode_peticoes_registrar_resultado", "pode_peticoes_concluir", "pode_admin", "protegido"):
             record[key] = bool(record.get(key))
         record["gabinetes"] = [
             r[0]

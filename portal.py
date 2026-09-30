@@ -50,6 +50,7 @@ PORTAL_NAV_STATE_KEYS = frozenset(
         "tarefas_open_id",
         "tarefas_new_origin",
         "representacoes_view",
+        "peticoes_view",
         "ouvidoria_open_id",
         "portaria_open_id",
     }
@@ -83,6 +84,7 @@ MODULE_LISTING_KEYS = {
         "rep_f_procud",
         "rep_f_ass",
     ),
+    "Petições": ("peticoes_view",),
     "Ouvidoria": (
         "ouvi_fs",
         "ouvi_fr",
@@ -313,6 +315,7 @@ MODULES = (
         MODULE_ICONS["representacoes"],
         True,
     ),
+    Module("peticoes", "Petições", "Petições", "Acompanhamento de manifestações institucionais protocoladas no TRAMITA.", MODULE_ICONS["peticoes"], True),
     Module(
         "ouvidoria",
         "Ouvidoria",
@@ -552,6 +555,9 @@ def open_relatorios():
 def open_representacoes():
     queue_portal_navigation("Representações")
 
+def open_peticoes():
+    queue_portal_navigation("Petições")
+
 
 def open_ouvidoria():
     queue_portal_navigation("Ouvidoria")
@@ -579,6 +585,7 @@ def card(module):
                     "tarefas": open_tarefas,
                     "relatorios": open_relatorios,
                     "representacoes": open_representacoes,
+                    "peticoes": open_peticoes,
                     "ouvidoria": open_ouvidoria,
                 }[module.key],
             )
@@ -1049,6 +1056,8 @@ def render_portal():
         options.append("Relatórios e Indicadores")
     if has_permission(principal, "representacoes"):
         options.append("Representações")
+    if has_permission(principal, "peticoes"):
+        options.append("Petições")
     if has_permission(principal, "ouvidoria"):
         options.append("Ouvidoria")
     if has_permission(principal, "admin"):
@@ -1180,6 +1189,11 @@ def render_portal():
             require_permission(principal, "representacoes")
             from services.representacoes_ui import render
 
+            _render_module_fragment(render, store, principal)
+            st.stop()
+        if selected == "Petições":
+            require_permission(principal, "peticoes")
+            from services.peticoes_ui import render
             _render_module_fragment(render, store, principal)
             st.stop()
         if selected == "Ouvidoria":

@@ -52,6 +52,7 @@ def user_rows(users):
             "Memorandos": "Sim" if user["pode_memorandos"] else "Não",
             "Relatórios": "Sim" if user["pode_relatorios"] else "Não",
             "Representações": "Sim" if user["pode_representacoes"] else "Não",
+            "Petições": "Sim" if user.get("pode_peticoes") else "Não",
             "Ouvidoria": "Sim" if user["pode_ouvidoria"] else "Não",
             "Admin": "Sim" if user["pode_admin"] else "Não",
             "Gabinetes": ", ".join(user["gabinetes"]) or "—",
@@ -478,6 +479,7 @@ def render(store, principal):
         pode_memorandos=False,
         pode_relatorios=False,
         pode_representacoes=False,
+        pode_peticoes=False,
         pode_ouvidoria=False,
         pode_representacoes_registrar_protocolo=False,
         pode_representacoes_enviar_comunicacao=False,
@@ -545,6 +547,16 @@ def render(store, principal):
             value=current["pode_representacoes"],
             key=prefix + "representacoes",
         )
+        peticoes = st.checkbox(
+            "Petições",
+            value=current.get("pode_peticoes", False),
+            key=prefix + "peticoes",
+        )
+        peticoes_cadastrar = st.checkbox("Petições — Cadastrar", value=current.get("pode_peticoes_cadastrar", False), key=prefix + "peticoes_cadastrar")
+        peticoes_editar = st.checkbox("Petições — Editar", value=current.get("pode_peticoes_editar", False), key=prefix + "peticoes_editar")
+        peticoes_andamento = st.checkbox("Petições — Registrar andamento", value=current.get("pode_peticoes_registrar_andamento", False), key=prefix + "peticoes_andamento")
+        peticoes_resultado = st.checkbox("Petições — Registrar resultado", value=current.get("pode_peticoes_registrar_resultado", False), key=prefix + "peticoes_resultado")
+        peticoes_concluir = st.checkbox("Petições — Concluir", value=current.get("pode_peticoes_concluir", False), key=prefix + "peticoes_concluir")
         protocolo = st.checkbox(
             "Representações — Registrar protocolo",
             value=current.get("pode_representacoes_registrar_protocolo", False),
@@ -606,6 +618,12 @@ def render(store, principal):
                     "pode_memorandos": memorandos,
                     "pode_relatorios": relatorios,
                     "pode_representacoes": representacoes,
+                    "pode_peticoes": peticoes,
+                    "pode_peticoes_cadastrar": peticoes_cadastrar,
+                    "pode_peticoes_editar": peticoes_editar,
+                    "pode_peticoes_registrar_andamento": peticoes_andamento,
+                    "pode_peticoes_registrar_resultado": peticoes_resultado,
+                    "pode_peticoes_concluir": peticoes_concluir,
                     "pode_representacoes_registrar_protocolo": protocolo,
                     "pode_representacoes_enviar_comunicacao": comunicacao,
                     "pode_comunicacoes_configurar_destinatarios": destinatarios,

@@ -5,11 +5,12 @@ import time
 from database.access import AccessStore, normalize_email
 from services.oficios import GABINETES
 
-MODULES = ("portarias", "agenda", "oficios", "memorandos", "tarefas", "relatorios", "representacoes", "ouvidoria", "admin")
+MODULES = ("portarias", "agenda", "oficios", "memorandos", "tarefas", "relatorios", "representacoes", "peticoes", "ouvidoria", "admin")
 # Capacidades delegáveis para ações que podem produzir efeito institucional externo.
 CAPABILITIES = (
     "representacoes_registrar_protocolo",
     "representacoes_enviar_comunicacao",
+    "peticoes_cadastrar", "peticoes_editar", "peticoes_registrar_andamento", "peticoes_registrar_resultado", "peticoes_concluir",
     "comunicacoes_configurar_destinatarios",
     "comunicacoes_enviar_teste",
 )
@@ -31,9 +32,15 @@ class Principal:
     pode_memorandos: bool = False
     pode_relatorios: bool = False
     pode_representacoes: bool = False
+    pode_peticoes: bool = False
     pode_ouvidoria: bool = False
     pode_representacoes_registrar_protocolo: bool = False
     pode_representacoes_enviar_comunicacao: bool = False
+    pode_peticoes_cadastrar: bool = False
+    pode_peticoes_editar: bool = False
+    pode_peticoes_registrar_andamento: bool = False
+    pode_peticoes_registrar_resultado: bool = False
+    pode_peticoes_concluir: bool = False
     pode_comunicacoes_configurar_destinatarios: bool = False
     pode_comunicacoes_enviar_teste: bool = False
 
@@ -98,9 +105,11 @@ def principal_from_record(record):
             pode_memorandos=True,
             pode_relatorios=True,
             pode_representacoes=True,
+            pode_peticoes=True,
             pode_ouvidoria=True,
             pode_representacoes_registrar_protocolo=True,
             pode_representacoes_enviar_comunicacao=True,
+            pode_peticoes_cadastrar=True, pode_peticoes_editar=True, pode_peticoes_registrar_andamento=True, pode_peticoes_registrar_resultado=True, pode_peticoes_concluir=True,
             pode_comunicacoes_configurar_destinatarios=True,
             pode_comunicacoes_enviar_teste=True,
             pode_admin=True,
@@ -123,9 +132,11 @@ def principal_from_record(record):
         pode_memorandos=bool(record.get("pode_memorandos", False)),
         pode_relatorios=bool(record.get("pode_relatorios", False)),
         pode_representacoes=bool(record.get("pode_representacoes", False)),
+        pode_peticoes=bool(record.get("pode_peticoes", False)),
         pode_ouvidoria=bool(record.get("pode_ouvidoria", False)),
         pode_representacoes_registrar_protocolo=bool(record.get("pode_representacoes_registrar_protocolo", False)),
         pode_representacoes_enviar_comunicacao=bool(record.get("pode_representacoes_enviar_comunicacao", False)),
+        pode_peticoes_cadastrar=bool(record.get("pode_peticoes_cadastrar", False)), pode_peticoes_editar=bool(record.get("pode_peticoes_editar", False)), pode_peticoes_registrar_andamento=bool(record.get("pode_peticoes_registrar_andamento", False)), pode_peticoes_registrar_resultado=bool(record.get("pode_peticoes_registrar_resultado", False)), pode_peticoes_concluir=bool(record.get("pode_peticoes_concluir", False)),
         pode_comunicacoes_configurar_destinatarios=bool(record.get("pode_comunicacoes_configurar_destinatarios", False)),
         pode_comunicacoes_enviar_teste=bool(record.get("pode_comunicacoes_enviar_teste", False)),
         pode_admin=bool(record["pode_admin"]),
@@ -216,6 +227,8 @@ def has_permission(principal, module):
         return principal.administrator or principal.pode_relatorios
     if module == "representacoes":
         return principal.pode_representacoes
+    if module == "peticoes":
+        return principal.pode_peticoes
     if module == "ouvidoria":
         return principal.pode_ouvidoria
     if module == "admin":
