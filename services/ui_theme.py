@@ -842,6 +842,32 @@ border:0 !important;
 box-shadow:none !important;
 padding:0 !important;
 }}
+.mpc-guidance{{
+margin:.45rem 0 .75rem;
+padding:.8rem 1rem .75rem;
+background:var(--mpc-card-b);
+border:1px solid var(--mpc-card-border-b);
+border-left:3px solid var(--mpc-red);
+border-radius:var(--mpc-radius);
+box-shadow:none;
+color:var(--mpc-text);
+}}
+.mpc-guidance p{{
+margin:0;
+color:var(--mpc-text);
+font-size:.95rem;
+line-height:1.45;
+font-weight:450;
+}}
+section[data-testid="stMain"] [data-testid="stElementContainer"]:has(.mpc-guidance),
+section[data-testid="stMain"] [data-testid="stMarkdown"]:has(.mpc-guidance),
+section[data-testid="stMain"] [data-testid="stMarkdownContainer"]:has(.mpc-guidance){{
+background:transparent !important;
+background-color:transparent !important;
+border:0 !important;
+box-shadow:none !important;
+padding:0 !important;
+}}
 .mpc-record{{
 margin:0;
 padding:.05rem 0 .15rem;
@@ -1526,6 +1552,28 @@ def empty_state(text):
     render_html(
         f'<div class="mpc-empty-state"><p>{html_text(text)}</p></div>'
     )
+
+
+def guidance_note(text):
+    """Orientation notice painted with the active theme surfaces."""
+    render_html(f'<div class="mpc-guidance"><p>{html_text(text)}</p></div>')
+
+
+def style_striped_table(rows, theme_name="vermelho"):
+    """Alternate dataframe rows with the active table palette. Header stays untouched."""
+    import pandas as pd
+
+    frame = pd.DataFrame(rows)
+    tokens = theme_tokens(valid_theme(theme_name))
+    base = tokens["themed_table_bg"]
+    stripe = tokens["themed_table_stripe_bg"]
+    foreground = tokens["themed_table_fg"]
+
+    def paint(row):
+        fill = base if row.name % 2 == 0 else stripe
+        return [f"background-color: {fill}; color: {foreground}"] * len(row)
+
+    return frame.style.apply(paint, axis=1)
 
 
 def filter_mark():

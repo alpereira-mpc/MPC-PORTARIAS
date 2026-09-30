@@ -96,6 +96,13 @@ def style_user_table(rows, theme_name="vermelho"):
     return styler
 
 
+def style_function_table(rows, theme_name="vermelho"):
+    """Stripe institutional-function rows with the active table palette."""
+    from services.ui_theme import style_striped_table
+
+    return style_striped_table(rows, theme_name)
+
+
 def _active_theme_name():
     cached = st.session_state.get("_portal_theme") or {}
     return valid_theme(cached.get("name"))
@@ -113,14 +120,17 @@ def institutional_functions(store, principal):
     )
     current = functions.current_all()
     st.dataframe(
-        [
-            {
-                "Função": FUNCTIONS[code],
-                "Titular atual": row["nome"] if row else "—",
-                "Desde": date.fromisoformat(row["data_inicio"]) if row else None,
-            }
-            for code, row in current.items()
-        ],
+        style_function_table(
+            [
+                {
+                    "Função": FUNCTIONS[code],
+                    "Titular atual": row["nome"] if row else "—",
+                    "Desde": date.fromisoformat(row["data_inicio"]) if row else None,
+                }
+                for code, row in current.items()
+            ],
+            _active_theme_name(),
+        ),
         column_config={
             "Desde": st.column_config.DateColumn("Desde", format="DD/MM/YYYY")
         },

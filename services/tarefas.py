@@ -5,6 +5,7 @@ import hashlib
 import json
 
 from database.tarefas import ACTIVE, effective_deadline
+from database.record_engagement import ORIGIN_LABELS
 from services.audit import INSTITUTIONAL_TZ
 
 
@@ -91,7 +92,7 @@ def _tarefa_resumo(row, agora):
         "prioridade": PRIORITY_LABELS[priority],
         "prazo": _prazo_publico(row, deadline),
         "situacao_prazo": _situacao_prazo(deadline, agora),
-        "origem_modulo": _texto(row.get("origem_modulo"), 80),
+        "origem_modulo": _rotulo_origem(row.get("origem_modulo")),
         "lembretes": _lembretes_publicos(row.get("lembretes"), agora),
     }
 
@@ -142,6 +143,20 @@ def _lembretes_publicos(values, agora):
             }
         )
     return reminders[:3]
+
+
+def _rotulo_origem(value):
+    """Friendly module name for the briefing. Stored slugs stay unchanged."""
+    text = _texto(value, 80)
+    if not text:
+        return ""
+    label = ORIGIN_LABELS.get(text)
+    if label:
+        return label
+    readable = " ".join(
+        part.capitalize() for part in text.replace("-", " ").split("_") if part
+    )
+    return readable
 
 
 def _texto(value, limit):

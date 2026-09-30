@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import json
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 import services.ai_service as ai_service
@@ -226,3 +227,61 @@ def test_ai_failure_never_writes_tasks(store, monkeypatch):
 
     assert any("IA indisponível." in item.value for item in app.error)
     assert repo.get(task["id"], principal.id) == before
+
+
+@pytest.mark.parametrize(
+    ("slug", "label"),
+    [
+        ("oficio_recebido", "Ofício recebido"),
+        ("oficio_enviado", "Ofício enviado"),
+        ("memorando", "Memorando"),
+        ("representacao", "Representação"),
+        ("ouvidoria", "Notícia de Fato"),
+    ],
+)
+def test_task_analysis_context_uses_official_origin_labels(slug, label):
+    row = _row("Vinculada", "A_FAZER")
+    row["origem_modulo"] = slug
+    context, _ = contexto_analise_tarefas([row], NOW)
+    assert row["origem_modulo"] == slug
+    assert context["tarefas"][0]["origem_modulo"] == label
+    dumped = json.dumps(context, ensure_ascii=False)
+    assert slug not in dumped
+    assert f"`{label}`" not in dumped
+    assert "`" not in dumped
+
+
+def test_unknown_origin_is_readable_and_the_prompt_forbids_slugs():
+    row = _row("Sem catálogo", "A_FAZER")
+    row["origem_modulo"] = "modulo_inexistente"
+    context, _ = contexto_analise_tarefas([row], NOW)
+    assert context["tarefas"][0]["origem_modulo"] == "Modulo Inexistente"
+    assert "modulo_inexistente" not in json.dumps(context)
+    prompt = ai_service.PROMPT_ANALISE_TAREFAS
+    assert "nomes amigáveis destinados ao usuário" in prompt
+    assert "Nunca exponha identificadores técnicos" in prompt
+    assert "sem crases, backticks ou formatação de código Markdown" in prompt
+
+
+def test_task_analysis_payload_sends_the_friendly_origin(monkeypatch):
+    seen = {}
+
+    def post(request):
+        seen["body"] = json.loads(request.data.decode("utf-8"))
+        return json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": "Briefing seguro."}]}}]}
+        ).encode()
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    import streamlit as st
+
+    monkeypatch.setattr(st, "secrets", {"GEMINI_API_KEY": "chave-teste"})
+    row = _row("Recebido", "A_FAZER")
+    row["origem_modulo"] = "oficio_recebido"
+    context, _ = contexto_analise_tarefas([row], NOW)
+    assert ai_service.analisar_tarefas_ativas(context) == "Briefing seguro."
+    body = seen["body"]["contents"][0]["parts"][0]["text"]
+    facts = body.split("Dados:\n", 1)[1]
+    assert "Ofício recebido" in facts
+    assert "oficio_recebido" not in facts
+    assert "`" not in facts

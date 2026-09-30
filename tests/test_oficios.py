@@ -686,3 +686,21 @@ def test_new_oficio_defaults_to_system_creation(store, monkeypatch):
         c.label.startswith("Confirmo que este documento será registrado")
         for c in app.checkbox
     )
+
+
+def test_ultimas_movimentacoes_show_brazilian_dates():
+    from datetime import datetime
+
+    from services.oficios_ui import data_movimentacao
+    from services.ui_theme import record_html
+
+    assert data_movimentacao("2026-09-29") == "29/09/2026"
+    assert data_movimentacao(date(2026, 9, 16)) == "16/09/2026"
+    assert data_movimentacao(datetime(2026, 9, 14, 18, 30)) == "14/09/2026"
+    assert data_movimentacao("2026-09-29T08:15:00") == "29/09/2026"
+    markup = record_html(
+        "5230/2026/MPF/PR-PB/PRDC-JAS/2026 — Encaminha documentação",
+        meta=data_movimentacao("2026-09-29"),
+    )
+    assert "29/09/2026" in markup
+    assert "2026-09-29" not in markup

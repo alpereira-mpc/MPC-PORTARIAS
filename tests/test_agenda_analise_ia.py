@@ -87,15 +87,15 @@ def _leaves():
 
 def test_period_facts_keep_overlap_rules_and_count_records():
     context, signature = contexto_periodo(START, END, _week(), _leaves(), NAMES)
-    assert context["periodo"] == {"inicio": "2026-09-28", "fim": "2026-10-04"}
+    assert context["periodo"] == {"inicio": "28/09/2026", "fim": "04/10/2026"}
     assert context["total_compromissos"] == 11
     assert context["total_afastamentos"] == 2
     assert context["compromissos_sem_horario"] == 1
-    assert context["quantidade_por_dia"]["2026-09-28"] == 2
-    assert context["quantidade_por_dia"]["2026-09-30"] == 4
-    assert context["quantidade_por_dia"]["2026-10-01"] == 2
-    assert context["quantidade_por_dia"]["2026-10-02"] == 3
-    assert context["dias_maior_concentracao"] == ["2026-09-30"]
+    assert context["quantidade_por_dia"]["28/09/2026"] == 2
+    assert context["quantidade_por_dia"]["30/09/2026"] == 4
+    assert context["quantidade_por_dia"]["01/10/2026"] == 2
+    assert context["quantidade_por_dia"]["02/10/2026"] == 3
+    assert context["dias_maior_concentracao"] == ["30/09/2026"]
     assert "dia_mais_carregado" not in context
     titles = [item["titulo"] for item in context["compromissos"]]
     assert "Fora da semana" not in titles
@@ -120,6 +120,8 @@ def test_period_facts_keep_overlap_rules_and_count_records():
         '"id"',
     ):
         assert secret not in dumped
+    assert "2026-09-30" not in dumped
+    assert "30/09/2026" in dumped
     _, same = contexto_periodo(START, END, _week(), _leaves(), NAMES)
     assert same == signature
     changed = _week()
@@ -137,7 +139,7 @@ def test_concentration_tie_lists_every_day_and_a_spanning_leave_is_clipped():
         _item("2026-09-30", "14:00", "15:00", [1], "E"),
     ]
     context, _ = contexto_periodo(START, date(2026, 9, 30), rows, [], NAMES)
-    assert context["dias_maior_concentracao"] == ["2026-09-28", "2026-09-30"]
+    assert context["dias_maior_concentracao"] == ["28/09/2026", "30/09/2026"]
     leave = {
         "procurador_id": 1,
         "motivo": "Férias",
@@ -153,13 +155,45 @@ def test_concentration_tie_lists_every_day_and_a_spanning_leave_is_clipped():
         NAMES,
     )
     assert spanned["total_afastamentos"] == 1
-    assert spanned["afastamentos"][0]["inicio"] == "2026-09-20"
-    assert spanned["afastamentos"][0]["fim"] == "2026-10-10"
-    assert "2026-09-20" not in spanned["quantidade_por_dia"]
-    assert "2026-10-10" not in spanned["quantidade_por_dia"]
-    assert spanned["quantidade_por_dia"]["2026-09-26"] == 2
-    assert spanned["quantidade_por_dia"]["2026-09-27"] == 1
+    assert spanned["afastamentos"][0]["inicio"] == "20/09/2026"
+    assert spanned["afastamentos"][0]["fim"] == "10/10/2026"
+    assert "20/09/2026" not in spanned["quantidade_por_dia"]
+    assert "10/10/2026" not in spanned["quantidade_por_dia"]
+    assert spanned["quantidade_por_dia"]["26/09/2026"] == 2
+    assert spanned["quantidade_por_dia"]["27/09/2026"] == 1
     assert len(spanned["coincidencias_afastamento_compromisso"]) == 1
+
+
+def test_textual_dates_use_brazilian_format_without_touching_other_text():
+    from services.agenda import _data_textual
+
+    assert _data_textual("2026-10-07") == "07/10/2026"
+    assert _data_textual(date(2026, 10, 7)) == "07/10/2026"
+    assert _data_textual("09:00") == "09:00"
+    assert _data_textual("0001/2026") == "0001/2026"
+    assert _data_textual("2026-10-07T09:00:00") == "2026-10-07T09:00:00"
+    assert _data_textual("1234-56-78") == "1234-56-78"
+    rows = [
+        _item("2026-10-07", "09:00", "10:00", [1], "Primeiro"),
+        _item("2026-10-07", "14:00", "15:00", [1], "Segundo"),
+        _item("2026-10-08", "09:00", "10:00", [1], "Terceiro"),
+        _item("2026-10-08", "14:00", "15:00", [1], "Quarto"),
+        _item("2026-10-09", "09:00", "10:00", [1], "Quinto"),
+        _item("2026-10-09", "14:00", "15:00", [1], "Sexto"),
+    ]
+    context, _ = contexto_periodo(date(2026, 10, 7), date(2026, 10, 9), rows, [], NAMES)
+    assert context["dias_maior_concentracao"] == [
+        "07/10/2026",
+        "08/10/2026",
+        "09/10/2026",
+    ]
+    assert context["periodo"] == {"inicio": "07/10/2026", "fim": "09/10/2026"}
+    assert context["compromissos"][0]["data"] == "07/10/2026"
+    assert context["quantidade_por_dia"]["07/10/2026"] == 2
+    dumped = json.dumps(context, ensure_ascii=False)
+    assert "2026-10-07" not in dumped
+    assert "2026-10-08" not in dumped
+    assert "2026-10-09" not in dumped
 
 
 def test_interval_rejects_inverted_dates_and_more_than_31_days():
@@ -208,6 +242,8 @@ def test_period_prompt_treats_coincidence_as_information():
         "Não decida cancelamento",
         "Não indique substituto",
         "Não gere tarefa",
+        "DD/MM/AAAA",
+        "Nunca utilize o formato ISO AAAA-MM-DD",
     ):
         assert phrase in prompt
     assert "pedido cautelar" not in prompt
@@ -246,6 +282,8 @@ def test_period_analysis_sends_text_facts_and_hides_them_from_logs(monkeypatch, 
     assert "inlineData" not in json.dumps(seen["body"])
     assert ai_service.PROMPT_ANALISE_AGENDA in part
     assert "Sessão do Pleno" in part
+    assert "30/09/2026" in part
+    assert "2026-09-30" not in part
     assert "Ana Lima" not in caplog.text
     assert "chave-teste" not in caplog.text
 
@@ -278,7 +316,7 @@ def test_period_button_calls_gemini_once_and_hides_another_interval(monkeypatch)
     assert calls == []
     assert app.button(key="agenda_analise_ia_btn").label == "✨ Analisar período com IA"
     app.button(key="agenda_analise_ia_btn").click().run()
-    assert calls == [{"inicio": "2026-09-28", "fim": "2026-10-04"}]
+    assert calls == [{"inicio": "28/09/2026", "fim": "04/10/2026"}]
     assert any("Panorama Executivo" in item.value for item in app.markdown)
     assert any("Panorama de teste." in item.value for item in app.markdown)
     app.run()

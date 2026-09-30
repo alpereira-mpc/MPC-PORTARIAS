@@ -273,3 +273,58 @@ def test_recent_table_stays_behind_the_admin_permission(store):
 
     with pytest.raises(ValueError, match="não autorizado"):
         render_ai_health(store, _usuario())
+
+
+def test_recent_operations_table_reuses_theme_stripes():
+    from inspect import getsource
+
+    from services.system_ui import _render_operacoes_recentes
+    from services.themes import THEMES
+    from services.ui_theme import style_striped_table
+
+    source = getsource(_render_operacoes_recentes)
+    assert "style_striped_table(tabela, _theme_name())" in source
+    rows = [
+        linha_operacao_recente(
+            {
+                "criado_em": "2026-09-28T20:42:18+00:00",
+                "operacao": "agenda_analise",
+                "sucesso": 1,
+                "tentativas": 1,
+                "retry": 0,
+                "fallback": 0,
+                "modelo_final": "gemini-3.5-flash-lite",
+                "duracao_ms": 820,
+                "http_status": 200,
+            },
+            AGORA,
+        ),
+        linha_operacao_recente(
+            {
+                "criado_em": "2026-09-27T18:00:00+00:00",
+                "operacao": "tarefas_analise",
+                "sucesso": 0,
+                "tentativas": 2,
+                "retry": 1,
+                "fallback": 1,
+                "modelo_final": "gemini-3.1-flash-lite",
+                "duracao_ms": 2400,
+                "http_status": 503,
+            },
+            AGORA,
+        ),
+    ]
+    assert rows[0]["Operação"] == "Agenda"
+    assert rows[1]["HTTP"] == "503"
+    for name, tokens in THEMES.items():
+        styler = style_striped_table(rows, name)
+        assert list(styler.data["Operação"]) == ["Agenda", "Tarefas"]
+        html = styler.to_html().lower()
+        base = tokens["themed_table_bg"].lower()
+        stripe = tokens["themed_table_stripe_bg"].lower()
+        first = html[html.find("row0_col0") : html.find("}", html.find("row0_col0"))]
+        second = html[html.find("row1_col0") : html.find("}", html.find("row1_col0"))]
+        assert base in first and stripe not in first
+        assert stripe in second and base not in second
+        assert tokens["themed_table_fg"].lower() in html
+        assert not styler.table_styles

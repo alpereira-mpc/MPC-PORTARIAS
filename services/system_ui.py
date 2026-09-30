@@ -11,7 +11,15 @@ from services.audit import format_local, registrar_evento
 from services.backup import backup_filename, generate_backup, unique_backup_path
 from services.branding import APP_NAME, APP_SUBTITLE
 from services.system_health import ATTENTION, ERROR, OK, diagnose
-from services.ui_theme import badge, empty_state, html_text, render_html, status_tone
+from services.themes import valid_theme
+from services.ui_theme import (
+    badge,
+    empty_state,
+    html_text,
+    render_html,
+    status_tone,
+    style_striped_table,
+)
 
 LOGGER = logging.getLogger("mpc.sistema")
 HEALTH_KEY = "sistema_health"
@@ -19,6 +27,11 @@ BACKUP_RESULT = "sistema_backup_result"
 BACKUP_ERROR = "sistema_backup_error"
 BACKUP_RUNNING = "sistema_backup_running"
 BACKUP_OFFERED = "sistema_backup_offered"
+
+
+def _theme_name():
+    cached = st.session_state.get("_portal_theme") or {}
+    return valid_theme(cached.get("name"))
 
 
 def _tone(status):
@@ -449,7 +462,11 @@ def _render_operacoes_recentes(store):
     if not tabela:
         st.caption("Nenhuma operação registrada.")
         return
-    st.dataframe(tabela, hide_index=True, use_container_width=True)
+    st.dataframe(
+        style_striped_table(tabela, _theme_name()),
+        hide_index=True,
+        use_container_width=True,
+    )
 
 
 def render(store, principal):

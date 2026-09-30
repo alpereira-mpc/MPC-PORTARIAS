@@ -20,7 +20,7 @@ from services.oficios import (
 )
 from services.ui_store import display_store
 from services.branding import module_title
-from services.date_format import format_datetime_br
+from services.date_format import format_date_br, format_datetime_br
 from services.ui_theme import (
     badges,
     card_container,
@@ -150,6 +150,11 @@ def audit_oficio(evento, acao, record=None, extra=None, resultado="OK"):
 
 def label(r):
     return f"{r['serie'] or ''} {r['numero'] or r['numero_externo'] or 'Rascunho'}/{r['ano']} — {r['assunto'][:75]}"
+
+
+def data_movimentacao(value):
+    """Date shown on a recent-movement card. The stored value stays unchanged."""
+    return format_date_br(value)
 
 
 def configuration(service, people):
@@ -1339,9 +1344,12 @@ def render(store=None, principal=None):
         selected = st.session_state.get("oficio_gabinete")
         if selected not in offices:
             st.subheader(module_title("oficios", "Ofícios — Geração e Controle"))
-            st.write("Selecione o gabinete:")
             st.markdown(
+                '<p class="oficios-gabinete-prompt">Selecione o gabinete:</p>'
                 "<style>"
+                "section[data-testid='stMain'] .oficios-gabinete-prompt{"
+                "margin:1.25rem 0 0 0;"
+                "}"
                 "section[data-testid='stMain'] div[class*='st-key-gabinete_']{"
                 "display:flex;justify-content:center;max-width:100%;"
                 "margin:0 0 .55rem 0;"
@@ -1444,7 +1452,7 @@ def render(store=None, principal=None):
                     render_record(
                         label(row),
                         badges_html=badges((row["status"], status_tone(row["status"]))),
-                        meta=row["atualizada"][:10],
+                        meta=data_movimentacao(row["atualizada"]),
                         accent=status_tone(row["status"]),
                     )
                     st.button(

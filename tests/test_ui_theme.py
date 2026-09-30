@@ -30,6 +30,30 @@ def test_badge_and_record_escape_content():
     assert "html_text" in getsource(empty_state)
 
 
+def test_guidance_note_uses_active_theme_surfaces():
+    from inspect import getsource
+
+    from services.ui_theme import _css, guidance_note
+    from services import memorandos_ui
+
+    for theme in ("vermelho", "azul", "verde", "dourado", "vermelho_escuro"):
+        css = _css(theme)
+        block = css[css.find(".mpc-guidance{") : css.find(".mpc-guidance p")]
+        assert "background:var(--mpc-card-b)" in block
+        assert "border:1px solid var(--mpc-card-border-b)" in block
+        assert "border-left:3px solid var(--mpc-red)" in block
+        assert "color:var(--mpc-text)" in block
+        assert "#" not in block
+    assert "mpc-guidance" in getsource(guidance_note)
+    assert "html_text" in getsource(guidance_note)
+    editor = getsource(memorandos_ui._editor)
+    assert "guidance_note(" in editor
+    assert "Selecione o servidor afastado e o substituto(a) para continuar." in editor
+    assert "empty_state(" not in editor
+    listing = getsource(memorandos_ui._listing)
+    assert "empty_state(" in listing
+
+
 def test_status_tone_covers_semantic_labels():
     assert status_tone("URGENTE") == "danger"
     assert status_tone("VENCIDA") == "danger"

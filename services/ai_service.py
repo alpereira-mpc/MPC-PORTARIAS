@@ -211,6 +211,8 @@ PROMPT_ANALISE_AGENDA = (
     "Ao descrever a distribuição, fale em maior concentração de registros da Agenda.\n"
     "Não use a expressão dia mais carregado.\n"
     "Se dias_maior_concentracao tiver mais de um dia, mencione todos.\n"
+    "Apresente todas as datas mencionadas na resposta exclusivamente no formato brasileiro DD/MM/AAAA. "
+    "Nunca utilize o formato ISO AAAA-MM-DD.\n"
     "Mencione afastamentos relevantes que constem dos dados.\n"
     "Mencione somente as sobreposições já informadas.\n"
     "Coincidência entre afastamento e compromisso é apenas coincidência temporal.\n"
@@ -241,7 +243,10 @@ PROMPT_ANALISE_TAREFAS = (
     "Em Panorama geral, use as contagens fornecidas.\n"
     "Em Prioridades imediatas e Próximas ações, destaque apenas tarefas com base objetiva nos dados.\n"
     "Em Organização das pendências, agrupe apenas quando houver relação clara por assunto, módulo ou natureza da providência.\n"
-    "Não transforme sugestões em comandos administrativos ou decisões automáticas."
+    "Não transforme sugestões em comandos administrativos ou decisões automáticas.\n"
+    "Ao mencionar módulos do sistema, utilize exclusivamente seus nomes amigáveis destinados ao usuário. "
+    "Nunca exponha identificadores técnicos, slugs, nomes de campos ou chaves internas. "
+    "Nomes de módulos devem ser escritos como texto comum, sem crases, backticks ou formatação de código Markdown."
 )
 _STATUS_TOKEN = re.compile(r"[A-Z0-9_]{1,40}")
 

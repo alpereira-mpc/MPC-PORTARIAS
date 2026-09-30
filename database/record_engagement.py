@@ -9,6 +9,14 @@ _READY = set()
 ORIGIN_MODULES = frozenset(
     {"oficio_enviado", "oficio_recebido", "memorando", "representacao", "ouvidoria"}
 )
+ORIGIN_LABELS = {
+    "oficio_enviado": "Ofício enviado",
+    "oficio_recebido": "Ofício recebido",
+    "memorando": "Memorando",
+    "representacao": "Representação",
+    "ouvidoria": "Notícia de Fato",
+    "tarefa": "Tarefa",
+}
 
 
 class RecordEngagementStore:

@@ -1,8 +1,9 @@
 """Central catalogs and local institutional availability rules."""
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 import hashlib
 import json
+import re
 import unicodedata
 
 TYPES = {"EVENTO": "Evento", "REUNIAO": "Reunião", "DESPACHO": "Despacho"}
@@ -211,6 +212,24 @@ def validate(record):
 
 
 MAX_DIAS_ANALISE = 31
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+
+
+def _data_textual(value):
+    """Present one agenda date as DD/MM/YYYY. Counting still uses date objects."""
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, date):
+        return value.strftime("%d/%m/%Y")
+    if isinstance(value, str):
+        match = _ISO_DATE.fullmatch(value.strip())
+        if match:
+            year, month, day = (int(part) for part in match.groups())
+            try:
+                return date(year, month, day).strftime("%d/%m/%Y")
+            except ValueError:
+                return value
+    return value
 
 
 def validar_intervalo_analise(inicio, fim):
@@ -236,25 +255,28 @@ def contexto_periodo(inicio, fim, compromissos, afastamentos, nomes):
         if not row.get("cancelado") and _afastamento_no_periodo(row, inicio, fim)
     ]
     por_dia = {
-        (inicio + timedelta(days=offset)).isoformat(): 0
-        for offset in range((fim - inicio).days + 1)
+        inicio + timedelta(days=offset): 0 for offset in range((fim - inicio).days + 1)
     }
     for row in items:
         for day in _dias_compromisso(row):
-            if day.isoformat() in por_dia:
-                por_dia[day.isoformat()] += 1
+            if day in por_dia:
+                por_dia[day] += 1
     for leave in leaves:
         for day in _dias_afastamento(leave, inicio, fim):
-            por_dia[day.isoformat()] += 1
+            por_dia[day] += 1
     peak = max(por_dia.values(), default=0)
     context = {
-        "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
+        "periodo": {"inicio": _data_textual(inicio), "fim": _data_textual(fim)},
         "total_compromissos": len(items),
         "total_afastamentos": len(leaves),
         "compromissos_sem_horario": sum(1 for row in items if row.get("sem_hora")),
-        "quantidade_por_dia": por_dia,
+        "quantidade_por_dia": {
+            _data_textual(day): count for day, count in por_dia.items()
+        },
         "dias_maior_concentracao": [
-            day for day, count in por_dia.items() if peak and count == peak
+            _data_textual(day)
+            for day, count in por_dia.items()
+            if peak and count == peak
         ],
         "compromissos": [_compromisso_resumo(row, nomes) for row in items[:80]],
         "afastamentos": [_afastamento_resumo(row, nomes) for row in leaves[:40]],
@@ -371,7 +393,7 @@ def _titulo(row):
 
 def _compromisso_resumo(row, nomes):
     return {
-        "data": row["inicio"][:10],
+        "data": _data_textual(row["inicio"][:10]),
         "inicio": _hora(row.get("inicio"), row.get("sem_hora")),
         "fim": _hora(row.get("fim"), row.get("sem_hora")),
         "titulo": _titulo(row),
@@ -382,8 +404,8 @@ def _compromisso_resumo(row, nomes):
 
 def _afastamento_resumo(row, nomes):
     return {
-        "inicio": row.get("data_inicio"),
-        "fim": row.get("data_fim"),
+        "inicio": _data_textual(row.get("data_inicio")),
+        "fim": _data_textual(row.get("data_fim")),
         "motivo": str(row.get("motivo") or "")[:80],
         "responsavel": _nomes([row.get("procurador_id")], nomes),
     }
@@ -405,7 +427,7 @@ def _sobreposicoes(items, nomes):
                 moment = max(left_start, right_start)
                 found.append(
                     {
-                        "data": moment.date().isoformat(),
+                        "data": _data_textual(moment.date()),
                         "itens": [
                             _compromisso_resumo(left, nomes),
                             _compromisso_resumo(right, nomes),

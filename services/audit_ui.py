@@ -25,6 +25,7 @@ from services.audit import (
     resumo_humano,
     user_overview,
 )
+from services.themes import valid_theme
 from services.ui_theme import (
     badges,
     card_container,
@@ -34,6 +35,7 @@ from services.ui_theme import (
     kpi_mark,
     render_record,
     section_label,
+    style_striped_table,
 )
 
 
@@ -49,6 +51,11 @@ RESULT_OPTIONS = (
     ("ERRO", "Falha"),
     ("NEGADO", "Recusado"),
 )
+
+
+def _theme_name():
+    cached = st.session_state.get("_portal_theme") or {}
+    return valid_theme(cached.get("name"))
 
 
 def _period_filter(prefix):
@@ -136,15 +143,18 @@ def _render_overview(store, principal):
     )
     st.subheader("Usuários")
     st.dataframe(
-        [
-            {
-                "Usuário": f"{r['nome']} ({r['email']})" if r["email"] else r["nome"],
-                "Último acesso": format_local(r.get("ultimo_acesso")),
-                "Acessos": r.get("sessoes") or 0,
-                "Última atividade": format_local(r.get("ultima_atividade")),
-            }
-            for r in rows
-        ],
+        style_striped_table(
+            [
+                {
+                    "Usuário": f"{r['nome']} ({r['email']})" if r["email"] else r["nome"],
+                    "Último acesso": format_local(r.get("ultimo_acesso")),
+                    "Acessos": r.get("sessoes") or 0,
+                    "Última atividade": format_local(r.get("ultima_atividade")),
+                }
+                for r in rows
+            ],
+            _theme_name(),
+        ),
         hide_index=True,
         use_container_width=True,
     )
@@ -184,21 +194,24 @@ def _render_accesses(store, principal):
         empty_state("Nenhum acesso no período filtrado.")
         return
     st.dataframe(
-        [
-            {
-                "Nome": r["nome"],
-                "E-mail": r["email"],
-                "Perfil": r.get("perfil") or "—",
-                "Ativo": "Sim" if r.get("ativo") else ("Não" if r.get("ativo") is False else "—"),
-                "Primeiro acesso": format_local(r.get("primeiro_acesso")),
-                "Último acesso": format_local(r.get("ultimo_acesso")),
-                "Sessões": r.get("sessoes") or 0,
-                "Dias distintos": r.get("dias_distintos") or 0,
-                "Última atividade": format_local(r.get("ultima_atividade")),
-                "Módulos": ", ".join(module_label(m) for m in r.get("modulos") or []) or "—",
-            }
-            for r in rows
-        ],
+        style_striped_table(
+            [
+                {
+                    "Nome": r["nome"],
+                    "E-mail": r["email"],
+                    "Perfil": r.get("perfil") or "—",
+                    "Ativo": "Sim" if r.get("ativo") else ("Não" if r.get("ativo") is False else "—"),
+                    "Primeiro acesso": format_local(r.get("primeiro_acesso")),
+                    "Último acesso": format_local(r.get("ultimo_acesso")),
+                    "Sessões": r.get("sessoes") or 0,
+                    "Dias distintos": r.get("dias_distintos") or 0,
+                    "Última atividade": format_local(r.get("ultima_atividade")),
+                    "Módulos": ", ".join(module_label(m) for m in r.get("modulos") or []) or "—",
+                }
+                for r in rows
+            ],
+            _theme_name(),
+        ),
         hide_index=True,
         use_container_width=True,
     )

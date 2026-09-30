@@ -4,20 +4,12 @@ from datetime import date, datetime, time
 
 import streamlit as st
 
-from database.record_engagement import RecordEngagementStore
+from database.record_engagement import ORIGIN_LABELS, RecordEngagementStore
 from database.tarefas import TarefasStore
 from services.audit import INSTITUTIONAL_TZ, registrar_evento
 from services.date_format import format_date_br
 from services.ui_theme import actions_mark, section_label
 
-ORIGIN_LABELS = {
-    "oficio_enviado": "Ofício enviado",
-    "oficio_recebido": "Ofício recebido",
-    "memorando": "Memorando",
-    "representacao": "Representação",
-    "ouvidoria": "Notícia de Fato",
-    "tarefa": "Tarefa",
-}
 TASK_STATUS = {
     "A_FAZER": "A fazer",
     "EM_ANDAMENTO": "Em andamento",
