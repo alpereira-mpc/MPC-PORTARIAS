@@ -19,6 +19,48 @@ def _visible_text(app):
     return "\n".join(parts)
 
 
+def test_portal_navigation_format_keeps_internal_values_and_uses_material_icons():
+    from portal import PORTAL_NAVIGATION_ICONS, _portal_navigation_label
+
+    expected = {
+        "Início": "home",
+        "Busca Global": "search",
+        "Portarias": "description",
+        "Agenda": "calendar_month",
+        "Ofícios": "mail",
+        "Memorandos": "article",
+        "Tarefas": "check_circle",
+        "Relatórios e Indicadores": "bar_chart",
+        "Representações": "gavel",
+        "Petições": "article",
+        "Ouvidoria": "forum",
+        "Administração": "manage_accounts",
+    }
+
+    assert PORTAL_NAVIGATION_ICONS == expected
+    for value, icon in expected.items():
+        visible = "Agenda e Afastamentos" if value == "Agenda" else value
+        assert _portal_navigation_label(value) == f":material/{icon}: {visible}"
+        assert value in PORTAL_NAVIGATION_ICONS
+
+
+@pytest.mark.parametrize(
+    "theme", ("vermelho", "azul", "verde", "dourado", "vermelho_escuro")
+)
+def test_portal_navigation_style_is_scoped_and_uses_theme_tokens(theme):
+    from services.themes import THEMES
+    from services.ui_theme import _css
+
+    css = _css(theme)
+    scope = '[class*="st-key-portal_navigation_menu"]'
+    assert scope in css
+    assert f"--mpc-brand:{THEMES[theme]['primary']}" in css
+    assert "label > div:first-child" in css
+    assert "label:has(input:checked)" in css
+    assert "label:has(input:focus-visible)" in css
+    assert 'section[data-testid="stSidebar"] [data-testid="stRadio"] label{' not in css
+
+
 def test_home_is_default_and_never_initializes_database(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("Home must not initialize Portarias or open a database")
@@ -221,14 +263,15 @@ def test_home_shows_only_authorized_modules(store, monkeypatch):
     portal = next(
         r for r in app.sidebar.radio if getattr(r, "key", None) == "portal_module"
     )
-    assert "Agenda e Afastamentos" in portal.options
-    assert "Agenda" not in portal.options
-    assert "Ofícios" not in portal.options
-    assert "Portarias" not in portal.options
-    from inspect import getsource
-    from portal import render_portal
+    assert ":material/calendar_month: Agenda e Afastamentos" in portal.options
+    assert ":material/description: Portarias" not in portal.options
+    assert ":material/mail: Ofícios" not in portal.options
+    portal.set_value("Agenda").run()
+    assert not app.exception
+    assert app.session_state["portal_module"] == "Agenda"
+    from portal import _portal_navigation_label
 
-    assert '"Agenda e Afastamentos" if option == "Agenda"' in getsource(render_portal)
+    assert _portal_navigation_label("Agenda").endswith("Agenda e Afastamentos")
 
 
 def test_relatorios_card_menu_and_route_follow_module_permission(store, monkeypatch):
@@ -260,7 +303,7 @@ def test_relatorios_card_menu_and_route_follow_module_permission(store, monkeypa
         getattr(button, "key", None) == "open_relatorios" for button in app.button
     )
     portal = next(radio for radio in app.sidebar.radio if radio.key == "portal_module")
-    assert "Relatórios e Indicadores" in portal.options
+    assert ":material/bar_chart: Relatórios e Indicadores" in portal.options
     portal.set_value("Relatórios e Indicadores").run()
     assert not app.exception
     assert next(radio for radio in app.radio if radio.label == "Seção").options == [
@@ -300,7 +343,7 @@ def test_relatorios_is_hidden_and_manipulated_navigation_is_reset_without_permis
         getattr(button, "key", None) == "open_relatorios" for button in app.button
     )
     portal = next(radio for radio in app.sidebar.radio if radio.key == "portal_module")
-    assert "Relatórios e Indicadores" not in portal.options
+    assert ":material/bar_chart: Relatórios e Indicadores" not in portal.options
     from portal import PORTAL_NAV_REQUEST
 
     app.session_state[PORTAL_NAV_REQUEST] = {

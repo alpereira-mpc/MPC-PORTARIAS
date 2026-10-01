@@ -36,6 +36,20 @@ PORTAL_SPECIAL_VIEW = "portal_special_view"
 PORTAL_SPECIAL_RETURN = "portal_special_return"
 PORTAL_SPECIAL_ANCHOR = "portal_special_anchor"
 ALERTS_VIEW = "alerts"
+PORTAL_NAVIGATION_ICONS = {
+    "Início": "home",
+    "Busca Global": "search",
+    "Portarias": MODULE_ICONS["portarias"],
+    "Agenda": MODULE_ICONS["agenda"],
+    "Ofícios": MODULE_ICONS["oficios"],
+    "Memorandos": MODULE_ICONS["memorandos"],
+    "Tarefas": MODULE_ICONS["tarefas"],
+    "Relatórios e Indicadores": MODULE_ICONS["relatorios"],
+    "Representações": MODULE_ICONS["representacoes"],
+    "Petições": MODULE_ICONS["peticoes"],
+    "Ouvidoria": MODULE_ICONS["ouvidoria"],
+    "Administração": MODULE_ICONS["admin"],
+}
 # Set only from the module radio (or the sidebar logo when it actually
 # changes the module). Consumed once so later reruns do not touch the drawer.
 PORTAL_MOBILE_SIDEBAR_COLLAPSE = "_portal_mobile_sidebar_collapse"
@@ -998,6 +1012,16 @@ def _emit_mobile_sidebar_collapse():
         )
 
 
+def _portal_navigation_label(option):
+    """Present a portal module with its familiar Material icon.
+
+    The radio still receives and stores the original module name; this only
+    changes its visible label.
+    """
+    label = "Agenda e Afastamentos" if option == "Agenda" else option
+    return f":material/{PORTAL_NAVIGATION_ICONS[option]}: {label}"
+
+
 def render_portal():
     from services.access import (
         current_user,
@@ -1111,15 +1135,14 @@ def render_portal():
             _logout()
         if can_view_alertas(principal):
             render_bell(store, principal)
-        selected = st.radio(
-            "Portal",
-            options,
-            key="portal_module",
-            format_func=lambda option: (
-                "Agenda e Afastamentos" if option == "Agenda" else option
-            ),
-            on_change=_mark_mobile_sidebar_collapse,
-        )
+        with st.container(key="portal_navigation_menu"):
+            selected = st.radio(
+                "Portal",
+                options,
+                key="portal_module",
+                format_func=_portal_navigation_label,
+                on_change=_mark_mobile_sidebar_collapse,
+            )
         st.session_state[PORTAL_LAST_MODULE] = selected
         theme_key = f"portal_theme_select_{principal.id}"
         active_theme = _active_theme(identity)

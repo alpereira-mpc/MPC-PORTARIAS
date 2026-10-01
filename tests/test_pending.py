@@ -337,11 +337,11 @@ def test_menu_and_central_ui(store, monkeypatch):
     portal = next(
         r for r in app.sidebar.radio if getattr(r, "key", None) == "portal_module"
     )
-    assert portal.options[0] == "Início"
-    assert portal.options[1] == "Busca Global"
+    assert portal.options[0] == ":material/home: Início"
+    assert portal.options[1] == ":material/search: Busca Global"
     assert "Pendências" not in portal.options
     assert "Alertas" not in portal.options
-    assert portal.options[2] == "Portarias"
+    assert portal.options[2] == ":material/description: Portarias"
     app.session_state["portal_navigation_request"] = {
         "module": "Pendências",
         "state": {},

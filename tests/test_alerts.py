@@ -838,9 +838,9 @@ def test_menu_home_and_deep_links(store, monkeypatch):
         r for r in app.sidebar.radio if getattr(r, "key", None) == "portal_module"
     )
     assert "Alertas" not in portal.options
-    assert portal.options[1] == "Busca Global"
+    assert portal.options[1] == ":material/search: Busca Global"
     assert "Pendências" not in portal.options
-    assert portal.options[2] == "Portarias"
+    assert portal.options[2] == ":material/description: Portarias"
     assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
     assert not any(b.label == "Ver alertas" for b in app.button)
     labels = " ".join(str(getattr(b, "label", "")) for b in app.button)

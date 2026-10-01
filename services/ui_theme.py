@@ -260,18 +260,47 @@ border:0 !important;
 section[data-testid="stSidebar"] [data-testid="stCaption"]{{
 color:var(--mpc-text-2);
 }}
-section[data-testid="stSidebar"] [data-testid="stRadio"] label{{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] [role="radiogroup"]{{
+gap:.14rem;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label{{
+position:relative;
+display:flex;
+align-items:flex-start;
+min-height:2.2rem;
+margin:0;
+padding:.42rem .55rem .42rem .75rem;
 border-radius:8px;
-transition:background .12s ease;
+cursor:pointer;
+transition:background .12s ease,box-shadow .12s ease;
 }}
-section[data-testid="stSidebar"] [data-testid="stRadio"] label:hover{{
-background:rgba({primary_rgb},.05);
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label > div:first-child{{
+position:absolute !important;
+inline-size:1px !important;
+block-size:1px !important;
+overflow:hidden !important;
+opacity:0 !important;
 }}
-section[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label > div:last-child{{
+min-width:0;
+padding-left:0 !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label p{{
+overflow-wrap:anywhere;
+line-height:1.35;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label:hover{{
+background:rgba({primary_rgb},.07);
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label:has(input:checked){{
 background:rgba({primary_rgb},.16);
 box-shadow:inset 3px 0 0 var(--mpc-brand);
-font-weight:700;
+font-weight:650;
 color:var(--mpc-brand-dark);
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label:has(input:focus-visible){{
+outline:2px solid var(--mpc-brand-dark);
+outline-offset:2px;
 }}
 section[data-testid="stSidebar"] [data-testid="stExpander"]{{
 background:var(--mpc-control-bg) !important;

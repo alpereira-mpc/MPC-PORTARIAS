@@ -315,8 +315,8 @@ def test_source_error_remains_isolated_if_audit_logging_fails(store, monkeypatch
 
 def _open_global_search(app):
     portal = app.sidebar.radio(key="portal_module")
-    assert portal.options[0] == "Início"
-    assert portal.options[1] == "Busca Global"
+    assert portal.options[0] == ":material/home: Início"
+    assert portal.options[1] == ":material/search: Busca Global"
     assert not any(getattr(button, "key", None) == "global_search_submit" for button in app.button)
     portal.set_value("Busca Global").run()
     assert not app.exception
