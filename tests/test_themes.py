@@ -1,6 +1,7 @@
 """Palette isolation, persistence, and the portal's theme lifecycle."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -12,6 +13,115 @@ from tests.access_testing import enable_login, seed_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("theme", tuple(THEME_LABELS))
+def test_valid_widget_theme_recovers_all_palettes_when_persistence_is_unavailable(
+    monkeypatch, theme
+):
+    import portal
+
+    state = {
+        "_audit_actor": SimpleNamespace(id=7, email="tema@test.local"),
+        "portal_theme_select_7": theme,
+    }
+    monkeypatch.setattr(portal.st, "session_state", state)
+
+    persistence_reads = []
+
+    def unavailable(*args):
+        persistence_reads.append(args)
+        raise OSError("Falha temporária")
+
+    monkeypatch.setattr(AccessStore, "get_theme_by_email", unavailable)
+
+    assert portal._active_theme({"email": "tema@test.local"}) == theme
+    assert state["_portal_theme"] == {"email": "tema@test.local", "name": theme}
+    assert persistence_reads == []
+
+
+def test_invalid_widget_uses_official_fallback_when_persistence_fails(store, monkeypatch):
+    import portal
+
+    state = {
+        "_audit_actor": SimpleNamespace(id=7, email="tema@test.local"),
+        "portal_theme_select_7": "tema_antigo",
+    }
+    monkeypatch.setattr(portal.st, "session_state", state)
+    monkeypatch.setattr(portal, "_application_store", lambda: store)
+
+    def unavailable(*args):
+        raise OSError("Falha temporária")
+
+    monkeypatch.setattr(AccessStore, "get_theme_by_email", unavailable)
+
+    fallback = valid_theme(None)
+    assert portal._active_theme({"email": "tema@test.local"}) == fallback
+    assert state["_portal_theme"] == {"email": "tema@test.local", "name": fallback}
+
+
+def test_valid_persisted_theme_is_used_when_widget_is_invalid(store, monkeypatch):
+    import portal
+
+    state = {
+        "_audit_actor": SimpleNamespace(id=7, email="tema@test.local"),
+        "portal_theme_select_7": "tema_antigo",
+    }
+    monkeypatch.setattr(portal.st, "session_state", state)
+    monkeypatch.setattr(portal, "_application_store", lambda: store)
+
+    persistence_reads = []
+
+    def persisted_theme(_access, email):
+        persistence_reads.append(email)
+        return "azul"
+
+    monkeypatch.setattr(AccessStore, "get_theme_by_email", persisted_theme)
+
+    assert portal._active_theme({"email": "tema@test.local"}) == "azul"
+    assert persistence_reads == ["tema@test.local"]
+    assert state["_portal_theme"] == {"email": "tema@test.local", "name": "azul"}
+
+
+def test_valid_cache_wins_over_widget_without_reading_persistence(monkeypatch):
+    import portal
+
+    state = {
+        "_audit_actor": SimpleNamespace(id=7, email="tema@test.local"),
+        "_portal_theme": {"email": "tema@test.local", "name": "dourado"},
+        "portal_theme_select_7": "azul",
+    }
+    monkeypatch.setattr(portal.st, "session_state", state)
+
+    def unexpected_persistence_read(*args):
+        raise AssertionError("A preferência persistida não deve ser consultada")
+
+    monkeypatch.setattr(AccessStore, "get_theme_by_email", unexpected_persistence_read)
+
+    assert portal._active_theme({"email": "tema@test.local"}) == "dourado"
+    assert state["_portal_theme"] == {"email": "tema@test.local", "name": "dourado"}
+
+
+def test_theme_widget_is_isolated_to_the_current_user(monkeypatch):
+    import portal
+
+    state = {
+        "_audit_actor": SimpleNamespace(id=2, email="usuario-b@test.local"),
+        "portal_theme_select_1": "dourado",
+        "portal_theme_select_2": "vermelho",
+    }
+    monkeypatch.setattr(portal.st, "session_state", state)
+
+    def unexpected_persistence_read(*args):
+        raise AssertionError("O widget do usuário atual deve resolver o tema")
+
+    monkeypatch.setattr(AccessStore, "get_theme_by_email", unexpected_persistence_read)
+
+    assert portal._active_theme({"email": "usuario-b@test.local"}) == "vermelho"
+    assert state["_portal_theme"] == {
+        "email": "usuario-b@test.local",
+        "name": "vermelho",
+    }
 
 
 def test_theme_labels_are_official_and_legacy_keys_keep_their_palettes():

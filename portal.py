@@ -211,8 +211,20 @@ def _active_theme(identity):
         return "dourado"
     email = identity["email"]
     cached = _session_get("_portal_theme")
-    if cached and cached.get("email") == email:
-        return valid_theme(cached.get("name"))
+    if (
+        cached
+        and cached.get("email") == email
+        and cached.get("name") in THEME_LABELS
+    ):
+        return cached["name"]
+    # The sidebar widget survives ordinary reruns.  When its durable cache was
+    # transiently absent, prefer that valid, user-scoped value over a fallback.
+    actor = _session_get("_audit_actor")
+    if getattr(actor, "email", None) == email:
+        selected = _session_get(f"portal_theme_select_{actor.id}")
+        if selected in THEME_LABELS:
+            st.session_state["_portal_theme"] = {"email": email, "name": selected}
+            return selected
     try:
         from database.access import AccessStore
 
