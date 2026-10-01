@@ -956,7 +956,7 @@ def apresentar_analise_periodo(inicio, fim, appointments, leaves, names):
             + format_date_br(period["fim"])
             + ")"
         )
-        st.markdown(text)
+        st.markdown(text, unsafe_allow_html=False)
         st.caption(AVISO_ANALISE_IA)
 
 

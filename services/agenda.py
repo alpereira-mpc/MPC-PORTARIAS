@@ -241,43 +241,23 @@ def validar_intervalo_analise(inicio, fim):
 
 def contexto_periodo(inicio, fim, compromissos, afastamentos, nomes):
     """Facts for an inclusive date range. The caller already loaded these records."""
-    exclusive = fim + timedelta(days=1)
     items = [
         row
         for row in compromissos or []
         if not row.get("afastamento")
         and row.get("situacao") != "Cancelado"
-        and _no_periodo(row, inicio, exclusive)
+        and _compromisso_no_periodo(row, inicio, fim)
     ]
     leaves = [
         row
         for row in afastamentos or []
         if not row.get("cancelado") and _afastamento_no_periodo(row, inicio, fim)
     ]
-    por_dia = {
-        inicio + timedelta(days=offset): 0 for offset in range((fim - inicio).days + 1)
-    }
-    for row in items:
-        for day in _dias_compromisso(row):
-            if day in por_dia:
-                por_dia[day] += 1
-    for leave in leaves:
-        for day in _dias_afastamento(leave, inicio, fim):
-            por_dia[day] += 1
-    peak = max(por_dia.values(), default=0)
     context = {
         "periodo": {"inicio": _data_textual(inicio), "fim": _data_textual(fim)},
         "total_compromissos": len(items),
         "total_afastamentos": len(leaves),
         "compromissos_sem_horario": sum(1 for row in items if row.get("sem_hora")),
-        "quantidade_por_dia": {
-            _data_textual(day): count for day, count in por_dia.items()
-        },
-        "dias_maior_concentracao": [
-            _data_textual(day)
-            for day, count in por_dia.items()
-            if peak and count == peak
-        ],
         "compromissos": [_compromisso_resumo(row, nomes) for row in items[:80]],
         "afastamentos": [_afastamento_resumo(row, nomes) for row in leaves[:40]],
         "sobreposicoes_compromissos": _sobreposicoes(items, nomes)[:30],
@@ -306,20 +286,13 @@ def leitura_analise_salva(stored, inicio, fim, assinatura):
     return text, stored.get("assinatura") != assinatura
 
 
-def _no_periodo(row, start, end):
+def _compromisso_no_periodo(row, inicio, fim):
+    """Keep only commitments whose event date starts in the selected range."""
     try:
-        begin = datetime.fromisoformat(row["inicio"])
+        data_evento = datetime.fromisoformat(row["inicio"]).date()
     except (KeyError, TypeError, ValueError):
         return False
-    finish = begin
-    if row.get("fim"):
-        try:
-            finish = datetime.fromisoformat(row["fim"])
-        except (TypeError, ValueError):
-            finish = begin
-    return begin < datetime.combine(end, time.min) and finish >= datetime.combine(
-        start, time.min
-    )
+    return inicio <= data_evento <= fim
 
 
 def _afastamento_no_periodo(row, start, last):
