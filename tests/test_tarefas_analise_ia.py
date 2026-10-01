@@ -273,6 +273,24 @@ def test_unknown_origin_is_readable_and_the_prompt_forbids_slugs():
     assert "sem crases, backticks ou formatação de código Markdown" in prompt
 
 
+def test_task_analysis_prompt_requires_a_concise_non_repetitive_briefing():
+    prompt = ai_service.PROMPT_ANALISE_TAREFAS
+
+    assert "### ⚠️ Atenção hoje" in prompt
+    assert "### 📅 Próximos dias" in prompt
+    assert "### 📌 Pontos de atenção" in prompt
+    assert "Mostre cada tarefa no máximo uma vez" in prompt
+    assert "DD/MM/AAAA" in prompt
+    assert "500 e 900 caracteres" in prompt
+    for retired_section in (
+        "Panorama geral",
+        "Prioridades imediatas",
+        "Organização das pendências",
+        "Próximas ações",
+    ):
+        assert retired_section not in prompt
+
+
 def test_task_analysis_payload_sends_the_friendly_origin(monkeypatch):
     seen = {}
 
