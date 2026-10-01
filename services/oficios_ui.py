@@ -159,61 +159,56 @@ def data_movimentacao(value):
 
 
 def configuration(service, people):
-    with st.expander("Configuração administrativa da numeração"):
-        st.caption(
-            "As referências são sugestões incompletas. Confirme o próximo número oficialmente disponível antes de finalizar."
+    st.caption(
+        "As referências são sugestões incompletas. Confirme o próximo número oficialmente disponível antes de finalizar."
+    )
+    series = service.series()
+    sigla = st.session_state["oficio_gabinete"]
+    year = st.number_input("Ano da sequência", 1000, 9999, date.today().year)
+    seq = service.sequence(sigla, year) if sigla else {"proximo": 1}
+    with st.form("oficio_sequence"):
+        number = st.number_input(
+            "Próximo número a confirmar", 1, value=seq["proximo"]
         )
-        series = service.series()
-        sigla = st.session_state["oficio_gabinete"]
-        year = st.number_input("Ano da sequência", 1000, 9999, date.today().year)
-        seq = service.sequence(sigla, year) if sigla else {"proximo": 1}
-        with st.form("oficio_sequence"):
-            number = st.number_input(
-                "Próximo número a confirmar", 1, value=seq["proximo"]
-            )
-            confirmed = st.checkbox(
-                "Conferi os ofícios já expedidos e confirmo o próximo número"
-            )
-            submit = st.form_submit_button("Confirmar sequência")
-        if sigla:
-            seq = service.sequence(sigla, year)
-            empty_state(
-                f"{sigla}/{year}: próximo {seq['proximo']} · "
-                + (
-                    "confirmado"
-                    if seq["confirmada"]
-                    else "sugestão ainda não confirmada"
-                )
-            )
-        if submit:
-            service.confirm_sequence(sigla, year, number, confirmed)
-            done("Sequência confirmada.")
-        current = next(s for s in series if s["sigla"] == sigla)
-        with st.form("oficio_series"):
-            st.caption(
-                "Modelo do gabinete — configurações de documentos já emitidos são preservadas."
-            )
-            heading = st.text_input(
-                "Cabeçalho com {numero} e {ano}", current["cabecalho"]
-            )
-            digits = st.number_input(
-                "Quantidade mínima de dígitos", 1, 6, max(1, current["digitos"])
-            )
-            confirmed_model = st.checkbox(
-                "Conferi o padrão institucional deste gabinete"
-            )
-            submit_model = st.form_submit_button("Salvar modelo do gabinete")
-        if submit_model:
-            service.configure_series(
-                current["membro_id"],
-                sigla,
-                current["modelo"],
-                heading,
-                digits,
-                confirmed_model,
-            )
-            st.session_state.pop("oficio_preview", None)
-            done("Modelo do gabinete configurado.")
+        confirmed = st.checkbox(
+            "Conferi os ofícios já expedidos e confirmo o próximo número"
+        )
+        submit = st.form_submit_button("Confirmar sequência")
+    if sigla:
+        seq = service.sequence(sigla, year)
+        empty_state(
+            f"{sigla}/{year}: próximo {seq['proximo']} · "
+            + ("confirmado" if seq["confirmada"] else "sugestão ainda não confirmada")
+        )
+    if submit:
+        service.confirm_sequence(sigla, year, number, confirmed)
+        done("Sequência confirmada.")
+    current = next(s for s in series if s["sigla"] == sigla)
+    with st.form("oficio_series"):
+        st.caption(
+            "Modelo do gabinete — configurações de documentos já emitidos são preservadas."
+        )
+        heading = st.text_input(
+            "Cabeçalho com {numero} e {ano}", current["cabecalho"]
+        )
+        digits = st.number_input(
+            "Quantidade mínima de dígitos", 1, 6, max(1, current["digitos"])
+        )
+        confirmed_model = st.checkbox(
+            "Conferi o padrão institucional deste gabinete"
+        )
+        submit_model = st.form_submit_button("Salvar modelo do gabinete")
+    if submit_model:
+        service.configure_series(
+            current["membro_id"],
+            sigla,
+            current["modelo"],
+            heading,
+            digits,
+            confirmed_model,
+        )
+        st.session_state.pop("oficio_preview", None)
+        done("Modelo do gabinete configurado.")
 
 
 def reset_editor():
@@ -263,6 +258,7 @@ def consume_pending_open_oficio(offices):
         opened = set(st.session_state.get("oficio_open_ids") or ())
         opened.add(source_id)
         st.session_state["oficio_open_ids"] = opened
+        st.session_state[_detail_section_key(source_id)] = "Resumo"
     return pending
 
 
@@ -868,9 +864,20 @@ def _open_linked_response(identifier):
     st.session_state["oficio_page"] = "Recebidos"
     st.session_state["oficio_open_ids"] = {identifier}
     st.session_state["oficio_detail"] = identifier
+    st.session_state[_detail_section_key(identifier)] = "Resumo"
 
 
-def details(service, r, principal=None):
+def _detail_section_key(record_id):
+    return "oficio_detail_section_" + record_id
+
+
+def _show_detail_section(record_id, section, status=None):
+    st.session_state[_detail_section_key(record_id)] = section
+    if status:
+        st.session_state["oficio_status_" + record_id] = status
+
+
+def _render_detail_header(r):
     direction = "Enviado" if r.get("direcao") == "ENVIADO" else "Recebido"
     render_record(
         label(r),
@@ -890,62 +897,71 @@ def details(service, r, principal=None):
             else "neutral"
         ),
     )
-    definition_block(
-        "Identificação",
-        [
-            ("Signatário", r.get("signatario")),
-            ("Remetente", r.get("remetente")),
-            ("Destinatário", r.get("destinatario")),
-            ("Instituição", r.get("instituicao")),
-        ],
-    )
-    definition_block(
-        "Referência",
-        [
-            ("Processo", r.get("processo")),
-            ("Procedimento", r.get("procedimento")),
-            ("Referência", r.get("referencia")),
-            ("Observações", r.get("observacoes")),
-        ],
-    )
-    tramitacao = [
-        ("Data", date.fromisoformat(r["data"]).strftime("%d/%m/%Y")),
-    ]
-    for field, title in (
-        ("data_envio", "Envio"),
-        ("data_recebimento", "Recebimento"),
-        ("prazo", "Prazo"),
-        ("cancelada", "Cancelamento"),
-    ):
-        if r.get(field):
-            tramitacao.append(
-                (title, date.fromisoformat(r[field][:10]).strftime("%d/%m/%Y"))
-            )
-    definition_block("Tramitação", tramitacao)
-    if r.get("membros"):
-        people = {p["id"]: p["nome"] for p in service.store.catalog("procuradores")}
+
+
+def _render_detail_summary(service, r):
+    left, right = st.columns(2)
+    with left:
         definition_block(
-            "Destinatários internos",
+            "Identificação",
             [
-                (
-                    "Membros",
-                    ", ".join(
-                        people.get(i, "Membro indisponível") for i in r["membros"]
-                    ),
-                )
+                ("Signatário", r.get("signatario")),
+                ("Remetente", r.get("remetente")),
+                ("Destinatário", r.get("destinatario")),
+                ("Instituição", r.get("instituicao")),
+                ("Assunto", r.get("assunto")),
             ],
         )
-    if r.get("corpo"):
-        st.text(r["corpo"])
+        definition_block(
+            "Referência",
+            [
+                ("Processo", r.get("processo")),
+                ("Procedimento", r.get("procedimento")),
+                ("Referência", r.get("referencia")),
+            ],
+        )
+    with right:
+        tramitacao = [
+            ("Data", date.fromisoformat(r["data"]).strftime("%d/%m/%Y")),
+            ("Situação", r.get("status")),
+        ]
+        for field, title in (
+            ("data_envio", "Envio"),
+            ("data_recebimento", "Recebimento"),
+            ("prazo", "Prazo"),
+            ("cancelada", "Cancelamento"),
+        ):
+            if r.get(field):
+                tramitacao.append(
+                    (title, date.fromisoformat(r[field][:10]).strftime("%d/%m/%Y"))
+                )
+        definition_block("Tramitação", tramitacao)
+        if r.get("membros"):
+            people = {p["id"]: p["nome"] for p in service.store.catalog("procuradores")}
+            definition_block(
+                "Destinatários internos",
+                [
+                    (
+                        "Membros",
+                        ", ".join(
+                            people.get(i, "Membro indisponível") for i in r["membros"]
+                        ),
+                    )
+                ],
+            )
+
+
+def _render_detail_documents(service, r):
     if r.get("responde_a"):
         response = service.get(r["responde_a"])
-        empty_state("Respondido pelo Ofício recebido " + label(response))
-        st.button(
-            "Abrir resposta",
-            key="open_response_" + r["id"],
-            on_click=_open_linked_response,
-            args=(response["id"],),
-        )
+        if response:
+            empty_state("Respondido pelo Ofício recebido " + label(response))
+            st.button(
+                "Abrir resposta",
+                key="open_response_" + r["id"],
+                on_click=_open_linked_response,
+                args=(response["id"],),
+            )
     if r["direcao"] == "RECEBIDO":
         for reply in read_list(service, related=r["id"]):
             empty_state(
@@ -956,234 +972,92 @@ def details(service, r, principal=None):
                 )
                 + label(reply)
             )
-        with st.container(key=recebidos_excluir_key(r["id"])):
-            with st.expander("Excluir ofício recebido"):
-                ack = st.checkbox(
-                    "Confirmo que desejo excluir definitivamente este ofício recebido",
-                    key="recv_ack_" + r["id"],
-                )
-                typed = st.text_input("Digite EXCLUIR", key="recv_typed_" + r["id"])
-                if st.button("Excluir definitivamente", key="recv_purge_" + r["id"]):
-                    service.delete_received(r["id"], ack, typed)
-                    audit_oficio("OFICIO_EXCLUIDO", "EXCLUIR", r)
-                    st.session_state.pop("oficio_detail", None)
-                    st.session_state.pop("oficio_open_ids", None)
-                    done("Ofício recebido excluído.")
     files = list(service.files(r["id"]))
-    if files:
-        principal_files = [f for f in files if f.get("papel") != "ANEXO"]
-        attachments = [f for f in files if f.get("papel") == "ANEXO"]
-        if principal_files:
-            section_label("Documento principal")
-        for f in principal_files:
-            st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
-            if st.button(
-                "Preparar download: " + f["nome"], key="oficio_file_" + f["id"]
-            ):
-                audit_oficio(
-                    "DOCUMENTO_BAIXADO",
-                    "EXPORTAR",
-                    r,
-                    extra={"formato": f.get("tipo"), "arquivo": f["nome"][:80]},
-                )
-                st.download_button(
-                    "Baixar arquivo",
-                    service.download(f["id"]),
-                    f["nome"],
-                    mime=f["tipo"],
-                    key="oficio_download_" + f["id"],
-                )
-        if attachments:
-            section_label(f"Anexos ({len(attachments)})")
-        for f in attachments:
-            st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
-            if st.button(
-                "Preparar download: " + f["nome"], key="oficio_file_" + f["id"]
-            ):
-                audit_oficio(
-                    "DOCUMENTO_BAIXADO",
-                    "EXPORTAR",
-                    r,
-                    extra={"formato": f.get("tipo"), "arquivo": f["nome"][:80]},
-                )
-                st.download_button(
-                    "Baixar arquivo",
-                    service.download(f["id"]),
-                    f["nome"],
-                    mime=f["tipo"],
-                    key="oficio_download_" + f["id"],
-                )
-    if r["status"] == "Rascunho":
-        st.button(
-            "Editar rascunho",
-            key="edit_" + r["id"],
-            on_click=edit_draft,
-            args=(r["id"],),
-        )
-        confirmed = st.checkbox(
-            "Confirmo a exclusão deste rascunho", key="confirm_" + r["id"]
-        )
-        if st.button("Excluir rascunho", key="delete_" + r["id"]):
-            service.delete_draft(r["id"], confirmed)
-            audit_oficio("RASCUNHO_EXCLUIDO", "EXCLUIR", r)
-            done("Rascunho excluído.")
-    elif r["status"] != "Cancelado":
-        if r["status"] == "Gerado":
-            with st.expander("Excluir definitivamente"):
-                reason = st.text_area("Motivo obrigatório", key="reason_" + r["id"])
-                acknowledged = st.checkbox(
-                    "Estou ciente de que este Ofício será excluído e sua numeração poderá ser reutilizada.",
-                    key="ack_" + r["id"],
-                )
-                typed = st.text_input("Digite EXCLUIR", key="typed_" + r["id"])
-                confirmed = st.checkbox(
-                    "Confirmação final da exclusão definitiva",
-                    key="final_delete_" + r["id"],
-                )
-                if st.button("Excluir definitivamente", key="purge_" + r["id"]):
-                    service.delete_generated(
-                        r["id"], reason, acknowledged, typed, confirmed
-                    )
-                    audit_oficio(
-                        "NUMERO_LIBERADO",
-                        "EXCLUIR",
-                        r,
-                        extra={"numero_liberado": True},
-                    )
-                    done(
-                        "Ofício preservado em quarentena e número liberado para reutilização."
-                    )
-        section_label("Acompanhamento")
-        tracking = (
-            st.container(key=recebidos_acompanhamento_key(r["id"]))
-            if r["direcao"] == "RECEBIDO"
-            else nullcontext()
-        )
-        with tracking:
-            with st.form("status_" + r["id"]):
-                form_mark()
-                choices = [
-                    s
-                    for s in (SENT if r["direcao"] == "ENVIADO" else RECEIVED)
-                    if s not in ("Rascunho", "Gerado")
-                ]
-                status = st.selectbox(
-                    "Novo status",
-                    choices,
-                    index=choices.index(r["status"]) if r["status"] in choices else 0,
-                )
-                due = st.date_input(
-                    "Prazo",
-                    value=date.fromisoformat(r["prazo"]) if r.get("prazo") else None,
-                    format="DD/MM/YYYY",
-                )
-                sent = st.date_input(
-                    "Data de envio (para status Enviado)",
-                    value=None,
-                    format="DD/MM/YYYY",
-                )
-                note = st.text_area("Observação / motivo do cancelamento")
-                submit = st.form_submit_button("Registrar movimentação")
-        if submit:
-            service.update_status(
-                r["id"],
-                status,
-                note,
-                due.isoformat() if due else None,
-                sent.isoformat() if sent else None,
-            )
-            evento = "OFICIO_CANCELADO" if status == "Cancelado" else "OFICIO_ALTERADO"
-            audit_oficio(evento, "MOVIMENTAR", {**r, "status": status})
-            done("Movimentação registrada.")
-    if (
-        r["direcao"] == "ENVIADO"
-        and r.get("numero") is not None
-        and r["status"] != "Cancelado"
+    if not files:
+        guidance_note("Nenhum documento vinculado a este Ofício.")
+        return
+    principal_files = [f for f in files if f.get("papel") != "ANEXO"]
+    attachments = [f for f in files if f.get("papel") == "ANEXO"]
+    for title, items in (
+        ("Documento principal", principal_files),
+        (f"Anexos ({len(attachments)})", attachments),
     ):
-        section_label("Resposta")
-        with st.form("response_tracking_" + r["id"]):
-            waiting = st.checkbox(
-                "Aguarda resposta",
-                value=bool(r.get("aguarda_resposta")),
-                key="waiting_response_" + r["id"],
+        if items:
+            section_label(title)
+        for f in items:
+            st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
+            if st.button(
+                "Preparar download: " + f["nome"], key="oficio_file_" + f["id"]
+            ):
+                audit_oficio(
+                    "DOCUMENTO_BAIXADO",
+                    "EXPORTAR",
+                    r,
+                    extra={"formato": f.get("tipo"), "arquivo": f["nome"][:80]},
+                )
+                st.download_button(
+                    "Baixar arquivo",
+                    service.download(f["id"]),
+                    f["nome"],
+                    mime=f["tipo"],
+                    key="oficio_download_" + f["id"],
+                )
+
+
+def _render_detail_movements(service, r):
+    section_label("Registrar andamento")
+    tracking = (
+        st.container(key=recebidos_acompanhamento_key(r["id"]))
+        if r["direcao"] == "RECEBIDO"
+        else nullcontext()
+    )
+    with tracking:
+        with st.form("status_" + r["id"]):
+            form_mark()
+            choices = [
+                s
+                for s in (SENT if r["direcao"] == "ENVIADO" else RECEIVED)
+                if s not in ("Rascunho", "Gerado")
+            ]
+            status = st.selectbox(
+                "Novo status",
+                choices,
+                index=choices.index(r["status"]) if r["status"] in choices else 0,
+                key="oficio_status_" + r["id"],
             )
-            expected = st.date_input(
-                "Data esperada para resposta (opcional)",
-                value=(
-                    date.fromisoformat(r["data_esperada_resposta"])
-                    if r.get("data_esperada_resposta")
-                    else None
-                ),
+            due = st.date_input(
+                "Prazo",
+                value=date.fromisoformat(r["prazo"]) if r.get("prazo") else None,
                 format="DD/MM/YYYY",
-                key="expected_response_" + r["id"],
             )
-            save_tracking = st.form_submit_button("Salvar acompanhamento")
-        if save_tracking:
-            service.set_response_tracking(
-                r["id"], waiting, expected.isoformat() if waiting and expected else None
+            sent = st.date_input(
+                "Data de envio (para status Enviado)", value=None, format="DD/MM/YYYY"
             )
-            audit_oficio(
-                "OFICIO_ACOMPANHAMENTO_RESPOSTA",
-                "ALTERAR",
-                r,
-                extra={
-                    "aguarda_resposta": waiting,
-                    "possui_data_esperada": bool(expected),
-                },
-            )
-            done("Acompanhamento de resposta atualizado.")
-        if not r.get("responde_a"):
-            candidates = service.response_candidates(
-                r["id"], st.session_state.get("oficio_gabinete_member")
-            )
-            by_id = {item["id"]: item for item in candidates}
-            with st.form("link_response_" + r["id"]):
-                chosen = st.selectbox(
-                    "Ofício recebido",
-                    list(by_id),
-                    index=None,
-                    placeholder="Selecione a resposta recebida",
-                    format_func=lambda value: (
-                        f"{by_id[value]['numero_externo']} · {by_id[value]['assunto']} · "
-                        + date.fromisoformat(by_id[value]["data"]).strftime("%d/%m/%Y")
-                        if value in by_id
-                        else ""
-                    ),
-                    key="response_choice_" + r["id"],
-                )
-                link = st.form_submit_button("Vincular resposta")
-            if link:
-                if not chosen:
-                    st.error("Selecione um Ofício recebido.")
-                else:
-                    service.link_response(r["id"], chosen)
-                    audit_oficio("OFICIO_RESPOSTA_VINCULADA", "VINCULAR", r)
-                    done("Resposta vinculada.")
-        else:
-            with st.form("unlink_response_" + r["id"]):
-                confirm_unlink = st.checkbox(
-                    "Confirmo que desejo desfazer somente o vínculo",
-                    key="unlink_confirm_" + r["id"],
-                )
-                unlink = st.form_submit_button("Desvincular resposta")
-            if unlink:
-                if not confirm_unlink:
-                    st.error("Confirme a desvinculação.")
-                else:
-                    service.unlink_response(r["id"])
-                    audit_oficio("OFICIO_RESPOSTA_DESVINCULADA", "DESVINCULAR", r)
-                    done("Vínculo da resposta removido; nenhum Ofício foi excluído.")
+            note = st.text_area("Observação / motivo do cancelamento")
+            submit = st.form_submit_button("Registrar movimentação")
+    if submit:
+        service.update_status(
+            r["id"],
+            status,
+            note,
+            due.isoformat() if due else None,
+            sent.isoformat() if sent else None,
+        )
+        evento = "OFICIO_CANCELADO" if status == "Cancelado" else "OFICIO_ALTERADO"
+        audit_oficio(evento, "MOVIMENTAR", {**r, "status": status})
+        done("Movimentação registrada.")
+
     history = (
         st.container(key=recebidos_historico_key(r["id"]))
         if r["direcao"] == "RECEBIDO"
         else nullcontext()
     )
     with history:
+        movements = service.movements(r["id"])
         if r["direcao"] == "RECEBIDO":
-            _render_recebidos_historico(service.movements(r["id"]))
+            _render_recebidos_historico(movements)
         else:
             st.write("Histórico")
-            movements = service.movements(r["id"])
             for movement in movements:
                 movement["instante"] = datetime.fromisoformat(movement["instante"])
             st.dataframe(
@@ -1196,38 +1070,105 @@ def details(service, r, principal=None):
                 hide_index=True,
                 use_container_width=True,
             )
-    from services.internal_collaboration_ui import render_internal_collaboration
 
+
+def _render_detail_more(service, r, principal):
+    if r.get("corpo"):
+        section_label("Conteúdo")
+        st.text(r["corpo"])
+    if r.get("observacoes"):
+        definition_block("Observações", [("Observações", r["observacoes"])])
+    if r["status"] == "Rascunho":
+        st.button("Editar rascunho", key="edit_" + r["id"], on_click=edit_draft, args=(r["id"],))
+        confirmed = st.checkbox("Confirmo a exclusão deste rascunho", key="confirm_" + r["id"])
+        if st.button("Excluir rascunho", key="delete_" + r["id"]):
+            service.delete_draft(r["id"], confirmed)
+            audit_oficio("RASCUNHO_EXCLUIDO", "EXCLUIR", r)
+            done("Rascunho excluído.")
+    elif r["status"] != "Cancelado":
+        if r["status"] == "Gerado":
+            with st.expander("Excluir definitivamente"):
+                reason = st.text_area("Motivo obrigatório", key="reason_" + r["id"])
+                acknowledged = st.checkbox("Estou ciente de que este Ofício será excluído e sua numeração poderá ser reutilizada.", key="ack_" + r["id"])
+                typed = st.text_input("Digite EXCLUIR", key="typed_" + r["id"])
+                confirmed = st.checkbox("Confirmação final da exclusão definitiva", key="final_delete_" + r["id"])
+                if st.button("Excluir definitivamente", key="purge_" + r["id"]):
+                    service.delete_generated(r["id"], reason, acknowledged, typed, confirmed)
+                    audit_oficio("NUMERO_LIBERADO", "EXCLUIR", r, extra={"numero_liberado": True})
+                    done("Ofício preservado em quarentena e número liberado para reutilização.")
+    if r["direcao"] == "RECEBIDO":
+        with st.container(key=recebidos_excluir_key(r["id"])):
+            with st.expander("Excluir ofício recebido"):
+                ack = st.checkbox("Confirmo que desejo excluir definitivamente este ofício recebido", key="recv_ack_" + r["id"])
+                typed = st.text_input("Digite EXCLUIR", key="recv_typed_" + r["id"])
+                if st.button("Excluir definitivamente", key="recv_purge_" + r["id"]):
+                    service.delete_received(r["id"], ack, typed)
+                    audit_oficio("OFICIO_EXCLUIDO", "EXCLUIR", r)
+                    st.session_state.pop("oficio_detail", None)
+                    st.session_state.pop("oficio_open_ids", None)
+                    done("Ofício recebido excluído.")
+    if r["direcao"] == "ENVIADO" and r.get("numero") is not None and r["status"] != "Cancelado":
+        section_label("Resposta")
+        with st.form("response_tracking_" + r["id"]):
+            waiting = st.checkbox("Aguarda resposta", value=bool(r.get("aguarda_resposta")), key="waiting_response_" + r["id"])
+            expected = st.date_input("Data esperada para resposta (opcional)", value=date.fromisoformat(r["data_esperada_resposta"]) if r.get("data_esperada_resposta") else None, format="DD/MM/YYYY", key="expected_response_" + r["id"])
+            save_tracking = st.form_submit_button("Salvar acompanhamento")
+        if save_tracking:
+            service.set_response_tracking(r["id"], waiting, expected.isoformat() if waiting and expected else None)
+            audit_oficio("OFICIO_ACOMPANHAMENTO_RESPOSTA", "ALTERAR", r, extra={"aguarda_resposta": waiting, "possui_data_esperada": bool(expected)})
+            done("Acompanhamento de resposta atualizado.")
+        if not r.get("responde_a"):
+            candidates = service.response_candidates(r["id"], st.session_state.get("oficio_gabinete_member"))
+            by_id = {item["id"]: item for item in candidates}
+            with st.form("link_response_" + r["id"]):
+                chosen = st.selectbox("Ofício recebido", list(by_id), index=None, placeholder="Selecione a resposta recebida", format_func=lambda value: f"{by_id[value]['numero_externo']} · {by_id[value]['assunto']} · " + date.fromisoformat(by_id[value]["data"]).strftime("%d/%m/%Y") if value in by_id else "", key="response_choice_" + r["id"])
+                link = st.form_submit_button("Vincular resposta")
+            if link:
+                if not chosen:
+                    st.error("Selecione um Ofício recebido.")
+                else:
+                    service.link_response(r["id"], chosen)
+                    audit_oficio("OFICIO_RESPOSTA_VINCULADA", "VINCULAR", r)
+                    done("Resposta vinculada.")
+        else:
+            with st.form("unlink_response_" + r["id"]):
+                confirm_unlink = st.checkbox("Confirmo que desejo desfazer somente o vínculo", key="unlink_confirm_" + r["id"])
+                unlink = st.form_submit_button("Desvincular resposta")
+            if unlink:
+                if not confirm_unlink:
+                    st.error("Confirme a desvinculação.")
+                else:
+                    service.unlink_response(r["id"])
+                    audit_oficio("OFICIO_RESPOSTA_DESVINCULADA", "DESVINCULAR", r)
+                    done("Vínculo da resposta removido; nenhum Ofício foi excluído.")
     if principal is not None:
-        render_internal_collaboration(
-            service.store,
-            principal,
-            "oficio_enviado" if r["direcao"] == "ENVIADO" else "oficio_recebido",
-            r["id"],
-        )
+        from services.internal_collaboration_ui import render_internal_collaboration
         from services.record_engagement_ui import render_origin_tools
 
-        source_pdf = next(
-            (item for item in files if item.get("tipo") == "application/pdf"), None
-        )
-
-        render_origin_tools(
-            service.store,
-            principal,
-            "oficio_enviado" if r["direcao"] == "ENVIADO" else "oficio_recebido",
-            r["id"],
-            label(r),
-            pdf_supplier=(lambda: service.download(source_pdf["id"])) if source_pdf else None,
-            ai_context={
-                "tipo": "Ofício " + r["direcao"].lower(),
-                "numero": str(r.get("numero_externo") or r.get("numero") or ""),
-                "assunto": r.get("assunto") or "",
-                "origem": r.get("remetente") or "",
-                "identificacao": label(r),
-            },
-        )
+        render_internal_collaboration(service.store, principal, "oficio_enviado" if r["direcao"] == "ENVIADO" else "oficio_recebido", r["id"])
+        files = list(service.files(r["id"]))
+        source_pdf = next((item for item in files if item.get("tipo") == "application/pdf"), None)
+        render_origin_tools(service.store, principal, "oficio_enviado" if r["direcao"] == "ENVIADO" else "oficio_recebido", r["id"], label(r), pdf_supplier=(lambda: service.download(source_pdf["id"])) if source_pdf else None, ai_context={"tipo": "Ofício " + r["direcao"].lower(), "numero": str(r.get("numero_externo") or r.get("numero") or ""), "assunto": r.get("assunto") or "", "origem": r.get("remetente") or "", "identificacao": label(r)})
 
 
+def details(service, r, principal=None):
+    _render_detail_header(r)
+    can_move = r["status"] not in ("Rascunho", "Cancelado")
+    action_left, action_right = st.columns(2)
+    if can_move:
+        action_left.button("Registrar andamento", type="primary", key="oficio_register_movement_" + r["id"], on_click=_show_detail_section, args=(r["id"], "Movimentações"))
+        if r["status"] != "Concluído":
+            action_right.button("Concluir ofício", key="oficio_conclude_" + r["id"], on_click=_show_detail_section, args=(r["id"], "Movimentações", "Concluído"))
+    section = st.radio("Detalhes do Ofício", ("Resumo", "Movimentações", "Documentos", "Mais"), horizontal=True, key=_detail_section_key(r["id"]))
+    if section == "Resumo":
+        _render_detail_summary(service, r)
+    elif section == "Movimentações":
+        _render_detail_movements(service, r)
+    elif section == "Documentos":
+        _render_detail_documents(service, r)
+    else:
+        _render_detail_more(service, r, principal)
+    return
 def render_filters(*, direction=None, tracking=False, submit_label=None):
     """Render the shared listing filters once, always initially collapsed."""
     with st.expander("Filtros", expanded=False):
@@ -1290,6 +1231,7 @@ def _toggle_oficio_detail(record_id):
         opened.discard(record_id)
     else:
         opened.add(record_id)
+        st.session_state[_detail_section_key(record_id)] = "Resumo"
     st.session_state["oficio_open_ids"] = opened
     if record_id in opened:
         st.session_state["oficio_detail"] = record_id
@@ -1505,7 +1447,14 @@ def render(store=None, principal=None):
         st.button("← Trocar gabinete", type="primary", on_click=switch_gabinete)
         page = st.radio(
             "Ofícios",
-            ["Visão Geral", "Novo Ofício", "Enviados", "Recebidos", "Acompanhamento"],
+            [
+                "Visão Geral",
+                "Novo Ofício",
+                "Enviados",
+                "Recebidos",
+                "Acompanhamento",
+                "Numeração",
+            ],
             horizontal=True,
             key="oficio_page",
         )
@@ -1533,7 +1482,6 @@ def render(store=None, principal=None):
                 with col:
                     kpi_mark(tone)
                     st.metric(title, value)
-            configuration(service, people)
             overview_filters = render_filters(submit_label="Consultar ofícios")
             detail_drawn = set()
             if overview_filters["submitted"]:
@@ -1562,6 +1510,8 @@ def render(store=None, principal=None):
                     )
                 if is_open:
                     _details_if_open(service, row["id"], detail_drawn, principal)
+        elif page == "Numeração":
+            configuration(service, people)
         elif page == "Novo Ofício":
             editor(service, people)
         elif page == "Recebidos":

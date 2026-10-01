@@ -376,10 +376,75 @@ def test_home_and_oficios_navigation(store, monkeypatch):
         "Enviados",
         "Recebidos",
         "Acompanhamento",
+        "Numeração",
         "Visão Geral",
     ]:
         app.radio(key="oficio_page").set_value(page).run()
         assert not app.exception and not app.error
+
+
+def test_numbering_configuration_is_rendered_only_in_its_page(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    from database.store import ROOT
+    from tests.access_testing import enable_login
+
+    service = ready(store)
+    service.confirm_sequence("LAF", 2026, 4, True)
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_oficios").click().run()
+    app.button(key="gabinete_PROGE").click().run()
+
+    assert "Numeração" in app.radio(key="oficio_page").options
+    assert not any(input.label == "Ano da sequência" for input in app.number_input)
+    app.radio(key="oficio_page").set_value("Numeração").run()
+    assert any(input.label == "Ano da sequência" for input in app.number_input)
+    assert any("PROGE/2026: próximo 8" in item.value for item in app.markdown)
+
+    next(button for button in app.button if button.label == "← Trocar gabinete").click().run()
+    app.button(key="gabinete_LAF").click().run()
+    app.radio(key="oficio_page").set_value("Numeração").run()
+    assert any("LAF/2026: próximo 4" in item.value for item in app.markdown)
+
+
+def test_oficio_detail_uses_conditional_sections(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    from database.store import ROOT
+    from tests.access_testing import enable_login
+
+    service = ready(store)
+    identifier = service.save(sample(service))
+    service.finalize(identifier, files)
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_oficios").click().run()
+    app.button(key="gabinete_PROGE").click().run()
+    app.radio(key="oficio_page").set_value("Enviados").run()
+    app.button(key="open_oficio_" + identifier).click().run()
+
+    section = app.radio(key="oficio_detail_section_" + identifier)
+    assert section.value == "Resumo"
+    assert set(section.options) == {"Resumo", "Movimentações", "Documentos", "Mais"}
+    assert not any(item.label == "Novo status" for item in app.selectbox)
+
+    app.button(key="oficio_register_movement_" + identifier).click().run()
+    assert app.radio(key="oficio_detail_section_" + identifier).value == "Movimentações"
+    assert any(item.label == "Novo status" for item in app.selectbox)
+
+    app.button(key="oficio_conclude_" + identifier).click().run()
+    assert app.radio(key="oficio_detail_section_" + identifier).value == "Movimentações"
+    assert app.selectbox(key="oficio_status_" + identifier).value == "Concluído"
+
+    app.radio(key="oficio_detail_section_" + identifier).set_value("Documentos").run()
+    assert any(
+        metadata["nome"] in caption.value
+        for metadata in service.files(identifier)
+        for caption in app.caption
+    )
 
 
 @pytest.mark.parametrize(
@@ -569,6 +634,7 @@ def test_editor_save_reopen_finalize_ui(store, monkeypatch):
     assert s.get(identifier)["numero"] is None
     app.radio(key="oficio_page").set_value("Enviados").run()
     app.button(key="open_oficio_" + identifier).click().run()
+    app.radio(key="oficio_detail_section_" + identifier).set_value("Mais").run()
     app.button(key="edit_" + identifier).click().run()
     assert app.radio(key="oficio_page").value == "Novo Ofício"
     assert next(x for x in app.button if x.label == "Finalizar e gerar ofício").disabled
