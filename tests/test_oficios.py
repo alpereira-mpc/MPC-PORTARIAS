@@ -792,6 +792,49 @@ def test_new_oficio_defaults_to_system_creation(store, monkeypatch):
     )
 
 
+def test_attached_editor_persists_uploaded_pdf_and_complementary_pdf(
+    store, monkeypatch
+):
+    from streamlit.testing.v1 import AppTest
+
+    from database.store import ROOT
+    from tests.access_testing import enable_login
+    from services.oficios_ui import PREP_ATTACH
+
+    ready(store)
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_oficios").click().run()
+    app.button(key="gabinete_PROGE").click().run()
+    app.radio(key="oficio_page").set_value("Novo Ofício").run()
+    app.radio(key="oficio_prep_mode").set_value(PREP_ATTACH).run()
+    principal = _blank_pdf()
+    attachment = _blank_pdf()
+    app.file_uploader(key="oficio_attach_file").set_value(
+        ("principal.pdf", principal, "application/pdf")
+    )
+    app.file_uploader(key="oficio_attach_extras").set_value(
+        [("anexo.pdf", attachment, "application/pdf")]
+    )
+    app.text_input(key="oficio_attach_destinatario").set_value("Destinatário")
+    app.text_input(key="oficio_attach_unidade").set_value("Unidade")
+    app.text_input(key="oficio_attach_assunto").set_value("Assunto")
+    app.checkbox(key="oficio_attach_confirm").check().run()
+    app.button(key="oficio_attach_finalize").click().run()
+
+    assert not app.exception
+    from database.oficios import OficiosStore
+
+    service = OficiosStore(store)
+    created = service.list(direction="ENVIADO", status="Gerado")
+    assert len(created) == 1
+    files = service.files(created[0]["id"])
+    assert [row["papel"] for row in files] == ["PRINCIPAL", "ANEXO"]
+    assert service.download(files[0]["id"]) == principal
+    assert service.download(files[1]["id"]) == attachment
+
+
 def test_ultimas_movimentacoes_show_brazilian_dates():
     from datetime import datetime
 

@@ -345,11 +345,14 @@ def _attached_editor(service, people, member, series):
                 complementary_files=extras,
             )
         except Exception:
+            LOGGER.exception("Falha ao finalizar ofício anexado com anexos complementares.")
             if "identifier" in locals():
                 try:
                     service.delete_draft(identifier, True)
                 except Exception:
-                    pass
+                    LOGGER.exception(
+                        "Falha ao limpar rascunho após erro na finalização do ofício anexado."
+                    )
             st.error("Não foi possível finalizar o ofício com os anexos selecionados.")
             return
         audit_oficio("OFICIO_FINALIZADO", "FINALIZAR", final)
