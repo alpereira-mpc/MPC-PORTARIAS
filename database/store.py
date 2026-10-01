@@ -63,6 +63,9 @@ def ensure_addon_schemas(store):
     from database.record_engagement import ensure_schema as ensure_engagement
 
     ensure_engagement(store)
+    from database.alert_attention import ensure_schema as ensure_alert_attention
+
+    ensure_alert_attention(store)
     from database.memorandos import MemorandosStore
 
     MemorandosStore(store)

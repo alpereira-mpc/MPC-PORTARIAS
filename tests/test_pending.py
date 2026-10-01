@@ -168,25 +168,31 @@ def test_sources_include_and_exclude(store):
     from tests.test_memorandos import record as memo_record
 
     memorandos.save_draft(
-        memo_record(data_inicio="2026-09-18", data_fim="2026-09-20", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-18", data_fim="2026-09-20", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     memorandos.save_draft(
-        memo_record(data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     memorandos.save_draft(
-        memo_record(data_inicio="2026-08-01", data_fim="2026-09-01", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-08-01", data_fim="2026-09-01", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     cancelled_m = memorandos.save_draft(
-        memo_record(data_inicio="2026-09-19", data_fim="2026-09-25", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-19", data_fim="2026-09-25", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     with store.connection() as c:
-        c.execute(
-            "UPDATE memorandos SET status='CANCELADO' WHERE id=?", (cancelled_m,)
-        )
+        c.execute("UPDATE memorandos SET status='CANCELADO' WHERE id=?", (cancelled_m,))
     items, errors, _ = collect_pending(store, _admin(store), today=TODAY)
     assert not any(errors.values())
     titles = {i.title for i in items}
@@ -273,9 +279,7 @@ def test_permissions_modules_and_cabinets(store):
     )
     scoped, _, _ = collect_pending(store, proge_user, today=TODAY)
     assert all(i.gabinete != "SBBQ" for i in scoped)
-    leaked, _, _ = collect_pending(
-        store, proge_user, today=TODAY, gabinete="SBBQ"
-    )
+    leaked, _, _ = collect_pending(store, proge_user, today=TODAY, gabinete="SBBQ")
     assert leaked == []
     with pytest.raises(ValueError, match="módulo"):
         collect_pending(
@@ -339,16 +343,17 @@ def test_menu_and_central_ui(store, monkeypatch):
     )
     assert portal.options[0] == "Início"
     assert portal.options[1] == "Busca Global"
-    assert portal.options[2] == "Pendências"
+    assert "Pendências" not in portal.options
     assert "Alertas" not in portal.options
-    assert portal.options[3] == "Portarias"
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
+    assert portal.options[2] == "Portarias"
+    app.session_state["portal_alerts_request"] = True
+    app.run()
     assert not app.exception
     headings = [str(h.value) for h in app.subheader]
-    assert any("PENDÊNCIAS" in h for h in headings)
+    assert any("CENTRAL DE ALERTAS" in h for h in headings)
     blob = " ".join(str(m.value) for m in app.markdown)
-    assert "Nenhuma pend" in blob
-    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    assert "Nenhum alerta" in blob
+    app.button(key="alerts_back").click().run()
     assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
     assert not any(b.label == "Ver pendências" for b in app.button)
     assert not any(b.label == "Ver alertas" for b in app.button)
@@ -415,11 +420,14 @@ def test_programmatic_navigation_does_not_write_widget_keys():
         assert "queue_portal_navigation" in source
         assert "request_portal_navigation" not in source
         assert "st.rerun()" not in source
-    for fn in (open_pendencias, open_origin):
+    for fn in (open_origin,):
         source = getsource(fn)
         assert 'st.session_state["portal_module"]' not in source
         assert "st.session_state['portal_module']" not in source
         assert "request_portal_navigation" in source
+    source = getsource(open_pendencias)
+    assert 'st.session_state["portal_module"]' not in source
+    assert "request_alerts_view" in source
     assert "request_alerts_view" in getsource(open_alertas)
     assert 'st.session_state["portal_module"]' not in getsource(open_alertas)
     assert "Alertas" not in getsource(open_alertas)
@@ -550,9 +558,7 @@ def test_destination_consumes_pending_open_before_widgets(monkeypatch):
 
     from services.memorandos_ui import NAV_HISTORY, NAV_NEW, NAV_OVERVIEW
 
-    memo_state = {
-        "pending_open_memorando": {"id": "me-1", "page": "Em andamento"}
-    }
+    memo_state = {"pending_open_memorando": {"id": "me-1", "page": "Em andamento"}}
     monkeypatch.setattr(memorandos_ui.st, "session_state", memo_state)
     pages = [NAV_OVERVIEW, NAV_NEW, NAV_HISTORY]
     memorandos_ui.consume_pending_open_memorando(pages)
@@ -573,21 +579,16 @@ def test_home_cards_and_manual_pending_menu(store, monkeypatch):
     assert not app.exception
     assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
     assert not any(b.label == "Ver pendências" for b in app.button)
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
-    assert not app.exception
-    assert app.sidebar.radio(key="portal_module").value == "Pendências"
-    assert PORTAL_NAV_REQUEST not in app.session_state
-    headings = [str(h.value) for h in app.subheader]
-    assert any("PENDÊNCIAS" in h for h in headings)
+    assert "Pendências" not in app.sidebar.radio(key="portal_module").options
+    app.session_state["portal_alerts_request"] = True
     app.run()
     assert not app.exception
-    assert app.sidebar.radio(key="portal_module").value == "Pendências"
-    app.sidebar.radio(key="portal_module").set_value("Início").run()
-    assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Início"
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
-    assert not app.exception
-    assert app.sidebar.radio(key="portal_module").value == "Pendências"
+    assert PORTAL_NAV_REQUEST not in app.session_state
+    headings = [str(h.value) for h in app.subheader]
+    assert any("CENTRAL DE ALERTAS" in h for h in headings)
+    app.button(key="alerts_back").click().run()
+    assert app.sidebar.radio(key="portal_module").value == "Início"
 
 
 def test_pending_deep_links_open_origin_modules(store, monkeypatch):
@@ -614,18 +615,24 @@ def test_pending_deep_links_open_origin_modules(store, monkeypatch):
         conflict_confirmed=True,
     )
     memo_id = memorandos.save_draft(
-        memo_record(data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     monkeypatch.setattr("services.pending.today_recife", lambda now=None: TODAY)
+    monkeypatch.setattr(
+        "services.alerts.now_recife",
+        lambda now=None: datetime(2026, 9, 14, 12, tzinfo=timezone.utc),
+    )
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
+    app.session_state["portal_alerts_request"] = True
+    app.run()
     assert not app.exception
-    app.selectbox(key="pending_module").set_value("oficios").run()
-    app.selectbox(key="pending_open_pick").set_value(0).run()
-    app.button(key="pending_open_go").click().run()
+    app.selectbox(key="alerts_module").set_value("oficios").run()
+    app.button(key="alert_open_0").click().run()
     assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Ofícios"
     assert PORTAL_NAV_REQUEST not in app.session_state
@@ -634,26 +641,27 @@ def test_pending_deep_links_open_origin_modules(store, monkeypatch):
     assert app.session_state["oficio_page"] == "Recebidos"
     assert app.session_state["oficio_detail"] == oficio_id
 
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
-    app.selectbox(key="pending_module").set_value("agenda").run()
-    app.selectbox(key="pending_open_pick").set_value(0).run()
-    app.button(key="pending_open_go").click().run()
+    app.session_state["portal_alerts_request"] = True
+    app.run()
+    app.selectbox(key="alerts_module").set_value("agenda").run()
+    app.button(key="alert_open_0").click().run()
     assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Agenda"
     assert "pending_open_agenda" not in app.session_state
     assert app.session_state["agenda_edit"]["id"] == agenda_id
 
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
-    app.selectbox(key="pending_module").set_value("memorandos").run()
-    app.selectbox(key="pending_open_pick").set_value(0).run()
-    app.button(key="pending_open_go").click().run()
+    app.session_state["portal_alerts_request"] = True
+    app.run()
+    app.selectbox(key="alerts_module").set_value("memorandos").run()
+    app.button(key="alert_open_0").click().run()
     assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Memorandos"
     assert "pending_open_memorando" not in app.session_state
     assert app.session_state["memorandos_nav"] == "Histórico"
-    assert "pending_focus_memorando" not in app.session_state or app.session_state[
-        "pending_focus_memorando"
-    ] == memo_id
+    assert (
+        "pending_focus_memorando" not in app.session_state
+        or app.session_state["pending_focus_memorando"] == memo_id
+    )
 
 
 def test_item_in_period_windows():
@@ -773,22 +781,48 @@ def test_extended_modules_closed_and_permissions(store):
     requests.mark_processed(done_req["id"], "aprovado", admin.email)
     items, errors, _ = collect_pending(store, admin, today=TODAY, period="todas")
     assert not any(errors.values())
-    assert any(i.source_id == str(open_task["id"]) for i in items if i.source_module == "tarefas")
-    assert all(i.source_id != str(done_task["id"]) for i in items if i.source_module == "tarefas")
-    assert all(i.source_id != str(other["id"]) for i in items if i.source_module == "tarefas")
     assert any(
-        i.source_id == str(open_rep["id"]) for i in items if i.source_module == "representacoes"
+        i.source_id == str(open_task["id"])
+        for i in items
+        if i.source_module == "tarefas"
     )
     assert all(
-        i.source_id != str(closed_rep["id"]) for i in items if i.source_module == "representacoes"
-    )
-    assert any(i.source_id == str(open_nf["id"]) for i in items if i.source_module == "ouvidoria")
-    assert all(i.source_id != str(closed_nf["id"]) for i in items if i.source_module == "ouvidoria")
-    assert any(
-        i.source_id == str(pending_req["id"]) for i in items if i.source_module == "access_requests"
+        i.source_id != str(done_task["id"])
+        for i in items
+        if i.source_module == "tarefas"
     )
     assert all(
-        i.source_id != str(done_req["id"]) for i in items if i.source_module == "access_requests"
+        i.source_id != str(other["id"]) for i in items if i.source_module == "tarefas"
+    )
+    assert any(
+        i.source_id == str(open_rep["id"])
+        for i in items
+        if i.source_module == "representacoes"
+    )
+    assert all(
+        i.source_id != str(closed_rep["id"])
+        for i in items
+        if i.source_module == "representacoes"
+    )
+    assert any(
+        i.source_id == str(open_nf["id"])
+        for i in items
+        if i.source_module == "ouvidoria"
+    )
+    assert all(
+        i.source_id != str(closed_nf["id"])
+        for i in items
+        if i.source_module == "ouvidoria"
+    )
+    assert any(
+        i.source_id == str(pending_req["id"])
+        for i in items
+        if i.source_module == "access_requests"
+    )
+    assert all(
+        i.source_id != str(done_req["id"])
+        for i in items
+        if i.source_module == "access_requests"
     )
     denied = _user(
         store,

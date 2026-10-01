@@ -579,8 +579,10 @@ def test_app_same_module_deep_links_replace_the_open_screen(store, monkeypatch):
     assert app.session_state["oficio_gabinete"] == "PROGE"
     assert app.session_state["oficio_received_pdf_bytes"] == b"pdf"
 
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
-    app.text_input(key="pending_q").set_value("filtro").run()
+    app.session_state["portal_alerts_request"] = True
+    app.run()
+    assert any("CENTRAL DE ALERTAS" in str(item.value) for item in app.subheader)
+    app.button(key="alerts_back").click().run()
     app.session_state["tarefas_edit"] = {"titulo": "outra"}
     app.session_state[PORTAL_NAV_REQUEST] = {
         "module": "Tarefas",
@@ -589,5 +591,4 @@ def test_app_same_module_deep_links_replace_the_open_screen(store, monkeypatch):
     app.run()
     assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Tarefas"
-    assert app.session_state["pending_q"] == "filtro"
     assert any("Tarefa do atalho" in str(item.value) for item in app.text_input)

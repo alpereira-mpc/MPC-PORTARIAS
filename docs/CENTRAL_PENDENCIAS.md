@@ -1,4 +1,9 @@
-# Central de Pendências
+# Central de Pendências (legado)
+
+> A interface foi substituída pela **Central de Alertas**. Este documento é
+> mantido como registro da agregação que ainda é reutilizada internamente para
+> Ofícios, Agenda e Memorandos; o item de navegação não é mais exposto. Links
+> históricos são encaminhados com segurança para Alertas.
 
 Visão transversal do que exige atenção nos módulos já existentes. **Não há tabela própria de pendências** e não há cópia dos registros. A fonte da verdade permanece em Ofícios, Agenda e Memorandos.
 

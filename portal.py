@@ -112,19 +112,14 @@ MODULE_LISTING_KEYS = {
         "agenda_history_offset",
         "agenda_history_filters",
     ),
-    "Pendências": (
-        "pending_period",
-        "pending_module",
-        "pending_gabinete",
-        "pending_urgency",
-        "pending_q",
-        "pending_page",
-    ),
     "Alertas": (
-        "alerts_period",
+        "alerts_view",
         "alerts_module",
         "alerts_gabinete",
-        "alerts_severity",
+        "alerts_type",
+        "alerts_urgency",
+        "alerts_q",
+        "alerts_page",
     ),
     "Portarias": (
         "history_year",
@@ -399,6 +394,11 @@ def _pending_navigation(allowed):
         extra = request.get("state") or {}
     else:
         return None, {}
+    # Historical Pendências deep links remain safe: they open the replacement
+    # overlay rather than exposing a second operational centre.
+    if module == "Pendências":
+        module = "Início"
+        st.session_state[PORTAL_ALERTS_REQUEST] = True
     if module not in allowed or not isinstance(extra, dict):
         return None, {}
     nav_state = {
@@ -672,7 +672,8 @@ def _home_layout_style():
 
 
 def open_pendencias():
-    request_portal_navigation("Pendências")
+    # Public compatibility adapter for old internal callers and bookmarks.
+    request_alerts_view()
 
 
 def open_alertas():
@@ -1055,8 +1056,6 @@ def render_portal():
 
     iniciar_sessao_autorizada(store, principal)
     options = ["Início", "Busca Global"]
-    if has_permission(principal, "pendencias"):
-        options.append("Pendências")
     if has_permission(principal, "portarias"):
         options.append("Portarias")
     if has_permission(principal, "agenda"):
@@ -1077,6 +1076,11 @@ def render_portal():
         options.append("Ouvidoria")
     if has_permission(principal, "admin"):
         options.append("Administração")
+    if _session_get("portal_module") == "Pendências":
+        # A stale browser/session selection should follow the same safe adapter
+        # as an old link, never redraw the retired module.
+        st.session_state["portal_module"] = "Início"
+        st.session_state[PORTAL_ALERTS_REQUEST] = True
     enter_portal_module(options)
     if _session_get("portal_module") not in options:
         st.session_state["portal_module"] = "Início"
@@ -1164,12 +1168,6 @@ def render_portal():
     st.session_state.pop("_global_search_home_active", None)
     registrar_modulo(store, principal, selected)
     try:
-        if selected == "Pendências":
-            require_permission(principal, "pendencias")
-            from services.pending_ui import render
-
-            _render_module_fragment(render, store, principal)
-            st.stop()
         if selected == "Agenda":
             require_permission(principal, "agenda")
             from services.agenda_ui import render

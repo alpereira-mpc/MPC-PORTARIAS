@@ -1,6 +1,6 @@
 """Internal alerts derived from live records. No dedicated alerts table."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 import logging
 import json
@@ -55,6 +55,92 @@ class AlertItem:
     metadata: dict = field(default_factory=dict)
 
 
+def alert_key(item):
+    """Stable key for one logical live alert, never based on display text."""
+    metadata = item.metadata or {}
+    source_id = metadata.get("notice_id") or item.source_id
+    return ":".join(
+        str(part).replace(":", "_")
+        for part in ("v1", item.source_module, source_id, item.category)
+    )
+
+
+def alert_type(item):
+    """A compact presentation taxonomy, intentionally independent from urgency."""
+    category = item.category or ""
+    if category.startswith("prazo"):
+        return "Prazo"
+    if category.startswith("compromisso") or category.startswith("viagem"):
+        return "Compromisso"
+    if item.source_module == "tarefas":
+        return "Tarefa"
+    if category in ("lembrete_registro", "registro_seguido", "acesso_pendente"):
+        return "Comunicação"
+    return "Providência"
+
+
+def alert_urgency(item, today):
+    """Pure urgency classification used by both the bell and Central."""
+    if item.date and item.date < today:
+        return "Vencido"
+    if item.severity == CRITICO:
+        return "Vencido" if item.date and item.date < today else "Hoje"
+    if item.date == today:
+        return "Hoje"
+    if item.date and item.date <= today + timedelta(days=7):
+        return "Em breve"
+    return "Normal"
+
+
+def _attention_sort_key(item, today):
+    urgency = alert_urgency(item, today)
+    rank = {"Vencido": 0, "Hoje": 1, "Em breve": 2, "Normal": 3}[urgency]
+    return (rank, *_sort_key(item))
+
+
+def _parse_attention_time(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=INSTITUTIONAL_TZ)
+
+
+def apply_attention_state(store, principal, items, *, now=None):
+    """Overlay one user's read/snooze state without persisting alert payloads."""
+    from database.alert_attention import AlertAttentionStore
+
+    now = now_recife(now)
+    keys = [alert_key(item) for item in items]
+    states = AlertAttentionStore(store).states(principal.id, keys)
+    result = []
+    for item, key in zip(items, keys):
+        state = states.get(key) or {}
+        until = _parse_attention_time(state.get("adiado_ate"))
+        metadata = dict(item.metadata or {})
+        metadata.update(
+            {
+                "alert_key": key,
+                "alert_type": alert_type(item),
+                "alert_urgency": alert_urgency(item, now.date()),
+                "read": bool(state.get("lido_em")),
+                "snoozed_until": until,
+                "snoozed": bool(until and until > now),
+            }
+        )
+        result.append(replace(item, metadata=metadata))
+    result.sort(key=lambda item: _attention_sort_key(item, now.date()))
+    return result
+
+
+def active_attention_items(store, principal, *, now=None, **kwargs):
+    """Authorized live alerts enriched with individual presentation state."""
+    items, errors, today = collect_alerts(store, principal, now=now, **kwargs)
+    return apply_attention_state(store, principal, items, now=now), errors, today
+
+
 def can_view_alertas(principal):
     return has_permission(principal, "alertas")
 
@@ -95,11 +181,7 @@ def summarize_alerts(items):
 
 
 def _sort_key(item):
-    rank = (
-        SEVERITY_ORDER.index(item.severity)
-        if item.severity in SEVERITY_ORDER
-        else 9
-    )
+    rank = SEVERITY_ORDER.index(item.severity) if item.severity in SEVERITY_ORDER else 9
     when = item.datetime
     if when is None and item.date is not None:
         when = datetime.combine(item.date, datetime.min.time(), INSTITUTIONAL_TZ)
@@ -117,7 +199,13 @@ def _sort_key(item):
             item.title,
         )
     if item.category in ("viagem_ida", "viagem_volta"):
-        return (rank, int((item.metadata or {}).get("trip_rank", 99)), 99, when, item.title)
+        return (
+            rank,
+            int((item.metadata or {}).get("trip_rank", 99)),
+            99,
+            when,
+            item.title,
+        )
     # Every source must use the same tuple shape: mixing datetime and int in
     # the second position fails when a task and another module share severity.
     return (rank, 99, 99, when, item.title)
@@ -125,21 +213,60 @@ def _sort_key(item):
 
 def trip_alerts(store, tomorrow):
     from database.agenda import AgendaStore
+
     items = []
-    for row in AgendaStore(store, load_bindings=False).trip_alert_window(tomorrow.isoformat()):
+    for row in AgendaStore(store, load_bindings=False).trip_alert_window(
+        tomorrow.isoformat()
+    ):
         informed = bool(row.get("motorista_informado"))
         payload = json.loads(row.get("payload") or "{}")
-        commitment = payload.get("titulo") or payload.get("processo") or "Compromisso institucional"
+        commitment = (
+            payload.get("titulo")
+            or payload.get("processo")
+            or "Compromisso institucional"
+        )
         for leg, field, hour, title in (
             ("ida", "ida_data", "ida_hora", "✈️ Voo de ida amanhã"),
             ("volta", "volta_data", "volta_chegada_hora", "✈️ Retorno amanhã"),
         ):
-            if row.get(field) != tomorrow.isoformat(): continue
-            airport = row.get("aeroporto_" + leg + "_outro") if row.get("aeroporto_" + leg) == "Outro" else row.get("aeroporto_" + leg)
+            if row.get(field) != tomorrow.isoformat():
+                continue
+            airport = (
+                row.get("aeroporto_" + leg + "_outro")
+                if row.get("aeroporto_" + leg) == "Outro"
+                else row.get("aeroporto_" + leg)
+            )
             detail = f"{row['nome']}\nEvento: {commitment}\n{tomorrow.strftime('%d/%m')} às {row.get(hour) or '--:--'} — {airport or 'Aeroporto não informado'}"
-            detail += "\n" + ("✅ Motorista informado" if informed else "⚠ Motorista ainda não informado")
-            rank = (0 if leg == "ida" else 1) if not informed else (2 if leg == "ida" else 3)
-            items.append(AlertItem("agenda", f"viagem:{row['compromisso_id']}:{row['procurador_id']}:{leg}:{tomorrow}", "—", ALTO if not informed else ATENCAO, f"viagem_{leg}", title, detail, tomorrow, None, "AGENDADA", "Agenda", {"compromisso_id": row["compromisso_id"], "procurador_id": row["procurador_id"], "trip_rank": rank}))
+            detail += "\n" + (
+                "✅ Motorista informado"
+                if informed
+                else "⚠ Motorista ainda não informado"
+            )
+            rank = (
+                (0 if leg == "ida" else 1)
+                if not informed
+                else (2 if leg == "ida" else 3)
+            )
+            items.append(
+                AlertItem(
+                    "agenda",
+                    f"viagem:{row['compromisso_id']}:{row['procurador_id']}:{leg}:{tomorrow}",
+                    "—",
+                    ALTO if not informed else ATENCAO,
+                    f"viagem_{leg}",
+                    title,
+                    detail,
+                    tomorrow,
+                    None,
+                    "AGENDADA",
+                    "Agenda",
+                    {
+                        "compromisso_id": row["compromisso_id"],
+                        "procurador_id": row["procurador_id"],
+                        "trip_rank": rank,
+                    },
+                )
+            )
     return items
 
 
@@ -260,29 +387,87 @@ def task_alerts(store, principal, now):
     for row in TarefasStore(store).alert_window(principal.id, now):
         due = date.fromisoformat(row["prazo_data"]) if row.get("prazo_data") else None
         deadline = effective_deadline(row, INSTITUTIONAL_TZ)
-        reminder = datetime.fromisoformat(row["lembrete_atingido_em"]) if row.get("lembrete_atingido_em") else None
+        reminder = (
+            datetime.fromisoformat(row["lembrete_atingido_em"])
+            if row.get("lembrete_atingido_em")
+            else None
+        )
         overdue = deadline is not None and deadline < now
-        today_due = deadline is not None and deadline.date() == now.date() and not overdue
-        tomorrow_due = deadline is not None and deadline.date() == now.date().fromordinal(now.date().toordinal() + 1)
-        upcoming_due = deadline is not None and now.date().fromordinal(now.date().toordinal() + 2) <= deadline.date() <= now.date().fromordinal(now.date().toordinal() + 7)
+        today_due = (
+            deadline is not None and deadline.date() == now.date() and not overdue
+        )
+        tomorrow_due = (
+            deadline is not None
+            and deadline.date() == now.date().fromordinal(now.date().toordinal() + 1)
+        )
+        upcoming_due = deadline is not None and now.date().fromordinal(
+            now.date().toordinal() + 2
+        ) <= deadline.date() <= now.date().fromordinal(now.date().toordinal() + 7)
         reminder_due = reminder is not None and reminder <= now
         if not (overdue or today_due or tomorrow_due or upcoming_due or reminder_due):
             continue
         if overdue:
             severity = CRITICO if row["prioridade"] == "URGENTE" else ALTO
-            category, title, alert_rank = "tarefa_atrasada", "ATRASADA", 0 if row["prioridade"] == "URGENTE" else 1
+            category, title, alert_rank = (
+                "tarefa_atrasada",
+                "ATRASADA",
+                0 if row["prioridade"] == "URGENTE" else 1,
+            )
         elif reminder_due:
-            severity, category, title, alert_rank = ATENCAO, "lembrete_tarefa", "LEMBRETE", 2
+            severity, category, title, alert_rank = (
+                ATENCAO,
+                "lembrete_tarefa",
+                "LEMBRETE",
+                2,
+            )
         elif today_due:
-            severity, category, title, alert_rank = ATENCAO, "tarefa_hoje", "VENCE HOJE", 3
+            severity, category, title, alert_rank = (
+                ATENCAO,
+                "tarefa_hoje",
+                "VENCE HOJE",
+                3,
+            )
         elif tomorrow_due:
-            severity, category, title, alert_rank = INFORMATIVO, "tarefa_amanha", "VENCE AMANHÃ", 4
+            severity, category, title, alert_rank = (
+                INFORMATIVO,
+                "tarefa_amanha",
+                "VENCE AMANHÃ",
+                4,
+            )
         else:
-            severity, category, title, alert_rank = INFORMATIVO, "tarefa_proxima", "PRÓXIMO PRAZO", 5
+            severity, category, title, alert_rank = (
+                INFORMATIVO,
+                "tarefa_proxima",
+                "PRÓXIMO PRAZO",
+                5,
+            )
         # A date-only deadline intentionally has no datetime in the UI: it is
         # due at the end of its local day, but should not display a fake 00:00.
-        moment = reminder if reminder_due and not overdue else deadline if row.get("prazo_hora") else None
-        alerts.append(AlertItem("tarefas", str(row["id"]), "—", severity, category, title, row["titulo"][:160], due, moment, row["status"], "Tarefas", {"task_id": row["id"], "task_alert_rank": alert_rank, "task_priority_rank": priority_rank.get(row["prioridade"], 9)}))
+        moment = (
+            reminder
+            if reminder_due and not overdue
+            else deadline if row.get("prazo_hora") else None
+        )
+        alerts.append(
+            AlertItem(
+                "tarefas",
+                str(row["id"]),
+                "—",
+                severity,
+                category,
+                title,
+                row["titulo"][:160],
+                due,
+                moment,
+                row["status"],
+                "Tarefas",
+                {
+                    "task_id": row["id"],
+                    "task_alert_rank": alert_rank,
+                    "task_priority_rank": priority_rank.get(row["prioridade"], 9),
+                },
+            )
+        )
     return alerts
 
 
@@ -308,7 +493,9 @@ def engagement_alerts(store, principal, now):
                 source_id=str(row["origem_id"]),
                 gabinete="—",
                 severity=ATENCAO if kind == "LEMBRETE" else INFORMATIVO,
-                category="lembrete_registro" if kind == "LEMBRETE" else "registro_seguido",
+                category=(
+                    "lembrete_registro" if kind == "LEMBRETE" else "registro_seguido"
+                ),
                 title="LEMBRETE" if kind == "LEMBRETE" else "ATUALIZAÇÃO",
                 description=(row.get("texto") or "Lembrete do registro")[:160],
                 date=moment.date() if moment else now.date(),
@@ -394,7 +581,9 @@ def system_alerts(store, *, cached=None, principal=None):
                 severity=CRITICO,
                 category="banco",
                 title="Banco indisponível",
-                description=(database.get("summary") or "Não foi possível consultar o banco")[:160],
+                description=(
+                    database.get("summary") or "Não foi possível consultar o banco"
+                )[:160],
                 date=today_recife(),
                 datetime=None,
                 source_status=ERROR,
@@ -433,7 +622,9 @@ def system_alerts(store, *, cached=None, principal=None):
                     severity=ALTO,
                     category="schema",
                     title="Schema incompleto",
-                    description=(schema.get("summary") or "Estrutura esperada não encontrada")[:160],
+                    description=(
+                        schema.get("summary") or "Estrutura esperada não encontrada"
+                    )[:160],
                     date=today_recife(),
                     datetime=None,
                     source_status=status,
@@ -550,8 +741,10 @@ def collect_alerts(
     today = now.date()
     if not can_view_alertas(principal):
         raise ValueError("Acesso não autorizado a este módulo.")
-    if gabinete and not principal.administrator and gabinete not in visible_cabinets(
-        principal
+    if (
+        gabinete
+        and not principal.administrator
+        and gabinete not in visible_cabinets(principal)
     ):
         return [], {}, today
     wanted = set(modules) if modules else None
@@ -585,7 +778,13 @@ def collect_alerts(
         except Exception as exc:
             LOGGER.exception("Falha ao carregar alertas de tarefas")
             errors["tarefas"] = "tarefas"
-    engagement_modules = {"oficios", "memorandos", "representacoes", "ouvidoria", "tarefas"}
+    engagement_modules = {
+        "oficios",
+        "memorandos",
+        "representacoes",
+        "ouvidoria",
+        "tarefas",
+    }
     if wanted is None or bool(wanted & engagement_modules):
         try:
             notices = engagement_alerts(store, principal, now)
@@ -599,9 +798,11 @@ def collect_alerts(
             collected.extend(trip_alerts(store, today + timedelta(days=1)))
         except Exception:
             LOGGER.exception("Falha ao carregar alertas de viagens")
-    if has_permission(principal, "admin") and (
-        wanted is None or "sistema" in wanted
-    ) and not gabinete:
+    if (
+        has_permission(principal, "admin")
+        and (wanted is None or "sistema" in wanted)
+        and not gabinete
+    ):
         try:
             collected.extend(
                 system_alerts(store, cached=cached_health, principal=principal)
@@ -619,9 +820,11 @@ def collect_alerts(
             errors["sistema"] = "sistema"
     elif not has_permission(principal, "admin"):
         errors.pop("sistema", None)
-    if has_permission(principal, "admin") and (
-        wanted is None or "access_requests" in wanted
-    ) and not gabinete:
+    if (
+        has_permission(principal, "admin")
+        and (wanted is None or "access_requests" in wanted)
+        and not gabinete
+    ):
         try:
             collected.extend(access_request_alerts(store, principal))
         except Exception:
@@ -646,7 +849,7 @@ def collect_alerts(
             continue
         filtered.append(item)
     filtered.sort(key=_sort_key)
-    return filtered[: SOURCE_CAP], errors, today
+    return filtered[:SOURCE_CAP], errors, today
 
 
 BELL_LIMIT = 5
@@ -689,14 +892,17 @@ def invalidate_alert_summary(state=None):
 def get_alert_summary(store, principal, *, now=None, cached_health=None, revision=None):
     """Lightweight bell payload: counts plus the top active alerts."""
     _ = revision
-    items, errors, today = collect_alerts(
+    items, errors, today = active_attention_items(
         store, principal, now=now, cached_health=cached_health
     )
-    counts = summarize_alerts(items)
+    visible = [item for item in items if not (item.metadata or {}).get("snoozed")]
+    unread = [item for item in visible if not (item.metadata or {}).get("read")]
+    counts = summarize_alerts(visible)
     return {
-        "total": counts["total"],
+        "total": len(unread),
+        "active_total": len(visible),
         "counts": counts,
-        "top": items[:BELL_LIMIT],
+        "top": visible[:BELL_LIMIT],
         "errors": errors,
         "today": today,
     }

@@ -1,6 +1,6 @@
 """Internal alerts UI. Bell in the sidebar; full view is a special overlay."""
 
-from datetime import date
+from datetime import date, datetime, time, timedelta
 import time
 import streamlit as st
 
@@ -14,15 +14,26 @@ from services.alerts import (
     INFORMATIVO,
     PERIODS,
     SEVERITY_ORDER,
+    active_attention_items,
     alerts_revision,
     can_view_alertas,
     collect_alerts,
     get_alert_summary,
+    invalidate_alert_summary,
 )
-from services.audit import format_local
+from services.audit import INSTITUTIONAL_TZ, format_local
 from services.pending import PAGE_SIZE, visible_cabinets
 from services.pending_ui import open_origin
-from services.ui_theme import badge, badges, card_container, empty_state, record_html, render_html, render_record, status_tone
+from services.ui_theme import (
+    badge,
+    badges,
+    card_container,
+    empty_state,
+    record_html,
+    render_html,
+    render_record,
+    status_tone,
+)
 
 MODULE_OPTIONS = (
     ("oficios", "Ofícios"),
@@ -53,6 +64,18 @@ def _severity_label(severity):
         INFORMATIVO: "blue",
     }.get(severity, "gray")
     return f":{color}[**{severity}**] · {severity}"
+
+
+def _attention(item, key, default=None):
+    return (item.metadata or {}).get(key, default)
+
+
+def _attention_badge(item):
+    urgency = _attention(item, "alert_urgency", "Normal")
+    tone = {"Vencido": "danger", "Hoje": "warning", "Em breve": "brand"}.get(
+        urgency, "neutral"
+    )
+    return _attention(item, "alert_type", "Providência"), urgency, tone
 
 
 def _date_text(item):
@@ -91,13 +114,14 @@ def _bell_item_markdown(item):
         if local and local.strip():
             meta_parts.append(local.strip())
     meta = " · ".join(part for part in meta_parts if part)
+    alert_type, urgency, tone = _attention_badge(item)
     block = record_html(
         item.title or "",
-        badges_html=badge(item.severity, status_tone(item.severity)),
+        badges_html=badges((alert_type, "neutral"), (urgency, tone)),
         secondary=item.description or "—",
         meta=meta,
-        accent=status_tone(item.severity),
-        surface=status_tone(item.severity),
+        accent=tone,
+        surface="muted",
         boxed=True,
     )
     block = block.replace(
@@ -207,6 +231,81 @@ def _open_all_from_bell():
     queue_alerts_view()
 
 
+def _refresh_attention():
+    invalidate_alert_summary()
+    st.session_state.pop(BELL_CACHE_KEY, None)
+
+
+def _mark(item, store, principal, *, read):
+    from database.alert_attention import AlertAttentionStore
+
+    AlertAttentionStore(store).mark_read(
+        principal.id, _attention(item, "alert_key"), read=read
+    )
+    _refresh_attention()
+
+
+def _snooze(item, store, principal, until):
+    from database.alert_attention import AlertAttentionStore
+
+    AlertAttentionStore(store).snooze(
+        principal.id, _attention(item, "alert_key"), until
+    )
+    _refresh_attention()
+
+
+def _mark_all(store, principal):
+    from database.alert_attention import AlertAttentionStore
+
+    items, _errors, _today = active_attention_items(
+        store, principal, cached_health=_health_cache()
+    )
+    AlertAttentionStore(store).mark_all_read(
+        principal.id, [_attention(item, "alert_key") for item in items]
+    )
+    _refresh_attention()
+
+
+def _snooze_until(days):
+    return datetime.combine(
+        datetime.now(INSTITUTIONAL_TZ).date() + timedelta(days=days),
+        time(9),
+        INSTITUTIONAL_TZ,
+    )
+
+
+def _render_item_menu(item, store, principal, key):
+    """Discrete secondary actions shared by bell and Central cards."""
+    with st.popover("⋯", key=key, help="Ações do alerta"):
+        if _attention(item, "read"):
+            if st.button("Marcar como não lido", key=key + "_unread"):
+                _mark(item, store, principal, read=False)
+                st.rerun()
+        elif st.button("Marcar como lido", key=key + "_read"):
+            _mark(item, store, principal, read=True)
+            st.rerun()
+        if st.button("Lembrar amanhã", key=key + "_tomorrow"):
+            _snooze(item, store, principal, _snooze_until(1))
+            st.rerun()
+        if st.button("Lembrar em 3 dias", key=key + "_3days"):
+            _snooze(item, store, principal, _snooze_until(3))
+            st.rerun()
+        if st.button("Lembrar na próxima semana", key=key + "_week"):
+            _snooze(item, store, principal, _snooze_until(7))
+            st.rerun()
+        selected = st.date_input(
+            "Escolher data", min_value=date.today(), key=key + "_date"
+        )
+        if st.button("Adiar até esta data", key=key + "_custom"):
+            _snooze(
+                item,
+                store,
+                principal,
+                datetime.combine(selected, time(9), INSTITUTIONAL_TZ),
+            )
+            st.rerun()
+
+
 def _notice_actions(store, principal, item, key):
     metadata = item.metadata or {}
     notice_id = metadata.get("notice_id")
@@ -214,9 +313,7 @@ def _notice_actions(store, principal, item, key):
         return
     from services.record_engagement_ui import render_notice_actions
 
-    render_notice_actions(
-        store, principal, notice_id, metadata.get("notice_type"), key
-    )
+    render_notice_actions(store, principal, notice_id, metadata.get("notice_type"), key)
 
 
 def render_bell(store, principal):
@@ -240,18 +337,42 @@ def render_bell(store, principal):
         if st.session_state.pop("_alerts_bell_navigation_error", None):
             st.error("A origem não existe ou você não possui mais acesso.")
         top = summary.get("top") or []
+        st.markdown(f"**Alertas** · {total} não lido(s)")
         if not top:
             st.caption("Nenhum alerta ativo no momento.")
             return
+        bell_filter = st.radio(
+            "Filtro rápido",
+            ("Todos", "Não lidos", "Prazos"),
+            horizontal=True,
+            label_visibility="collapsed",
+            key="bell_filter",
+        )
+        if bell_filter == "Não lidos":
+            top = [item for item in top if not _attention(item, "read")]
+        elif bell_filter == "Prazos":
+            top = [item for item in top if _attention(item, "alert_type") == "Prazo"]
+        if not top:
+            st.caption("Nenhum alerta para este filtro.")
+            return
+        previous_group = None
         last = len(top) - 1
         for index, item in enumerate(top):
+            group = _attention(item, "alert_urgency", "Normal").upper()
+            if group != previous_group:
+                st.caption(group)
+                previous_group = group
             st.markdown(_bell_item_markdown(item), unsafe_allow_html=True)
-            st.button(
-                _open_label(item),
-                key=f"bell_open_{index}",
-                on_click=_open_bell_origin,
-                args=(item, store, principal),
-            )
+            open_col, more_col = st.columns([4, 1])
+            with open_col:
+                st.button(
+                    "Abrir",
+                    key=f"bell_open_{index}",
+                    on_click=_open_bell_origin,
+                    args=(item, store, principal),
+                )
+            with more_col:
+                _render_item_menu(item, store, principal, f"bell_more_{index}")
             if index != last:
                 st.markdown(
                     '<hr style="margin:0.45rem 0;border:none;'
@@ -263,12 +384,19 @@ def render_bell(store, principal):
             'border-top:1px solid rgba(49,51,63,.1)">',
             unsafe_allow_html=True,
         )
-        st.button(
-            "Ver todos os alertas",
-            key="bell_open_all",
-            type="tertiary",
-            on_click=_open_all_from_bell,
-        )
+        mark_col, all_col = st.columns(2)
+        with mark_col:
+            if st.button("Marcar todos como lidos", key="bell_mark_all"):
+                _mark_all(store, principal)
+                close_bell()
+                st.rerun()
+        with all_col:
+            st.button(
+                "Ver todos os alertas",
+                key="bell_open_all",
+                type="tertiary",
+                on_click=_open_all_from_bell,
+            )
 
 
 def render(store, principal):
@@ -277,20 +405,22 @@ def render(store, principal):
         from portal import close_alerts_view
 
         close_alerts_view()
-    st.subheader("ALERTAS")
+    st.subheader("CENTRAL DE ALERTAS")
     st.caption(
-        "Os alertas são atualizados automaticamente conforme os registros dos módulos."
+        "Itens ativos são derivados dos módulos de origem. Ler ou adiar um alerta não altera o registro original."
     )
     cabinets = visible_cabinets(principal)
-    period = st.radio(
-        "Período",
-        [p[0] for p in PERIODS],
-        format_func=lambda k: dict(PERIODS)[k],
+    view = st.radio(
+        "Visão",
+        ("Todos", "Não lidos", "Hoje", "Próximos", "Adiados", "Histórico"),
         horizontal=True,
-        key="alerts_period",
+        key="alerts_view",
     )
-    a, b, c = st.columns(3)
-    module_choices = [None, "oficios", "agenda", "memorandos", "tarefas"]
+    a, b, c, d, e = st.columns(5)
+    module_choices = [
+        None,
+        *(code for code, _label in MODULE_OPTIONS if code != "sistema"),
+    ]
     if has_permission(principal, "admin"):
         module_choices.append("sistema")
     module = a.selectbox(
@@ -307,26 +437,79 @@ def render(store, principal):
         key="alerts_gabinete",
         disabled=not cabinets,
     )
-    severity = c.selectbox(
-        "Severidade",
-        [None, *SEVERITY_ORDER],
-        format_func=lambda u: u or "Todas",
-        key="alerts_severity",
+    kind = c.selectbox(
+        "Tipo",
+        [None, "Prazo", "Providência", "Tarefa", "Compromisso", "Comunicação"],
+        format_func=lambda value: value or "Todos",
+        key="alerts_type",
+    )
+    urgency = d.selectbox(
+        "Urgência",
+        [None, "Vencido", "Hoje", "Em breve", "Normal"],
+        format_func=lambda value: value or "Todas",
+        key="alerts_urgency",
+    )
+    pesquisa = e.text_input(
+        "Busca", key="alerts_q", placeholder="Descrição ou gabinete"
     )
     modules = (module,) if module else None
-    items, errors, _today = collect_alerts(
+    items, errors, today = active_attention_items(
         store,
         principal,
         modules=modules,
         gabinete=gabinete,
-        severity=severity,
-        period=period,
+        period="todos",
         cached_health=_health_cache(),
     )
+    needle = pesquisa.strip().casefold()
+    filtered = []
+    for item in items:
+        metadata = item.metadata or {}
+        if kind and metadata.get("alert_type") != kind:
+            continue
+        if urgency and metadata.get("alert_urgency") != urgency:
+            continue
+        if (
+            needle
+            and needle
+            not in " ".join(
+                str(value or "")
+                for value in (
+                    item.title,
+                    item.description,
+                    item.gabinete,
+                    item.source_module,
+                )
+            ).casefold()
+        ):
+            continue
+        snoozed = bool(metadata.get("snoozed"))
+        if view == "Não lidos" and (metadata.get("read") or snoozed):
+            continue
+        if view == "Hoje" and (metadata.get("alert_urgency") != "Hoje" or snoozed):
+            continue
+        if view == "Próximos" and (
+            metadata.get("alert_urgency") != "Em breve" or snoozed
+        ):
+            continue
+        if view == "Adiados" and not snoozed:
+            continue
+        # History is deliberately limited to readable state on alerts still
+        # derivable from authorized sources; no redundant record snapshots.
+        if view == "Histórico" and not metadata.get("read"):
+            continue
+        if view == "Todos" and snoozed:
+            continue
+        filtered.append(item)
+    items = filtered
     cards = st.columns(4)
-    cards[0].metric("Críticos", sum(1 for i in items if i.severity == CRITICO))
-    cards[1].metric("Altos", sum(1 for i in items if i.severity == ALTO))
-    cards[2].metric("Atenção", sum(1 for i in items if i.severity == ATENCAO))
+    cards[0].metric(
+        "Vencidos", sum(1 for i in items if _attention(i, "alert_urgency") == "Vencido")
+    )
+    cards[1].metric(
+        "Hoje", sum(1 for i in items if _attention(i, "alert_urgency") == "Hoje")
+    )
+    cards[2].metric("Não lidos", sum(1 for i in items if not _attention(i, "read")))
     cards[3].metric("Total", len(items))
     labels = {
         "oficios": "Ofícios",
@@ -342,30 +525,54 @@ def render(store, principal):
     if not items:
         empty_state("Nenhum alerta ativo no momento.")
         return
+    signature = (view, module, gabinete, kind, urgency, pesquisa)
+    if st.session_state.get("alerts_page_sig") != signature:
+        st.session_state["alerts_page_sig"] = signature
+        st.session_state["alerts_page"] = 1
     pages = max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
-    page = st.number_input("Página", min_value=1, max_value=pages, value=1, step=1)
-    start = (int(page) - 1) * PAGE_SIZE
+    page = min(int(st.session_state.get("alerts_page") or 1), pages)
+    start = (page - 1) * PAGE_SIZE
     view = items[start : start + PAGE_SIZE]
-    st.caption(f"{len(items)} alerta(s) · página {int(page)} de {pages}")
+    st.caption(f"{len(items)} alerta(s) · página {page} de {pages}")
     for offset, item in enumerate(view):
         with card_container(offset, f"al_{start}_{offset}"):
+            alert_type, urgency, tone = _attention_badge(item)
             render_record(
                 item.title,
                 badges_html=badges(
-                    (item.severity, status_tone(item.severity)),
+                    (alert_type, "neutral"),
+                    (urgency, tone),
                     (_module_label(item.source_module), "neutral"),
                 ),
                 secondary=item.description,
                 meta=" · ".join(
                     part
-                    for part in (_module_label(item.source_module), item.gabinete, _date_text(item))
+                    for part in (
+                        _module_label(item.source_module),
+                        item.gabinete,
+                        _date_text(item),
+                    )
                     if part
                 ),
-                accent=status_tone(item.severity),
+                accent=tone,
             )
-            if st.button(_open_label(item), key=f"alert_open_{start + offset}"):
-                try:
-                    open_alert_origin(item, store, principal)
-                except ValueError:
-                    st.error("A origem não existe ou você não possui mais acesso.")
+            open_col, more_col = st.columns([4, 1])
+            with open_col:
+                if st.button("Abrir", key=f"alert_open_{start + offset}"):
+                    try:
+                        open_alert_origin(item, store, principal)
+                    except ValueError:
+                        st.error("A origem não existe ou você não possui mais acesso.")
+            with more_col:
+                _render_item_menu(
+                    item, store, principal, f"alert_more_{start + offset}"
+                )
             _notice_actions(store, principal, item, f"alert_notice_{start + offset}")
+    nav_a, nav_b, nav_c = st.columns([1, 2, 1])
+    if nav_a.button("Anterior", disabled=page <= 1, key="alerts_prev"):
+        st.session_state["alerts_page"] = page - 1
+        st.rerun()
+    nav_b.caption(f"Página {page} de {pages}")
+    if nav_c.button("Próxima", disabled=page >= pages, key="alerts_next"):
+        st.session_state["alerts_page"] = page + 1
+        st.rerun()

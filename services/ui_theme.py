@@ -1060,33 +1060,33 @@ html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.
 html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-surface-info,
 html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-stripe-a,
 html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed.mpc-stripe-b{{
-background:#FFF2BF !important;
-background-color:#FFF2BF !important;
-border:1px solid #E7C968 !important;
-border-left:3px solid #C99800 !important;
+background:var(--mpc-surface-primary-bg) !important;
+background-color:var(--mpc-surface-primary-bg) !important;
+border:1px solid var(--mpc-border) !important;
+border-left:3px solid var(--mpc-brand) !important;
 box-shadow:none;
-color:#2B2B2B !important;
+color:var(--mpc-text) !important;
 }}
 html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed:hover,
 html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card.mpc-record-boxed:hover{{
-background:#FFEBA6 !important;
-background-color:#FFEBA6 !important;
+background:var(--mpc-card-b) !important;
+background-color:var(--mpc-card-b) !important;
 }}
 html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-title,
 html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-title{{
-color:#2B2B2B !important;
+color:var(--mpc-text) !important;
 }}
 html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-secondary,
 html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-meta,
 html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-secondary,
 html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card .mpc-record-meta{{
-color:#6E6040 !important;
+color:var(--mpc-text-2) !important;
 }}
 html body .stApp .mpc-bell-alert .mpc-sidebar-alert-card .mpc-badge--info,
 html body [data-testid="stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card .mpc-badge--info{{
-background:#F2D675 !important;
-color:#594500 !important;
-border-color:#E7C968 !important;
+background:var(--mpc-brand-soft) !important;
+color:var(--mpc-brand-strong) !important;
+border-color:var(--mpc-brand-border) !important;
 }}
 .mpc-section-label{{
 margin:.75rem 0 .35rem;

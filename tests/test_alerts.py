@@ -59,12 +59,35 @@ def _item(**kwargs):
 
 
 def test_oficio_severity_rules():
-    assert alert_from_pending(_item(urgency="VENCIDA", due_date=TODAY - timedelta(days=1)), NOW).severity == CRITICO
+    assert (
+        alert_from_pending(
+            _item(urgency="VENCIDA", due_date=TODAY - timedelta(days=1)), NOW
+        ).severity
+        == CRITICO
+    )
     assert alert_from_pending(_item(urgency="HOJE"), NOW).title == "Prazo vence hoje"
-    assert alert_from_pending(_item(urgency="URGENTE", due_date=TODAY + timedelta(days=1)), NOW).severity == ATENCAO
-    assert alert_from_pending(_item(urgency="URGENTE", due_date=TODAY + timedelta(days=3)), NOW).severity == ATENCAO
-    assert alert_from_pending(_item(urgency="PRÓXIMA", due_date=TODAY + timedelta(days=4)), NOW) is None
-    assert alert_from_pending(_item(urgency="SEM PRAZO", due_date=None), NOW).severity == INFORMATIVO
+    assert (
+        alert_from_pending(
+            _item(urgency="URGENTE", due_date=TODAY + timedelta(days=1)), NOW
+        ).severity
+        == ATENCAO
+    )
+    assert (
+        alert_from_pending(
+            _item(urgency="URGENTE", due_date=TODAY + timedelta(days=3)), NOW
+        ).severity
+        == ATENCAO
+    )
+    assert (
+        alert_from_pending(
+            _item(urgency="PRÓXIMA", due_date=TODAY + timedelta(days=4)), NOW
+        )
+        is None
+    )
+    assert (
+        alert_from_pending(_item(urgency="SEM PRAZO", due_date=None), NOW).severity
+        == INFORMATIVO
+    )
 
 
 def test_agenda_severity_and_no_duplicates():
@@ -174,7 +197,9 @@ def test_same_day_leave_does_not_join_commitment_alert(store):
     summary = get_alert_summary(store, _admin(store), now=moment, cached_health=HEALTHY)
     assert summary["total"] == len(items)
     assert any("UNIDROIT" in item.description for item in summary["top"])
-    assert not any((item.metadata or {}).get("afastamento_id") for item in summary["top"])
+    assert not any(
+        (item.metadata or {}).get("afastamento_id") for item in summary["top"]
+    )
 
 
 def test_memorando_severity_rules():
@@ -209,16 +234,27 @@ def test_memorando_severity_rules():
     assert alert_from_pending(starts, NOW).title == "Substituição inicia hoje"
     assert alert_from_pending(soon, NOW).severity == ATENCAO
     assert alert_from_pending(later, NOW) is None
-    assert alert_from_pending(_item(source_module="memorandos", status_original="ENCERRADA", urgency="HOJE", navigation="Memorandos"), NOW) is None
+    assert (
+        alert_from_pending(
+            _item(
+                source_module="memorandos",
+                status_original="ENCERRADA",
+                urgency="HOJE",
+                navigation="Memorandos",
+            ),
+            NOW,
+        )
+        is None
+    )
 
 
 def test_timezone_midnight_and_utc(monkeypatch):
     utc_evening = datetime(2026, 9, 15, 2, 0, tzinfo=timezone.utc)
     local = parse_datetime(utc_evening)
     assert local.date() == date(2026, 9, 14)
-    assert now_recife(datetime(2026, 9, 14, 23, 30, tzinfo=timezone.utc)).date() == date(
-        2026, 9, 14
-    )
+    assert now_recife(
+        datetime(2026, 9, 14, 23, 30, tzinfo=timezone.utc)
+    ).date() == date(2026, 9, 14)
     midnight = datetime(2026, 9, 15, 0, 0, tzinfo=INSTITUTIONAL_TZ)
     soon = _item(
         source_module="agenda",
@@ -355,27 +391,39 @@ def test_agenda_store_rules(store):
 def test_memorando_store_rules(store):
     _, _, memorandos = _prepare(store)
     ongoing = memorandos.save_draft(
-        memo_record(data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     starts = memorandos.save_draft(
-        memo_record(data_inicio="2026-09-14", data_fim="2026-09-20", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-14", data_fim="2026-09-20", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     soon = memorandos.save_draft(
-        memo_record(data_inicio="2026-09-17", data_fim="2026-09-20", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-17", data_fim="2026-09-20", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     later = memorandos.save_draft(
-        memo_record(data_inicio="2026-09-18", data_fim="2026-09-20", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-18", data_fim="2026-09-20", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     ended = memorandos.save_draft(
-        memo_record(data_inicio="2026-08-01", data_fim="2026-09-01", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-08-01", data_fim="2026-09-01", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     cancelled = memorandos.save_draft(
-        memo_record(data_inicio="2026-09-16", data_fim="2026-09-25", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-16", data_fim="2026-09-25", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     with store.connection() as c:
@@ -509,7 +557,10 @@ def test_system_alerts_admin_only(store):
         cached={
             **HEALTHY,
             "documents": {
-                "pdf": {"status": ATTENTION, "summary": "ATENÇÃO — conversor PDF não detectado"}
+                "pdf": {
+                    "status": ATTENTION,
+                    "summary": "ATENÇÃO — conversor PDF não detectado",
+                }
             },
         },
     )
@@ -535,9 +586,7 @@ def test_system_alerts_admin_only(store):
         "database": {"status": ERROR, "summary": "ERRO — banco"},
     }
     assert system_alerts(store, cached=broken, principal=user) == []
-    collected, errors, _ = collect_alerts(
-        store, user, now=NOW, cached_health=broken
-    )
+    collected, errors, _ = collect_alerts(store, user, now=NOW, cached_health=broken)
     assert all(i.source_module != "sistema" for i in collected)
     assert "sistema" not in errors
     forced, _, _ = collect_alerts(
@@ -648,7 +697,10 @@ def test_current_health_failures_alert_admin_and_clear_when_ok(store):
     pdf_fail = {
         **HEALTHY,
         "documents": {
-            "pdf": {"status": ATTENTION, "summary": "ATENÇÃO — conversor PDF não detectado"}
+            "pdf": {
+                "status": ATTENTION,
+                "summary": "ATENÇÃO — conversor PDF não detectado",
+            }
         },
     }
     assert any(
@@ -657,7 +709,11 @@ def test_current_health_failures_alert_admin_and_clear_when_ok(store):
     )
     audit_down = {
         **HEALTHY,
-        "audit": {"status": ERROR, "summary": "ERRO — Auditoria indisponível", "errors_24h": 0},
+        "audit": {
+            "status": ERROR,
+            "summary": "ERRO — Auditoria indisponível",
+            "errors_24h": 0,
+        },
     }
     assert any(
         i.category == "auditoria"
@@ -824,7 +880,9 @@ def test_menu_home_and_deep_links(store, monkeypatch):
         conflict_confirmed=True,
     )
     memo_id = memorandos.save_draft(
-        memo_record(data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     enable_login(monkeypatch, store)
@@ -838,8 +896,9 @@ def test_menu_home_and_deep_links(store, monkeypatch):
         r for r in app.sidebar.radio if getattr(r, "key", None) == "portal_module"
     )
     assert "Alertas" not in portal.options
+    assert "Pendências" not in portal.options
     assert portal.options[1] == "Busca Global"
-    assert portal.options[3] == "Portarias"
+    assert portal.options[2] == "Portarias"
     assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
     assert not any(b.label == "Ver alertas" for b in app.button)
     labels = " ".join(str(getattr(b, "label", "")) for b in app.button)
@@ -1014,7 +1073,9 @@ def test_alert_summary_cache_uses_revision(store, monkeypatch):
     after_agenda = alerts_ui.load_bell_summary(store, _admin(store))
     assert after_agenda["total"] > fresh["total"]
     memorandos.save_draft(
-        memo_record(data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1),
+        memo_record(
+            data_inicio="2026-09-10", data_fim="2026-09-20", gabinete_procurador_id=1
+        ),
         actor_email="admin@test.local",
     )
     invalidate_alert_summary(state)
@@ -1023,7 +1084,11 @@ def test_alert_summary_cache_uses_revision(store, monkeypatch):
 
 
 def test_failed_write_does_not_invalidate():
-    from services.alerts import ALERTS_REVISION_KEY, alerts_revision, invalidate_alert_summary
+    from services.alerts import (
+        ALERTS_REVISION_KEY,
+        alerts_revision,
+        invalidate_alert_summary,
+    )
 
     state = {ALERTS_REVISION_KEY: 3}
     try:
@@ -1051,7 +1116,9 @@ def test_modules_invalidate_after_success_only():
     assert "Erro operacional recente" not in health
     assert "if refresh:" in health
     assert "cache_data.clear" not in getsource(
-        __import__("services.alerts", fromlist=["invalidate_alert_summary"]).invalidate_alert_summary
+        __import__(
+            "services.alerts", fromlist=["invalidate_alert_summary"]
+        ).invalidate_alert_summary
     )
     except_block = getsource(memorandos_ui._finalize_active)
     assert except_block.find("invalidate_alert_summary") < except_block.find(
@@ -1076,8 +1143,9 @@ def test_inicio_after_change_refreshes_bell_without_f5(store, monkeypatch):
     assert cached["payload"]["total"] == 0
     proge = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "PROGE")
     _received(oficios, proge, "2026-09-13")
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
-    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    app.session_state["portal_alerts_request"] = True
+    app.run()
+    app.button(key="alerts_back").click().run()
     assert app.session_state[BELL_CACHE_KEY]["payload"]["total"] == 0
     app.session_state[ALERTS_REVISION_KEY] = 1
     app.sidebar.radio(key="portal_module").set_value("Início").run()
@@ -1246,6 +1314,193 @@ def test_audit_alertas_once_per_entry(store):
             ("ALERTAS_ACESSADOS",),
         ).fetchone()[0]
     assert count == 1
+
+
+def test_attention_state_is_per_user_and_does_not_duplicate_payload(store):
+    from database.alert_attention import AlertAttentionStore
+    from services.alerts import AlertItem, alert_key, apply_attention_state
+
+    principal = _admin(store)
+    seed_access(
+        store,
+        email="second.alert@test.local",
+        perfil="USUARIO",
+        pode_oficios=True,
+        gabinetes=["PROGE"],
+    )
+    second = resolve_principal(store, {"email": "second.alert@test.local"})
+    item = AlertItem(
+        "oficios",
+        "42",
+        "PROGE",
+        ALTO,
+        "prazo_hoje",
+        "Prazo vence hoje",
+        "Providência",
+        TODAY,
+        None,
+        "RECEBIDO",
+        "Ofícios",
+    )
+    key = alert_key(item)
+    attention = AlertAttentionStore(store)
+    attention.mark_read(principal.id, key)
+    first_item = apply_attention_state(store, principal, [item], now=NOW)[0]
+    second_item = apply_attention_state(store, second, [item], now=NOW)[0]
+    assert first_item.metadata["read"] is True
+    assert second_item.metadata["read"] is False
+    with store.connection(read_only=True) as c:
+        row = c.execute("SELECT chave_alerta FROM alertas_atencao").fetchone()
+    assert row["chave_alerta"] == key
+    assert "Providência" not in str(dict(row))
+
+
+def test_attention_snooze_hides_then_reappears_and_uses_stable_key(store):
+    from database.alert_attention import AlertAttentionStore
+    from services.alerts import (
+        AlertItem,
+        active_attention_items,
+        alert_key,
+        apply_attention_state,
+    )
+
+    principal = _admin(store)
+    item = AlertItem(
+        "tarefas",
+        "9",
+        "—",
+        ATENCAO,
+        "tarefa_hoje",
+        "VENCE HOJE",
+        "Texto que pode mudar",
+        TODAY,
+        None,
+        "A_FAZER",
+        "Tarefas",
+    )
+    renamed = AlertItem(
+        "tarefas",
+        "9",
+        "—",
+        ATENCAO,
+        "tarefa_hoje",
+        "VENCE HOJE",
+        "Texto atualizado",
+        TODAY,
+        None,
+        "A_FAZER",
+        "Tarefas",
+    )
+    assert alert_key(item) == alert_key(renamed)
+    attention = AlertAttentionStore(store)
+    attention.snooze(principal.id, alert_key(item), NOW + timedelta(days=1))
+    sleeping = apply_attention_state(store, principal, [item], now=NOW)[0]
+    awake = apply_attention_state(
+        store, principal, [item], now=NOW + timedelta(days=2)
+    )[0]
+    assert sleeping.metadata["snoozed"] is True
+    assert awake.metadata["snoozed"] is False
+
+
+def test_bell_counter_counts_only_unread_and_awake_alerts(store, monkeypatch):
+    from database.alert_attention import AlertAttentionStore
+    from services.alerts import AlertItem, alert_key, get_alert_summary
+
+    principal = _admin(store)
+    item = AlertItem(
+        "oficios",
+        "77",
+        "PROGE",
+        ALTO,
+        "prazo_hoje",
+        "Prazo vence hoje",
+        "Providência",
+        TODAY,
+        None,
+        "RECEBIDO",
+        "Ofícios",
+    )
+    monkeypatch.setattr(
+        "services.alerts.collect_alerts",
+        lambda *args, **kwargs: ([item], {}, TODAY),
+    )
+    attention = AlertAttentionStore(store)
+    assert get_alert_summary(store, principal, now=NOW)["total"] == 1
+    attention.mark_read(principal.id, alert_key(item))
+    summary = get_alert_summary(store, principal, now=NOW)
+    assert summary["total"] == 0
+    assert summary["active_total"] == 1
+    attention.mark_read(principal.id, alert_key(item), read=False)
+    attention.snooze(principal.id, alert_key(item), NOW + timedelta(days=1))
+    assert get_alert_summary(store, principal, now=NOW)["top"] == []
+    assert (
+        get_alert_summary(store, principal, now=NOW + timedelta(days=2))["total"] == 1
+    )
+
+
+def test_alert_type_urgency_and_temporal_order_are_pure():
+    from services.alerts import (
+        AlertItem,
+        alert_type,
+        alert_urgency,
+        _attention_sort_key,
+    )
+
+    overdue = AlertItem(
+        "oficios",
+        "1",
+        "PROGE",
+        CRITICO,
+        "prazo_vencido",
+        "",
+        "",
+        TODAY - timedelta(days=1),
+        None,
+        "",
+        "",
+    )
+    today = AlertItem(
+        "tarefas", "2", "—", ATENCAO, "tarefa_hoje", "", "", TODAY, None, "", ""
+    )
+    future = AlertItem(
+        "agenda",
+        "3",
+        "—",
+        ATENCAO,
+        "compromisso_proximo",
+        "",
+        "",
+        TODAY + timedelta(days=3),
+        None,
+        "",
+        "",
+    )
+    no_due = AlertItem(
+        "memorandos",
+        "4",
+        "—",
+        INFORMATIVO,
+        "substituicao_andamento",
+        "",
+        "",
+        None,
+        None,
+        "",
+        "",
+    )
+    assert [alert_type(item) for item in (overdue, today, future, no_due)] == [
+        "Prazo",
+        "Tarefa",
+        "Compromisso",
+        "Providência",
+    ]
+    assert [
+        alert_urgency(item, TODAY) for item in (overdue, today, future, no_due)
+    ] == ["Vencido", "Hoje", "Em breve", "Normal"]
+    assert sorted(
+        (no_due, future, today, overdue),
+        key=lambda item: _attention_sort_key(item, TODAY),
+    ) == [overdue, today, future, no_due]
 
 
 def test_postgres_alerts_contract(pg_store):
