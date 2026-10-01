@@ -1338,13 +1338,38 @@ def test_hard_delete_ui_is_admin_only():
     assert "situacao_counts" in inspect.getsource(memorandos_ui.render)
 
 
+def test_history_detail_excludes_collaboration_and_personal_organization():
+    import inspect
+    from services import memorandos_ui
+
+    details = inspect.getsource(memorandos_ui._details)
+    for label in (
+        "Notas internas",
+        "Encaminhar / Solicitar providência",
+        "Tarefas, lembretes e acompanhamento",
+        "Criar tarefa",
+        "Seguir",
+        "Criar lembrete",
+        "Tarefas relacionadas",
+    ):
+        assert label not in details
+    for label in (
+        "Baixar DOCX",
+        "Baixar PDF",
+        "Número oficial",
+        "Salvar número oficial",
+    ):
+        assert label in details
+    assert "_hard_delete_controls" in details
+
+
 def test_admin_sees_hard_delete_common_user_does_not(store, monkeypatch):
     from tests.access_testing import enable_login, seed_access
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
     from services.memorandos_ui import NAV_KEY, NAV_HISTORY
 
-    identifier = _finalize_memo(MemorandosStore(store))
+    identifier = _finalize_memo(MemorandosStore(store), official="99/2026", extra_docx=True)
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
@@ -1352,6 +1377,21 @@ def test_admin_sees_hard_delete_common_user_does_not(store, monkeypatch):
     app.radio(key=NAV_KEY).set_value(NAV_HISTORY).run()
     assert not app.exception
     assert any(b.label == "Excluir definitivamente" for b in app.button)
+    assert {button.label for button in app.get("download_button")} >= {"Baixar DOCX", "Baixar PDF"}
+    assert any(field.label == "Número oficial" for field in app.text_input)
+    assert any(button.label == "Salvar número oficial" for button in app.button)
+    hidden_labels = {
+        "Notas internas",
+        "Encaminhar / Solicitar providência",
+        "Tarefas, lembretes e acompanhamento",
+        "Criar tarefa",
+        "Seguir",
+        "Criar lembrete",
+        "Tarefas relacionadas",
+    }
+    rendered_labels = {button.label for button in app.button}
+    rendered_labels.update(expander.label for expander in app.expander)
+    assert not hidden_labels & rendered_labels
     assert identifier
 
     seed_access(

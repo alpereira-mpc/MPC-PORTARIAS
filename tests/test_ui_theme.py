@@ -85,6 +85,19 @@ def test_guidance_note_uses_active_theme_surfaces():
     assert "empty_state(" in listing
 
 
+def test_empty_state_uses_active_theme_surfaces():
+    from services.ui_theme import _css
+
+    for theme in ("vermelho", "azul", "verde", "dourado", "vermelho_escuro"):
+        css = _css(theme)
+        block = css[css.find(".mpc-empty-state{") : css.find(".mpc-empty-state p")]
+        assert "background:var(--mpc-card-b)" in block
+        assert "border:1px solid var(--mpc-card-border-b)" in block
+        assert "border-left:3px solid var(--mpc-red)" in block
+        assert "color:var(--mpc-text)" in block
+        assert "#" not in block
+
+
 def test_status_tone_covers_semantic_labels():
     assert status_tone("URGENTE") == "danger"
     assert status_tone("VENCIDA") == "danger"
@@ -253,8 +266,8 @@ def test_stripe_and_header_helpers_are_available():
     assert 'stTextInput"]>div>div{background:var(--mpc-white)' not in compact
     assert "--mpc-expander-border:var(--mpc-card-border-b)" in css
     assert "--mpc-expander-hover:var(--mpc-card-institutional-bg)" in css
-    assert "--mpc-empty-state-bg:" + EMPTY_STATE_BG in compact
-    assert "--mpc-empty-state-border:" + EMPTY_STATE_BORDER in compact
+    assert "--mpc-empty-state-bg:" not in compact
+    assert "--mpc-empty-state-border:" not in compact
     assert "--mpc-surface-primary-bg:var(--mpc-card-institutional-bg)" in compact
     assert (
         "--mpc-surface-primary-border:var(--mpc-card-institutional-border)" in compact

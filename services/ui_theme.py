@@ -170,8 +170,6 @@ def _css(theme_name="vermelho"):
 --mpc-surface-control-bg:var(--mpc-control-bg);
 --mpc-surface-control-border:var(--mpc-control-border);
 --mpc-surface-control-hover:var(--mpc-control-hover);
---mpc-empty-state-bg:{EMPTY_STATE_BG};
---mpc-empty-state-border:{EMPTY_STATE_BORDER};
 --mpc-expander:var(--mpc-card-b);
 --mpc-expander-border:var(--mpc-card-border-b);
 --mpc-expander-hover:var(--mpc-card-institutional-bg);
@@ -829,8 +827,8 @@ outline-offset:2px;
 .mpc-empty-state{{
 margin:.45rem 0 .75rem;
 padding:.8rem 1rem .75rem;
-background:var(--mpc-empty-state-bg);
-border:1px solid var(--mpc-empty-state-border);
+background:var(--mpc-card-b);
+border:1px solid var(--mpc-card-border-b);
 border-left:3px solid var(--mpc-red);
 border-radius:var(--mpc-radius);
 box-shadow:none;
