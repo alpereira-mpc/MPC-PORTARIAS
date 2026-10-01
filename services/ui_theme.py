@@ -263,6 +263,9 @@ color:var(--mpc-text-2);
 section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] [role="radiogroup"]{{
 gap:.14rem;
 }}
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"]{{
+margin-top:.15rem;
+}}
 section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label{{
 position:relative;
 display:flex;
@@ -271,6 +274,8 @@ min-height:2.2rem;
 margin:0;
 padding:.42rem .55rem .42rem .75rem;
 border-radius:8px;
+border:1px solid transparent;
+box-shadow:none;
 cursor:pointer;
 transition:background .12s ease,box-shadow .12s ease;
 }}
@@ -294,6 +299,7 @@ background:rgba({primary_rgb},.07);
 }}
 section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label:has(input:checked){{
 background:rgba({primary_rgb},.16);
+border-color:transparent;
 box-shadow:inset 3px 0 0 var(--mpc-brand);
 font-weight:650;
 color:var(--mpc-brand-dark);

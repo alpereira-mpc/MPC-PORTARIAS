@@ -1142,6 +1142,7 @@ def render_portal():
                 key="portal_module",
                 format_func=_portal_navigation_label,
                 on_change=_mark_mobile_sidebar_collapse,
+                label_visibility="collapsed",
             )
         st.session_state[PORTAL_LAST_MODULE] = selected
         theme_key = f"portal_theme_select_{principal.id}"

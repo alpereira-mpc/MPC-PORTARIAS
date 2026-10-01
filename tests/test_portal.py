@@ -20,7 +20,13 @@ def _visible_text(app):
 
 
 def test_portal_navigation_format_keeps_internal_values_and_uses_material_icons():
-    from portal import PORTAL_NAVIGATION_ICONS, _portal_navigation_label
+    from inspect import getsource
+
+    from portal import (
+        PORTAL_NAVIGATION_ICONS,
+        _portal_navigation_label,
+        render_portal,
+    )
 
     expected = {
         "Início": "home",
@@ -42,6 +48,7 @@ def test_portal_navigation_format_keeps_internal_values_and_uses_material_icons(
         visible = "Agenda e Afastamentos" if value == "Agenda" else value
         assert _portal_navigation_label(value) == f":material/{icon}: {visible}"
         assert value in PORTAL_NAVIGATION_ICONS
+    assert 'label_visibility="collapsed"' in getsource(render_portal)
 
 
 @pytest.mark.parametrize(
@@ -58,6 +65,8 @@ def test_portal_navigation_style_is_scoped_and_uses_theme_tokens(theme):
     assert "label > div:first-child" in css
     assert "label:has(input:checked)" in css
     assert "label:has(input:focus-visible)" in css
+    assert "border:1px solid transparent" in css
+    assert "box-shadow:inset 3px 0 0 var(--mpc-brand)" in css
     assert 'section[data-testid="stSidebar"] [data-testid="stRadio"] label{' not in css
 
 
