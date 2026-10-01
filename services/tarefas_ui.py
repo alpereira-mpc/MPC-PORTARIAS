@@ -92,6 +92,11 @@ def _delete_task(repo, store, principal, identifier):
     if repo.delete(identifier, principal.id):
         _audit(store, principal, "TAREFA_EXCLUIDA", "EXCLUIR", identifier)
         _remember("Tarefa excluída.")
+    st.session_state.pop("tarefas_delete_confirm", None)
+
+
+def _open_task_delete_confirmation(identifier):
+    st.session_state["tarefas_delete_confirm"] = identifier
 
 
 def _begin_new_task():
@@ -412,34 +417,13 @@ def _card(repo, store, principal, row, index=0):
             render_task_origin(store, principal, row, "active")
         with st.container(key=f"task_actions_{row['id']}"):
             actions_mark()
-            controls=st.columns(5)
-            status_action = {
-                "A_FAZER": (
-                    "Iniciar", "start", "EM_ANDAMENTO", "INICIAR", "Tarefa iniciada."
-                ),
-                "EM_ANDAMENTO": (
-                    "Aguardando", "wait", "AGUARDANDO", "AGUARDAR", "Tarefa aguardando."
-                ),
-                "AGUARDANDO": (
-                    "Retomar", "resume", "EM_ANDAMENTO", "RETOMAR", "Tarefa retomada."
-                ),
-            }.get(row["status"])
-            if status_action:
-                label, key_part, target, audit_action, message = status_action
-                controls[0].button(
-                    label,
-                    key=f"task_{key_part}_{row['id']}",
-                    on_click=_transition_active_status,
-                    args=(
-                        repo,
-                        store,
-                        principal,
-                        row["id"],
-                        target,
-                        audit_action,
-                        message,
-                    ),
-                )
+            controls = st.columns(3)
+            controls[0].button(
+                "Editar",
+                key=f"task_edit_{row['id']}",
+                on_click=_open_editor,
+                args=(row,),
+            )
             if row["status"] in ACTIVE:
                 controls[1].button(
                     "Concluir",
@@ -448,19 +432,13 @@ def _card(repo, store, principal, row, index=0):
                     args=(repo, store, principal, row["id"]),
                 )
             controls[2].button(
-                "Editar",
-                key=f"task_edit_{row['id']}",
-                on_click=_open_editor,
-                args=(row,),
+                "Excluir",
+                key=f"task_delete_open_{row['id']}",
+                on_click=_open_task_delete_confirmation,
+                args=(row["id"],),
             )
-            if row["status"] in ACTIVE:
-                controls[3].button(
-                    "Cancelar",
-                    key=f"task_cancel_{row['id']}",
-                    on_click=_cancel_task,
-                    args=(repo, store, principal, row["id"]),
-                )
-            with controls[4].popover("Excluir"):
+            if st.session_state.get("tarefas_delete_confirm") == row["id"]:
+                st.warning("Esta ação excluirá definitivamente a tarefa.")
                 confirmed = st.checkbox(
                     "Confirmo a exclusão definitiva",
                     key=f"task_confirm_{row['id']}",

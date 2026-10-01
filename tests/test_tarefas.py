@@ -410,7 +410,6 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
     repo = TarefasStore(store)
     first = repo.create(owner["id"], {"titulo": "Ativa alfa"})
     second = repo.create(owner["id"], {"titulo": "Ativa beta"})
-    to_cancel = repo.create(owner["id"], {"titulo": "Ativa cancelar"})
     edit_only = repo.create(owner["id"], {"titulo": "Ativa editar"})
     completed = repo.create(owner["id"], {"titulo": "Concluída recente"})
     cancelled = repo.create(owner["id"], {"titulo": "Cancelada recente"})
@@ -433,41 +432,23 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
     assert app.expander[0].proto.expanded is False
     assert app.button(key=f"task_finish_{first['id']}")
     assert app.button(key=f"task_finish_{second['id']}")
+    assert app.button(key=f"task_edit_{first['id']}")
+    assert app.button(key=f"task_delete_open_{first['id']}")
+    assert not _button_keys(app, "task_start_")
+    assert not _button_keys(app, "task_wait_")
+    assert not _button_keys(app, "task_resume_")
+    assert not _button_keys(app, "task_cancel_")
 
-    app.button(key=f"task_start_{first['id']}").click().run()
+    repo.transition_status(first["id"], owner["id"], "EM_ANDAMENTO")
+    app.run()
     assert not app.exception
     assert repo.get(first["id"], owner["id"])["status"] == "EM_ANDAMENTO"
     assert sum("Ativa alfa" in str(item.value) for item in app.markdown) == 1
-    app.button(key=f"task_wait_{first['id']}").click().run()
-    assert not app.exception
-    assert repo.get(first["id"], owner["id"])["status"] == "AGUARDANDO"
-    assert sum("Ativa alfa" in str(item.value) for item in app.markdown) == 1
-    assert not any(
-        button.key == f"task_wait_{first['id']}" for button in app.button
-    )
-    app.run().run()
-    assert sum("Ativa alfa" in str(item.value) for item in app.markdown) == 1
-    with store.connection(read_only=True) as connection:
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM tarefas WHERE id=?", (first["id"],)
-            ).fetchone()[0]
-            == 1
-        )
-    app.button(key=f"task_resume_{first['id']}").click().run()
-    assert not app.exception
-    assert repo.get(first["id"], owner["id"])["status"] == "EM_ANDAMENTO"
-
-    app.button(key=f"task_cancel_{to_cancel['id']}").click().run()
-    assert not app.exception
-    assert repo.get(to_cancel["id"], owner["id"])["status"] == "CANCELADA"
-    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (3)"
-
     app.button(key=f"task_finish_{first['id']}").click().run()
 
     assert not app.exception
     assert repo.get(first["id"], owner["id"])["status"] == "CONCLUIDA"
-    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (4)"
+    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (3)"
     assert not any(
         button.key == f"task_finish_{first['id']}" for button in app.button
     )
@@ -481,6 +462,7 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
         button.key == f"task_finish_{first['id']}" for button in app.button
     )
 
+    app.button(key=f"task_delete_open_{second['id']}").click().run()
     app.checkbox(key=f"task_confirm_{second['id']}").check().run()
     app.button(key=f"task_delete_{second['id']}").click().run()
 
@@ -610,32 +592,21 @@ def test_status_changes_rebuild_each_task_once(store, monkeypatch):
     assert _markdown_text(app).count("Acumulo alfa") == 1
     assert _button_keys(app, f"task_finish_{alpha['id']}") == []
 
-    act(f"task_start_{beta['id']}")
-    assert repo.get(beta["id"], owner["id"])["status"] == "EM_ANDAMENTO"
-    assert _button_keys(app, f"task_start_{beta['id']}") == []
-    assert _button_keys(app, f"task_wait_{beta['id']}") == [f"task_wait_{beta['id']}"]
+    beta, changed = repo.transition_status(beta["id"], owner["id"], "EM_ANDAMENTO")
+    assert changed is True
+    app.run()
+    assert not app.exception
+    assert not _button_keys(app, "task_start_")
+    assert not _button_keys(app, "task_wait_")
+    assert not _button_keys(app, "task_resume_")
+    assert not _button_keys(app, "task_cancel_")
     _assert_single_active_render(app, repo, owner["id"], ["Acumulo beta", "Acumulo gama"])
-
-    act(f"task_wait_{beta['id']}")
-    assert repo.get(beta["id"], owner["id"])["status"] == "AGUARDANDO"
-    assert _button_keys(app, f"task_resume_{beta['id']}") == [
-        f"task_resume_{beta['id']}"
-    ]
-    _assert_single_active_render(app, repo, owner["id"], ["Acumulo beta", "Acumulo gama"])
-
-    act(f"task_resume_{beta['id']}")
-    assert repo.get(beta["id"], owner["id"])["status"] == "EM_ANDAMENTO"
-    _assert_single_active_render(app, repo, owner["id"], ["Acumulo beta", "Acumulo gama"])
-
-    act(f"task_cancel_{gamma['id']}")
-    assert repo.get(gamma["id"], owner["id"])["status"] == "CANCELADA"
-    _assert_single_active_render(app, repo, owner["id"], ["Acumulo beta"])
-    assert _markdown_text(app).count("Acumulo gama") == 1
-    assert _button_keys(app, f"task_cancel_{gamma['id']}") == []
 
     act(f"task_finish_{beta['id']}")
     assert repo.get(beta["id"], owner["id"])["status"] == "CONCLUIDA"
-    _assert_single_active_render(app, repo, owner["id"], [])
-    assert _button_keys(app, "task_finish_") == []
+    _assert_single_active_render(app, repo, owner["id"], ["Acumulo gama"])
+    assert _button_keys(app, f"task_finish_{gamma['id']}") == [
+        f"task_finish_{gamma['id']}"
+    ]
     with store.connection(read_only=True) as connection:
         assert connection.execute("SELECT COUNT(*) FROM tarefas").fetchone()[0] == 3

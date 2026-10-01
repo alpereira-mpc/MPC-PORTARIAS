@@ -1226,12 +1226,6 @@ def test_closed_bell_stays_closed_through_task_reruns(store, monkeypatch):
     assert "tarefas_edit" not in app.session_state
     assert repo.get(task["id"], owner["id"])["titulo"] == "Sininho título novo"
 
-    app.button(key=f"task_start_{task['id']}").click().run()
-    assert not app.exception
-    closed()
-    assert repo.get(task["id"], owner["id"])["status"] == "EM_ANDAMENTO"
-    assert app.session_state[BELL_CACHE_KEY]["payload"]["total"] == total
-
     app.session_state[BELL_INTENT] = True
     app.session_state[bell_widget_key(app.session_state)] = True
     app.run()
