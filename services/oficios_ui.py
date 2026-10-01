@@ -285,7 +285,7 @@ def _attached_editor(service, people, member, series):
     unidade = st.text_input("Órgão/Unidade", key="oficio_attach_unidade")
     assunto = st.text_input("Assunto", key="oficio_attach_assunto")
     uploaded = st.file_uploader(
-        "Arquivo do ofício",
+        "Documento principal do ofício",
         type=["pdf", "docx"],
         accept_multiple_files=False,
         key="oficio_attach_file",
@@ -294,12 +294,22 @@ def _attached_editor(service, people, member, series):
         st.caption(
             f"{uploaded.name} · {uploaded.type or 'arquivo'} · {uploaded.size:,} bytes"
         )
+    complementary_uploads = st.file_uploader(
+        "Anexos complementares — opcional",
+        type=["pdf", "jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key="oficio_attach_extras",
+    )
+    for attachment in complementary_uploads or ():
+        st.caption(
+            f"{attachment.name} · {attachment.type or 'arquivo'} · {attachment.size:,} bytes"
+        )
     st.info(
         "O número administrativo será o previsto pelo sistema. "
-        "O conteúdo do arquivo não é lido nem convertido."
+        "O documento principal e os anexos serão armazenados em seus formatos originais, sem leitura ou conversão de conteúdo."
     )
     confirmed = st.checkbox(
-        f"Confirmo que este documento será registrado como Ofício {series['sigla']} nº {predicted}.",
+        f"Confirmo o registro deste documento como Ofício {series['sigla']} nº {predicted}, juntamente com seus anexos, quando houver.",
         key="oficio_attach_confirm",
     )
     if st.button(
@@ -316,20 +326,32 @@ def _attached_editor(service, people, member, series):
             "unidade": unidade,
             "assunto": assunto,
         }
-        from services.oficios import validate
-
-        content = uploaded.getvalue()
-        attached = official_attached_files(uploaded.name, content)
-        validate(record, official=True, attached=True)
-        identifier = service.save(record)
         try:
-            final = service.finalize(identifier, attached_files=attached)
+            from services.oficios import validate, validate_complementary_upload
+
+            content = uploaded.getvalue()
+            attached = official_attached_files(uploaded.name, content)
+            extras = []
+            for attachment in complementary_uploads or ():
+                validate_complementary_upload(
+                    attachment.name, attachment.getvalue()
+                )
+                extras.append((attachment.name, attachment.getvalue()))
+            validate(record, official=True, attached=True)
+            identifier = service.save(record)
+            final = service.finalize(
+                identifier,
+                attached_files=attached,
+                complementary_files=extras,
+            )
         except Exception:
-            try:
-                service.delete_draft(identifier, True)
-            except Exception:
-                pass
-            raise
+            if "identifier" in locals():
+                try:
+                    service.delete_draft(identifier, True)
+                except Exception:
+                    pass
+            st.error("Não foi possível finalizar o ofício com os anexos selecionados.")
+            return
         audit_oficio("OFICIO_FINALIZADO", "FINALIZAR", final)
         st.session_state["oficio_final"] = final
         from services.alerts import invalidate_alert_summary
@@ -348,7 +370,10 @@ def editor(service, people):
         st.write(
             f"Ofício {series['sigla']} nº {str(final['numero']).zfill(series['digitos'])}/{final['ano']}"
         )
-        for f in service.files(final["id"]):
+        files = service.files(final["id"])
+        principal_files = [f for f in files if f.get("papel") != "ANEXO"]
+        attachments = [f for f in files if f.get("papel") == "ANEXO"]
+        for f in principal_files:
             st.download_button(
                 "Baixar "
                 + ("PDF" if f["tipo"] == "application/pdf" else "DOCX")
@@ -357,6 +382,16 @@ def editor(service, people):
                 f["nome"],
                 mime=f["tipo"],
             )
+        if attachments:
+            st.caption(f"Anexos ({len(attachments)})")
+            for f in attachments:
+                st.download_button(
+                    "Baixar anexo: " + f["nome"],
+                    service.download(f["id"]),
+                    f["nome"],
+                    mime=f["tipo"],
+                    key="oficio_final_attachment_" + f["id"],
+                )
         st.button(
             "Ver em Enviados",
             on_click=lambda: st.session_state.update(oficio_page="Enviados"),
@@ -933,8 +968,31 @@ def details(service, r, principal=None):
                     done("Ofício recebido excluído.")
     files = list(service.files(r["id"]))
     if files:
-        section_label("Arquivo")
-        for f in files:
+        principal_files = [f for f in files if f.get("papel") != "ANEXO"]
+        attachments = [f for f in files if f.get("papel") == "ANEXO"]
+        if principal_files:
+            section_label("Documento principal")
+        for f in principal_files:
+            st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
+            if st.button(
+                "Preparar download: " + f["nome"], key="oficio_file_" + f["id"]
+            ):
+                audit_oficio(
+                    "DOCUMENTO_BAIXADO",
+                    "EXPORTAR",
+                    r,
+                    extra={"formato": f.get("tipo"), "arquivo": f["nome"][:80]},
+                )
+                st.download_button(
+                    "Baixar arquivo",
+                    service.download(f["id"]),
+                    f["nome"],
+                    mime=f["tipo"],
+                    key="oficio_download_" + f["id"],
+                )
+        if attachments:
+            section_label(f"Anexos ({len(attachments)})")
+        for f in attachments:
             st.caption(f"{f['nome']} · {f['tamanho']:,} bytes · {f['incluida'][:10]}")
             if st.button(
                 "Preparar download: " + f["nome"], key="oficio_file_" + f["id"]

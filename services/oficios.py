@@ -155,6 +155,24 @@ def validate_upload(name, content):
     return safe_name(name), mime
 
 
+def validate_complementary_upload(name, content):
+    """Validate a complementary attachment without transforming its bytes."""
+    if not content or len(content) > MAX_FILE:
+        raise ValueError("Cada arquivo deve ter entre 1 byte e 10 MB.")
+    ext = PurePath(name).suffix.lower()
+    if ext == ".pdf":
+        return validate_upload(name, content)
+    image_types = {
+        ".jpg": (b"\xff\xd8\xff", "image/jpeg"),
+        ".jpeg": (b"\xff\xd8\xff", "image/jpeg"),
+        ".png": (b"\x89PNG\r\n\x1a\n", "image/png"),
+    }
+    expected = image_types.get(ext)
+    if not expected or not content.startswith(expected[0]):
+        raise ValueError("Anexos aceitos: PDF, JPG, JPEG ou PNG válidos.")
+    return safe_name(name), expected[1]
+
+
 def official_attached_files(name, content):
     """Validate a user-supplied official file. Bytes are not altered."""
     safe, mime = validate_upload(name, content)

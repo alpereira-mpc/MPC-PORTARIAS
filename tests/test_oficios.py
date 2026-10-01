@@ -149,7 +149,15 @@ def control(store):
     )
     metadata = s.files(identifier)
     assert s.download(metadata[0]["id"]) == out.getvalue()
-    assert set(metadata[0]) == {"id", "nome", "tipo", "tamanho", "incluida"}
+    assert set(metadata[0]) == {
+        "id",
+        "nome",
+        "tipo",
+        "tamanho",
+        "incluida",
+        "papel",
+    }
+    assert metadata[0]["papel"] == "DOCUMENTO"
     assert "conteudo" not in str(s.list()) and "payload" not in s.list()[0]
     s.update_status(
         identifier, "Em análise", "Encaminhado ao gabinete.", due="2026-09-12"
@@ -660,6 +668,96 @@ def test_attached_rejects_invalid_files_without_consuming_number(store):
     assert not s.files(identifier)
 
 
+def test_attached_office_persists_pdf_and_image_complementary_files(store):
+    from services.oficios import official_attached_files
+
+    service = ready(store)
+    identifier = service.save(attached_sample(service))
+    principal = _blank_pdf()
+    image = b"\x89PNG\r\n\x1a\nimagem"
+    service.finalize(
+        identifier,
+        attached_files=official_attached_files("oficio pronto.pdf", principal),
+        complementary_files=[("parecer.pdf", _blank_pdf()), ("imagem.png", image)],
+    )
+
+    files = service.files(identifier)
+    assert service.sequence("PROGE", 2026)["proximo"] == 9
+    assert [row["papel"] for row in files] == ["PRINCIPAL", "ANEXO", "ANEXO"]
+    assert {row["nome"] for row in files[1:]} == {"parecer.pdf", "imagem.png"}
+    image_file = next(row for row in files if row["nome"] == "imagem.png")
+    assert service.download(image_file["id"]) == image
+    assert all(row["id"] for row in files)
+
+
+def test_attached_office_accepts_one_pdf_complementary_file(store):
+    from services.oficios import official_attached_files
+
+    service = ready(store)
+    identifier = service.save(attached_sample(service))
+    service.finalize(
+        identifier,
+        attached_files=official_attached_files("pronto.pdf", _blank_pdf()),
+        complementary_files=[("anexo.pdf", _blank_pdf())],
+    )
+
+    files = service.files(identifier)
+    assert len(files) == 2
+    assert [row["papel"] for row in files] == ["PRINCIPAL", "ANEXO"]
+    assert files[1]["nome"] == "anexo.pdf"
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("arquivo.exe", b"MZ"),
+        ("imagem.jpg", b"imagem sem assinatura"),
+        ("imagem.png", b"imagem sem assinatura"),
+    ],
+)
+def test_invalid_complementary_attachment_rolls_back_finalization(store, name, content):
+    from services.oficios import official_attached_files
+
+    service = ready(store)
+    identifier = service.save(attached_sample(service))
+    with pytest.raises(ValueError):
+        service.finalize(
+            identifier,
+            attached_files=official_attached_files("pronto.pdf", _blank_pdf()),
+            complementary_files=[(name, content)],
+        )
+    assert service.get(identifier)["status"] == "Rascunho"
+    assert service.get(identifier)["numero"] is None
+    assert service.sequence("PROGE", 2026)["proximo"] == 8
+    assert service.files(identifier) == []
+
+
+def test_attachment_persistence_failure_rolls_back_entire_finalization(store, monkeypatch):
+    from services.oficios import official_attached_files
+
+    service = ready(store)
+    identifier = service.save(attached_sample(service))
+    original_file = service._file
+
+    def fail_attachment(connection, *args, **kwargs):
+        role = args[4] if len(args) > 4 else kwargs.get("role")
+        if role == "ANEXO":
+            raise RuntimeError("Falha ao persistir anexo")
+        return original_file(connection, *args, **kwargs)
+
+    monkeypatch.setattr(service, "_file", fail_attachment)
+    with pytest.raises(RuntimeError, match="persistir anexo"):
+        service.finalize(
+            identifier,
+            attached_files=official_attached_files("pronto.pdf", _blank_pdf()),
+            complementary_files=[("anexo.pdf", _blank_pdf())],
+        )
+    assert service.get(identifier)["status"] == "Rascunho"
+    assert service.get(identifier)["numero"] is None
+    assert service.sequence("PROGE", 2026)["proximo"] == 8
+    assert service.files(identifier) == []
+
+
 def test_new_oficio_defaults_to_system_creation(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
@@ -679,11 +777,17 @@ def test_new_oficio_defaults_to_system_creation(store, monkeypatch):
     assert any(a.label.startswith("Corpo do ofício") for a in app.text_area)
     app.radio(key="oficio_prep_mode").set_value(PREP_ATTACH).run()
     assert not any(a.label.startswith("Corpo do ofício") for a in app.text_area)
-    assert any(i.label == "Arquivo do ofício" for i in app.get("file_uploader"))
+    assert any(
+        i.label == "Documento principal do ofício" for i in app.get("file_uploader")
+    )
+    assert any(
+        i.label == "Anexos complementares — opcional"
+        for i in app.get("file_uploader")
+    )
     finalize = next(b for b in app.button if b.key == "oficio_attach_finalize")
     assert finalize.disabled
     assert any(
-        c.label.startswith("Confirmo que este documento será registrado")
+        c.label.startswith("Confirmo o registro deste documento")
         for c in app.checkbox
     )
 

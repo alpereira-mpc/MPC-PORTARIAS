@@ -41,8 +41,8 @@ class OficiosStore:
         with self.store.connection(read_only=True) as c:
             if c.execute(
                 "SELECT COUNT(*) FROM configuracoes "
-                "WHERE chave IN ('oficios_schema_v2','oficios_schema_v3')"
-            ).fetchone()[0] == 2:
+                "WHERE chave IN ('oficios_schema_v2','oficios_schema_v3','oficios_schema_v4')"
+            ).fetchone()[0] == 3:
                 self._schema_ready = True
                 return
         binary = "BYTEA" if self.store.backend == "postgresql" else "BLOB"
@@ -81,6 +81,24 @@ class OficiosStore:
                 )
             if "data_esperada_resposta" not in columns:
                 c.execute("ALTER TABLE oficios ADD COLUMN data_esperada_resposta TEXT")
+            if self.store.backend == "postgresql":
+                file_columns = {
+                    row[0]
+                    for row in c.execute(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema=current_schema() AND table_name='oficio_arquivos'"
+                    )
+                }
+            else:
+                file_columns = {
+                    row[1] for row in c.execute("PRAGMA table_info(oficio_arquivos)")
+                }
+            if "papel" not in file_columns:
+                c.execute(
+                    "ALTER TABLE oficio_arquivos ADD COLUMN papel TEXT NOT NULL DEFAULT 'DOCUMENTO'"
+                )
+            if "nome_original" not in file_columns:
+                c.execute("ALTER TABLE oficio_arquivos ADD COLUMN nome_original TEXT")
             people = [dict(r) for r in c.execute("SELECT id,nome FROM procuradores")]
             for name, (sigla, modelo, heading, digits) in SERIES.items():
                 matches = [
@@ -103,6 +121,9 @@ class OficiosStore:
             )
             c.execute(
                 "INSERT INTO configuracoes VALUES('oficios_schema_v3','1') ON CONFLICT DO NOTHING"
+            )
+            c.execute(
+                "INSERT INTO configuracoes VALUES('oficios_schema_v4','1') ON CONFLICT DO NOTHING"
             )
         self._schema_ready = True
 
@@ -356,10 +377,20 @@ class OficiosStore:
             )
             return identifier
 
-    def _file(self, c, identifier, name, mime, content):
+    def _file(self, c, identifier, name, mime, content, role="DOCUMENTO", original_name=None):
         c.execute(
-            "INSERT INTO oficio_arquivos VALUES(?,?,?,?,?,?,?)",
-            (uuid.uuid4().hex, identifier, name, mime, len(content), now(), content),
+            "INSERT INTO oficio_arquivos(id,oficio_id,nome,tipo,tamanho,incluida,conteudo,papel,nome_original) VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                uuid.uuid4().hex,
+                identifier,
+                name,
+                mime,
+                len(content),
+                now(),
+                content,
+                role,
+                original_name or name,
+            ),
         )
 
     def finalize_reviewed(self, identifier, document, series, preview_hash):
@@ -381,9 +412,15 @@ class OficiosStore:
         expected_record=None,
         expected_series=None,
         attached_files=None,
+        complementary_files=(),
     ):
         from document_generator.oficios import official_documents
-        from services.oficios import safe_name
+        from services.oficios import safe_name, validate_complementary_upload
+
+        complementary = [
+            (*validate_complementary_upload(name, content), name, content)
+            for name, content in (complementary_files or ())
+        ]
 
         generator = generator or official_documents
         with self.store.connection() as c:
@@ -474,7 +511,11 @@ class OficiosStore:
                         else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     ),
                     content,
+                    "PRINCIPAL" if attached_files is not None else "DOCUMENTO",
+                    name,
                 )
+            for safe, mime, original_name, content in complementary:
+                self._file(c, identifier, safe, mime, content, "ANEXO", original_name)
             c.execute(
                 "UPDATE oficios SET serie=?,numero=?,status='Gerado',payload=?,atualizada=? WHERE id=?",
                 (series["sigla"], number, encode(record), now(), identifier),
@@ -767,7 +808,11 @@ class OficiosStore:
             return [
                 dict(r)
                 for r in c.execute(
-                    "SELECT id,nome,tipo,tamanho,incluida FROM oficio_arquivos WHERE oficio_id=? ORDER BY incluida,id",
+                    "SELECT id,COALESCE(nome_original,nome) AS nome,tipo,tamanho,incluida,"
+                    "COALESCE(papel,'DOCUMENTO') AS papel FROM oficio_arquivos "
+                    "WHERE oficio_id=? ORDER BY "
+                    "CASE COALESCE(papel,'DOCUMENTO') WHEN 'PRINCIPAL' THEN 0 "
+                    "WHEN 'DOCUMENTO' THEN 0 ELSE 1 END,incluida,id",
                     (identifier,),
                 )
             ]
