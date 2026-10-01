@@ -299,9 +299,11 @@ def test_stripe_and_header_helpers_are_available():
     assert 'stSidebar"] .mpc-record-boxed' in css
     assert ".mpc-sidebar-alert-card.mpc-record-boxed" in css
     assert 'stPopoverBody"] .mpc-bell-alert .mpc-sidebar-alert-card' in css
-    assert "background:var(--mpc-surface-primary-bg)" in css
-    assert "border-left:3px solid var(--mpc-brand)" in css
-    assert "background:var(--mpc-card-b)" in css
+    assert "#FFF2BF" in css
+    assert "#E7C968" in css
+    assert "#C99800" in css
+    assert "#FFEBA6" in css
+    assert "#F2D675" in css
     assert "#FFF4CC" not in css
     from services import alerts_ui
 

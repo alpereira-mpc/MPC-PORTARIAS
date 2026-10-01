@@ -1,4 +1,4 @@
-"""Global search page. Read-only; opening origin reuses shared navigation."""
+"""Global search page. Read-only; opening origin reuses Pendências navigation."""
 
 from datetime import date
 import streamlit as st
