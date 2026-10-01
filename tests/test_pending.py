@@ -339,16 +339,16 @@ def test_menu_and_central_ui(store, monkeypatch):
     )
     assert portal.options[0] == "Início"
     assert portal.options[1] == "Busca Global"
-    assert portal.options[2] == "Pendências"
+    assert "Pendências" not in portal.options
     assert "Alertas" not in portal.options
-    assert portal.options[3] == "Portarias"
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
+    assert portal.options[2] == "Portarias"
+    app.session_state["portal_navigation_request"] = {
+        "module": "Pendências",
+        "state": {},
+    }
+    app.run()
     assert not app.exception
-    headings = [str(h.value) for h in app.subheader]
-    assert any("PENDÊNCIAS" in h for h in headings)
-    blob = " ".join(str(m.value) for m in app.markdown)
-    assert "Nenhuma pend" in blob
-    app.sidebar.radio(key="portal_module").set_value("Início").run()
+    assert app.sidebar.radio(key="portal_module").value == "Início"
     assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
     assert not any(b.label == "Ver pendências" for b in app.button)
     assert not any(b.label == "Ver alertas" for b in app.button)
@@ -361,12 +361,12 @@ def test_portal_navigation_helper_applies_once(monkeypatch):
     monkeypatch.setattr(portal.st, "session_state", state)
     portal.queue_portal_navigation("Pendências")
     assert portal.PORTAL_NAV_REQUEST in state
-    applied = portal.apply_portal_navigation(["Início", "Pendências", "Ofícios"])
-    assert applied == "Pendências"
-    assert state["portal_module"] == "Pendências"
+    applied = portal.apply_portal_navigation(["Início", "Ofícios"])
+    assert applied == "Início"
+    assert state["portal_module"] == "Início"
     assert portal.PORTAL_NAV_REQUEST not in state
-    portal.apply_portal_navigation(["Início", "Pendências", "Ofícios"])
-    assert state["portal_module"] == "Pendências"
+    portal.apply_portal_navigation(["Início", "Ofícios"])
+    assert state["portal_module"] == "Início"
     assert portal.PORTAL_NAV_REQUEST not in state
     assert "st.rerun" not in getsource(portal.apply_portal_navigation)
     assert "st.rerun" in getsource(portal.request_portal_navigation)
@@ -415,11 +415,12 @@ def test_programmatic_navigation_does_not_write_widget_keys():
         assert "queue_portal_navigation" in source
         assert "request_portal_navigation" not in source
         assert "st.rerun()" not in source
-    for fn in (open_pendencias, open_origin):
+    for fn in (open_origin,):
         source = getsource(fn)
         assert 'st.session_state["portal_module"]' not in source
         assert "st.session_state['portal_module']" not in source
         assert "request_portal_navigation" in source
+    assert "request_portal_navigation" in getsource(open_pendencias)
     assert "request_alerts_view" in getsource(open_alertas)
     assert 'st.session_state["portal_module"]' not in getsource(open_alertas)
     assert "Alertas" not in getsource(open_alertas)
@@ -573,23 +574,13 @@ def test_home_cards_and_manual_pending_menu(store, monkeypatch):
     assert not app.exception
     assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
     assert not any(b.label == "Ver pendências" for b in app.button)
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
-    assert not app.exception
-    assert app.sidebar.radio(key="portal_module").value == "Pendências"
-    assert PORTAL_NAV_REQUEST not in app.session_state
-    headings = [str(h.value) for h in app.subheader]
-    assert any("PENDÊNCIAS" in h for h in headings)
+    assert "Pendências" not in app.sidebar.radio(key="portal_module").options
+    app.session_state[PORTAL_NAV_REQUEST] = {"module": "Pendências", "state": {}}
     app.run()
-    assert not app.exception
-    assert app.sidebar.radio(key="portal_module").value == "Pendências"
-    app.sidebar.radio(key="portal_module").set_value("Início").run()
-    assert not app.exception
     assert app.sidebar.radio(key="portal_module").value == "Início"
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
-    assert not app.exception
-    assert app.sidebar.radio(key="portal_module").value == "Pendências"
 
 
+@pytest.mark.skip(reason="A Central de Pendências não é mais uma interface pública.")
 def test_pending_deep_links_open_origin_modules(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
@@ -840,6 +831,7 @@ def test_empty_period_and_pagination_uniqueness(store):
     assert len(set(first_ids + second_ids)) == len(first_ids + second_ids)
 
 
+@pytest.mark.skip(reason="A Central de Pendências não é mais uma interface pública.")
 def test_central_ui_summary_is_independent_of_listing_period(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from database.store import ROOT
@@ -864,6 +856,7 @@ def test_central_ui_summary_is_independent_of_listing_period(store, monkeypatch)
     assert metrics.get("Total de pendências ativas")
 
 
+@pytest.mark.skip(reason="A Central de Pendências não é mais uma interface pública.")
 def test_summary_cards_apply_period_without_writing_widget_after_instantiation(
     store, monkeypatch
 ):

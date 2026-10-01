@@ -1,4 +1,9 @@
-# Central de Pendências
+# Central de Pendências (legado interno)
+
+> A página e o item de navegação foram removidos da aplicação. Este documento
+> registra a agregação preservada temporariamente porque partes dela ainda são
+> reutilizadas internamente por outros fluxos. Links históricos são direcionados
+> para a página inicial.
 
 Visão transversal do que exige atenção nos módulos já existentes. **Não há tabela própria de pendências** e não há cópia dos registros. A fonte da verdade permanece em Ofícios, Agenda e Memorandos.
 

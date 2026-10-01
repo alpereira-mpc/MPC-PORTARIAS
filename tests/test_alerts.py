@@ -839,7 +839,8 @@ def test_menu_home_and_deep_links(store, monkeypatch):
     )
     assert "Alertas" not in portal.options
     assert portal.options[1] == "Busca Global"
-    assert portal.options[3] == "Portarias"
+    assert "Pendências" not in portal.options
+    assert portal.options[2] == "Portarias"
     assert any(getattr(b, "key", None) == "open_portarias" for b in app.button)
     assert not any(b.label == "Ver alertas" for b in app.button)
     labels = " ".join(str(getattr(b, "label", "")) for b in app.button)
@@ -1076,7 +1077,6 @@ def test_inicio_after_change_refreshes_bell_without_f5(store, monkeypatch):
     assert cached["payload"]["total"] == 0
     proge = next(s["membro_id"] for s in oficios.series() if s["sigla"] == "PROGE")
     _received(oficios, proge, "2026-09-13")
-    app.sidebar.radio(key="portal_module").set_value("Pendências").run()
     app.sidebar.radio(key="portal_module").set_value("Início").run()
     assert app.session_state[BELL_CACHE_KEY]["payload"]["total"] == 0
     app.session_state[ALERTS_REVISION_KEY] = 1

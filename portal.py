@@ -112,14 +112,6 @@ MODULE_LISTING_KEYS = {
         "agenda_history_offset",
         "agenda_history_filters",
     ),
-    "Pendências": (
-        "pending_period",
-        "pending_module",
-        "pending_gabinete",
-        "pending_urgency",
-        "pending_q",
-        "pending_page",
-    ),
     "Alertas": (
         "alerts_period",
         "alerts_module",
@@ -380,6 +372,8 @@ def apply_portal_navigation(allowed):
     else:
         module = request.get("module")
         extra = request.get("state") or {}
+    if module == "Pendências":
+        module, extra = "Início", {}
     if module not in allowed:
         return None
     st.session_state["portal_module"] = module
@@ -399,6 +393,8 @@ def _pending_navigation(allowed):
         extra = request.get("state") or {}
     else:
         return None, {}
+    if module == "Pendências":
+        module, extra = "Início", {}
     if module not in allowed or not isinstance(extra, dict):
         return None, {}
     nav_state = {
@@ -672,7 +668,8 @@ def _home_layout_style():
 
 
 def open_pendencias():
-    request_portal_navigation("Pendências")
+    """Compatibility adapter for an obsolete Central de Pendências link."""
+    request_portal_navigation("Início")
 
 
 def open_alertas():
@@ -1055,8 +1052,6 @@ def render_portal():
 
     iniciar_sessao_autorizada(store, principal)
     options = ["Início", "Busca Global"]
-    if has_permission(principal, "pendencias"):
-        options.append("Pendências")
     if has_permission(principal, "portarias"):
         options.append("Portarias")
     if has_permission(principal, "agenda"):
@@ -1164,12 +1159,6 @@ def render_portal():
     st.session_state.pop("_global_search_home_active", None)
     registrar_modulo(store, principal, selected)
     try:
-        if selected == "Pendências":
-            require_permission(principal, "pendencias")
-            from services.pending_ui import render
-
-            _render_module_fragment(render, store, principal)
-            st.stop()
         if selected == "Agenda":
             require_permission(principal, "agenda")
             from services.agenda_ui import render
