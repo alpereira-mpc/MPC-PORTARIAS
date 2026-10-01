@@ -49,6 +49,21 @@ def _principal(store):
     return resolve_principal(store, {"email": "admin@test.local"})
 
 
+def test_petition_badges_map_status_and_keep_date_neutral():
+    from services.peticoes_ui import _badge_items
+
+    badges = _badge_items(
+        {"situacao": "EM_ACOMPANHAMENTO", "data_protocolo": "2026-09-30"}
+    )
+    assert badges == [
+        ("Em acompanhamento", "neutral", "pet-status pet-status-active"),
+        ("30/09/2026", "neutral", "pet-date"),
+    ]
+    unknown = _badge_items({"situacao": "FUTURA", "data_protocolo": "2026-09-30"})
+    assert unknown[0] == ("FUTURA", "neutral", "pet-status pet-status-unknown")
+    assert unknown[1][0] == "30/09/2026"
+
+
 def test_create_list_document_and_constraints(store):
     principal = _principal(store)
     record = create(

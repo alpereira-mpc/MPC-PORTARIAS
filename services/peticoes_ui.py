@@ -32,7 +32,6 @@ from services.ui_theme import (
     definition_block,
     empty_state,
     render_record,
-    status_tone,
 )
 
 DESTINOS = (
@@ -50,6 +49,27 @@ FILTROS_SITUACAO = {
 }
 PAGE_SIZE = 15
 PREVIEW_LIMIT = 280
+
+# Presentation mapping only. Domain status values and validation remain in
+# services.peticoes/database.peticoes; future values deliberately stay neutral.
+_SITUACAO_BADGE_VARIANTS = {
+    "PROTOCOLADA": "active",
+    "EM_ACOMPANHAMENTO": "active",
+    "CONCLUIDA": "complete",
+}
+
+
+def _badge_items(record):
+    situacao = record.get("situacao")
+    return [
+        (
+            SITUACOES.get(situacao, situacao),
+            "neutral",
+            "pet-status pet-status-"
+            + _SITUACAO_BADGE_VARIANTS.get(situacao, "unknown"),
+        ),
+        (format_date_br(record.get("data_protocolo")), "neutral", "pet-date"),
+    ]
 
 
 def _remember(key, default):
@@ -394,13 +414,7 @@ def _card(store, db, principal, record, index, *, acompanhar):
     with card_container(index, f"pet_{identifier}"):
         render_record(
             f"{record['numero_tramita']} — {record['assunto']}",
-            badges_html=badges(
-                (
-                    SITUACOES.get(record["situacao"], record["situacao"]),
-                    status_tone(SITUACOES.get(record["situacao"], "")),
-                ),
-                (format_date_br(record["data_protocolo"]), "neutral"),
-            ),
+            badges_html=badges(*_badge_items(record)),
             secondary="Natureza: "
             + NATUREZAS.get(record["natureza"], record["natureza"]),
             meta="Destinatário: " + (record.get("destinatario") or "—"),

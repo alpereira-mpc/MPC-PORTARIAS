@@ -75,11 +75,54 @@ from services.ui_theme import (
     kpi_mark,
     render_record,
     section_label,
-    status_tone,
 )
 
 
 _FILTER_ALL = "__todas__"
+
+
+class _BadgeItem(tuple):
+    """Two-value badge item with an optional semantic CSS modifier.
+
+    Keeping the public tuple shape avoids changing callers that consume the
+    existing ``(text, tone)`` convention.
+    """
+
+    def __new__(cls, text, tone, semantic_class):
+        item = super().__new__(cls, (text, tone))
+        item.semantic_class = semantic_class
+        return item
+
+
+# Visual-only classification kept beside the card presenter. Codes remain the
+# authoritative values from services.representacoes and unknown future values
+# deliberately use the neutral variant.
+_SITUACAO_BADGE_VARIANTS = {
+    "IDEIA": "active",
+    "PESQUISA": "active",
+    "ELABORACAO": "active",
+    "MINUTA_REVISAO": "active",
+    "APROVADA": "approved",
+    "AGUARDANDO_PROTOCOLO": "waiting",
+    "PROTOCOLADA": "active",
+    "EM_TRAMITACAO": "active",
+    "JULGADA": "complete",
+    "ENCERRADA": "closed",
+    "ARQUIVADA": "closed",
+    "SUSPENSA": "waiting",
+    "CANCELADA": "cancelled",
+}
+
+_FASE_BADGE_VARIANTS = {
+    "INSTRUCAO": "instruction",
+    "AGUARDANDO_DEFESA": "instruction",
+    "DEFESA_APRESENTADA": "instruction",
+    "ANALISE_DEFESA": "instruction",
+    "MPC": "instruction",
+    "PAUTA": "agenda",
+    "JULGAMENTO": "judgment",
+    "POS_JULGAMENTO": "post",
+}
 
 
 def _detail_chrome(prefix):
@@ -350,12 +393,30 @@ def _filters():
 
 
 def _badge_items(record):
-    chips = [kind_label(record), label(SITUACOES, record["situacao"])]
+    situacao = record.get("situacao")
+    chips = [
+        _BadgeItem(kind_label(record), "neutral", "rep-type"),
+        _BadgeItem(
+            label(SITUACOES, situacao),
+            "neutral",
+            "rep-status rep-status-"
+            + _SITUACAO_BADGE_VARIANTS.get(situacao, "unknown"),
+        ),
+    ]
     if record.get("numero_processo"):
-        chips.insert(1, record["numero_processo"])
+        chips.insert(
+            1, _BadgeItem(record["numero_processo"], "neutral", "rep-identifier")
+        )
     if is_protocolled(record) and record.get("fase_processual"):
-        chips.append(label(FASES, record["fase_processual"]))
-    return [(chip, status_tone(chip)) for chip in chips]
+        fase = record["fase_processual"]
+        chips.append(
+            _BadgeItem(
+                label(FASES, fase),
+                "neutral",
+                "rep-phase rep-phase-" + _FASE_BADGE_VARIANTS.get(fase, "unknown"),
+            )
+        )
+    return chips
 
 
 def _card(record, index, procuradores_map, assessores_map):
@@ -879,8 +940,11 @@ def _detail_compact(store, principal, record):
             "representacao",
             record["id"],
             record["titulo"],
-            pdf_supplier=(lambda: download(store, official["id"])["conteudo"])
-            if official else None,
+            pdf_supplier=(
+                (lambda: download(store, official["id"])["conteudo"])
+                if official
+                else None
+            ),
             ai_context={
                 "tipo": "Representação",
                 "numero": record.get("numero") or "",
@@ -1084,8 +1148,9 @@ def _detail_body(store, principal, record):
         "representacao",
         record["id"],
         record["titulo"],
-        pdf_supplier=(lambda: download(store, official["id"])["conteudo"])
-        if official else None,
+        pdf_supplier=(
+            (lambda: download(store, official["id"])["conteudo"]) if official else None
+        ),
         ai_context={
             "tipo": "Representação",
             "numero": record.get("numero") or "",

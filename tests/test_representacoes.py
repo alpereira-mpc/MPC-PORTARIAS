@@ -137,6 +137,32 @@ def test_authorized_user_sees_module(store):
     assert "representacoes" in {module.key for module in visible_modules(allowed)}
 
 
+def test_representation_badges_use_central_semantic_variants_and_fallback():
+    from services.representacoes_ui import _badge_items
+
+    record = {
+        "situacao": "EM_TRAMITACAO",
+        "numero_processo": "04421/26",
+        "fase_processual": "INSTRUCAO",
+    }
+    items = _badge_items(record)
+    assert [
+        (text, tone, item.semantic_class) for item, (text, tone) in zip(items, items)
+    ] == [
+        ("Representação", "neutral", "rep-type"),
+        ("04421/26", "neutral", "rep-identifier"),
+        ("Em tramitação", "neutral", "rep-status rep-status-active"),
+        ("Instrução inicial", "neutral", "rep-phase rep-phase-instruction"),
+    ]
+    unknown = _badge_items(
+        {"situacao": "FUTURA", "numero_processo": "1/26", "fase_processual": "NOVA"}
+    )
+    assert unknown[2][0] == "FUTURA"
+    assert unknown[2].semantic_class == "rep-status rep-status-unknown"
+    assert unknown[3][0] == "NOVA"
+    assert unknown[3].semantic_class == "rep-phase rep-phase-unknown"
+
+
 def test_direct_ui_load_is_blocked(store):
     from services.representacoes_ui import render
 
@@ -947,8 +973,12 @@ def test_representation_summary_can_be_hidden_without_regeneration(store, monkey
     identifier = _protocolled_with_pdf(store, principal, number="TC 066666/26")
     official = pdf_oficial(store, identifier)
     RepresentacoesStore(store).save_resumo_ia(
-        identifier, "Resumo preservado.", "2026-09-30T12:00:00", "mock",
-        "abc", official["id"],
+        identifier,
+        "Resumo preservado.",
+        "2026-09-30T12:00:00",
+        "mock",
+        "abc",
+        official["id"],
     )
     calls = []
 
@@ -958,7 +988,9 @@ def test_representation_summary_can_be_hidden_without_regeneration(store, monkey
 
     monkeypatch.setattr(ui, "atualizar_resumo_representacao", update)
     _UI_HOLD.clear()
-    _UI_HOLD.update(ui=ui, store=store, principal=principal, record=get(store, identifier))
+    _UI_HOLD.update(
+        ui=ui, store=store, principal=principal, record=get(store, identifier)
+    )
 
     def page():
         from tests.test_representacoes import _UI_HOLD

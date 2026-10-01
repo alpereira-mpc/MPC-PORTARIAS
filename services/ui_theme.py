@@ -6,6 +6,7 @@ or Streamlit widget keys live here. CSS is injected once per script run.
 
 from contextlib import contextmanager
 from html import escape
+import re
 
 import streamlit as st
 
@@ -55,9 +56,7 @@ INFO_SOFT = "#EEF2F7"
 NEUTRAL = "#5C6570"
 NEUTRAL_SOFT = "#F0F1F3"
 
-TONES = frozenset(
-    {"brand", "success", "warning", "danger", "muted", "neutral", "info"}
-)
+TONES = frozenset({"brand", "success", "warning", "danger", "muted", "neutral", "info"})
 
 _STATUS_SUCCESS = (
     "conclu",
@@ -111,6 +110,7 @@ _PRIORITY_TONES = {
     "FUTURA": "muted",
     "SEM PRAZO": "muted",
 }
+
 
 def _css(theme_name="vermelho"):
     theme_name = valid_theme(theme_name)
@@ -194,6 +194,16 @@ def _css(theme_name="vermelho"):
 --mpc-danger-soft:{DANGER_SOFT};
 --mpc-info:{INFO};
 --mpc-info-soft:{INFO_SOFT};
+--mpc-rep-blue:#24577D;
+--mpc-rep-blue-soft:#E8F3F8;
+--mpc-rep-cyan:#276C7A;
+--mpc-rep-cyan-soft:#E6F5F6;
+--mpc-rep-purple:#624B82;
+--mpc-rep-purple-soft:#F0EBF7;
+--mpc-rep-violet:#694A86;
+--mpc-rep-violet-soft:#F2EAF7;
+--mpc-rep-teal:#236B62;
+--mpc-rep-teal-soft:#E5F4F0;
 --mpc-radius:10px;
 --mpc-shadow:0 1px 3px rgba(32,40,50,.07);
 }}
@@ -981,6 +991,27 @@ border:1px solid transparent;
 .mpc-badge--danger{{background:var(--mpc-danger-soft);color:var(--mpc-danger);border-color:rgba(176,42,42,.2);}}
 .mpc-badge--muted,.mpc-badge--neutral{{background:var(--mpc-muted-bg);color:var(--mpc-text-2);border-color:var(--mpc-border);}}
 .mpc-badge--info{{background:#EEE8E6;color:var(--mpc-text);border-color:#DED5D2;}}
+.mpc-badge--rep-type{{font-weight:650;letter-spacing:.035em;}}
+.mpc-badge--rep-identifier{{color:var(--mpc-text);font-weight:750;background:var(--mpc-white);border-color:var(--mpc-border-md);}}
+.mpc-badge--rep-status,.mpc-badge--rep-phase{{position:relative;padding-left:.68rem;}}
+.mpc-badge--rep-status::before,.mpc-badge--rep-phase::before{{content:"";display:inline-block;width:.38rem;height:.38rem;margin-right:.34rem;border-radius:50%;vertical-align:.08em;background:currentColor;}}
+.mpc-badge--rep-status-active{{background:var(--mpc-rep-blue-soft);color:var(--mpc-rep-blue);border-color:color-mix(in srgb,var(--mpc-rep-blue) 28%,transparent);}}
+.mpc-badge--rep-status-approved{{background:var(--mpc-rep-teal-soft);color:var(--mpc-rep-teal);border-color:color-mix(in srgb,var(--mpc-rep-teal) 28%,transparent);}}
+.mpc-badge--rep-status-waiting{{background:var(--mpc-warning-soft);color:var(--mpc-warning);border-color:color-mix(in srgb,var(--mpc-warning) 30%,transparent);}}
+.mpc-badge--rep-status-complete{{background:var(--mpc-success-soft);color:var(--mpc-success);border-color:color-mix(in srgb,var(--mpc-success) 28%,transparent);}}
+.mpc-badge--rep-status-closed{{background:var(--mpc-muted-bg);color:var(--mpc-text-2);border-color:var(--mpc-border);}}
+.mpc-badge--rep-status-cancelled{{background:var(--mpc-danger-soft);color:var(--mpc-danger);border-color:color-mix(in srgb,var(--mpc-danger) 28%,transparent);}}
+.mpc-badge--rep-phase-instruction{{background:var(--mpc-rep-cyan-soft);color:var(--mpc-rep-cyan);border-color:color-mix(in srgb,var(--mpc-rep-cyan) 25%,transparent);}}
+.mpc-badge--rep-phase-agenda{{background:var(--mpc-rep-purple-soft);color:var(--mpc-rep-purple);border-color:color-mix(in srgb,var(--mpc-rep-purple) 25%,transparent);}}
+.mpc-badge--rep-phase-judgment{{background:var(--mpc-rep-violet-soft);color:var(--mpc-rep-violet);border-color:color-mix(in srgb,var(--mpc-rep-violet) 25%,transparent);}}
+.mpc-badge--rep-phase-post{{background:var(--mpc-rep-teal-soft);color:var(--mpc-rep-teal);border-color:color-mix(in srgb,var(--mpc-rep-teal) 25%,transparent);}}
+.mpc-badge--rep-status-unknown,.mpc-badge--rep-phase-unknown{{background:var(--mpc-muted-bg);color:var(--mpc-text-2);border-color:var(--mpc-border);}}
+.mpc-badge--pet-date{{color:var(--mpc-text-2);font-weight:650;letter-spacing:.025em;background:var(--mpc-white);border-color:var(--mpc-border);}}
+.mpc-badge--pet-status{{position:relative;padding-left:.68rem;}}
+.mpc-badge--pet-status::before{{content:"";display:inline-block;width:.38rem;height:.38rem;margin-right:.34rem;border-radius:50%;vertical-align:.08em;background:currentColor;}}
+.mpc-badge--pet-status-active{{background:var(--mpc-rep-blue-soft);color:var(--mpc-rep-blue);border-color:color-mix(in srgb,var(--mpc-rep-blue) 28%,transparent);}}
+.mpc-badge--pet-status-complete{{background:var(--mpc-success-soft);color:var(--mpc-success);border-color:color-mix(in srgb,var(--mpc-success) 28%,transparent);}}
+.mpc-badge--pet-status-unknown{{background:var(--mpc-muted-bg);color:var(--mpc-text-2);border-color:var(--mpc-border);}}
 section[data-testid="stSidebar"] .mpc-record-boxed,
 section[data-testid="stSidebar"] .mpc-record-boxed.mpc-surface-brand,
 section[data-testid="stSidebar"] .mpc-record-boxed.mpc-surface-success,
@@ -1397,7 +1428,9 @@ fill:currentColor !important;
 """.strip()
     if theme_name == "vermelho":
         return css
-    return css + """
+    return (
+        css
+        + """
 [data-testid="stRadio"] input,
 [data-testid="stCheckbox"] input,
 [data-testid="stToggle"] input{
@@ -1421,6 +1454,7 @@ background-color:var(--mpc-brand-soft) !important;
 color:var(--mpc-brand-dark) !important;
 }
 """
+    )
 
 
 def apply_theme(theme_name="vermelho"):
@@ -1437,12 +1471,20 @@ def _tone(name):
     return name if name in TONES else "neutral"
 
 
-def badge(text, tone="neutral"):
+def _badge_classes(value):
+    """Return safe, optional semantic modifier classes for a badge."""
+    return " ".join(
+        "mpc-badge--" + item
+        for item in str(value or "").split()
+        if re.fullmatch(r"[a-z0-9-]+", item)
+    )
+
+
+def badge(text, tone="neutral", semantic_class=""):
     if not text:
         return ""
-    return (
-        f'<span class="mpc-badge mpc-badge--{_tone(tone)}">{html_text(text)}</span>'
-    )
+    classes = _badge_classes(semantic_class)
+    return f'<span class="mpc-badge mpc-badge--{_tone(tone)} {classes}">{html_text(text)}</span>'
 
 
 def badges(*items):
@@ -1452,9 +1494,12 @@ def badges(*items):
             continue
         if isinstance(item, (tuple, list)):
             text, tone = item[0], item[1] if len(item) > 1 else "neutral"
+            semantic_class = (
+                item[2] if len(item) > 2 else getattr(item, "semantic_class", "")
+            )
         else:
-            text, tone = item, "neutral"
-        mark = badge(text, tone)
+            text, tone, semantic_class = item, "neutral", ""
+        mark = badge(text, tone, semantic_class)
         if mark:
             parts.append(mark)
     return "".join(parts)
@@ -1500,7 +1545,11 @@ def record_html(
     accent = _tone(accent)
     surface_class = f" mpc-surface-{_tone(surface)}" if surface else ""
     kind = stripe if stripe in ("a", "b") else ""
-    stripe_class = f" mpc-stripe-{kind} mpc-card-{'even' if kind == 'a' else 'odd'}" if kind else ""
+    stripe_class = (
+        f" mpc-stripe-{kind} mpc-card-{'even' if kind == 'a' else 'odd'}"
+        if kind
+        else ""
+    )
     boxed_class = " mpc-record-boxed" if boxed else ""
     head = ['<div class="mpc-record-head">']
     head.append(f'<p class="mpc-record-title">{html_text(title)}</p>')
@@ -1549,9 +1598,7 @@ def trip_html(title="Logística de viagem", body=""):
 
 def empty_state(text):
     """Single institutional empty-result notice. Not a KPI card or st.info."""
-    render_html(
-        f'<div class="mpc-empty-state"><p>{html_text(text)}</p></div>'
-    )
+    render_html(f'<div class="mpc-empty-state"><p>{html_text(text)}</p></div>')
 
 
 def guidance_note(text):
@@ -1581,7 +1628,9 @@ def filter_mark():
 
 
 def institutional_card_mark():
-    render_html('<div class="mpc-institutional-card-mark mpc-home-card-mark" hidden></div>')
+    render_html(
+        '<div class="mpc-institutional-card-mark mpc-home-card-mark" hidden></div>'
+    )
 
 
 def operational_card_mark():
