@@ -991,6 +991,15 @@ border:1px solid transparent;
 .mpc-badge--danger{{background:var(--mpc-danger-soft);color:var(--mpc-danger);border-color:rgba(176,42,42,.2);}}
 .mpc-badge--muted,.mpc-badge--neutral{{background:var(--mpc-muted-bg);color:var(--mpc-text-2);border-color:var(--mpc-border);}}
 .mpc-badge--info{{background:#EEE8E6;color:var(--mpc-text);border-color:#DED5D2;}}
+.mpc-badge--task-status-a-fazer{{background:#EAF2FB;color:#355D7A;border-color:#C6DAEA;}}
+.mpc-badge--task-status-em-andamento{{background:#FFF0CC;color:#75500A;border-color:#E8CC83;}}
+.mpc-badge--task-status-aguardando{{background:#F3EEE2;color:#695B3D;border-color:#DDD2B9;}}
+.mpc-badge--task-status-concluida{{background:#E7F4EA;color:#356447;border-color:#BFDAC7;}}
+.mpc-badge--task-status-cancelada{{background:#F9E7E7;color:#874444;border-color:#E5BDBD;}}
+.mpc-badge--task-priority-baixa{{background:#E7F2EF;color:#42665D;border-color:#C5DCD5;}}
+.mpc-badge--task-priority-normal{{background:#EEEDF4;color:#615D70;border-color:#D7D4E1;}}
+.mpc-badge--task-priority-alta{{background:#F8E1DC;color:#8A3E32;border-color:#E3B1A7;}}
+.mpc-badge--task-priority-urgente{{background:#F6E4E4;color:#813535;border-color:#E0B8B8;}}
 .mpc-badge--rep-type{{font-weight:650;letter-spacing:.035em;}}
 .mpc-badge--rep-identifier{{color:var(--mpc-text);font-weight:750;background:var(--mpc-white);border-color:var(--mpc-border-md);}}
 .mpc-badge--rep-status,.mpc-badge--rep-phase{{position:relative;padding-left:.68rem;}}

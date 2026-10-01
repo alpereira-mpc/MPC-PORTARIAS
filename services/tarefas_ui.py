@@ -25,6 +25,19 @@ from services.ui_theme import (
 PRIORITIES = ("BAIXA", "NORMAL", "ALTA", "URGENTE")
 STATUS_LABELS = {"A_FAZER": "A fazer", "EM_ANDAMENTO": "Em andamento", "AGUARDANDO": "Aguardando", "CONCLUIDA": "Concluída", "CANCELADA": "Cancelada"}
 PRIORITY_LABELS = {"BAIXA": "Baixa", "NORMAL": "Normal", "ALTA": "Alta", "URGENTE": "Urgente"}
+STATUS_BADGE_CLASSES = {
+    "A_FAZER": "task-status-a-fazer",
+    "EM_ANDAMENTO": "task-status-em-andamento",
+    "AGUARDANDO": "task-status-aguardando",
+    "CONCLUIDA": "task-status-concluida",
+    "CANCELADA": "task-status-cancelada",
+}
+PRIORITY_BADGE_CLASSES = {
+    "BAIXA": "task-priority-baixa",
+    "NORMAL": "task-priority-normal",
+    "ALTA": "task-priority-alta",
+    "URGENTE": "task-priority-urgente",
+}
 HOUR_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 REMINDER_TIMES = tuple(
     f"{hour:02d}:{minute:02d}"
@@ -404,8 +417,8 @@ def _card(repo, store, principal, row, index=0):
         due_label = due_label + ": " + due.strftime("%d/%m/%Y") + (" às "+row["prazo_hora"] if row.get("prazo_hora") else "")
     accent = "danger" if overdue else "muted" if row["status"] == "CANCELADA" else priority_tone(row["prioridade"])
     marks = badges(
-        (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
-        (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"])),
+        (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]]), STATUS_BADGE_CLASSES[row["status"]]),
+        (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"]), PRIORITY_BADGE_CLASSES[row["prioridade"]]),
     )
     if overdue:
         marks += badge("Atrasada", "danger")
@@ -457,8 +470,8 @@ def _history_card(repo, store, principal, row, index=0):
         render_record(
             row["titulo"],
             badges_html=badges(
-                (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]])),
-                (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"])),
+                (STATUS_LABELS[row["status"]], status_tone(STATUS_LABELS[row["status"]]), STATUS_BADGE_CLASSES[row["status"]]),
+                (PRIORITY_LABELS[row["prioridade"]], priority_tone(row["prioridade"]), PRIORITY_BADGE_CLASSES[row["prioridade"]]),
             ),
             accent="muted" if row["status"] == "CANCELADA" else "success",
         )

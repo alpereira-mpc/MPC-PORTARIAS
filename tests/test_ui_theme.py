@@ -49,6 +49,18 @@ def test_badges_render_safe_semantic_classes_and_preserve_text():
     )
 
 
+def test_task_badges_keep_status_and_priority_semantics_separate():
+    from services.tarefas_ui import PRIORITY_BADGE_CLASSES, STATUS_BADGE_CLASSES
+
+    mark = badges(
+        ("A fazer", "neutral", STATUS_BADGE_CLASSES["A_FAZER"]),
+        ("Normal", "neutral", PRIORITY_BADGE_CLASSES["NORMAL"]),
+    )
+
+    assert "mpc-badge--task-status-a-fazer" in mark
+    assert "mpc-badge--task-priority-normal" in mark
+
+
 def test_guidance_note_uses_active_theme_surfaces():
     from inspect import getsource
 
