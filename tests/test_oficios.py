@@ -919,6 +919,16 @@ def test_ultimas_movimentacoes_show_brazilian_dates():
     assert "2026-09-29" not in markup
 
 
+def test_ultimas_movimentacoes_keep_the_full_subject():
+    from services.oficios_ui import label, recent_movement_label
+
+    subject = "Requisição de informações e cópia integral do Protocolo nº 88.362/2026 - Ministério Público"
+    row = {"serie": "LAF", "numero": 1, "numero_externo": "", "ano": 2026, "assunto": subject}
+
+    assert recent_movement_label(row) == f"LAF 1/2026 — {subject}"
+    assert label(row) != recent_movement_label(row)
+
+
 def test_empty_oficio_listing_uses_the_themed_notice():
     from inspect import getsource
 
