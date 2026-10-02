@@ -1130,7 +1130,8 @@ def render_portal():
             unsafe_allow_html=True,
         )
         if can_view_alertas(principal):
-            render_bell(store, principal)
+            with st.container(key="portal_notifications"):
+                render_bell(store, principal)
         with st.container(key="portal_navigation_menu"):
             selected = st.radio(
                 "Portal",
@@ -1147,7 +1148,7 @@ def render_portal():
             st.session_state[theme_key] = active_theme
         with st.container(key="portal_theme_footer"):
             st.caption(principal.nome + " · " + principal.email)
-            _, logout_column, _ = st.columns(3)
+            _, logout_column, _ = st.columns([1, 1, 0.7])
             if logout_column.button("Sair", type="primary", key="portal_logout"):
                 _logout()
             st.selectbox(

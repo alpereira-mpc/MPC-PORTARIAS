@@ -257,6 +257,9 @@ padding-top:.35rem;
 section[data-testid="stSidebar"] [class*="st-key-portal_theme_footer"] [data-testid="stCaption"]{{
 text-align:center;
 }}
+section[data-testid="stSidebar"] [class*="st-key-portal_notifications"]{{
+margin:0 0 .7rem;
+}}
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"],
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] [data-testid="stButton"]{{
 background-color:{SIDEBAR_BG} !important;
