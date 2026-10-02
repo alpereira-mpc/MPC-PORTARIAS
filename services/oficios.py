@@ -218,7 +218,7 @@ def attention(record, today=None):
     today = today or date.today()
     if record["status"] in CLOSED:
         return ""
-    due = prazo_efetivo(record)
+    due = record.get("prazo")
     if due and date.fromisoformat(due) < today:
         return "⚠ Prazo vencido"
     if due and date.fromisoformat(due) <= today + timedelta(days=7):
@@ -228,27 +228,6 @@ def attention(record, today=None):
     if record["status"] in ("Em análise", "Aguardando providência"):
         return "• " + record["status"]
     return ""
-
-
-def prazo_efetivo(record):
-    """The single operational deadline for a correspondence record."""
-    if (
-        record.get("direcao") == "ENVIADO"
-        and record.get("aguarda_resposta")
-        and not record.get("responde_a")
-    ):
-        return record.get("data_esperada_resposta")
-    return record.get("prazo")
-
-
-def prazo_resposta_label(record):
-    quantidade = record.get("prazo_resposta_quantidade")
-    tipo = record.get("prazo_resposta_tipo")
-    if not quantidade or not tipo:
-        return ""
-    return f"{quantidade} dia{'s' if quantidade != 1 else ''} " + (
-        "úteis" if tipo == "DIAS_UTEIS" else "corridos"
-    )
 
 
 def open_service(store):

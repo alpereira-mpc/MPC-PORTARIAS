@@ -23,9 +23,7 @@ from services.oficios import (
 COLUMNS = (
     "id,direcao,serie,ano,numero,status,data,prazo,membro_id,assunto,destinatario,"
     "numero_externo,responde_a,payload,criada,atualizada,data_envio,cancelada,"
-    "aguarda_resposta,data_esperada_resposta,prazo_resposta_quantidade,"
-    "prazo_resposta_tipo,prazo_resposta_inicio,prazo_resposta_manual,"
-    "prazo_resposta_motivo_ajuste"
+    "aguarda_resposta,data_esperada_resposta"
 )
 
 
@@ -53,7 +51,7 @@ class OficiosStore:
             for statement in [
                 "CREATE TABLE IF NOT EXISTS oficio_series (sigla TEXT PRIMARY KEY, membro_id INTEGER NOT NULL UNIQUE REFERENCES procuradores(id), modelo TEXT NOT NULL, cabecalho TEXT NOT NULL, digitos INTEGER NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS oficio_sequencias (serie TEXT NOT NULL REFERENCES oficio_series(sigla), ano INTEGER NOT NULL CHECK(ano BETWEEN 1000 AND 9999), proximo INTEGER NOT NULL CHECK(proximo>0), confirmada TEXT NOT NULL, PRIMARY KEY(serie,ano))",
-                "CREATE TABLE IF NOT EXISTS oficios (id TEXT PRIMARY KEY, direcao TEXT NOT NULL CHECK(direcao IN ('ENVIADO','RECEBIDO')), serie TEXT REFERENCES oficio_series(sigla), ano INTEGER NOT NULL, numero INTEGER CHECK(numero>0), status TEXT NOT NULL, data TEXT NOT NULL, prazo TEXT, membro_id INTEGER REFERENCES procuradores(id), assunto TEXT NOT NULL, destinatario TEXT NOT NULL, numero_externo TEXT NOT NULL, responde_a TEXT REFERENCES oficios(id), payload TEXT NOT NULL, criada TEXT NOT NULL, atualizada TEXT NOT NULL, data_envio TEXT, cancelada TEXT, aguarda_resposta INTEGER NOT NULL DEFAULT 0 CHECK(aguarda_resposta IN (0,1)), data_esperada_resposta TEXT, prazo_resposta_quantidade INTEGER, prazo_resposta_tipo TEXT, prazo_resposta_inicio TEXT, prazo_resposta_manual INTEGER NOT NULL DEFAULT 0, prazo_resposta_motivo_ajuste TEXT, UNIQUE(serie,ano,numero), CHECK(numero IS NULL OR (direcao='ENVIADO' AND serie IS NOT NULL AND status!='Rascunho')))",
+                "CREATE TABLE IF NOT EXISTS oficios (id TEXT PRIMARY KEY, direcao TEXT NOT NULL CHECK(direcao IN ('ENVIADO','RECEBIDO')), serie TEXT REFERENCES oficio_series(sigla), ano INTEGER NOT NULL, numero INTEGER CHECK(numero>0), status TEXT NOT NULL, data TEXT NOT NULL, prazo TEXT, membro_id INTEGER REFERENCES procuradores(id), assunto TEXT NOT NULL, destinatario TEXT NOT NULL, numero_externo TEXT NOT NULL, responde_a TEXT REFERENCES oficios(id), payload TEXT NOT NULL, criada TEXT NOT NULL, atualizada TEXT NOT NULL, data_envio TEXT, cancelada TEXT, aguarda_resposta INTEGER NOT NULL DEFAULT 0 CHECK(aguarda_resposta IN (0,1)), data_esperada_resposta TEXT, UNIQUE(serie,ano,numero), CHECK(numero IS NULL OR (direcao='ENVIADO' AND serie IS NOT NULL AND status!='Rascunho')))",
                 "CREATE TABLE IF NOT EXISTS oficio_destinatarios (oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, membro_id INTEGER NOT NULL REFERENCES procuradores(id), PRIMARY KEY(oficio_id,membro_id))",
                 f"CREATE TABLE IF NOT EXISTS oficio_arquivos (id TEXT PRIMARY KEY, oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, nome TEXT NOT NULL, tipo TEXT NOT NULL, tamanho INTEGER NOT NULL, incluida TEXT NOT NULL, conteudo {binary} NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS oficio_movimentacoes (id TEXT PRIMARY KEY, oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, instante TEXT NOT NULL, anterior TEXT NOT NULL, novo TEXT NOT NULL, observacao TEXT NOT NULL)",
@@ -83,16 +81,6 @@ class OficiosStore:
                 )
             if "data_esperada_resposta" not in columns:
                 c.execute("ALTER TABLE oficios ADD COLUMN data_esperada_resposta TEXT")
-            for name, definition in (
-                ("prazo_resposta_quantidade", "INTEGER"),
-                ("prazo_resposta_tipo", "TEXT"),
-                ("prazo_resposta_inicio", "TEXT"),
-                ("prazo_resposta_manual", "INTEGER NOT NULL DEFAULT 0"),
-                ("prazo_resposta_motivo_ajuste", "TEXT"),
-            ):
-                if name not in columns:
-                    c.execute(f"ALTER TABLE oficios ADD COLUMN {name} {definition}")
-            c.execute("CREATE INDEX IF NOT EXISTS oficio_resposta_prazo_idx ON oficios(aguarda_resposta,data_esperada_resposta,status)")
             if self.store.backend == "postgresql":
                 file_columns = {
                     row[0]
@@ -280,27 +268,6 @@ class OficiosStore:
 
     def save(self, record, identifier=None, uploads=()):
         validate(record)
-        waiting = bool(record.get("aguarda_resposta"))
-        tracking = {
-            "aguarda_resposta": 1 if waiting else 0,
-            "data_esperada_resposta": record.get("data_esperada_resposta") if waiting else None,
-            "prazo_resposta_quantidade": record.get("prazo_resposta_quantidade") if waiting else None,
-            "prazo_resposta_tipo": record.get("prazo_resposta_tipo") if waiting else None,
-            "prazo_resposta_inicio": record.get("prazo_resposta_inicio") if waiting else None,
-            "prazo_resposta_manual": 1 if waiting and record.get("prazo_resposta_manual") else 0,
-            "prazo_resposta_motivo_ajuste": record.get("prazo_resposta_motivo_ajuste", "").strip() if waiting and record.get("prazo_resposta_manual") else None,
-        }
-        if waiting:
-            if not tracking["data_esperada_resposta"]:
-                raise ValueError("Informe o vencimento para acompanhamento da resposta.")
-            date.fromisoformat(tracking["data_esperada_resposta"])
-            if tracking["prazo_resposta_quantidade"] is not None:
-                if not isinstance(tracking["prazo_resposta_quantidade"], int) or tracking["prazo_resposta_quantidade"] < 1:
-                    raise ValueError("O prazo deve ser um número inteiro positivo.")
-                if tracking["prazo_resposta_tipo"] not in ("DIAS_UTEIS", "DIAS_CORRIDOS") or not tracking["prazo_resposta_inicio"]:
-                    raise ValueError("Informe o tipo e o início da contagem.")
-            if tracking["prazo_resposta_manual"] and not tracking["prazo_resposta_motivo_ajuste"]:
-                raise ValueError("Informe o motivo do ajuste manual do vencimento.")
         files = [
             (*validate_upload(name, content), content) for name, content in uploads
         ]
@@ -384,24 +351,16 @@ class OficiosStore:
                     ),
                 )
                 c.execute(
-                    "UPDATE oficios SET aguarda_resposta=?,data_esperada_resposta=?,"
-                    "prazo_resposta_quantidade=?,prazo_resposta_tipo=?,prazo_resposta_inicio=?,"
-                    "prazo_resposta_manual=?,prazo_resposta_motivo_ajuste=? WHERE id=?",
-                    (*tracking.values(), identifier),
-                )
-                c.execute(
                     "DELETE FROM oficio_destinatarios WHERE oficio_id=?", (identifier,)
                 )
             else:
                 c.execute(
                     "INSERT INTO oficios(id,direcao,serie,ano,numero,status,data,prazo,"
                     "membro_id,assunto,destinatario,numero_externo,responde_a,payload,"
-                    "criada,atualizada,data_envio,cancelada,aguarda_resposta,data_esperada_resposta,"
-                    "prazo_resposta_quantidade,prazo_resposta_tipo,prazo_resposta_inicio,"
-                    "prazo_resposta_manual,prazo_resposta_motivo_ajuste) VALUES("
-                    + ",".join("?" for _ in (*values, *tracking.values()))
+                    "criada,atualizada,data_envio,cancelada) VALUES("
+                    + ",".join("?" for _ in values)
                     + ")",
-                    (*values, *tracking.values()),
+                    values,
                 )
             for member in set(members):
                 c.execute(
@@ -417,129 +376,6 @@ class OficiosStore:
                 "Rascunho atualizado" if previous else "Registro criado",
             )
             return identifier
-
-    def edit_finalized(self, identifier, changes, *, administrator=False, actor_email=""):
-        """Administratively update safe registration fields without touching files.
-
-        Official identifiers, numbering and the emitted document are deliberately
-        outside this operation.  The caller is responsible for the application
-        audit; the durable event below is the minimal service-side audit trail.
-        """
-        if not administrator:
-            raise ValueError("Acesso não autorizado à edição administrativa.")
-        editable = {
-            "tratamento", "destinatario", "cargo", "unidade", "instituicao",
-            "assunto", "referencia", "vocativo", "corpo", "processo",
-            "procedimento", "fechamento", "titulo_assinatura", "observacoes",
-        }
-        def audit_value(value):
-            text = str(value or "")
-            return text if len(text) <= 500 else text[:500] + "… [conteúdo resumido]"
-        with self.store.connection() as c:
-            c.execute("BEGIN IMMEDIATE")
-            previous = self._get(c, identifier)
-            if previous["direcao"] != "ENVIADO" or previous["numero"] is None:
-                raise ValueError("A edição administrativa exige Ofício enviado e numerado.")
-            record = dict(previous)
-            changed = {}
-            for field in editable:
-                if field not in changes:
-                    continue
-                value = changes[field]
-                if value is None:
-                    value = ""
-                if previous.get(field, "") != value:
-                    changed[field] = {
-                        "anterior": audit_value(previous.get(field, "")),
-                        "novo": audit_value(value),
-                    }
-                    record[field] = value
-            if not changed:
-                return {"record": previous, "changed": {}}
-            validate(record, official=True)
-            c.execute(
-                "UPDATE oficios SET assunto=?,destinatario=?,payload=?,atualizada=? WHERE id=?",
-                (record["assunto"], record.get("destinatario", ""), encode(record), now(), identifier),
-            )
-            self._movement(c, identifier, previous["status"], previous["status"], "Edição administrativa de dados cadastrais")
-            self.store.event(
-                c,
-                "oficio_edicao_administrativa",
-                {
-                    "id": identifier,
-                    "serie": previous["serie"],
-                    "ano": previous["ano"],
-                    "numero": previous["numero"],
-                    "usuario": actor_email,
-                    "campos": changed,
-                },
-            )
-            return {"record": self._get(c, identifier), "changed": changed}
-
-    def delete_finalized(
-        self, identifier, reason, confirmation, *, administrator=False, actor_email=""
-    ):
-        """Delete a final record and exclusive relations in one transaction.
-
-        The pre-send ``Gerado`` state keeps its stricter, full-quarantine flow.
-        Officially used numbers are never returned to the available sequence.
-        """
-        if not administrator:
-            raise ValueError("Acesso não autorizado à exclusão definitiva.")
-        if not reason or not reason.strip():
-            raise ValueError("Informe o motivo da exclusão definitiva.")
-        with self.store.connection(read_only=True) as c:
-            record = self._get(c, identifier)
-        if record["status"] == "Rascunho" or (
-            record["direcao"] == "ENVIADO" and record["numero"] is None
-        ):
-            raise ValueError("Use a exclusão de rascunho para documento não numerado.")
-        reference = (
-            f"{record['serie']} {record['numero']}/{record['ano']}"
-            if record["direcao"] == "ENVIADO"
-            else str(record.get("numero_externo") or record["id"])
-        )
-        if confirmation.strip() != reference:
-            raise ValueError("Digite a identificação completa do Ofício para confirmar.")
-        if record["direcao"] == "ENVIADO" and record["status"] == "Gerado" and not record.get("data_envio"):
-            self.delete_generated(
-                identifier,
-                reason,
-                True,
-                "EXCLUIR",
-                True,
-                administrator=True,
-                actor_email=actor_email,
-            )
-            return {"id": identifier, "identificacao": reference, "quarentena": True, "numero_liberado": True}
-        with self.store.connection() as c:
-            c.execute("BEGIN IMMEDIATE")
-            record = self._get(c, identifier)
-            linked = [
-                dict(row)
-                for row in c.execute(
-                    "SELECT serie,numero,ano,status FROM oficios WHERE responde_a=? ORDER BY ano,numero,id",
-                    (identifier,),
-                )
-            ]
-            if linked:
-                raise ValueError("Há Ofício vinculado como resposta. Desvincule-o antes da exclusão.")
-            snapshot = {
-                "id": record["id"], "direcao": record["direcao"], "serie": record["serie"],
-                "ano": record["ano"], "numero": record["numero"], "identificacao": reference,
-                "status": record["status"], "usuario": actor_email, "motivo": reason.strip(),
-                "tipo": "EXCLUSAO_DEFINITIVA", "instante": now(),
-            }
-            from database.internal_collaboration import InternalCollaborationStore
-
-            InternalCollaborationStore.delete_origin(
-                c, "oficio_enviado" if record["direcao"] == "ENVIADO" else "oficio_recebido", identifier
-            )
-            deleted = c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
-            if getattr(deleted, "rowcount", 1) == 0:
-                raise ValueError("Não foi possível excluir o Ofício.")
-            self.store.event(c, "oficio_excluir_definitivamente", snapshot)
-            return snapshot
 
     def _file(self, c, identifier, name, mime, content, role="DOCUMENTO", original_name=None):
         c.execute(
@@ -735,20 +571,10 @@ class OficiosStore:
                 note + (f" | Envio: {sent}" if sent else ""),
             )
 
-    def set_response_tracking(self, identifier, waiting, expected_date=None, *, quantidade=None, tipo=None, inicio=None, manual=False, motivo_ajuste=""):
+    def set_response_tracking(self, identifier, waiting, expected_date=None):
         if expected_date:
             date.fromisoformat(expected_date)
         waiting = bool(waiting)
-        if waiting and quantidade is not None:
-            if not isinstance(quantidade, int) or quantidade < 1:
-                raise ValueError("O prazo deve ser um número inteiro positivo.")
-            if tipo not in ("DIAS_UTEIS", "DIAS_CORRIDOS"):
-                raise ValueError("Tipo de prazo inválido.")
-            if not inicio:
-                raise ValueError("Informe o início da contagem.")
-            date.fromisoformat(inicio)
-        if manual and not motivo_ajuste.strip():
-            raise ValueError("Informe o motivo do ajuste manual do vencimento.")
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             record = self._get(c, identifier)
@@ -769,12 +595,8 @@ class OficiosStore:
             stamp = now()
             c.execute(
                 "UPDATE oficios SET aguarda_resposta=?,data_esperada_resposta=?,"
-                "prazo_resposta_quantidade=?,prazo_resposta_tipo=?,prazo_resposta_inicio=?,"
-                "prazo_resposta_manual=?,prazo_resposta_motivo_ajuste=?,status=?,atualizada=? WHERE id=?",
-                (1 if waiting else 0, expected_date if waiting else None,
-                 quantidade if waiting else None, tipo if waiting else None,
-                 inicio if waiting else None, 1 if waiting and manual else 0,
-                 motivo_ajuste.strip() if waiting and manual else None, status, stamp, identifier),
+                "status=?,atualizada=? WHERE id=?",
+                (1 if waiting else 0, expected_date, status, stamp, identifier),
             )
             self._movement(
                 c,
@@ -862,9 +684,7 @@ class OficiosStore:
             InternalCollaborationStore.delete_origin(c, "oficio_enviado", identifier)
             c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
 
-    def delete_received(self, identifier, acknowledged=False, typed="", *, administrator=False):
-        if not administrator:
-            raise ValueError("Acesso não autorizado à exclusão definitiva.")
+    def delete_received(self, identifier, acknowledged=False, typed=""):
         if not acknowledged or typed != "EXCLUIR":
             raise ValueError(
                 "Confirme a exclusão definitiva: marque a ciência e digite EXCLUIR."
@@ -908,21 +728,11 @@ class OficiosStore:
             c.execute("DELETE FROM oficios WHERE id=?", (identifier,))
 
     def delete_generated(
-        self,
-        identifier,
-        reason,
-        acknowledged=False,
-        typed="",
-        confirmed=False,
-        *,
-        administrator=False,
-        actor_email="",
+        self, identifier, reason, acknowledged=False, typed="", confirmed=False
     ):
         """Quarantine and release atomically, retaining evidence independently of FKs."""
         import base64
 
-        if not administrator:
-            raise ValueError("Acesso não autorizado à exclusão definitiva.")
         if (
             not reason.strip()
             or not acknowledged
@@ -970,7 +780,6 @@ class OficiosStore:
                 "gabinete": record["serie"],
                 "motivo": reason.strip(),
                 "instante": stamp,
-                "usuario": actor_email,
                 "numero_liberado": True,
                 "movimentacoes": history,
             }
@@ -1049,7 +858,6 @@ class OficiosStore:
     ):
         clauses = []
         values = []
-        effective_due = "(CASE WHEN o.direcao='ENVIADO' AND o.numero IS NOT NULL AND o.aguarda_resposta=1 AND o.responde_a IS NULL THEN o.data_esperada_resposta ELSE o.prazo END)"
         for column, value in [
             ("direcao", direction),
             ("serie", series),
@@ -1085,20 +893,18 @@ class OficiosStore:
                 "o.status NOT IN ('Respondido','Concluído','Cancelado','Arquivado')"
             )
             if deadline == "Vencido":
-                clauses.append(effective_due + "<?")
+                clauses.append("o.prazo<?")
                 values.append(today.isoformat())
             elif deadline == "Próximos 7 dias":
-                clauses.append(effective_due + ">=? AND " + effective_due + "<=?")
+                clauses.append("o.prazo>=? AND o.prazo<=?")
                 values.extend(
                     [today.isoformat(), (today + timedelta(days=7)).isoformat()]
                 )
             elif deadline == "Com prazo":
-                clauses.append(effective_due + " IS NOT NULL")
+                clauses.append("o.prazo IS NOT NULL")
         if attention_only:
             clauses.append(
-                "(o.status NOT IN ('Respondido','Concluído','Cancelado','Arquivado') AND ((o.direcao='ENVIADO' AND o.status!='Rascunho') OR o.status IN ('Em análise','Aguardando providência') OR "
-                + effective_due
-                + "<=?))"
+                "(o.status NOT IN ('Respondido','Concluído','Cancelado','Arquivado') AND ((o.direcao='ENVIADO' AND o.status!='Rascunho') OR o.status IN ('Em análise','Aguardando providência') OR o.prazo<=?))"
             )
             values.append((date.today() + timedelta(days=7)).isoformat())
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
@@ -1115,9 +921,9 @@ class OficiosStore:
                     + " FROM oficios o"
                     + where
                     + (
-                        " ORDER BY CASE WHEN " + effective_due + "<'"
+                        " ORDER BY CASE WHEN o.prazo<'"
                         + date.today().isoformat()
-                        + "' THEN 0 WHEN " + effective_due + "<='"
+                        + "' THEN 0 WHEN o.prazo<='"
                         + (date.today() + timedelta(days=7)).isoformat()
                         + "' THEN 1 WHEN o.status='Aguardando providência' THEN 2 WHEN o.status='Aguardando resposta' THEN 3 WHEN o.status='Em análise' THEN 4 ELSE 5 END,o.prazo,o.data DESC,o.id LIMIT ? OFFSET ?"
                         if attention_only
@@ -1136,10 +942,10 @@ class OficiosStore:
                     """SELECT
     COALESCE(SUM(CASE WHEN direcao='ENVIADO' AND ano=? AND numero IS NOT NULL THEN 1 ELSE 0 END),0) AS enviados,
     COALESCE(SUM(CASE WHEN direcao='RECEBIDO' AND ano=? THEN 1 ELSE 0 END),0) AS recebidos,
-    COALESCE(SUM(CASE WHEN direcao='ENVIADO' AND numero IS NOT NULL AND aguarda_resposta=1 AND responde_a IS NULL AND status NOT IN ('Respondido','Concluído','Cancelado','Arquivado') THEN 1 ELSE 0 END),0) AS aguardando_resposta,
+    COALESCE(SUM(CASE WHEN status='Aguardando resposta' THEN 1 ELSE 0 END),0) AS aguardando_resposta,
     COALESCE(SUM(CASE WHEN status='Aguardando providência' THEN 1 ELSE 0 END),0) AS aguardando_providencia,
-    COALESCE(SUM(CASE WHEN (CASE WHEN direcao='ENVIADO' AND numero IS NOT NULL AND aguarda_resposta=1 THEN data_esperada_resposta ELSE prazo END)<? AND status NOT IN ('Respondido','Concluído','Cancelado','Arquivado') THEN 1 ELSE 0 END),0) AS vencidos,
-    COALESCE(SUM(CASE WHEN (CASE WHEN direcao='ENVIADO' AND numero IS NOT NULL AND aguarda_resposta=1 THEN data_esperada_resposta ELSE prazo END)>=? AND (CASE WHEN direcao='ENVIADO' AND numero IS NOT NULL AND aguarda_resposta=1 THEN data_esperada_resposta ELSE prazo END)<=? AND status NOT IN ('Respondido','Concluído','Cancelado','Arquivado') THEN 1 ELSE 0 END),0) AS proximos
+    COALESCE(SUM(CASE WHEN prazo<? AND status NOT IN ('Respondido','Concluído','Cancelado','Arquivado') THEN 1 ELSE 0 END),0) AS vencidos,
+    COALESCE(SUM(CASE WHEN prazo>=? AND prazo<=? AND status NOT IN ('Respondido','Concluído','Cancelado','Arquivado') THEN 1 ELSE 0 END),0) AS proximos
     FROM oficios o"""
                     + (
                         " WHERE EXISTS (SELECT 1 FROM oficio_destinatarios d WHERE d.oficio_id=o.id AND d.membro_id=?)"

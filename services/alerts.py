@@ -144,27 +144,26 @@ def trip_alerts(store, tomorrow):
 
 
 def alert_from_oficio(item):
-    response_deadline = bool((item.metadata or {}).get("aguarda_resposta"))
     if item.urgency == VENCIDA:
         return _from_pending(
             item,
             CRITICO,
-            "prazo_resposta_vencido" if response_deadline else "prazo_vencido",
-            "Prazo para resposta vencido" if response_deadline else "Prazo vencido",
+            "prazo_vencido",
+            "Prazo vencido",
         )
     if item.urgency == HOJE:
         return _from_pending(
             item,
             ALTO,
-            "prazo_resposta_hoje" if response_deadline else "prazo_hoje",
-            "Prazo para resposta vence hoje" if response_deadline else "Prazo vence hoje",
+            "prazo_hoje",
+            "Prazo vence hoje",
         )
     if item.urgency == URGENTE:
         return _from_pending(
             item,
             ATENCAO,
-            "prazo_resposta_d2" if response_deadline else "prazo_proximo",
-            "Prazo para resposta próximo" if response_deadline else "Prazo próximo",
+            "prazo_proximo",
+            "Prazo próximo",
         )
     if item.urgency == SEM_PRAZO:
         return _from_pending(
