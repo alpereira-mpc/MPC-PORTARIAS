@@ -1283,6 +1283,9 @@ def render(store=None, principal=None):
             st.session_state.pop("agenda_edit", None)
             st.session_state["agenda_leave_edit"] = {}
             st.rerun()
+    analysis_requested = st.button(
+        "✨ Analisar agenda com IA", key="agenda_open_period_analysis"
+    )
     with st.container(border=True):
         filter_mark()
         a, b, c, d = st.columns(4)
@@ -1311,7 +1314,7 @@ def render(store=None, principal=None):
         )
     show_appointments = item_scope != "Somente afastamentos"
     show_leaves = item_scope != "Somente compromissos"
-    if st.button("✨ Analisar agenda com IA", key="agenda_open_period_analysis"):
+    if analysis_requested:
         st.session_state["agenda_period_analysis_open"] = True
     if st.session_state.get("agenda_period_analysis_open"):
         if st.button("← Voltar à agenda", key="agenda_close_period_analysis"):
