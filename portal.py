@@ -1114,11 +1114,9 @@ def render_portal():
     apply_alerts_view_request()
     with st.sidebar:
         render_sidebar_brand(on_click=open_home)
-        st.caption(principal.nome + " · " + principal.email)
         from services.alerts import can_view_alertas
         from services.alerts_ui import render_bell
 
-        _, logout_column = st.columns([3, 2])
         st.markdown(
             "<style>"
             "div.st-key-portal_logout{display:flex;justify-content:flex-end;}"
@@ -1131,8 +1129,6 @@ def render_portal():
             "</style>",
             unsafe_allow_html=True,
         )
-        if logout_column.button("Sair", type="primary", key="portal_logout"):
-            _logout()
         if can_view_alertas(principal):
             render_bell(store, principal)
         with st.container(key="portal_navigation_menu"):
@@ -1150,6 +1146,10 @@ def render_portal():
         if st.session_state.get(theme_key) != active_theme:
             st.session_state[theme_key] = active_theme
         with st.container(key="portal_theme_footer"):
+            st.caption(principal.nome + " · " + principal.email)
+            _, logout_column, _ = st.columns(3)
+            if logout_column.button("Sair", type="primary", key="portal_logout"):
+                _logout()
             st.selectbox(
                 "Tema",
                 tuple(THEME_LABELS),

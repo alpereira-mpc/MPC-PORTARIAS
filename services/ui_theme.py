@@ -251,6 +251,12 @@ section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > [d
 margin-top:auto;
 flex-shrink:0;
 }}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_footer"]{{
+padding-top:.35rem;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_footer"] [data-testid="stCaption"]{{
+text-align:center;
+}}
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"],
 section[data-testid="stSidebar"] [class*="st-key-sidebar_home"] [data-testid="stButton"]{{
 background-color:{SIDEBAR_BG} !important;
