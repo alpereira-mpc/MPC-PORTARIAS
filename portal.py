@@ -1148,7 +1148,7 @@ def render_portal():
             st.session_state[theme_key] = active_theme
         with st.container(key="portal_theme_footer"):
             st.caption(principal.nome + " · " + principal.email)
-            _, logout_column, _ = st.columns([1, 1, 0.7])
+            _, logout_column, _ = st.columns([1.3, 1, 0.4])
             if logout_column.button("Sair", type="primary", key="portal_logout"):
                 _logout()
             st.selectbox(
