@@ -257,6 +257,13 @@ padding-top:.35rem;
 section[data-testid="stSidebar"] [class*="st-key-portal_theme_footer"] [data-testid="stCaption"]{{
 text-align:center;
 }}
+section[data-testid="stSidebar"] [class*="st-key-portal_user_area"]{{
+width:fit-content;
+margin-inline:auto;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_logout_row"]{{
+width:100%;
+}}
 section[data-testid="stSidebar"] [class*="st-key-portal_notifications"]{{
 margin:0 0 .7rem;
 }}

@@ -1147,10 +1147,17 @@ def render_portal():
         if st.session_state.get(theme_key) != active_theme:
             st.session_state[theme_key] = active_theme
         with st.container(key="portal_theme_footer"):
-            st.caption(principal.nome + " · " + principal.email)
-            _, logout_column, _ = st.columns([1.3, 1, 0.4])
-            if logout_column.button("Sair", type="primary", key="portal_logout"):
-                _logout()
+            with st.container(key="portal_user_area", width="content"):
+                st.caption(principal.nome + " · " + principal.email)
+                with st.container(
+                    key="portal_logout_row",
+                    width="stretch",
+                    horizontal=True,
+                    horizontal_alignment="right",
+                    gap=None,
+                ):
+                    if st.button("Sair", type="primary", key="portal_logout"):
+                        _logout()
             st.selectbox(
                 "Tema",
                 tuple(THEME_LABELS),
