@@ -9,6 +9,7 @@ from services.oficios import (
     open_service,
     SENT,
     RECEIVED,
+    CLOSED,
     attention,
     suggest_vocative,
     GABINETES,
@@ -17,7 +18,10 @@ from services.oficios import (
     normalized,
     official_attached_files,
     validate_upload,
+    prazo_efetivo,
+    prazo_resposta_label,
 )
+from services.business_calendar import DIAS_CORRIDOS, DIAS_UTEIS, calcular_vencimento, dias_restantes
 from services.ui_store import display_store
 from services.branding import module_title
 from services.date_format import format_date_br, format_datetime_br
@@ -225,6 +229,7 @@ def reset_editor():
             or key
             in (
                 "oficio_edit",
+                "oficio_admin_edit",
                 "oficio_preview",
                 "oficio_final",
                 "oficio_detail",
@@ -364,8 +369,9 @@ def _attached_editor(service, people, member, series):
         st.rerun()
 
 
-def editor(service, people):
-    identifier = st.session_state.get("oficio_edit")
+def editor(service, people, principal=None):
+    administrative = st.session_state.get("oficio_admin_edit")
+    identifier = administrative or st.session_state.get("oficio_edit")
     member = st.session_state["oficio_gabinete_member"]
     series = next(s for s in service.series() if s["membro_id"] == member)
     final = st.session_state.get("oficio_final")
@@ -403,11 +409,24 @@ def editor(service, people):
         st.button("Iniciar outro rascunho", on_click=reset_editor)
         return
     seed = service.get(identifier) if identifier else {}
-    if seed and (seed["membro_id"] != member or seed["status"] != "Rascunho"):
+    if administrative and (principal is None or not principal.administrator):
+        raise ValueError("Acesso não autorizado à edição administrativa.")
+    if seed and (
+        seed["membro_id"] != member
+        or (not administrative and seed["status"] != "Rascunho")
+        or (administrative and (seed["direcao"] != "ENVIADO" or seed["numero"] is None))
+    ):
         raise ValueError(
-            "Rascunho não pertence ao gabinete atual ou já foi finalizado."
+            "Registro não pertence ao gabinete atual ou não pode ser editado neste modo."
         )
-    st.write(f"NOVO OFÍCIO — {series['sigla']}")
+    if administrative:
+        st.warning("Edição administrativa de ofício finalizado. O documento oficial já emitido não será alterado.")
+        st.caption(
+            f"Identificação imutável: {seed['serie']} {seed['numero']}/{seed['ano']} · "
+            f"{date.fromisoformat(seed['data']).strftime('%d/%m/%Y')}"
+        )
+    else:
+        st.write(f"NOVO OFÍCIO — {series['sigla']}")
     st.caption(people[member]["nome"])
     if identifier:
         mode = PREP_CREATE
@@ -426,6 +445,7 @@ def editor(service, people):
         date.fromisoformat(seed["data"]) if seed else date.today(),
         format="DD/MM/YYYY",
         key="oficio_day",
+        disabled=bool(administrative),
     )
     seq = service.sequence(series["sigla"], day.year)
     st.caption(
@@ -493,26 +513,81 @@ def editor(service, people):
                 seed.get(field, "Atenciosamente," if field == "fechamento" else ""),
                 key="oficio_input_" + field,
             )
-        related_search = st.text_input(
-            "Pesquisar recebido para vincular", key="oficio_input_search"
-        )
-        received = read_list(
-            service, direction="RECEBIDO", search=related_search, limit=200
-        )
-        choices = {r["id"]: label(r) for r in received}
-        if seed.get("responde_a") and seed["responde_a"] not in choices:
-            choices[seed["responde_a"]] = label(service.get(seed["responde_a"]))
-        record["responde_a"] = st.selectbox(
-            "Este ofício responde a um recebido?",
-            [None, *choices],
-            index=(
-                [None, *choices].index(seed.get("responde_a"))
-                if seed.get("responde_a") in choices
-                else 0
-            ),
-            format_func=lambda x: choices[x] if x else "Não",
-            key="oficio_input_related",
-        )
+        if not administrative:
+            section_label("Acompanhamento da resposta")
+            waiting = st.checkbox(
+                "Aguardar resposta",
+                value=bool(seed.get("aguarda_resposta")),
+                key="oficio_input_waiting_response",
+            )
+            record["aguarda_resposta"] = waiting
+        if not administrative and waiting:
+            quantity = st.number_input(
+                "Prazo", min_value=1,
+                value=int(seed.get("prazo_resposta_quantidade") or 5),
+                key="oficio_input_response_quantity",
+            )
+            kind = st.selectbox(
+                "Contagem", (DIAS_UTEIS, DIAS_CORRIDOS),
+                index=0 if seed.get("prazo_resposta_tipo", DIAS_UTEIS) == DIAS_UTEIS else 1,
+                format_func=lambda value: "Dias úteis" if value == DIAS_UTEIS else "Dias corridos",
+                key="oficio_input_response_kind",
+            )
+            start = st.date_input(
+                "Início da contagem",
+                value=date.fromisoformat(seed["prazo_resposta_inicio"]) if seed.get("prazo_resposta_inicio") else day,
+                format="DD/MM/YYYY", key="oficio_input_response_start",
+            )
+            calculated = calcular_vencimento(start, int(quantity), kind)
+            st.caption("Vencimento calculado: " + calculated.strftime("%d/%m/%Y"))
+            manual = st.checkbox(
+                "Ajustar vencimento manualmente",
+                value=bool(seed.get("prazo_resposta_manual")),
+                key="oficio_input_response_manual",
+            )
+            expected = calculated
+            reason = ""
+            if manual:
+                st.caption("Vencimento ajustado manualmente")
+                expected = st.date_input(
+                    "Vencimento ajustado", value=date.fromisoformat(seed["data_esperada_resposta"]) if seed.get("data_esperada_resposta") else calculated,
+                    format="DD/MM/YYYY", key="oficio_input_response_due",
+                )
+                reason = st.text_input(
+                    "Motivo do ajuste manual", seed.get("prazo_resposta_motivo_ajuste", ""),
+                    key="oficio_input_response_reason",
+                )
+            record.update(
+                prazo_resposta_quantidade=int(quantity), prazo_resposta_tipo=kind,
+                prazo_resposta_inicio=start.isoformat(), prazo_resposta_manual=manual,
+                prazo_resposta_motivo_ajuste=reason,
+                data_esperada_resposta=expected.isoformat(),
+            )
+        if administrative:
+            record["responde_a"] = seed.get("responde_a")
+            if record["responde_a"]:
+                st.caption("Vínculo de resposta preservado nesta edição administrativa.")
+        else:
+            related_search = st.text_input(
+                "Pesquisar recebido para vincular", key="oficio_input_search"
+            )
+            received = read_list(
+                service, direction="RECEBIDO", search=related_search, limit=200
+            )
+            choices = {r["id"]: label(r) for r in received}
+            if seed.get("responde_a") and seed["responde_a"] not in choices:
+                choices[seed["responde_a"]] = label(service.get(seed["responde_a"]))
+            record["responde_a"] = st.selectbox(
+                "Este ofício responde a um recebido?",
+                [None, *choices],
+                index=(
+                    [None, *choices].index(seed.get("responde_a"))
+                    if seed.get("responde_a") in choices
+                    else 0
+                ),
+                format_func=lambda x: choices[x] if x else "Não",
+                key="oficio_input_related",
+            )
         record["observacoes"] = st.text_area(
             "Observações", seed.get("observacoes", ""), key="oficio_input_observacoes"
         )
@@ -521,18 +596,45 @@ def editor(service, people):
         "signatario": people[member]["nome"],
         "cargo_base": people[member]["cargo_base"],
     }
+    if administrative:
+        save_col, cancel_col = st.columns(2)
+        if save_col.button("Salvar edição administrativa", type="primary"):
+            result = service.edit_finalized(
+                identifier,
+                record,
+                administrator=principal.administrator,
+                actor_email=principal.email,
+            )
+            if result["changed"]:
+                audit_oficio(
+                    "OFICIO_EDITADO_ADMINISTRATIVAMENTE",
+                    "EDITAR",
+                    result["record"],
+                    extra={"campos_alterados": result["changed"]},
+                )
+            st.session_state.pop("oficio_admin_edit", None)
+            st.session_state["oficio_page"] = "Enviados"
+            done("Edição administrativa salva; o documento oficial foi preservado.")
+        if cancel_col.button("Cancelar edição"):
+            reset_editor()
+            st.session_state["oficio_page"] = "Enviados"
+            st.rerun()
+        return
     current = fingerprint(document, series, [series["sigla"], identifier])
     st.write("CONFERÊNCIA E FINALIZAÇÃO")
     if st.button("Salvar rascunho"):
-        saved = service.save(record, identifier)
-        st.session_state["oficio_edit"] = saved
-        # Saving the same form must not lose an already checked preview.
-        preview = st.session_state.get("oficio_preview")
-        if preview and preview["fingerprint"] == current:
-            preview["fingerprint"] = fingerprint(
-                document, series, [series["sigla"], saved]
-            )
-        done("Rascunho salvo sem consumir número.")
+        if record.get("prazo_resposta_manual") and not record.get("prazo_resposta_motivo_ajuste", "").strip():
+            st.error("Informe o motivo do ajuste manual do vencimento.")
+        else:
+            saved = service.save(record, identifier)
+            st.session_state["oficio_edit"] = saved
+            # Saving the same form must not lose an already checked preview.
+            preview = st.session_state.get("oficio_preview")
+            if preview and preview["fingerprint"] == current:
+                preview["fingerprint"] = fingerprint(
+                    document, series, [series["sigla"], saved]
+                )
+            done("Rascunho salvo sem consumir número.")
     a, b = st.columns(2)
     docx_requested = a.button("Pré-visualizar DOCX")
     pdf_requested = b.button("Pré-visualizar PDF")
@@ -570,6 +672,9 @@ def editor(service, people):
         validate(record, official=True)
         if not valid:
             raise ValueError("Gere uma nova prévia antes de finalizar.")
+        if record.get("prazo_resposta_manual") and not record.get("prazo_resposta_motivo_ajuste", "").strip():
+            st.error("Informe o motivo do ajuste manual do vencimento.")
+            return
         identifier = service.save(record, identifier)
         st.session_state["oficio_edit"] = identifier
         # Update the context after assigning a draft ID; failures remain retryable.
@@ -865,6 +970,12 @@ def edit_draft(identifier):
         st.session_state.pop(key, None)
 
 
+def edit_finalized(identifier):
+    reset_editor()
+    st.session_state["oficio_admin_edit"] = identifier
+    st.session_state["oficio_page"] = "Novo Ofício"
+
+
 def _open_linked_response(identifier):
     st.session_state["oficio_page"] = "Recebidos"
     st.session_state["oficio_open_ids"] = {identifier}
@@ -940,6 +1051,15 @@ def _render_detail_summary(service, r):
                 tramitacao.append(
                     (title, date.fromisoformat(r[field][:10]).strftime("%d/%m/%Y"))
                 )
+        if r.get("direcao") == "ENVIADO" and r.get("aguarda_resposta") and not r.get("responde_a"):
+            prazo_resposta = prazo_resposta_label(r)
+            if prazo_resposta:
+                tramitacao.append(("Prazo para resposta", prazo_resposta))
+            due = prazo_efetivo(r)
+            if due:
+                tramitacao.append(("Vencimento", date.fromisoformat(due).strftime("%d/%m/%Y")))
+            if r.get("prazo_resposta_manual"):
+                tramitacao.append(("Ajuste", "Vencimento ajustado"))
         definition_block("Tramitação", tramitacao)
         if r.get("membros"):
             people = {p["id"]: p["nome"] for p in service.store.catalog("procuradores")}
@@ -954,6 +1074,27 @@ def _render_detail_summary(service, r):
                     )
                 ],
             )
+
+
+def _response_deadline_badge(record, today=None):
+    """Presentation-only semantic badge; deadline calculation stays in services."""
+    if record.get("status") in CLOSED or record.get("responde_a") or not record.get("aguarda_resposta"):
+        return None
+    due = prazo_efetivo(record)
+    if not due:
+        return None
+    today = today or date.today()
+    due_date = date.fromisoformat(due)
+    if due_date < today:
+        return ("Prazo vencido", "danger")
+    if due_date == today:
+        return ("Vence hoje", "warning")
+    remaining = dias_restantes(
+        today, due_date, record.get("prazo_resposta_tipo") or DIAS_CORRIDOS
+    )
+    if remaining <= 2:
+        return (f"Vence em {remaining} dia{'s' if remaining != 1 else ''}", "warning")
+    return ("Prazo " + due_date.strftime("%d/%m"), "info")
 
 
 def _render_detail_documents(service, r):
@@ -1090,38 +1231,100 @@ def _render_detail_more(service, r, principal):
             service.delete_draft(r["id"], confirmed)
             audit_oficio("RASCUNHO_EXCLUIDO", "EXCLUIR", r)
             done("Rascunho excluído.")
-    elif r["status"] != "Cancelado":
-        if r["status"] == "Gerado":
-            with st.expander("Excluir definitivamente"):
-                reason = st.text_area("Motivo obrigatório", key="reason_" + r["id"])
-                acknowledged = st.checkbox("Estou ciente de que este Ofício será excluído e sua numeração poderá ser reutilizada.", key="ack_" + r["id"])
-                typed = st.text_input("Digite EXCLUIR", key="typed_" + r["id"])
-                confirmed = st.checkbox("Confirmação final da exclusão definitiva", key="final_delete_" + r["id"])
-                if st.button("Excluir definitivamente", key="purge_" + r["id"]):
-                    service.delete_generated(r["id"], reason, acknowledged, typed, confirmed)
-                    audit_oficio("NUMERO_LIBERADO", "EXCLUIR", r, extra={"numero_liberado": True})
-                    done("Ofício preservado em quarentena e número liberado para reutilização.")
-    if r["direcao"] == "RECEBIDO":
-        with st.container(key=recebidos_excluir_key(r["id"])):
-            with st.expander("Excluir ofício recebido"):
-                ack = st.checkbox("Confirmo que desejo excluir definitivamente este ofício recebido", key="recv_ack_" + r["id"])
-                typed = st.text_input("Digite EXCLUIR", key="recv_typed_" + r["id"])
-                if st.button("Excluir definitivamente", key="recv_purge_" + r["id"]):
-                    service.delete_received(r["id"], ack, typed)
-                    audit_oficio("OFICIO_EXCLUIDO", "EXCLUIR", r)
-                    st.session_state.pop("oficio_detail", None)
-                    st.session_state.pop("oficio_open_ids", None)
-                    done("Ofício recebido excluído.")
+    elif principal is not None and principal.administrator:
+        section_label("Administração")
+        if r["direcao"] == "ENVIADO" and r.get("numero") is not None:
+            st.button(
+                "Editar ofício",
+                key="admin_edit_" + r["id"],
+                on_click=edit_finalized,
+                args=(r["id"],),
+            )
+        with st.expander("Excluir definitivamente"):
+            st.warning(
+                "Esta exclusão remove o registro operacional, documentos, anexos e movimentações. "
+                "Notas, encaminhamentos, seguidores e tarefas vinculadas são desvinculados. "
+                "Permanece apenas o registro mínimo de auditoria."
+            )
+            confirmation_label = (
+                f"{r['serie']} {r['numero']}/{r['ano']}"
+                if r["direcao"] == "ENVIADO"
+                else (r.get("numero_externo") or r["id"])
+            )
+            st.caption("Identificação exigida: " + confirmation_label)
+            reason = st.text_area("Motivo obrigatório", key="admin_delete_reason_" + r["id"])
+            confirmation = st.text_input(
+                "Digite a identificação completa do Ofício para confirmar",
+                key="admin_delete_confirmation_" + r["id"],
+            )
+            if st.button("Excluir definitivamente", type="primary", key="admin_delete_" + r["id"]):
+                result = service.delete_finalized(
+                    r["id"], reason, confirmation,
+                    administrator=principal.administrator, actor_email=principal.email,
+                )
+                audit_oficio(
+                    "OFICIO_EXCLUIDO_DEFINITIVAMENTE", "EXCLUIR", r,
+                    extra={"motivo": reason.strip(), "quarentena": result.get("quarentena", False)},
+                )
+                st.session_state.pop("oficio_detail", None)
+                st.session_state.pop("oficio_open_ids", None)
+                done("Ofício excluído definitivamente.")
     if r["direcao"] == "ENVIADO" and r.get("numero") is not None and r["status"] != "Cancelado":
         section_label("Resposta")
-        with st.form("response_tracking_" + r["id"]):
-            waiting = st.checkbox("Aguarda resposta", value=bool(r.get("aguarda_resposta")), key="waiting_response_" + r["id"])
-            expected = st.date_input("Data esperada para resposta (opcional)", value=date.fromisoformat(r["data_esperada_resposta"]) if r.get("data_esperada_resposta") else None, format="DD/MM/YYYY", key="expected_response_" + r["id"])
-            save_tracking = st.form_submit_button("Salvar acompanhamento")
+        waiting = st.checkbox(
+            "Aguarda resposta", value=bool(r.get("aguarda_resposta")),
+            key="waiting_response_" + r["id"],
+        )
+        quantity = kind = start = expected = reason = None
+        manual = False
+        if waiting:
+            quantity = st.number_input(
+                "Prazo", min_value=1,
+                value=int(r.get("prazo_resposta_quantidade") or 5),
+                key="response_quantity_" + r["id"],
+            )
+            kind = st.selectbox(
+                "Contagem", (DIAS_UTEIS, DIAS_CORRIDOS),
+                index=0 if r.get("prazo_resposta_tipo", DIAS_UTEIS) == DIAS_UTEIS else 1,
+                format_func=lambda value: "Dias úteis" if value == DIAS_UTEIS else "Dias corridos",
+                key="response_kind_" + r["id"],
+            )
+            start = st.date_input(
+                "Início da contagem",
+                value=date.fromisoformat(r["prazo_resposta_inicio"]) if r.get("prazo_resposta_inicio") else date.today(),
+                format="DD/MM/YYYY", key="response_start_" + r["id"],
+            )
+            calculated = calcular_vencimento(start, int(quantity), kind)
+            st.caption("Vencimento calculado: " + calculated.strftime("%d/%m/%Y"))
+            manual = st.checkbox(
+                "Ajustar vencimento manualmente", value=bool(r.get("prazo_resposta_manual")),
+                key="response_manual_" + r["id"],
+            )
+            expected = calculated
+            if manual:
+                st.caption("Vencimento ajustado manualmente")
+                expected = st.date_input(
+                    "Vencimento ajustado",
+                    value=date.fromisoformat(r["data_esperada_resposta"]) if r.get("data_esperada_resposta") else calculated,
+                    format="DD/MM/YYYY", key="response_due_" + r["id"],
+                )
+                reason = st.text_input(
+                    "Motivo do ajuste manual", r.get("prazo_resposta_motivo_ajuste") or "",
+                    key="response_reason_" + r["id"],
+                )
+        save_tracking = st.button("Salvar acompanhamento", key="save_response_tracking_" + r["id"])
         if save_tracking:
-            service.set_response_tracking(r["id"], waiting, expected.isoformat() if waiting and expected else None)
-            audit_oficio("OFICIO_ACOMPANHAMENTO_RESPOSTA", "ALTERAR", r, extra={"aguarda_resposta": waiting, "possui_data_esperada": bool(expected)})
-            done("Acompanhamento de resposta atualizado.")
+            if waiting and manual and not (reason or "").strip():
+                st.error("Informe o motivo do ajuste manual do vencimento.")
+            else:
+                service.set_response_tracking(
+                    r["id"], waiting, expected.isoformat() if waiting else None,
+                    quantidade=int(quantity) if waiting else None, tipo=kind,
+                    inicio=start.isoformat() if waiting else None, manual=manual,
+                    motivo_ajuste=reason or "",
+                )
+                audit_oficio("OFICIO_ACOMPANHAMENTO_RESPOSTA", "ALTERAR", r, extra={"aguarda_resposta": waiting, "possui_data_esperada": bool(expected)})
+                done("Acompanhamento de resposta atualizado.")
         if not r.get("responde_a"):
             candidates = service.response_candidates(r["id"], st.session_state.get("oficio_gabinete_member"))
             by_id = {item["id"]: item for item in candidates}
@@ -1292,7 +1495,8 @@ def listing(
     drawn = detail_drawn if detail_drawn is not None else set()
     for index, r in enumerate(rows):
         attention_text = attention(r)
-        if r.get("aguarda_resposta") and not r.get("responde_a"):
+        deadline_badge = _response_deadline_badge(r)
+        if r.get("aguarda_resposta") and not r.get("responde_a") and r["status"] not in CLOSED:
             response_text = (
                 "Resposta esperada até "
                 + date.fromisoformat(r["data_esperada_resposta"]).strftime("%d/%m/%Y")
@@ -1307,6 +1511,8 @@ def listing(
             (direction_label, "brand" if r.get("direcao") == "ENVIADO" else "info"),
             (r["status"], status_tone(r["status"])),
         )
+        if deadline_badge:
+            marks += badges(deadline_badge)
         if "vencido" in attention_text.casefold():
             marks += badges(("Prazo vencido", "danger"))
             accent = "danger"
@@ -1518,7 +1724,7 @@ def render(store=None, principal=None):
         elif page == "Numeração":
             configuration(service, people)
         elif page == "Novo Ofício":
-            editor(service, people)
+            editor(service, people, principal)
         elif page == "Recebidos":
             received_form(service, people)
             listing(service, people, "RECEBIDO", principal=principal)

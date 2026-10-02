@@ -9,6 +9,7 @@ from database.store import schema_key_of, unwrap_store
 from services.access import allowed_gabinetes, has_permission
 from services.audit import INSTITUTIONAL_TZ, registrar_erro
 from services.oficios import CLOSED, GABINETES
+from services.business_calendar import DIAS_CORRIDOS, dias_restantes
 
 LOGGER = logging.getLogger("mpc.pending")
 PAGE_SIZE = 50
@@ -288,13 +289,16 @@ def fetch_oficios(
         placeholders = _sql_in(allowed)
         extra = ""
         params = [*closed, *allowed, *allowed, *allowed]
+        effective_due = "(CASE WHEN o.direcao='ENVIADO' AND o.numero IS NOT NULL AND o.aguarda_resposta=1 AND o.responde_a IS NULL THEN o.data_esperada_resposta ELSE o.prazo END)"
         if due_on_or_before is not None:
-            extra = " AND (o.prazo IS NULL OR o.prazo<=?) "
+            extra = " AND (" + effective_due + " IS NULL OR " + effective_due + "<=?) "
             params.append(due_on_or_before)
         params.append(limit)
         rows = connection.execute(
             "SELECT o.id,o.direcao,o.serie,o.ano,o.numero,o.status,o.data,o.prazo,"
-            "o.membro_id,o.assunto,o.destinatario,o.numero_externo,dest.sigla AS dest_sigla "
+            "o.aguarda_resposta,o.data_esperada_resposta,o.prazo_resposta_tipo,o.responde_a,"
+            + effective_due
+            + " AS prazo_efetivo,o.membro_id,o.assunto,o.destinatario,o.numero_externo,dest.sigla AS dest_sigla "
             "FROM oficios o LEFT JOIN ("
             "SELECT d.oficio_id,MIN(s.sigla) AS sigla FROM oficio_destinatarios d "
             "JOIN oficio_series s ON s.membro_id=d.membro_id GROUP BY d.oficio_id"
@@ -304,8 +308,9 @@ def fetch_oficios(
             "o.status='Rascunho' OR "
             "(o.direcao='RECEBIDO' AND (o.prazo IS NOT NULL OR o.status IN "
             "('Recebido','Em análise','Aguardando providência','Encaminhado')))"
-            " OR (o.direcao='ENVIADO' AND o.status IN "
-            "('Rascunho','Gerado','Enviado','Aguardando resposta'))) "
+            " OR (o.direcao='ENVIADO' AND o.numero IS NOT NULL "
+            "AND o.aguarda_resposta=1 AND o.responde_a IS NULL AND o.status IN "
+            "('Gerado','Enviado','Aguardando resposta'))) "
             "AND ("
             "o.serie IN (" + placeholders + ") "
             "OR o.membro_id IN (SELECT membro_id FROM oficio_series WHERE sigla IN ("
@@ -317,7 +322,7 @@ def fetch_oficios(
             + placeholders
             + "))) "
             + extra
-            + "ORDER BY o.prazo,o.data,o.id LIMIT ?",
+            + "ORDER BY " + effective_due + ",o.data,o.id LIMIT ?",
             params,
         ).fetchall()
         for row in rows:
@@ -330,7 +335,7 @@ def fetch_oficios(
                 continue
             if gabinete_filter and gabinete != gabinete_filter:
                 continue
-            due = parse_date(row["prazo"], today)
+            due = parse_date(row["prazo_efetivo"], today)
             number = row["numero"]
             if row["direcao"] == "ENVIADO" and number:
                 title = f"Ofício nº {number}/{row['ano']}"
@@ -353,7 +358,16 @@ def fetch_oficios(
                     urgency=classify_deadline(due, today),
                     context=row["destinatario"] or "",
                     navigation="Ofícios",
-                    metadata={"direcao": row["direcao"]},
+                    metadata={
+                        "direcao": row["direcao"],
+                        "aguarda_resposta": bool(row["aguarda_resposta"]),
+                        "prazo_resposta_tipo": row["prazo_resposta_tipo"],
+                        "dias_restantes": (
+                            dias_restantes(today, due, row["prazo_resposta_tipo"] or DIAS_CORRIDOS)
+                            if due and row["direcao"] == "ENVIADO" and row["aguarda_resposta"]
+                            else None
+                        ),
+                    },
                 )
             )
         return items
