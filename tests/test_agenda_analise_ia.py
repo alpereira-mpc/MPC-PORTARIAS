@@ -404,18 +404,18 @@ def test_period_error_keeps_the_screen(monkeypatch):
     assert "agenda_analise_ia" not in app.session_state
 
 
-def test_analysis_view_leaves_the_week_listing_and_does_not_write():
+def test_analysis_action_is_independent_from_listing_and_does_not_write():
     ui = Path("services/agenda_ui.py").read_text(encoding="utf-8")
     agenda = Path("services/agenda.py").read_text(encoding="utf-8")
-    assert '"Análise com IA"' in ui
+    assert '"✨ Analisar agenda com IA"' in ui
+    assert 'key="agenda_open_period_analysis"' in ui
+    assert 'key="agenda_view"' not in ui
     assert "st.markdown(text, unsafe_allow_html=False)" in ui
     assert "Analisar semana com IA" not in ui
     assert "render_week_analysis" not in ui
     assert "dia_mais_carregado" not in agenda
     screen = ui.split("def render(", 1)[1]
     assert screen.index("require_permission") < screen.index("render_period_analysis(")
-    week = screen.split('if view == "Semana":', 1)[1].split('elif view == "Mês":', 1)[0]
-    assert "apresentar_analise_periodo" not in week
     handler = ui.split("def apresentar_analise_periodo", 1)[1].split(
         "\ndef render_period_analysis", 1
     )[0]

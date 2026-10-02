@@ -1,6 +1,5 @@
 """Native Streamlit agenda, loaded only on its portal route."""
 
-import calendar
 from datetime import date, datetime, time, timedelta
 import hashlib
 import json
@@ -110,6 +109,42 @@ def records(
         )
     )
     return read_agenda(key, start, end, member, kind, status, agenda, offset, active)
+
+
+def initial_listing_rows(
+    agenda,
+    today,
+    member,
+    kind,
+    status,
+    show_appointments,
+    show_leaves,
+    item_scope,
+):
+    """Return the operational Agenda list split by the existing temporal rules."""
+    now = _agora()
+    current = []
+    upcoming = []
+    if show_appointments:
+        for row in agenda.active_current_and_upcoming(member, kind, status):
+            phase = fase_compromisso(row, now)
+            if phase == "em_andamento":
+                row["_agenda_listing_section"] = "Em andamento"
+                current.append(row)
+            elif phase == "futuro":
+                row["_agenda_listing_section"] = "Próximos"
+                upcoming.append(row)
+    if show_leaves and (item_scope == "Somente afastamentos" or (not kind and not status)):
+        for row in agenda.active_current_and_upcoming_leaves(today.isoformat(), member):
+            row["inicio"] = row["data_inicio"] + "T00:00:00"
+            row["afastamento"] = True
+            if row["status"] == "EM ANDAMENTO":
+                row["_agenda_listing_section"] = "Em andamento"
+                current.append(row)
+            else:
+                row["_agenda_listing_section"] = "Próximos"
+                upcoming.append(row)
+    return current, upcoming
 
 
 def _listing_summary(appointments, leaves):
@@ -1276,15 +1311,12 @@ def render(store=None, principal=None):
         )
     show_appointments = item_scope != "Somente afastamentos"
     show_leaves = item_scope != "Somente compromissos"
-    if st.session_state.get("agenda_view") == "Lista":
-        st.session_state["agenda_view"] = "Hoje"
-    view = st.radio(
-        "Visualização",
-        ["Hoje", "Semana", "Mês", "Próximos", "Análise com IA"],
-        horizontal=True,
-        key="agenda_view",
-    )
-    if view == "Análise com IA":
+    if st.button("✨ Analisar agenda com IA", key="agenda_open_period_analysis"):
+        st.session_state["agenda_period_analysis_open"] = True
+    if st.session_state.get("agenda_period_analysis_open"):
+        if st.button("← Voltar à agenda", key="agenda_close_period_analysis"):
+            st.session_state.pop("agenda_period_analysis_open", None)
+            st.rerun()
         render_period_analysis(
             agenda,
             names,
@@ -1297,63 +1329,27 @@ def render(store=None, principal=None):
         )
         return
     today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
-    anchor = (
-        today
-        if view in ("Hoje", "Próximos")
-        else st.date_input(
-            "Data de referência", today, key="agenda_anchor", format="DD/MM/YYYY"
-        )
+    current_rows, upcoming_rows = initial_listing_rows(
+        agenda,
+        today,
+        member,
+        kind,
+        status,
+        show_appointments,
+        show_leaves,
+        item_scope,
     )
-    start = anchor
-    end = start + timedelta(days=1)
-    if view == "Semana":
-        start = anchor - timedelta(days=anchor.weekday())
-        end = start + timedelta(days=7)
-    elif view == "Mês":
-        start = anchor.replace(day=1)
-        end = start + timedelta(days=calendar.monthrange(anchor.year, anchor.month)[1])
-    if view == "Próximos":
-        rows = (
-            records(agenda, today.isoformat(), None, member, kind, status, active=True)
-            if show_appointments
-            else []
-        )
-        leaves = (
-            agenda.active_leaves(today.isoformat(), None, member, upcoming=True)
-            if show_leaves
-            and (item_scope == "Somente afastamentos" or (not kind and not status))
-            else []
-        )
-    else:
-        rows = (
-            records(
-                agenda,
-                start.isoformat(),
-                end.isoformat(),
-                member,
-                kind,
-                status,
-                active=True,
+    rows = [*current_rows, *upcoming_rows]
+    if rows:
+        st.caption(
+            _listing_summary(
+                sum(not row.get("afastamento") for row in rows),
+                sum(bool(row.get("afastamento")) for row in rows),
             )
-            if show_appointments
-            else []
         )
-        leaves = (
-            agenda.active_leaves(
-                start.isoformat(), (end - timedelta(days=1)).isoformat(), member
-            )
-            if show_leaves
-            and (item_scope == "Somente afastamentos" or (not kind and not status))
-            else []
-        )
-    if rows or leaves:
-        st.caption(_listing_summary(len(rows), len(leaves)))
-    for leave_record in leaves:
-        leave_record["inicio"] = leave_record["data_inicio"] + "T00:00:00"
-        leave_record["afastamento"] = True
-    rows.extend(leaves)
     rows.sort(
         key=lambda row: (
+            row["_agenda_listing_section"] != "Em andamento",
             row["inicio"][:10],
             bool(row.get("afastamento")),
             row["inicio"],
@@ -1364,9 +1360,13 @@ def render(store=None, principal=None):
         row["id"] for row in rows if not row.get("afastamento")
     )
     if not rows:
-        empty_state("Nenhum compromisso no período selecionado.")
-    current_day = current_group = None
+        empty_state("Nenhum compromisso ou afastamento em andamento ou agendado.")
+    current_section = current_day = current_group = None
     for index, row in enumerate(rows):
+        if row["_agenda_listing_section"] != current_section:
+            current_section = row["_agenda_listing_section"]
+            current_day = current_group = None
+            st.subheader(current_section)
         if row["inicio"][:10] != current_day:
             current_day = row["inicio"][:10]
             current_group = None
@@ -1489,9 +1489,9 @@ def render(store=None, principal=None):
             editor(agenda, people, principal)
 
     export_signature = (
-        view,
-        start.isoformat(),
-        end.isoformat() if view != "Próximos" else None,
+        "ativos_e_proximos",
+        today.isoformat(),
+        None,
         member,
         kind,
         status,
@@ -1507,24 +1507,17 @@ def render(store=None, principal=None):
         from document_generator.agenda_pdf import generate_agenda_pdf
 
         filter_labels = [
-            "Período: "
-            + (
-                "a partir de " + today.strftime("%d/%m/%Y")
-                if view == "Próximos"
-                else start.strftime("%d/%m/%Y")
-                + " a "
-                + (end - timedelta(days=1)).strftime("%d/%m/%Y")
-            ),
+            "Período: em andamento e a partir de "
+            + today.strftime("%d/%m/%Y"),
             "Procurador: " + names.get(member, "Todos"),
             "Tipo de item: " + item_scope,
             "Tipo de compromisso: " + TYPES.get(kind, "Todos"),
             "Situação: " + (status or "Todas"),
         ]
-        last_day = None if view == "Próximos" else end - timedelta(days=1)
         st.session_state["agenda_pdf_export"] = {
             "signature": export_signature,
             "data": generate_agenda_pdf(rows, names, filter_labels),
-            "name": agenda_pdf_filename(start, last_day),
+            "name": agenda_pdf_filename(today),
         }
     export = st.session_state.get("agenda_pdf_export")
     if export and export["signature"] == export_signature:

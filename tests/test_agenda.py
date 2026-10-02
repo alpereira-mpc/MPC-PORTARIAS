@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import pytest
 from streamlit.testing.v1 import AppTest
 from database.agenda import AgendaStore
@@ -283,9 +283,10 @@ def test_active_and_history_status_views(store):
     assert {row["id"] for row in agenda.history_leaves()} == {leave_ended, leave_cancelled}
 
 
-@pytest.mark.parametrize("view", ["Hoje", "Semana", "Mês", "Próximos"])
 @pytest.mark.parametrize("with_record", [False, True])
-def test_views_only_show_registered_appointments(store, monkeypatch, view, with_record):
+def test_initial_listing_only_shows_registered_operational_records(
+    store, monkeypatch, with_record
+):
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -300,8 +301,9 @@ def test_views_only_show_registered_appointments(store, monkeypatch, view, with_
         AgendaStore(store).save(record)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.button(key="open_agenda").click().run()
-    app.radio(key="agenda_view").set_value(view).run()
     assert not app.exception and not app.error
+    assert not any(radio.key == "agenda_view" for radio in app.radio)
+    assert app.button(key="agenda_open_period_analysis").label == "✨ Analisar agenda com IA"
     displayed = "\n".join(
         str(element.value)
         for category in (
@@ -327,8 +329,62 @@ def test_views_only_show_registered_appointments(store, monkeypatch, view, with_
             "Detalhes e ações"
         ]
     else:
-        assert "Nenhum compromisso no período selecionado." in displayed
+        assert "Nenhum compromisso ou afastamento em andamento ou agendado." in displayed
         assert not any(b.label == "Editar" for b in app.button)
+
+
+def test_initial_listing_prioritizes_current_records_and_keeps_open_intervals(
+    store, monkeypatch
+):
+    from services.agenda_ui import initial_listing_rows
+
+    agenda = AgendaStore(store)
+    ongoing = draft("EVENTO", members=[1], day="2026-09-26")
+    ongoing.update(fim="2026-10-12T11:00:00", titulo="Ainda em andamento")
+    ongoing_id = agenda.save(ongoing)
+    future = draft("EVENTO", members=[2], day="2026-10-04")
+    future["titulo"] = "Compromisso futuro"
+    future_id = agenda.save(future)
+    cancelled = agenda.save(draft("EVENTO", members=[3], day="2026-10-05"))
+    agenda.cancel(cancelled)
+    current_leave = agenda.save_leave(
+        {
+            "procurador_id": 1,
+            "motivo": "Férias",
+            "data_inicio": "2026-09-30",
+            "data_fim": "2026-10-02",
+        }
+    )
+    future_leave = agenda.save_leave(
+        {
+            "procurador_id": 2,
+            "motivo": "Férias",
+            "data_inicio": "2026-10-05",
+            "data_fim": "2026-10-06",
+        }
+    )
+    monkeypatch.setattr("services.agenda_ui._agora", lambda: datetime(2026, 10, 2, 9))
+
+    current, upcoming = initial_listing_rows(
+        agenda, date(2026, 10, 2), None, None, None, True, True, "Todos"
+    )
+
+    assert {row["id"] for row in current} == {ongoing_id, current_leave}
+    assert {row["id"] for row in upcoming} == {future_id, future_leave}
+
+
+def test_initial_listing_opens_period_analysis_from_its_own_action(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_agenda").click().run()
+    app.button(key="agenda_open_period_analysis").click().run()
+
+    assert not app.exception and not app.error
+    assert any(item.value == "Análise de Agenda com IA" for item in app.subheader)
+    assert app.button(key="agenda_close_period_analysis").label == "← Voltar à agenda"
 
 
 def test_agenda_ui_rebuilds_from_display_proxy_session(store, monkeypatch):
@@ -553,7 +609,6 @@ def test_edit_forms_render_after_the_selected_card_in_mixed_list(store, monkeypa
 
     next(button for button in app.button if button.label == "Voltar à agenda").click().run()
     assert "agenda_leave_edit" not in app.session_state
-    app.radio(key="agenda_view").set_value("Semana").run()
     future_key = f"agenda_edit_{future_id}"
     app.button(key=future_key).click().run()
     assert not app.exception and not app.error

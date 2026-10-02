@@ -276,14 +276,7 @@ def test_listing_shows_in_progress_without_the_past_warning(store, monkeypatch):
     assert "EM ANDAMENTO" in afastamento
     assert "mpc-badge" in afastamento
 
-    anchor = today if today.day > 1 else today - timedelta(days=1)
-    app.radio(key="agenda_view").set_value("Mês").run()
-    app.date_input(key="agenda_anchor").set_value(anchor).run()
-    encerrado = _card(app, "Evento encerrado")
-    assert "EM ANDAMENTO" not in encerrado
-    assert any("passado ainda não encerrado" in str(item.value) for item in app.warning)
-
-    app.radio(key="agenda_view").set_value("Próximos").run()
+    assert not _card(app, "Evento encerrado")
     futuro = _card(app, "Licença especial")
     assert "AGENDADO" in futuro
     assert "EM ANDAMENTO" not in futuro

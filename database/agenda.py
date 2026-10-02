@@ -239,6 +239,55 @@ class AgendaStore:
     def active_upcoming(self, start, member=None, kind=None, status=None, offset=0):
         return self.active(start, None, member, kind, status, offset=offset)
 
+    def active_current_and_upcoming(self, member=None, kind=None, status=None):
+        """Operational appointments for the initial Agenda listing.
+
+        The temporal split remains a presentation concern: an open appointment
+        that began before today can still be in progress under its own rules.
+        """
+        with self.store.connection(read_only=True) as c:
+            clauses = ["a.situacao NOT IN ('Realizado','Cancelado')"]
+            values = []
+            for column, value in (("tipo", kind), ("situacao", status)):
+                if value:
+                    clauses.append(f"a.{column}=?")
+                    values.append(value)
+            if member:
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM agenda_compromisso_procuradores p "
+                    "WHERE p.compromisso_id=a.id AND p.procurador_id=?)"
+                )
+                values.append(member)
+            rows = c.execute(
+                "SELECT a.*,p.procurador_id FROM agenda_compromissos a "
+                "JOIN agenda_compromisso_procuradores p ON "
+                "p.compromisso_id=a.id WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY a.inicio,a.id,p.procurador_id",
+                values,
+            )
+            records = {}
+            for row in rows:
+                if row["id"] not in records:
+                    records[row["id"]] = {
+                        **json.loads(row["payload"]),
+                        **{
+                            key: row[key]
+                            for key in (
+                                "id",
+                                "tipo",
+                                "inicio",
+                                "fim",
+                                "situacao",
+                                "criada",
+                                "atualizada",
+                            )
+                        },
+                        "procuradores": [],
+                    }
+                records[row["id"]]["procuradores"].append(row["procurador_id"])
+            return list(records.values())
+
     def history(self, *, member=None, kind=None, status=None, start=None, end=None, search=None, limit=30, offset=0):
         """Fetch one historical page in SQL, newest first, without moving records."""
         if not isinstance(limit, int) or not isinstance(offset, int) or limit < 1 or offset < 0:
@@ -402,6 +451,30 @@ class AgendaStore:
 
     def active_leaves(self, start, end, member=None, *, upcoming=False, limit=None, offset=0):
         return [row for row in self.leaves(start, end, member, upcoming=upcoming, limit=limit, offset=offset) if row["status"] in ("AGENDADO", "EM ANDAMENTO")]
+
+    def active_current_and_upcoming_leaves(self, start, member=None):
+        """Leaves that are either currently active or scheduled after start."""
+        with self.store.connection(read_only=True) as c:
+            clauses = ["cancelado=0", "data_fim>=?"]
+            values = [start]
+            if member:
+                clauses.append("procurador_id=?")
+                values.append(member)
+            rows = c.execute(
+                "SELECT id,procurador_id,motivo,motivo_outro,data_inicio,data_fim,"
+                "substituto_id,observacao,cancelado,criado_por,criado_em,atualizado_em "
+                "FROM agenda_afastamentos WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY data_inicio,id",
+                values,
+            )
+            active = []
+            for raw in rows:
+                row = dict(raw)
+                row["status"] = leave_status(row)
+                if row["status"] in ("AGENDADO", "EM ANDAMENTO"):
+                    active.append(row)
+            return active
 
     def history_leaves(self, *, member=None, status=None, start=None, end=None, limit=30, offset=0):
         """Historical leave page. Ended status is deliberately derived, never persisted."""
