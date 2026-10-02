@@ -12,15 +12,16 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import lru_cache, wraps
-import logging
 import os
+import threading
 import time
 
 
-LOGGER = logging.getLogger("mpc.performance")
 _METRICS = ContextVar("mpc_performance_metrics", default=None)
 _DATABASE_OPERATION = ContextVar("mpc_performance_database_operation", default=None)
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_TELEMETRY_CONFIRMATION_LOCK = threading.Lock()
+_telemetry_confirmation_emitted = False
 
 
 @lru_cache(maxsize=1)
@@ -31,10 +32,11 @@ def enabled():
         try:
             import streamlit as st
 
+            # Community Cloud exposes root-level secrets through this mapping.
             raw = st.secrets.get("MPC_PERF_LOG")
         except Exception:
             raw = None
-    return str(raw or "").strip().casefold() in _TRUE_VALUES
+    return raw is True or str(raw or "").strip().casefold() in _TRUE_VALUES
 
 
 @dataclass
@@ -140,9 +142,21 @@ def _emit(metrics):
                 for name, values in operations
             )
         )
-    # warning is intentional: Streamlit Cloud reliably exposes it, and this is
-    # emitted only when the explicit performance flag is enabled.
-    LOGGER.warning(" | ".join(fields))
+    # Streamlit Cloud exports stdout/stderr reliably. This is opt-in and emits
+    # exactly one consolidated line for the measured rerun.
+    print(" | ".join(fields), flush=True)
+
+
+def _emit_enabled_confirmation():
+    """Write one process-local confirmation without exposing configuration."""
+    global _telemetry_confirmation_emitted
+    if _telemetry_confirmation_emitted:
+        return
+    with _TELEMETRY_CONFIRMATION_LOCK:
+        if _telemetry_confirmation_emitted:
+            return
+        print("PERF | telemetry=enabled", flush=True)
+        _telemetry_confirmation_emitted = True
 
 
 def profile_rerun(function):
@@ -152,6 +166,7 @@ def profile_rerun(function):
     def wrapped(*args, **kwargs):
         if not enabled() or active():
             return function(*args, **kwargs)
+        _emit_enabled_confirmation()
         metrics = Metrics()
         token = _METRICS.set(metrics)
         try:
