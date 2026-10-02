@@ -266,7 +266,7 @@ gap:.14rem;
 section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"]{{
 margin-top:.15rem;
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label{{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"]{{
 position:relative;
 display:flex;
 align-items:flex-start;
@@ -279,32 +279,32 @@ box-shadow:none;
 cursor:pointer;
 transition:background .12s ease,box-shadow .12s ease;
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label > div:first-child{{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child{{
 position:absolute !important;
 inline-size:1px !important;
 block-size:1px !important;
 overflow:hidden !important;
 opacity:0 !important;
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label > div:last-child{{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"] > div:last-child{{
 min-width:0;
 padding-left:0 !important;
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label p{{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"] p{{
 overflow-wrap:anywhere;
 line-height:1.35;
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label:hover{{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"]:hover{{
 background:rgba({primary_rgb},.07);
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label:has(input:checked){{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked){{
 background:rgba({primary_rgb},.16);
 border-color:transparent;
 box-shadow:inset 3px 0 0 var(--mpc-brand);
 font-weight:650;
 color:var(--mpc-brand-dark);
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label:has(input:focus-visible){{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:focus-visible){{
 outline:2px solid var(--mpc-brand-dark);
 outline-offset:2px;
 }}

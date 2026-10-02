@@ -62,12 +62,13 @@ def test_portal_navigation_style_is_scoped_and_uses_theme_tokens(theme):
     scope = '[class*="st-key-portal_navigation_menu"]'
     assert scope in css
     assert f"--mpc-brand:{THEMES[theme]['primary']}" in css
-    assert "label > div:first-child" in css
-    assert "label:has(input:checked)" in css
-    assert "label:has(input:focus-visible)" in css
+    assert 'label[data-baseweb="radio"] > div:first-child' in css
+    assert 'label[data-baseweb="radio"]:has(input:checked)' in css
+    assert 'label[data-baseweb="radio"]:has(input:focus-visible)' in css
     assert "border:1px solid transparent" in css
     assert "box-shadow:inset 3px 0 0 var(--mpc-brand)" in css
     assert 'section[data-testid="stSidebar"] [data-testid="stRadio"] label{' not in css
+    assert 'label[data-baseweb="radio"]{' in css
 
 
 def test_home_is_default_and_never_initializes_database(monkeypatch):
