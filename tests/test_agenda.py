@@ -385,6 +385,18 @@ def test_initial_listing_opens_period_analysis_from_its_own_action(store, monkey
     assert not app.exception and not app.error
     assert any(item.value == "Análise de Agenda com IA" for item in app.subheader)
     assert app.button(key="agenda_close_period_analysis").label == "← Voltar à agenda"
+    assert not any(
+        widget.key in {
+            "agenda_filter_member",
+            "agenda_filter_type",
+            "agenda_filter_status",
+            "agenda_filter_item_scope",
+        }
+        for widget in app.selectbox
+    )
+    app.button(key="agenda_close_period_analysis").click().run()
+    assert app.button(key="agenda_open_period_analysis").label == "✨ Analisar agenda com IA"
+    assert app.selectbox(key="agenda_filter_member")
 
 
 def test_agenda_ui_rebuilds_from_display_proxy_session(store, monkeypatch):

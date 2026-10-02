@@ -194,6 +194,10 @@ def start_leave_edit(agenda, identifier):
     st.session_state["agenda_leave_edit"] = agenda.get_leave(identifier)
 
 
+def open_period_analysis():
+    st.session_state["agenda_period_analysis_open"] = True
+
+
 def audit_agenda(evento, acao, identifier=None, extra=None, entity_type="compromisso"):
     from services.audit import registrar_evento
 
@@ -1283,8 +1287,31 @@ def render(store=None, principal=None):
             st.session_state.pop("agenda_edit", None)
             st.session_state["agenda_leave_edit"] = {}
             st.rerun()
-    analysis_requested = st.button(
-        "✨ Analisar agenda com IA", key="agenda_open_period_analysis"
+    if st.session_state.get("agenda_period_analysis_open"):
+        member = st.session_state.get("agenda_filter_member")
+        kind = st.session_state.get("agenda_filter_type")
+        status = st.session_state.get("agenda_filter_status")
+        item_scope = st.session_state.get("agenda_filter_item_scope", "Todos")
+        show_appointments = item_scope != "Somente afastamentos"
+        show_leaves = item_scope != "Somente compromissos"
+        if st.button("← Voltar à agenda", key="agenda_close_period_analysis"):
+            st.session_state.pop("agenda_period_analysis_open", None)
+            st.rerun()
+        render_period_analysis(
+            agenda,
+            names,
+            member,
+            kind,
+            status,
+            show_appointments,
+            show_leaves,
+            item_scope,
+        )
+        return
+    st.button(
+        "✨ Analisar agenda com IA",
+        key="agenda_open_period_analysis",
+        on_click=open_period_analysis,
     )
     with st.container(border=True):
         filter_mark()
@@ -1311,26 +1338,9 @@ def render(store=None, principal=None):
             "Tipo de item",
             ("Todos", "Somente compromissos", "Somente afastamentos"),
             key="agenda_filter_item_scope",
-        )
+    )
     show_appointments = item_scope != "Somente afastamentos"
     show_leaves = item_scope != "Somente compromissos"
-    if analysis_requested:
-        st.session_state["agenda_period_analysis_open"] = True
-    if st.session_state.get("agenda_period_analysis_open"):
-        if st.button("← Voltar à agenda", key="agenda_close_period_analysis"):
-            st.session_state.pop("agenda_period_analysis_open", None)
-            st.rerun()
-        render_period_analysis(
-            agenda,
-            names,
-            member,
-            kind,
-            status,
-            show_appointments,
-            show_leaves,
-            item_scope,
-        )
-        return
     today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     current_rows, upcoming_rows = initial_listing_rows(
         agenda,
