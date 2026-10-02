@@ -220,7 +220,14 @@ def _session_get(key, default=None):
 def _render_module_fragment(renderer, store, principal):
     """Keep the portal shell stable during interactions inside one module."""
     with phase("module_render"):
-        renderer(store, principal)
+        if getattr(store, "backend", None) == "postgresql":
+            # A screen render is a bounded synchronous read scope. Repository
+            # reads reuse it through PostgresBackend's ContextVar; a mutation
+            # opens its own writer transaction and is never run in this scope.
+            with store.connection(read_only=True):
+                renderer(store, principal)
+        else:
+            renderer(store, principal)
 
 
 def _active_theme(identity):

@@ -2,12 +2,16 @@
 
 import atexit
 import hashlib
+import time
 import uuid
 from threading import RLock
 
 import psycopg
 import streamlit as st
 from psycopg_pool import ConnectionPool
+
+
+HEALTH_CHECK_AFTER_IDLE_SECONDS = 30
 
 
 class SafeConnection(psycopg.Connection):
@@ -24,10 +28,35 @@ class SafeConnection(psycopg.Connection):
 
 
 def check_connection(connection):
+    """Ping a new or genuinely idle connection, not every warm checkout.
+
+    psycopg_pool invokes this callback on every ``getconn()``.  A hot checkout
+    was returned cleanly moments earlier, so a second network round trip adds
+    latency without improving its safety.  A newly-created or idle connection
+    is still checked before being handed to the caller.
+    """
+    idle_since = getattr(connection, "_mpc_idle_since", None)
+    if (
+        idle_since is not None
+        and time.monotonic() - idle_since < HEALTH_CHECK_AFTER_IDLE_SECONDS
+    ):
+        return
     try:
         ConnectionPool.check_connection(connection)
     except psycopg.Error:
         raise psycopg.OperationalError("Conexão PostgreSQL interrompida") from None
+
+
+def mark_connection_idle(connection):
+    """Remember a clean return so the next warm checkout avoids a ping.
+
+    If a future psycopg connection implementation disallows instance
+    attributes, falling back to a check on every checkout remains safe.
+    """
+    try:
+        connection._mpc_idle_since = time.monotonic()
+    except (AttributeError, TypeError):
+        pass
 
 
 class Resource:

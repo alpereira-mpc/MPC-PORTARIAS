@@ -172,10 +172,29 @@ def parameters(statement):
 
 
 class Connection:
-    def __init__(self, raw, invalidate=None):
+    def __init__(
+        self,
+        raw,
+        invalidate=None,
+        *,
+        read_only=False,
+        isolation="READ COMMITTED",
+        statement_timeout="60s",
+    ):
         self.raw = raw
         self.invalidate = invalidate
+        self.read_only = read_only
+        self.isolation = isolation
+        self.statement_timeout = statement_timeout
         self.changed = set()
+
+    def can_share(self, *, read_only, isolation, statement_timeout):
+        """Whether a nested operation can use this transaction unchanged."""
+        return (
+            self.isolation == isolation
+            and self.statement_timeout == statement_timeout
+            and (read_only or not self.read_only)
+        )
 
     def execute(self, statement, values=None):
         measured = performance_active()
@@ -278,7 +297,6 @@ class PostgresBackend:
     def connection(self, *, read_only=False, isolation=None, statement_timeout=None):
         raw = None
         token = None
-        from database.pool import resource
 
         levels = {"READ COMMITTED", "REPEATABLE READ"}
         level = isolation or "READ COMMITTED"
@@ -287,6 +305,19 @@ class PostgresBackend:
         timeout = statement_timeout or "60s"
         if timeout not in ("60s", "120s", "300s"):
             raise ValueError("Tempo máximo de instrução inválido.")
+        active = self._active.get()
+        if active is not None and active.can_share(
+            read_only=read_only,
+            isolation=level,
+            statement_timeout=timeout,
+        ):
+            # The outer scope owns commit/rollback and pool return. A writer is
+            # never reused by a read-only outer transaction, and transaction
+            # settings are never silently weakened for a nested caller.
+            yield active
+            return
+        from database.pool import mark_connection_idle, resource
+
         pool = resource(self._options).pool
         try:
             measured = performance_active()
@@ -333,7 +364,13 @@ class PostgresBackend:
                             (time.perf_counter() - started) * 1000,
                             query=False,
                         )
-            connection = Connection(raw, self.invalidate)
+            connection = Connection(
+                raw,
+                self.invalidate,
+                read_only=read_only,
+                isolation=level,
+                statement_timeout=timeout,
+            )
             token = self._active.set(connection)
             yield connection
             connection.commit()
@@ -350,6 +387,8 @@ class PostgresBackend:
             if token is not None:
                 self._active.reset(token)
             if raw is not None:
+                if not getattr(raw, "closed", False):
+                    mark_connection_idle(raw)
                 pool.putconn(raw)
 
     @staticmethod
