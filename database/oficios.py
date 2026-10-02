@@ -43,8 +43,8 @@ class OficiosStore:
         with self.store.connection(read_only=True) as c:
             if c.execute(
                 "SELECT COUNT(*) FROM configuracoes "
-                "WHERE chave IN ('oficios_schema_v2','oficios_schema_v3','oficios_schema_v4')"
-            ).fetchone()[0] == 3:
+                "WHERE chave IN ('oficios_schema_v2','oficios_schema_v3','oficios_schema_v4','oficios_schema_v5')"
+            ).fetchone()[0] == 4:
                 self._schema_ready = True
                 return
         binary = "BYTEA" if self.store.backend == "postgresql" else "BLOB"
@@ -136,6 +136,9 @@ class OficiosStore:
             )
             c.execute(
                 "INSERT INTO configuracoes VALUES('oficios_schema_v4','1') ON CONFLICT DO NOTHING"
+            )
+            c.execute(
+                "INSERT INTO configuracoes VALUES('oficios_schema_v5','1') ON CONFLICT DO NOTHING"
             )
         self._schema_ready = True
 
