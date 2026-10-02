@@ -5,6 +5,7 @@ import json
 import re
 import uuid
 from database.store import now, schema_key_of, unwrap_store
+from services.performance import database_operation
 from services.agenda import RULES, normalized, validate, institutional, conflicts
 from services.afastamentos import validate as validate_leave, status as leave_status
 
@@ -189,6 +190,7 @@ class AgendaStore:
             records[row["id"]]["procuradores"].append(row["procurador_id"])
         return list(records.values())
 
+    @database_operation("AgendaStore.list")
     def list(self, start, end, member=None, kind=None, status=None):
         with self.store.connection(read_only=True) as c:
             return self._list(c, start, end, member, kind, status)
@@ -225,12 +227,14 @@ class AgendaStore:
                 "procuradores": people,
             }
 
+    @database_operation("AgendaStore.upcoming")
     def upcoming(self, start, member=None, kind=None, status=None, offset=0):
         if not isinstance(offset, int) or offset < 0:
             raise ValueError("Página inválida.")
         with self.store.connection(read_only=True) as c:
             return self._list(c, start, None, member, kind, status, offset=offset)
 
+    @database_operation("AgendaStore.active")
     def active(self, start, end, member=None, kind=None, status=None, *, offset=None):
         """Operational appointments only; old dates remain active until closed."""
         with self.store.connection(read_only=True) as c:
@@ -239,6 +243,7 @@ class AgendaStore:
     def active_upcoming(self, start, member=None, kind=None, status=None, offset=0):
         return self.active(start, None, member, kind, status, offset=offset)
 
+    @database_operation("AgendaStore.active_current_and_upcoming")
     def active_current_and_upcoming(self, member=None, kind=None, status=None):
         """Operational appointments for the initial Agenda listing.
 
@@ -288,6 +293,7 @@ class AgendaStore:
                 records[row["id"]]["procuradores"].append(row["procurador_id"])
             return list(records.values())
 
+    @database_operation("AgendaStore.history")
     def history(self, *, member=None, kind=None, status=None, start=None, end=None, search=None, limit=30, offset=0):
         """Fetch one historical page in SQL, newest first, without moving records."""
         if not isinstance(limit, int) or not isinstance(offset, int) or limit < 1 or offset < 0:
@@ -445,6 +451,7 @@ class AgendaStore:
         return [dict(r) | {"status": leave_status(dict(r))} for r in c.execute(
             "SELECT id,procurador_id,motivo,motivo_outro,data_inicio,data_fim,substituto_id,observacao,cancelado,criado_por,criado_em,atualizado_em FROM agenda_afastamentos WHERE " + " AND ".join(clauses) + " ORDER BY data_inicio,id" + pagination, values)]
 
+    @database_operation("AgendaStore.leaves")
     def leaves(self, start, end, member=None, *, upcoming=False, limit=None, offset=0):
         with self.store.connection(read_only=True) as c:
             return self._leaves(c, start, end, member, upcoming=upcoming, limit=limit, offset=offset)
@@ -476,6 +483,7 @@ class AgendaStore:
                     active.append(row)
             return active
 
+    @database_operation("AgendaStore.history_leaves")
     def history_leaves(self, *, member=None, status=None, start=None, end=None, limit=30, offset=0):
         """Historical leave page. Ended status is deliberately derived, never persisted."""
         if not isinstance(limit, int) or not isinstance(offset, int) or limit < 1 or offset < 0:
@@ -540,6 +548,7 @@ class AgendaStore:
             ).fetchone()
             return dict(row) if row else None
 
+    @database_operation("AgendaStore.trips_for_commitments")
     def trips_for_commitments(self, compromisso_ids):
         identifiers = tuple(dict.fromkeys(compromisso_ids))
         if not identifiers:
@@ -599,6 +608,7 @@ class AgendaStore:
                 trip["aeroporto_" + leg + "_outro"] = trip.get("aeroporto_outro")
         return trip
 
+    @database_operation("AgendaStore.trips_for_leaves")
     def trips_for_leaves(self, leave_ids):
         """Fetch optional trips in one query for an Agenda page."""
         identifiers = tuple(dict.fromkeys(leave_ids))

@@ -12,12 +12,16 @@ import gzip
 import hashlib
 import json
 import re
+import time
 import uuid
 
 import psycopg
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
+
+from services.performance import active as performance_active
+from services.performance import record_database_call, record_pool_wait
 
 TABLES = (
     "procuradores",
@@ -174,9 +178,19 @@ class Connection:
         self.changed = set()
 
     def execute(self, statement, values=None):
+        measured = performance_active()
+        started = time.perf_counter() if measured else None
         if statement.strip().upper() == "BEGIN IMMEDIATE":
             # Transaction and equivalent writer lock are already held.
-            return Cursor(self.raw.execute("SELECT 1"))
+            try:
+                return Cursor(self.raw.execute("SELECT 1"))
+            finally:
+                if measured:
+                    record_database_call(
+                        "postgres.transaction",
+                        (time.perf_counter() - started) * 1000,
+                        query=False,
+                    )
         returning_id = False
         insert = re.match(r"\s*INSERT\s+INTO\s+(\w+)", statement, re.I)
         if (
@@ -186,7 +200,15 @@ class Connection:
         ):
             statement += " RETURNING id"
             returning_id = True
-        cursor = Cursor(self.raw.execute(parameters(statement), values), returning_id)
+        try:
+            cursor = Cursor(
+                self.raw.execute(parameters(statement), values), returning_id
+            )
+        finally:
+            if measured:
+                record_database_call(
+                    "postgres.execute", (time.perf_counter() - started) * 1000
+                )
         mutation = re.match(
             r"\s*(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)", statement, re.I
         )
@@ -197,8 +219,16 @@ class Connection:
     def executemany(self, statement, rows):
         # No caller consumes generated IDs from executemany. Let psycopg send
         # the batch instead of waiting for one INSERT/RETURNING per row.
-        with self.raw.cursor() as cursor:
-            cursor.executemany(parameters(statement), rows)
+        measured = performance_active()
+        started = time.perf_counter() if measured else None
+        try:
+            with self.raw.cursor() as cursor:
+                cursor.executemany(parameters(statement), rows)
+        finally:
+            if measured:
+                record_database_call(
+                    "postgres.executemany", (time.perf_counter() - started) * 1000
+                )
         mutation = re.match(
             r"\s*(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)", statement, re.I
         )
@@ -206,7 +236,17 @@ class Connection:
             self.changed.add(mutation[1].lower())
 
     def commit(self):
-        self.raw.commit()
+        measured = performance_active()
+        started = time.perf_counter() if measured else None
+        try:
+            self.raw.commit()
+        finally:
+            if measured:
+                record_database_call(
+                    "postgres.commit",
+                    (time.perf_counter() - started) * 1000,
+                    query=False,
+                )
         if self.changed and self.invalidate:
             self.invalidate(self.changed)
         self.changed.clear()
@@ -249,28 +289,50 @@ class PostgresBackend:
             raise ValueError("Tempo máximo de instrução inválido.")
         pool = resource(self._options).pool
         try:
+            measured = performance_active()
+            started = time.perf_counter() if measured else None
             raw = pool.getconn()
+            if measured:
+                record_pool_wait((time.perf_counter() - started) * 1000)
             # One round trip for transaction setup, including transaction-pooler safety.
-            raw.execute(
-                sql.SQL(
-                    "SET TRANSACTION ISOLATION LEVEL {} {}; "
-                    "SET LOCAL statement_timeout = {}; "
-                    "SET LOCAL lock_timeout = '30s'; "
-                    "SET LOCAL search_path TO {}, pg_catalog"
-                ).format(
-                    sql.SQL(level),
-                    sql.SQL("READ ONLY" if read_only else "READ WRITE"),
-                    sql.Literal(timeout),
-                    sql.Identifier(self.schema),
-                ),
-                prepare=False,
-            )
+            started = time.perf_counter() if measured else None
+            try:
+                raw.execute(
+                    sql.SQL(
+                        "SET TRANSACTION ISOLATION LEVEL {} {}; "
+                        "SET LOCAL statement_timeout = {}; "
+                        "SET LOCAL lock_timeout = '30s'; "
+                        "SET LOCAL search_path TO {}, pg_catalog"
+                    ).format(
+                        sql.SQL(level),
+                        sql.SQL("READ ONLY" if read_only else "READ WRITE"),
+                        sql.Literal(timeout),
+                        sql.Identifier(self.schema),
+                    ),
+                    prepare=False,
+                )
+            finally:
+                if measured:
+                    record_database_call(
+                        "postgres.transaction_setup",
+                        (time.perf_counter() - started) * 1000,
+                        query=False,
+                    )
             if not read_only:
                 # Keep the same lock for all mutations, numbering and bootstrap.
-                raw.execute(
-                    "SELECT pg_advisory_xact_lock(64712026, hashtext(%s))",
-                    (self.schema,),
-                )
+                started = time.perf_counter() if measured else None
+                try:
+                    raw.execute(
+                        "SELECT pg_advisory_xact_lock(64712026, hashtext(%s))",
+                        (self.schema,),
+                    )
+                finally:
+                    if measured:
+                        record_database_call(
+                            "postgres.writer_lock",
+                            (time.perf_counter() - started) * 1000,
+                            query=False,
+                        )
             connection = Connection(raw, self.invalidate)
             token = self._active.set(connection)
             yield connection

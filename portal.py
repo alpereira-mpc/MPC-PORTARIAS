@@ -25,6 +25,7 @@ from services.ui_theme import (
 )
 from services.themes import THEME_LABELS, valid_theme
 from services.versioning import APP_VERSION
+from services.performance import phase, profile_rerun
 
 LOGGER = logging.getLogger(__name__)
 
@@ -215,9 +216,11 @@ def _session_get(key, default=None):
 
 
 @st.fragment
+@profile_rerun
 def _render_module_fragment(renderer, store, principal):
     """Keep the portal shell stable during interactions inside one module."""
-    renderer(store, principal)
+    with phase("module_render"):
+        renderer(store, principal)
 
 
 def _active_theme(identity):
@@ -225,11 +228,7 @@ def _active_theme(identity):
         return "dourado"
     email = identity["email"]
     cached = _session_get("_portal_theme")
-    if (
-        cached
-        and cached.get("email") == email
-        and cached.get("name") in THEME_LABELS
-    ):
+    if cached and cached.get("email") == email and cached.get("name") in THEME_LABELS:
         return cached["name"]
     # The sidebar widget survives ordinary reruns.  When its durable cache was
     # transiently absent, prefer that valid, user-scoped value over a fallback.
@@ -1022,6 +1021,7 @@ def _portal_navigation_label(option):
     return f":material/{PORTAL_NAVIGATION_ICONS[option]}: {label}"
 
 
+@profile_rerun
 def render_portal():
     from services.access import (
         current_user,
@@ -1035,7 +1035,8 @@ def render_portal():
         page_icon=str(SIDEBAR_LOGO),
         layout="wide",
     )
-    identity = oidc_identity()
+    with phase("portal_identity"):
+        identity = oidc_identity()
     apply_theme(_active_theme(identity))
     if identity is None:
         with st.sidebar:
@@ -1044,7 +1045,8 @@ def render_portal():
         render_login()
         st.stop()
     try:
-        store = _application_store()
+        with phase("portal_store"):
+            store = _application_store()
     except Exception:
         # logger.exception records the traceback only on the server. Do not
         # interpolate configuration or identity values into this message.
@@ -1058,7 +1060,8 @@ def render_portal():
             _logout()
         st.stop()
     try:
-        principal = current_user(store)
+        with phase("portal_authorization"):
+            principal = current_user(store)
     except Exception:
         LOGGER.exception("Falha ao verificar autorização")
         with st.sidebar:
@@ -1131,7 +1134,8 @@ def render_portal():
         )
         if can_view_alertas(principal):
             with st.container(key="portal_notifications"):
-                render_bell(store, principal)
+                with phase("sidebar_bell"):
+                    render_bell(store, principal)
         with st.container(key="portal_navigation_menu"):
             selected = st.radio(
                 "Portal",
@@ -1192,13 +1196,15 @@ def render_portal():
     if selected == "Início":
         st.session_state.pop("_global_search_home_active", None)
         st.session_state["audit_modulo_atual"] = None
-        home(principal)
+        with phase("module_render"):
+            home(principal)
         st.stop()
     if selected == "Busca Global":
         st.session_state["audit_modulo_atual"] = None
         from services.search_ui import render_home_search
 
-        render_home_search(store, principal)
+        with phase("module_render"):
+            render_home_search(store, principal)
         st.stop()
     st.session_state.pop("_global_search_home_active", None)
     registrar_modulo(store, principal, selected)

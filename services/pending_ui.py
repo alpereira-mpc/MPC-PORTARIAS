@@ -73,6 +73,11 @@ def _require(principal):
     require_permission(principal, "pendencias")
 
 
+def _set_pending_page(page):
+    """Set the requested page before Streamlit performs its widget rerun."""
+    st.session_state["pending_page"] = page
+
+
 def _date_text(value):
     if not value:
         return "—"
@@ -313,13 +318,21 @@ def render(store, principal):
                     f"pending_notice_{row.source_id}_{index}",
                 )
     nav_a, nav_b, nav_c = st.columns([1, 2, 1])
-    if nav_a.button("Anterior", disabled=page <= 1, key="pending_prev"):
-        st.session_state["pending_page"] = page - 1
-        st.rerun()
+    nav_a.button(
+        "Anterior",
+        disabled=page <= 1,
+        key="pending_prev",
+        on_click=_set_pending_page,
+        args=(page - 1,),
+    )
     nav_b.caption(f"Página {page} de {pages}")
-    if nav_c.button("Próxima", disabled=page >= pages, key="pending_next"):
-        st.session_state["pending_page"] = page + 1
-        st.rerun()
+    nav_c.button(
+        "Próxima",
+        disabled=page >= pages,
+        key="pending_next",
+        on_click=_set_pending_page,
+        args=(page + 1,),
+    )
     labels = {
         i: f"{_date_text(item.due_date)} · {item.title} · {URGENCY_LABELS.get(item.urgency, item.urgency)}"
         for i, item in enumerate(view)

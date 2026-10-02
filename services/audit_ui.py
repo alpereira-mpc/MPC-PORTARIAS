@@ -58,6 +58,11 @@ def _theme_name():
     return valid_theme(cached.get("name"))
 
 
+def _set_log_page(page):
+    """Set the requested page before Streamlit performs its widget rerun."""
+    st.session_state["log_page"] = page
+
+
 def _period_filter(prefix):
     choice = st.radio(
         "Período",
@@ -379,13 +384,21 @@ def _render_log(store, principal):
             with st.expander("Detalhes"):
                 _event_details(row)
     nav_a, nav_b, nav_c = st.columns([1, 2, 1])
-    if nav_a.button("Anterior", disabled=page <= 1, key="audit_prev"):
-        st.session_state["log_page"] = page - 1
-        st.rerun()
+    nav_a.button(
+        "Anterior",
+        disabled=page <= 1,
+        key="audit_prev",
+        on_click=_set_log_page,
+        args=(page - 1,),
+    )
     nav_b.caption(f"Página {page} de {pages}")
-    if nav_c.button("Próxima", disabled=page >= pages, key="audit_next"):
-        st.session_state["log_page"] = page + 1
-        st.rerun()
+    nav_c.button(
+        "Próxima",
+        disabled=page >= pages,
+        key="audit_next",
+        on_click=_set_log_page,
+        args=(page + 1,),
+    )
     csv_text, exported, truncated = export_csv(store, principal, filters)
     if truncated:
         st.warning(

@@ -62,6 +62,11 @@ def navigate(page):
     st.rerun()
 
 
+def set_history_page(page):
+    """Update pagination before Streamlit's natural widget rerun."""
+    st.session_state["history_page"] = page
+
+
 def portarias_section():
     """In-page section radio. Consumes next_nav before the widget exists."""
     if "next_nav" in st.session_state:
@@ -649,12 +654,18 @@ def history():
         page = st.session_state.get("history_page", 0)
         records = store.history_page(year, person, search, page * 50)
         previous, following = st.columns(2)
-        if previous.button("Página anterior", disabled=page == 0):
-            st.session_state["history_page"] = page - 1
-            st.rerun()
-        if following.button("Próxima página", disabled=len(records) <= 50):
-            st.session_state["history_page"] = page + 1
-            st.rerun()
+        previous.button(
+            "Página anterior",
+            disabled=page == 0,
+            on_click=set_history_page,
+            args=(page - 1,),
+        )
+        following.button(
+            "Próxima página",
+            disabled=len(records) <= 50,
+            on_click=set_history_page,
+            args=(page + 1,),
+        )
         st.caption(f"Página {page + 1} · até 50 Portarias por página")
         records = records[:50]
     filtered = []
