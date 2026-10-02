@@ -153,11 +153,6 @@ def label(r):
     return f"{r['serie'] or ''} {r['numero'] or r['numero_externo'] or 'Rascunho'}/{r['ano']} — {r['assunto'][:75]}"
 
 
-def recent_movement_label(r):
-    """Full subject for the operational recent-movements cards only."""
-    return f"{r['serie'] or ''} {r['numero'] or r['numero_externo'] or 'Rascunho'}/{r['ano']} — {r['assunto']}"
-
-
 def data_movimentacao(value):
     """Date shown on a recent-movement card. The stored value stays unchanged."""
     return format_date_br(value)
@@ -1502,7 +1497,7 @@ def render(store=None, principal=None):
                 is_open = _oficio_detail_is_open(row["id"])
                 with card_container(index, f"ofm_{row['id']}"):
                     render_record(
-                        recent_movement_label(row),
+                        label(row),
                         badges_html=badges((row["status"], status_tone(row["status"]))),
                         meta=data_movimentacao(row["atualizada"]),
                         accent=status_tone(row["status"]),
