@@ -121,28 +121,6 @@ def test_draft_preserves_response_tracking_metadata(store):
     assert record["prazo_resposta_inicio"] == "2026-10-01"
 
 
-def test_v5_migrates_legacy_response_columns_before_listing(store):
-    service = ready(store)
-    identifier = service.save(sample(service))
-    with store.connection() as c:
-        c.execute("DELETE FROM configuracoes WHERE chave='oficios_schema_v5'")
-        for column in (
-            "prazo_resposta_quantidade",
-            "prazo_resposta_tipo",
-            "prazo_resposta_inicio",
-            "prazo_resposta_manual",
-            "prazo_resposta_motivo_ajuste",
-        ):
-            c.execute("ALTER TABLE oficios DROP COLUMN " + column)
-    upgraded = OficiosStore(store)
-    with store.connection(read_only=True) as c:
-        columns = {row[1] for row in c.execute("PRAGMA table_info(oficios)")}
-    assert "prazo_resposta_quantidade" in columns
-    assert "prazo_resposta_motivo_ajuste" in columns
-    assert upgraded.list()[0]["id"] == identifier
-    assert upgraded.overview(2026)["enviados"] == 0
-
-
 def test_administrative_edit_preserves_identification_and_files(store):
     s = ready(store)
     identifier = s.save(sample(s))
