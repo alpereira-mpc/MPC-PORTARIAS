@@ -115,6 +115,23 @@ HISTORY_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS portarias_recent_idx "
     "ON portarias(criada DESC, id DESC)"
 )
+TRAMITA_HISTORY_MIGRATION_SQL = (
+    "ALTER TABLE tramita_importacoes "
+    "ADD COLUMN IF NOT EXISTS quantidade_inserida INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE tramita_importacoes "
+    "ADD COLUMN IF NOT EXISTS quantidade_duplicada INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE tramita_movimentacoes "
+    "ADD COLUMN IF NOT EXISTS procurador_original TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE tramita_movimentacoes ADD COLUMN IF NOT EXISTS data_evento TEXT",
+    "ALTER TABLE tramita_movimentacoes "
+    "ADD COLUMN IF NOT EXISTS classificacao_producao TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE tramita_movimentacoes "
+    "ADD COLUMN IF NOT EXISTS chave_evento TEXT NOT NULL DEFAULT ''",
+    "CREATE INDEX IF NOT EXISTS tramita_movimentacoes_evento_idx "
+    "ON tramita_movimentacoes(data_evento, tipo_movimentacao, procurador)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS tramita_movimentacoes_chave_unica "
+    "ON tramita_movimentacoes(chave_evento) WHERE chave_evento<>''",
+)
 
 
 class DatabaseUnavailable(ValueError):
@@ -432,11 +449,11 @@ class PostgresBackend:
             c.raw.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)"
             )
-            versions = [
+            versions = sorted(
                 r[0] for r in c.execute("SELECT version FROM schema_migrations")
-            ]
+            )
             if versions:
-                if versions != [1]:
+                if versions not in ([1], [1, 2]):
                     raise DatabaseUnavailable(
                         "Versão PostgreSQL incompatível. Atualize o aplicativo."
                     )
@@ -480,6 +497,7 @@ class PostgresBackend:
                     WHERE aeroporto_ida IS NULL OR aeroporto_volta IS NULL;""",
                     prepare=False,
                 )
+                self._migrate_tramita_history(c)
                 return
             # Do not silently start a second numbering history over legacy public data.
             legacy = c.raw.execute(
@@ -535,6 +553,16 @@ class PostgresBackend:
                 c.execute("INSERT INTO sequencias VALUES(2026,8)")
                 c.execute("INSERT INTO sequencia_baselines VALUES(2026,8)")
             c.execute("INSERT INTO schema_migrations VALUES(1)")
+            self._migrate_tramita_history(c)
+
+    @staticmethod
+    def _migrate_tramita_history(connection):
+        """Upgrade existing PostgreSQL schemas for historical Tramita reports."""
+        for statement in TRAMITA_HISTORY_MIGRATION_SQL:
+            connection.raw.execute(statement, prepare=False)
+        connection.execute(
+            "INSERT INTO schema_migrations VALUES(2) ON CONFLICT DO NOTHING"
+        )
 
     def backup(self, destination):
         active = self._active.get()

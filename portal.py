@@ -446,6 +446,8 @@ def _normalize_module_entry(module, nav_state):
         st.session_state["memorandos_nav"] = "Visão Geral"
     elif module == "Portarias" and "nav" not in nav_state:
         st.session_state["nav"] = "Nova Portaria"
+    elif module == "Relatórios e Indicadores":
+        st.session_state["relatorios_section"] = "Visão Atual"
     elif module == "Administração" and "pending_open_admin" not in nav_state:
         st.session_state["admin_secao"] = "Usuários"
     elif module == "Petições":

@@ -1,6 +1,12 @@
 import inspect
 
-from services.relatorios_ui import _indicator_cards, annual, production, quarterly
+from services.relatorios_ui import (
+    _indicator_cards,
+    annual,
+    production,
+    quarterly,
+    render,
+)
 
 
 def test_monthly_view_uses_year_and_month_instead_of_import_competence():
@@ -26,3 +32,12 @@ def test_indicator_cards_share_methodology_help_and_nonproductive_diagnostic():
     assert "Relação entre devoluções produtivas" in source
     assert "Intervalo mediano entre a distribuição" in source
     assert "Devoluções não produtivas no período" in source
+
+
+def test_reports_section_defaults_to_current_view_in_the_requested_order():
+    source = inspect.getsource(render)
+    assert source.index('"Visão Atual"') < source.index('"Produção Mensal"')
+    assert source.index('"Produção Mensal"') < source.index('"Avaliação Trimestral"')
+    assert source.index('"Avaliação Trimestral"') < source.index('"Avaliação Anual"')
+    assert 'key="relatorios_section"' in source
+    assert "index=0" in source

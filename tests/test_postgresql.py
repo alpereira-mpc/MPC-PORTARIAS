@@ -21,6 +21,7 @@ import pytest
 
 from database.postgresql import DatabaseUnavailable, TABLES
 from database.store import Store
+from database.tramita_reports import TramitaReportsStore
 from services.exports import export_record
 from tests.cases import sample
 from tests import test_persistence as persistence
@@ -107,6 +108,77 @@ def test_bootstrap_idempotent(pg_store, pg_url):
     again = Store(database_url=pg_url, postgres_schema=pg_store._postgres.schema)
     assert again.catalog("procuradores")[0]["nome"] == "Nome configurado"
     assert again.next_number(2026) == 18 and again.baseline(2026) == 17
+
+
+def test_tramita_history_migration_repairs_existing_postgresql_schema(pg_store):
+    with pg_store.connection() as c:
+        c.execute("DROP INDEX IF EXISTS tramita_movimentacoes_chave_unica")
+        c.execute("DROP INDEX IF EXISTS tramita_movimentacoes_evento_idx")
+        for column in (
+            "chave_evento",
+            "classificacao_producao",
+            "data_evento",
+            "procurador_original",
+        ):
+            c.execute(
+                f"ALTER TABLE tramita_movimentacoes DROP COLUMN IF EXISTS {column}"
+            )
+        for column in ("quantidade_inserida", "quantidade_duplicada"):
+            c.execute(f"ALTER TABLE tramita_importacoes DROP COLUMN IF EXISTS {column}")
+
+    pg_store.migrate()
+    pg_store.migrate()
+    reports = TramitaReportsStore(pg_store)
+    with pg_store.connection(read_only=True) as c:
+        columns = {
+            row[0]
+            for row in c.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=current_schema() AND table_name='tramita_movimentacoes'"
+            )
+        }
+        assert {
+            "data_evento",
+            "classificacao_producao",
+            "procurador_original",
+            "chave_evento",
+        } <= columns
+        assert c.execute(
+            "SELECT array_agg(version ORDER BY version) FROM schema_migrations"
+        ).fetchone()[0] == [1, 2]
+
+    row = {
+        "protocolo": "01004/26",
+        "tipo": "Processo",
+        "subcategoria": "Teste",
+        "origem": "Origem",
+        "data_realizacao": "2026-09-30 09:00",
+        "procurador": "Manoel Antônio dos Santos Neto",
+        "motivo_distribuicao": "Ao Procurador",
+        "data_devolucao": "2026-10-01 10:00",
+        "motivo_devolucao": "Analisado Com Parecer",
+    }
+    reports.import_historical_rows(
+        kind="ENTRADAS",
+        file_name="entrada.xls",
+        file_hash="postgres-history-entry",
+        actor="admin",
+        source_competence="2026-09",
+        rows=[row],
+    )
+    reports.import_historical_rows(
+        kind="SAIDAS",
+        file_name="saida.xls",
+        file_hash="postgres-history-exit",
+        actor="admin",
+        source_competence="2026-10",
+        rows=[row],
+    )
+    assert (
+        reports.period_report("2026-09-01", "2026-10-01")["summary"]["distributed"] == 1
+    )
+    october = reports.period_report("2026-10-01", "2026-11-01")["summary"]
+    assert october["production"] == 1 and october["opinions"] == 1
 
 
 def test_concurrent_bootstrap(pg_url):

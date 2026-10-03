@@ -267,6 +267,59 @@ def test_same_protocol_can_be_entry_and_exit_and_hash_blocks_repeat(tmp_path):
         )
 
 
+def test_historical_schema_upgrade_is_idempotent_for_existing_sqlite_database(tmp_path):
+    store = Store(tmp_path / "tramita-legacy.db")
+    with store.connection() as connection:
+        connection.execute("DROP TABLE tramita_movimentacoes")
+        connection.execute("DROP TABLE tramita_estoque")
+        connection.execute("DROP TABLE tramita_importacoes")
+        connection.execute(
+            "CREATE TABLE tramita_importacoes ("
+            "id INTEGER PRIMARY KEY,tipo TEXT NOT NULL,competencia TEXT,data_snapshot TEXT,"
+            "nome_arquivo TEXT NOT NULL,hash_arquivo TEXT NOT NULL UNIQUE,"
+            "quantidade_registros INTEGER NOT NULL,importado_em TEXT NOT NULL,"
+            "importado_por TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'CONCLUIDA')"
+        )
+        connection.execute(
+            "CREATE TABLE tramita_movimentacoes ("
+            "id INTEGER PRIMARY KEY,importacao_id INTEGER NOT NULL,competencia TEXT NOT NULL,"
+            "tipo_movimentacao TEXT NOT NULL,protocolo TEXT NOT NULL,tipo TEXT NOT NULL DEFAULT '',"
+            "subcategoria TEXT NOT NULL DEFAULT '',origem TEXT NOT NULL DEFAULT '',"
+            "data_realizacao TEXT,procurador TEXT NOT NULL DEFAULT '',"
+            "motivo_distribuicao TEXT NOT NULL DEFAULT '',data_devolucao TEXT,"
+            "motivo_devolucao TEXT NOT NULL DEFAULT '')"
+        )
+        connection.execute(
+            "CREATE TABLE tramita_estoque ("
+            "id INTEGER PRIMARY KEY,importacao_id INTEGER NOT NULL,data_snapshot TEXT NOT NULL,"
+            "protocolo TEXT NOT NULL,tipo TEXT NOT NULL DEFAULT '',digital TEXT NOT NULL DEFAULT '',"
+            "subcategoria TEXT NOT NULL DEFAULT '',jurisdicionado TEXT NOT NULL DEFAULT '',"
+            "fase TEXT NOT NULL DEFAULT '',procurador TEXT NOT NULL DEFAULT '',"
+            "dias_com_procurador REAL,assistente TEXT NOT NULL DEFAULT '',"
+            "dias_com_assistente REAL,dias_no_mpc REAL,prescricao TEXT NOT NULL DEFAULT '')"
+        )
+    store.__dict__.pop("_tramita_schema_ready", None)
+    TramitaReportsStore(store)
+    store.__dict__.pop("_tramita_schema_ready", None)
+    TramitaReportsStore(store)
+    with store.connection(read_only=True) as connection:
+        movement_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(tramita_movimentacoes)")
+        }
+        import_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(tramita_importacoes)")
+        }
+        assert {
+            "data_evento",
+            "classificacao_producao",
+            "procurador_original",
+            "chave_evento",
+        } <= movement_columns
+        assert {"quantidade_inserida", "quantidade_duplicada"} <= import_columns
+
+
 def test_indicators_and_aging_rules():
     assert (
         official_procurador("Bradson Tiberio Luna Camelo")

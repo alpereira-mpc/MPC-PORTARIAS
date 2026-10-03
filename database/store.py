@@ -280,6 +280,8 @@ class Store:
         _INITIALIZED.discard(self.schema_key)
         if self._postgres is not None:
             self._postgres.initialize(ROOT, force=True)
+            ensure_addon_schemas(self)
+            _INITIALIZED.add(self.schema_key)
             return
         from database.migration import migrate_v2
 

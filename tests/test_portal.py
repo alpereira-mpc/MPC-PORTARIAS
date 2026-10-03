@@ -316,10 +316,17 @@ def test_relatorios_card_menu_and_route_follow_module_permission(store, monkeypa
     assert ":material/bar_chart: Relatórios e Indicadores" in portal.options
     portal.set_value("Relatórios e Indicadores").run()
     assert not app.exception
-    assert next(radio for radio in app.radio if radio.label == "Seção").options == [
-        "Produção Mensal",
+    section = app.radio(key="relatorios_section")
+    assert section.options == [
         "Visão Atual",
+        "Produção Mensal",
+        "Avaliação Trimestral",
+        "Avaliação Anual",
     ]
+    assert section.value == "Visão Atual"
+    for view in section.options:
+        section.set_value(view).run()
+        assert not app.exception and not app.error, view
 
 
 def test_relatorios_is_hidden_and_manipulated_navigation_is_reset_without_permission(

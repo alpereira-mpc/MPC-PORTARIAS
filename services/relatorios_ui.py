@@ -733,14 +733,18 @@ def render(store, principal):
     st.subheader("RELATÓRIOS E INDICADORES")
     st.caption("Acompanhamento da movimentação e do estoque processual do MPC-PB")
     sections = (
-        "Produção Mensal",
         "Visão Atual",
+        "Produção Mensal",
         "Avaliação Trimestral",
         "Avaliação Anual",
     )
     if principal.administrator:
         sections += ("Importações",)
-    section = st.radio("Seção", sections, horizontal=True)
+    if st.session_state.get("relatorios_section") not in sections:
+        st.session_state.pop("relatorios_section", None)
+    section = st.radio(
+        "Seção", sections, horizontal=True, key="relatorios_section", index=0
+    )
     if section != "Importações":
         st.session_state.pop("_tramita_previews", None)
     if section == "Produção Mensal":
