@@ -2,6 +2,7 @@
 
 import logging
 import math
+from calendar import monthrange
 from datetime import date, datetime
 from pathlib import Path
 
@@ -1187,6 +1188,143 @@ def production(store, principal=None):
     )
 
 
+INSTITUTIONAL_STATUS_LABELS = {
+    "RASCUNHO": "Rascunho",
+    "EM_REVISAO": "Em revisão",
+    "FINALIZADO": "Finalizado",
+    "ENVIADO": "Enviado",
+}
+
+
+def _institutional_month_span(months, year):
+    """Present stored coverage in Portuguese without exposing query boundaries."""
+    months = sorted({int(month) for month in months or []})
+    if not months:
+        return f"sem meses disponíveis em {year}"
+    names = [MONTHS[month - 1].lower() for month in months]
+    if months == list(range(months[0], months[-1] + 1)):
+        return f"{names[0]} a {names[-1]} de {year}"
+    return f"{', '.join(names)} de {year}"
+
+
+def _institutional_covered_period(snapshot):
+    """Return the human period covered by the frozen data, never its SQL end."""
+    metadata = snapshot["metadados"]
+    coverage = snapshot["cobertura_historica"]
+    start = date.fromisoformat(metadata["data_inicio"])
+    months = coverage.get("meses_disponiveis") or []
+    if not months:
+        return f"Período previsto: {start.strftime('%d/%m/%Y')}"
+    last_month = max(int(month) for month in months)
+    end = date(start.year, last_month, monthrange(start.year, last_month)[1])
+    return f"Período coberto: {start.strftime('%d/%m/%Y')} a {end.strftime('%d/%m/%Y')}"
+
+
+def _institutional_coverage_text(snapshot):
+    metadata = snapshot["metadados"]
+    coverage = snapshot["cobertura_historica"]
+    span = _institutional_month_span(coverage.get("meses_disponiveis"), metadata["ano"])
+    gaps = coverage.get("meses_ausentes") or coverage.get("lacunas_no_ano") or []
+    condition = "sem lacunas" if not gaps else "com lacunas"
+    partial = (
+        "acumulado parcial" if metadata.get("periodo_parcial") else "período completo"
+    )
+    return f"Cobertura: {span} — {condition}; {partial}."
+
+
+def _institutional_snapshot_rows(snapshot):
+    """Adapt frozen data for existing table formatting; never read current reports."""
+    rows = []
+    for entry in snapshot.get("serie_mensal", []):
+        summary = entry["summary"]
+        rows.append(
+            {
+                "Mês": MONTHS[int(entry["month"]) - 1],
+                "Distribuídos": summary["distributed"],
+                "Produção": summary["production"],
+                "Pareceres": summary["opinions"],
+                "Cotas": summary["quotas"],
+                "Produção/Distribuições": summary["production_rate"],
+                "Mediana de permanência": summary["median_days"],
+            }
+        )
+    return rows
+
+
+def _institutional_preview(report, principal):
+    """Friendly, read-only rendering of the persisted snapshot."""
+    snapshot = report["snapshot_dados"]
+    metadata = snapshot["metadados"]
+    summary = snapshot["indicadores_gerais"]
+    type_label = (
+        "Relatório Trimestral de Produção"
+        if metadata["tipo"] == "TRIMESTRAL"
+        else f"Relatório Anual de Produção — {metadata['ano']}"
+    )
+    period_label = (
+        f"{metadata['trimestre']}º trimestre de {metadata['ano']}"
+        if metadata["tipo"] == "TRIMESTRAL"
+        else "Acumulado de "
+        + _institutional_month_span(
+            snapshot["cobertura_historica"].get("meses_disponiveis"), metadata["ano"]
+        )
+    )
+    st.markdown(f"#### {type_label}")
+    st.caption(period_label)
+    st.caption(
+        f"Versão {report['versao']} · {INSTITUTIONAL_STATUS_LABELS.get(report['status'], report['status'])}"
+    )
+    st.caption(_institutional_covered_period(snapshot))
+    st.caption(f"Data de corte: {format_datetime_br(report['data_corte'])}")
+    st.caption(f"Responsável: {report['criado_por'] or 'Não informado'}")
+
+    labels = ("Distribuídos", "Produção", "Pareceres", "Cotas")
+    values = (
+        summary["distributed"],
+        summary["production"],
+        summary["opinions"],
+        summary["quotas"],
+    )
+    for column, label, value in zip(st.columns(4), labels, values):
+        with column:
+            st.metric(label, _format_integer(value))
+    ratio, duration = st.columns(2)
+    ratio.metric(
+        "Produção/Distribuições", _format_decimal_br(summary["production_rate"], "%")
+    )
+    duration.metric(
+        "Mediana de permanência", _format_decimal_br(summary["median_days"], " dias")
+    )
+
+    st.subheader("Cobertura dos dados")
+    st.caption(_institutional_coverage_text(snapshot))
+    st.subheader("Produção por Procurador")
+    _report_table(
+        st,
+        [
+            {
+                "Procurador": row["procurador"],
+                "Distribuídos": row["distributed"],
+                "Produção": row["production"],
+                "Pareceres": row["opinions"],
+                "Cotas": row["quotas"],
+                "Produção/Distribuições": row["production_rate"],
+                "Mediana de permanência": row["median_days"],
+            }
+            for row in snapshot.get("por_procurador", [])
+        ],
+    )
+    st.subheader("Série do período")
+    _report_table(st, _institutional_snapshot_rows(snapshot))
+    with st.expander("Sobre os dados deste relatório"):
+        for text in snapshot.get("nota_metodologica", {}).values():
+            if isinstance(text, str) and text:
+                st.write(text)
+    if getattr(principal, "administrator", False):
+        with st.expander("Diagnóstico técnico"):
+            st.json({"metadados": metadata, "snapshot": snapshot})
+
+
 def _institutional_period_report(store, principal, tipo, year, quarter=None):
     """Small Phase 1 entry point; rendering never rebuilds a saved snapshot."""
     repository = InstitutionalReportsStore(store)
@@ -1196,24 +1334,32 @@ def _institutional_period_report(store, principal, tipo, year, quarter=None):
     if not current:
         st.caption(f"Nenhum relatório institucional criado para {label}.")
     else:
-        partial = " — acumulado parcial" if current["periodo_parcial"] else ""
+        snapshot = current["snapshot_dados"]
+        title = (
+            "Relatório Trimestral de Produção"
+            if tipo == "TRIMESTRAL"
+            else f"Relatório Anual de Produção — {year}"
+        )
+        period = (
+            f"{quarter}º trimestre de {year}"
+            if tipo == "TRIMESTRAL"
+            else "Acumulado de "
+            + _institutional_month_span(
+                snapshot["cobertura_historica"].get("meses_disponiveis"), year
+            )
+        )
+        st.markdown(f"**{title}**")
+        st.caption(period)
         st.caption(
-            f"Versão {current['versao']} · {current['status']}{partial} · "
+            f"Status: {INSTITUTIONAL_STATUS_LABELS.get(current['status'], current['status'])} · "
+            f"Versão {current['versao']} · "
             f"criado em {format_datetime_br(current['criado_em'])} · "
             f"corte: {format_datetime_br(current['data_corte'])}"
         )
         if st.button(
             "Abrir relatório", key=f"institutional_open_{tipo}_{year}_{quarter}"
         ):
-            st.json(
-                {
-                    "metadados": current["snapshot_dados"]["metadados"],
-                    "status": current["status"],
-                    "versao": current["versao"],
-                    "data_corte": current["data_corte"],
-                    "snapshot": current["snapshot_dados"],
-                }
-            )
+            _institutional_preview(current, principal)
     if not getattr(principal, "administrator", False):
         return
 

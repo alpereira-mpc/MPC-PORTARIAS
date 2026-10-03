@@ -11,6 +11,12 @@ from services.institutional_reports import (
     build_report_snapshot,
     can_finalize,
 )
+from services.relatorios_ui import (
+    INSTITUTIONAL_STATUS_LABELS,
+    _institutional_coverage_text,
+    _institutional_covered_period,
+    _institutional_snapshot_rows,
+)
 from services.tramita_reports import import_reference_reports
 
 
@@ -125,3 +131,51 @@ def test_postgresql_migration_prepares_jsonb_snapshot_and_version_three():
     assert "VALUES(3)" in inspect.getsource(
         PostgresBackend._migrate_institutional_reports
     )
+
+
+def test_institutional_preview_uses_friendly_covered_period_and_frozen_rows():
+    snapshot = {
+        "metadados": {
+            "tipo": "ANUAL",
+            "ano": 2026,
+            "trimestre": None,
+            "data_inicio": "2026-01-01",
+            "data_fim": "2027-01-01",
+            "periodo_parcial": True,
+        },
+        "cobertura_historica": {
+            "meses_disponiveis": list(range(1, 10)),
+            "meses_ausentes": [],
+            "lacunas_no_ano": [],
+        },
+        "serie_mensal": [
+            {
+                "month": 9,
+                "summary": {
+                    "distributed": 169,
+                    "production": 155,
+                    "opinions": 117,
+                    "quotas": 38,
+                    "production_rate": 91.7,
+                    "median_days": 9.1,
+                },
+            }
+        ],
+    }
+    assert _institutional_covered_period(snapshot) == (
+        "Período coberto: 01/01/2026 a 30/09/2026"
+    )
+    assert "janeiro a setembro de 2026" in _institutional_coverage_text(snapshot)
+    assert "sem lacunas" in _institutional_coverage_text(snapshot)
+    assert _institutional_snapshot_rows(snapshot) == [
+        {
+            "Mês": "Setembro",
+            "Distribuídos": 169,
+            "Produção": 155,
+            "Pareceres": 117,
+            "Cotas": 38,
+            "Produção/Distribuições": 91.7,
+            "Mediana de permanência": 9.1,
+        }
+    ]
+    assert INSTITUTIONAL_STATUS_LABELS["FINALIZADO"] == "Finalizado"
