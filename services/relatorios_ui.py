@@ -45,12 +45,55 @@ CHART_COLORS = {
     "Mediana de permanência": "#D62728",
     "Produção/Distribuições": "#17A2B8",
 }
-DAY_COLUMNS = (
+COUNT_COLUMNS = frozenset(
+    {
+        "Entradas",
+        "Saídas",
+        "Distribuídos",
+        "Produção",
+        "Pareceres",
+        "Cotas",
+        "Quantidade",
+        "Processos",
+        "Eventos",
+        "Protocolos",
+        "Estoque",
+        "Processos atualmente distribuídos",
+        "Processos atualmente no MPC-PB",
+        "Procuradores com processos",
+        "Processos há mais de 30 dias",
+        "+30 dias",
+        "+60 dias",
+        "+90 dias",
+    }
+)
+INTEGER_DAY_COLUMNS = frozenset(
+    {
+        "Maior permanência atual",
+        "Dias com Procurador",
+        "Dias com Assistente",
+        "Dias no MPC-PB",
+    }
+)
+FRACTIONAL_DAY_COLUMNS = (
     "Tempo médio até devolução",
     "Tempo médio com procurador",
-    "Maior permanência atual",
+    "Mediana de permanência",
     "Mediana de permanência em dias",
 )
+COUNT_METRICS = frozenset({"Distribuídos", "Produção", "Pareceres", "Cotas"})
+
+
+def _format_integer(value):
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{float(value):.0f}"
+
+
+def _format_decimal_br(value, suffix=""):
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{float(value):.1f}".replace(".", ",") + suffix
 
 
 def style_report_table(rows, theme_name="vermelho"):
@@ -70,15 +113,26 @@ def style_report_table(rows, theme_name="vermelho"):
         * len(row),
         axis=1,
     )
-    day_formatters = {
-        column: "{:.1f}" for column in DAY_COLUMNS if column in frame.columns
+    formatters = {
+        column: _format_integer
+        for column in COUNT_COLUMNS | INTEGER_DAY_COLUMNS
+        if column in frame.columns
     }
+    formatters.update(
+        {
+            column: _format_decimal_br
+            for column in FRACTIONAL_DAY_COLUMNS
+            if column in frame.columns
+        }
+    )
     if "Produção/Distribuições" in frame.columns:
-        day_formatters["Produção/Distribuições"] = "{:.1f}%"
-    if day_formatters:
+        formatters["Produção/Distribuições"] = lambda value: _format_decimal_br(
+            value, "%"
+        )
+    if formatters:
         # Styler changes presentation only: dataframe values stay numeric for
         # Streamlit sorting and any future table interactions.
-        styler = styler.format(day_formatters)
+        styler = styler.format(formatters)
     return styler.set_table_styles(
         [
             {
@@ -171,16 +225,16 @@ def _page_controls(key, offset, rows):
 
 
 def _number(value, suffix=""):
-    return "—" if value is None else f"{value:.1f}{suffix}"
+    return _format_decimal_br(value, suffix)
 
 
 def _period_delta(current, previous, field):
     if previous is None or current[field] is None or previous[field] is None:
         return None
     if field == "production_rate":
-        return f"{current[field] - previous[field]:+.1f} p.p."
+        return f"{current[field] - previous[field]:+.1f}".replace(".", ",") + " p.p."
     if field == "median_days":
-        return f"{current[field] - previous[field]:+.1f} dias"
+        return f"{current[field] - previous[field]:+.1f}".replace(".", ",") + " dias"
     return f"{current[field] - previous[field]:+d}"
 
 
@@ -193,10 +247,10 @@ def _indicator_cards(summary, previous=None):
     }
     section_label("Indicadores")
     values = (
-        ("Distribuídos", summary["distributed"], "distributed"),
-        ("Produção", summary["production"], "production"),
-        ("Pareceres", summary["opinions"], "opinions"),
-        ("Cotas", summary["quotas"], "quotas"),
+        ("Distribuídos", _format_integer(summary["distributed"]), "distributed"),
+        ("Produção", _format_integer(summary["production"]), "production"),
+        ("Pareceres", _format_integer(summary["opinions"]), "opinions"),
+        ("Cotas", _format_integer(summary["quotas"]), "quotas"),
         (
             "Produção/Distribuições",
             _number(summary["production_rate"], "%"),
@@ -295,6 +349,7 @@ def _line_chart(target, rows, fields, y_title, key):
     values = _chart_values(rows, fields)
     if not values:
         return
+    number_format = ".0f" if all(field in COUNT_METRICS for field in fields) else ".1f"
     target.vega_lite_chart(
         values,
         {
@@ -309,7 +364,7 @@ def _line_chart(target, rows, fields, y_title, key):
                 "y": {
                     "field": "Valor",
                     "type": "quantitative",
-                    "axis": {"title": y_title},
+                    "axis": {"title": y_title, "format": number_format},
                 },
                 "color": {
                     "field": "Métrica",
@@ -326,7 +381,7 @@ def _line_chart(target, rows, fields, y_title, key):
                     {
                         "field": "Valor",
                         "type": "quantitative",
-                        "format": ".1f",
+                        "format": number_format,
                         "title": y_title,
                     },
                 ],
@@ -399,7 +454,7 @@ def _procurador_chart(target, rows, fields, stacked, key):
         "x": {
             "field": "Quantidade",
             "type": "quantitative",
-            "axis": {"title": "Quantidade"},
+            "axis": {"title": "Quantidade", "format": ".0f"},
         },
         "color": {
             "field": "Métrica",
@@ -413,7 +468,7 @@ def _procurador_chart(target, rows, fields, stacked, key):
         "tooltip": [
             {"field": "Procurador", "type": "nominal"},
             {"field": "Métrica", "type": "nominal"},
-            {"field": "Quantidade", "type": "quantitative"},
+            {"field": "Quantidade", "type": "quantitative", "format": ".0f"},
         ],
     }
     if not stacked:
@@ -504,7 +559,7 @@ def _quarterly_summary(reports, key_prefix):
                     "y": {
                         "field": "Quantidade",
                         "type": "quantitative",
-                        "axis": {"title": "Quantidade"},
+                        "axis": {"title": "Quantidade", "format": ".0f"},
                     },
                     "color": {
                         "field": "Métrica",
@@ -518,6 +573,15 @@ def _quarterly_summary(reports, key_prefix):
                         },
                         "legend": {"title": None},
                     },
+                    "tooltip": [
+                        {"field": "Trimestre", "type": "nominal"},
+                        {"field": "Métrica", "type": "nominal"},
+                        {
+                            "field": "Quantidade",
+                            "type": "quantitative",
+                            "format": ".0f",
+                        },
+                    ],
                 },
             },
             use_container_width=True,
@@ -672,10 +736,10 @@ def current_view(store, principal=None):
         "Dados atualizados em " + datetime.fromisoformat(snapshot).strftime("%d/%m/%Y")
     )
     values = (
-        sum(row["n"] for row in summary),
-        len(people),
-        f"{days / timed:.1f} dias" if timed else "—",
-        sum(row["over30"] for row in summary),
+        _format_integer(sum(row["n"] for row in summary)),
+        _format_integer(len(people)),
+        _format_decimal_br(days / timed, " dias") if timed else "—",
+        _format_integer(sum(row["over30"] for row in summary)),
     )
     section_label("Indicadores")
     for col, label, value in zip(

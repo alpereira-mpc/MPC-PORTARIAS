@@ -5,8 +5,10 @@ import pandas as pd
 
 from services.relatorios_ui import (
     _chart_values,
+    _format_integer,
     _indicator_cards,
     _line_chart,
+    _number,
     _procurador_chart,
     _temporal_charts,
     annual,
@@ -21,6 +23,13 @@ def test_monthly_view_uses_year_and_month_instead_of_import_competence():
     assert '"Ano"' not in source  # shared year selector owns this control
     assert '"Mês"' in source
     assert "Competência" not in source
+
+
+def test_display_formatters_keep_counts_integer_and_fractional_metrics_precise():
+    assert _format_integer(155.0) == "155"
+    assert _format_integer(184.000000) == "184"
+    assert _number(80.5, "%") == "80,5%"
+    assert _number(7.9, " dias") == "7,9 dias"
 
 
 def test_historical_views_share_period_aggregation_and_required_charts():
@@ -75,6 +84,10 @@ def test_chart_specs_render_grouped_and_stacked_comparisons_without_exceptions()
     ]
     assert "yOffset" in target.calls[1][1]["encoding"]
     assert "yOffset" not in target.calls[2][1]["encoding"]
+    assert target.calls[0][1]["encoding"]["y"]["axis"]["format"] == ".0f"
+    assert target.calls[0][1]["encoding"]["tooltip"][2]["format"] == ".0f"
+    assert target.calls[1][1]["encoding"]["x"]["axis"]["format"] == ".0f"
+    assert target.calls[1][1]["encoding"]["tooltip"][2]["format"] == ".0f"
 
 
 def test_annual_time_series_normalize_nine_numeric_points_and_use_distinct_keys():
@@ -150,6 +163,12 @@ def test_annual_time_series_normalize_nine_numeric_points_and_use_distinct_keys(
     ]
     assert len(set(keys)) == 2
     assert "streamlit-generated" not in repr(target.calls)
+    assert all(
+        call[1]["encoding"]["y"]["axis"]["format"] == ".1f" for call in target.calls
+    )
+    assert all(
+        call[1]["encoding"]["tooltip"][2]["format"] == ".1f" for call in target.calls
+    )
 
 
 def test_indicator_cards_share_methodology_help_and_nonproductive_diagnostic():
