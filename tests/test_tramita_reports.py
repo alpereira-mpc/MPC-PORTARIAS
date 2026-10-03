@@ -375,6 +375,24 @@ def test_historical_import_is_idempotent_and_uses_event_dates(tmp_path):
     assert annual["quotas"] == 529
     assert annual["nonproductive_returns"] == 0
     assert round(annual["median_days"], 1) == 11.0
+    from services.relatorios_ui import _chart_values, _monthly_rows
+
+    chart_rows = _monthly_rows(reports.monthly_reports(2026, list(range(1, 10))))
+    median_series = _chart_values(chart_rows, ["Mediana de permanência"])
+    ratio_series = _chart_values(chart_rows, ["Produção/Distribuições"])
+    assert [round(row["Valor"], 1) for row in median_series] == [
+        19.1,
+        10.0,
+        11.0,
+        8.1,
+        15.2,
+        15.9,
+        7.1,
+        7.9,
+        9.1,
+    ]
+    assert len(ratio_series) == 9
+    assert all(isinstance(row["Valor"], float) for row in ratio_series)
     quarters = [
         reports.period_report(start, end)["summary"]
         for start, end in (

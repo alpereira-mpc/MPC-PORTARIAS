@@ -1,6 +1,10 @@
 import inspect
+from decimal import Decimal
+
+import pandas as pd
 
 from services.relatorios_ui import (
+    _chart_values,
     _indicator_cards,
     _line_chart,
     _procurador_chart,
@@ -71,6 +75,81 @@ def test_chart_specs_render_grouped_and_stacked_comparisons_without_exceptions()
     ]
     assert "yOffset" in target.calls[1][1]["encoding"]
     assert "yOffset" not in target.calls[2][1]["encoding"]
+
+
+def test_annual_time_series_normalize_nine_numeric_points_and_use_distinct_keys():
+    months = [
+        "Janeiro",
+        "Fevereiro",
+        "Março",
+        "Abril",
+        "Maio",
+        "Junho",
+        "Julho",
+        "Agosto",
+        "Setembro",
+    ]
+    rows = [
+        {
+            "Mês": month,
+            "Mediana de permanência": Decimal(str(median)),
+            "Produção/Distribuições": production / distributed * 100,
+        }
+        for month, median, distributed, production in zip(
+            months,
+            (19.1, 10.0, 11.0, 8.1, 15.2, 15.9, 7.1, 7.9, 9.1),
+            (140, 188, 200, 266, 228, 193, 221, 155, 169),
+            (146, 220, 189, 181, 259, 260, 227, 212, 155),
+        )
+    ]
+    median_values = _chart_values(rows, ["Mediana de permanência"])
+    ratio_values = _chart_values(rows, ["Produção/Distribuições"])
+    assert len(median_values) == len(ratio_values) == 9
+    assert [row["Mês"] for row in median_values] == months
+    assert [row["Mês"] for row in ratio_values] == months
+    assert all(isinstance(row["Valor"], float) for row in median_values)
+    assert all(isinstance(row["Valor"], float) for row in ratio_values)
+    assert (
+        _chart_values(
+            [
+                {"Mês": "Outubro", "Produção/Distribuições": None},
+                {"Mês": "Novembro", "Produção/Distribuições": float("nan")},
+                {"Mês": "Dezembro", "Produção/Distribuições": pd.NA},
+            ],
+            ["Produção/Distribuições"],
+        )
+        == []
+    )
+
+    class ChartTarget:
+        def __init__(self):
+            self.calls = []
+
+        def vega_lite_chart(self, values, spec, **kwargs):
+            self.calls.append((values, spec, kwargs))
+
+    target = ChartTarget()
+    _line_chart(
+        target,
+        rows,
+        ["Mediana de permanência"],
+        "Mediana de permanência (dias)",
+        "relatorios_anual_permanencia_2026",
+    )
+    _line_chart(
+        target,
+        rows,
+        ["Produção/Distribuições"],
+        "Produção/Distribuições (%)",
+        "relatorios_anual_relacao_2026",
+    )
+    keys = [call[2]["key"] for call in target.calls]
+    assert keys == [
+        "relatorios_anual_permanencia_2026",
+        "relatorios_anual_relacao_2026",
+    ]
+    assert len(set(keys)) == 2
+    assert "streamlit-generated" not in repr(target.calls)
 
 
 def test_indicator_cards_share_methodology_help_and_nonproductive_diagnostic():

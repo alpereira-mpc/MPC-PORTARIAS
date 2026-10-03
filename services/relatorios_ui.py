@@ -1,6 +1,7 @@
 """Interface administrativa de Relatórios e Indicadores."""
 
 import logging
+import math
 from datetime import date, datetime
 from pathlib import Path
 
@@ -41,6 +42,8 @@ CHART_COLORS = {
     "Produção": "#2CA02C",
     "Pareceres": "#9467BD",
     "Cotas": "#FF7F0E",
+    "Mediana de permanência": "#D62728",
+    "Produção/Distribuições": "#17A2B8",
 }
 DAY_COLUMNS = (
     "Tempo médio até devolução",
@@ -269,12 +272,23 @@ def _render_chart(name, render):
 
 
 def _chart_values(rows, fields):
-    return [
-        {"Mês": row["Mês"], "Métrica": field, "Valor": row[field]}
-        for row in rows
-        for field in fields
-        if row[field] is not None
-    ]
+    values = []
+    for row in rows:
+        for field in fields:
+            value = row[field]
+            if value is None:
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                LOGGER.warning(
+                    "Valor não numérico ignorado no gráfico %s: %r", field, value
+                )
+                continue
+            if not math.isfinite(numeric):
+                continue
+            values.append({"Mês": str(row["Mês"]), "Métrica": field, "Valor": numeric})
+    return values
 
 
 def _line_chart(target, rows, fields, y_title, key):
@@ -309,7 +323,12 @@ def _line_chart(target, rows, fields, y_title, key):
                 "tooltip": [
                     {"field": "Mês", "type": "nominal"},
                     {"field": "Métrica", "type": "nominal"},
-                    {"field": "Valor", "type": "quantitative", "format": ".1f"},
+                    {
+                        "field": "Valor",
+                        "type": "quantitative",
+                        "format": ".1f",
+                        "title": y_title,
+                    },
                 ],
             },
         },
