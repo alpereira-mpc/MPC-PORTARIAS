@@ -1443,9 +1443,10 @@ def _institutional_period_report(store, principal, tipo, year, quarter=None):
             f"corte: {format_datetime_br(current['data_corte'])}"
         )
         open_key = f"institutional_open_{tipo}_{year}_{quarter}"
+        open_state_key = f"{open_key}_visible"
         if st.button("Abrir relatório", key=open_key):
-            st.session_state[open_key] = True
-        if st.session_state.get(open_key):
+            st.session_state[open_state_key] = True
+        if st.session_state.get(open_state_key):
             _institutional_preview(current, principal, store)
     if not getattr(principal, "administrator", False):
         return
@@ -1556,6 +1557,18 @@ def _institutional_period_report(store, principal, tipo, year, quarter=None):
             st.rerun()
 
 
+def _render_institutional_safely(store, principal, tipo, year, quarter=None):
+    """A complementary report must never interrupt the analytical panel."""
+    try:
+        _institutional_period_report(store, principal, tipo, year, quarter)
+    except Exception:
+        LOGGER.exception("Falha ao renderizar relatório institucional")
+        st.error(
+            "Não foi possível carregar o relatório institucional neste momento. "
+            "Os indicadores do período permanecem disponíveis."
+        )
+
+
 def quarterly(store, principal=None):
     reports = TramitaReportsStore(store)
     year, read = _select_year(reports, principal, "rel_quarter_year")
@@ -1612,7 +1625,7 @@ def quarterly(store, principal=None):
             ),
         )["summary"]
     _indicator_cards(report["summary"], previous)
-    _institutional_period_report(store, principal, "TRIMESTRAL", year, quarter)
+    _render_institutional_safely(store, principal, "TRIMESTRAL", year, quarter)
     _temporal_charts(
         monthly, f"relatorios_trimestral_{year}_t{quarter}", compact_period=True
     )
@@ -1705,7 +1718,7 @@ def annual(store, principal=None):
         ("annual_monthly", year), lambda: reports.monthly_reports(year, months)
     )
     _indicator_cards(report["summary"], previous)
-    _institutional_period_report(store, principal, "ANUAL", year)
+    _render_institutional_safely(store, principal, "ANUAL", year)
     _temporal_charts(monthly, f"relatorios_anual_{year}")
     st.subheader("Evolução acumulada no ano")
     st.caption(

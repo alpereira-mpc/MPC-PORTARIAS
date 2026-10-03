@@ -27,6 +27,7 @@ from services.relatorios_ui import (
     _institutional_covered_period,
     _institutional_snapshot_rows,
 )
+import services.relatorios_ui as relatorios_ui
 from services.tramita_reports import import_reference_reports
 
 
@@ -322,3 +323,17 @@ def test_ai_generation_uses_one_structured_call_and_validates_sections(monkeypat
     )
     assert result == expected and model == "modelo-teste"
     assert calls == ["relatorio_conteudo"]
+
+
+def test_institutional_render_error_is_localized_and_does_not_escape(monkeypatch):
+    messages = []
+    monkeypatch.setattr(
+        relatorios_ui,
+        "_institutional_period_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("falha simulada")),
+    )
+    monkeypatch.setattr(relatorios_ui.st, "error", messages.append)
+    relatorios_ui._render_institutional_safely(None, None, "TRIMESTRAL", 2026, 3)
+    assert len(messages) == 1
+    assert "relatório institucional" in messages[0]
+    assert "Não foi possível carregar os indicadores" not in messages[0]
