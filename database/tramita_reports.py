@@ -430,15 +430,23 @@ class TramitaReportsStore:
         an October return out of September even if its original distribution
         appears in the September source file.
         """
+        return self.period_data(start, end)["report"]
+
+    def period_data(self, start, end):
+        """Return one period's approved events and its existing aggregate.
+
+        The UI uses the event set only for visual derivations such as duration
+        bands and heatmaps; it does not persist or reinterpret any event.
+        """
         rows = self._read(
             "SELECT tipo_movimentacao,procurador,data_realizacao,data_devolucao,"
-            "classificacao_producao FROM tramita_movimentacoes m "
+            "classificacao_producao,data_evento,protocolo FROM tramita_movimentacoes m "
             "JOIN tramita_importacoes i ON i.id=m.importacao_id "
             "WHERE m.data_evento>=? AND m.data_evento<? "
             "AND i.origem_historica='REFERENCIA_TRAMITA_2026'",
             (start, end),
         )
-        return self._aggregate_period(rows)
+        return {"report": self._aggregate_period(rows), "events": rows}
 
     @staticmethod
     def _aggregate_period(rows):
@@ -610,6 +618,14 @@ class TramitaReportsStore:
             "SUM(CASE WHEN dias_com_procurador>60 THEN 1 ELSE 0 END) AS over60,"
             "SUM(CASE WHEN dias_com_procurador>90 THEN 1 ELSE 0 END) AS over90 "
             "FROM tramita_estoque WHERE data_snapshot=? GROUP BY procurador",
+            (snapshot,),
+        )
+
+    def stock_visual_data(self, snapshot):
+        """Read the current stock once for derived visual summaries."""
+        return self._read(
+            "SELECT protocolo,procurador,dias_com_procurador "
+            "FROM tramita_estoque WHERE data_snapshot=?",
             (snapshot,),
         )
 

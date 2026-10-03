@@ -375,6 +375,9 @@ def test_historical_import_is_idempotent_and_uses_event_dates(tmp_path):
     assert annual["quotas"] == 529
     assert annual["nonproductive_returns"] == 0
     assert round(annual["median_days"], 1) == 11.0
+    period_data = reports.period_data("2026-01-01", "2027-01-01")
+    assert period_data["report"]["summary"] == annual
+    assert len(period_data["events"]) == 3609
     from services.relatorios_ui import _chart_values, _monthly_rows
 
     chart_rows = _monthly_rows(reports.monthly_reports(2026, list(range(1, 10))))

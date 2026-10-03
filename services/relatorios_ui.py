@@ -18,6 +18,7 @@ from services.tramita_reports import (
     import_reference_reports,
     parse_movements,
     parse_stock,
+    turnaround_days,
 )
 from services.ui_theme import empty_state, filter_mark, kpi_mark, section_label
 
@@ -392,28 +393,55 @@ def _line_chart(target, rows, fields, y_title, key):
     )
 
 
-def _temporal_charts(monthly, key_prefix):
+def _temporal_charts(monthly, key_prefix, compact_period=False):
     rows = _monthly_rows(monthly)
     if not rows:
         return
     st.subheader("Evolução da produção")
     left, right = st.columns(2)
-    _render_chart(
-        key_prefix + "_fluxo",
-        lambda: _line_chart(
-            left,
-            rows,
-            ["Distribuídos", "Produção"],
-            "Quantidade",
+    if compact_period:
+        _render_chart(
             key_prefix + "_fluxo",
-        ),
-    )
-    _render_chart(
-        key_prefix + "_tipos",
-        lambda: _line_chart(
-            right, rows, ["Pareceres", "Cotas"], "Quantidade", key_prefix + "_tipos"
-        ),
-    )
+            lambda: _category_bar_chart(
+                left,
+                rows,
+                "Mês",
+                ["Distribuídos", "Produção"],
+                key_prefix + "_fluxo",
+            ),
+        )
+        _render_chart(
+            key_prefix + "_tipos",
+            lambda: _category_bar_chart(
+                right,
+                rows,
+                "Mês",
+                ["Pareceres", "Cotas"],
+                key_prefix + "_tipos",
+                stacked=True,
+            ),
+        )
+    else:
+        _render_chart(
+            key_prefix + "_fluxo",
+            lambda: _line_chart(
+                left,
+                rows,
+                ["Distribuídos", "Produção"],
+                "Quantidade",
+                key_prefix + "_fluxo",
+            ),
+        )
+        _render_chart(
+            key_prefix + "_tipos",
+            lambda: _line_chart(
+                right,
+                rows,
+                ["Pareceres", "Cotas"],
+                "Quantidade",
+                key_prefix + "_tipos",
+            ),
+        )
     st.subheader("Permanência e relação entre fluxos")
     left, right = st.columns(2)
     _render_chart(
@@ -440,7 +468,16 @@ def _temporal_charts(monthly, key_prefix):
 
 def _procurador_chart(target, rows, fields, stacked, key):
     values = [
-        {"Procurador": row["Procurador"], "Métrica": field, "Quantidade": row[field]}
+        {
+            "Procurador": row["Procurador"],
+            "Métrica": field,
+            "Quantidade": row[field],
+            "Total": (
+                sum(_numeric_chart_value(row[item]) or 0 for item in fields)
+                if stacked
+                else None
+            ),
+        }
         for row in rows
         for field in fields
     ]
@@ -469,6 +506,11 @@ def _procurador_chart(target, rows, fields, stacked, key):
             {"field": "Procurador", "type": "nominal"},
             {"field": "Métrica", "type": "nominal"},
             {"field": "Quantidade", "type": "quantitative", "format": ".0f"},
+            *(
+                [{"field": "Total", "type": "quantitative", "format": ".0f"}]
+                if stacked
+                else []
+            ),
         ],
     }
     if not stacked:
@@ -479,6 +521,481 @@ def _procurador_chart(target, rows, fields, stacked, key):
             "mark": "bar",
             "height": max(240, 34 * len(rows)),
             "encoding": encoding,
+        },
+        use_container_width=True,
+        key=key,
+    )
+
+
+def _numeric_chart_value(value):
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _composition_values(rows, category_field, fields):
+    values = []
+    for row in rows:
+        quantities = {
+            field: _numeric_chart_value(row.get(field)) or 0 for field in fields
+        }
+        total = sum(quantities.values())
+        if not total:
+            continue
+        for field, quantity in quantities.items():
+            values.append(
+                {
+                    category_field: str(row[category_field]),
+                    "Métrica": field,
+                    "Quantidade": quantity,
+                    "Percentual": quantity / total * 100,
+                }
+            )
+    return values
+
+
+def _composition_chart(target, rows, category_field, fields, key, horizontal=False):
+    values = _composition_values(rows, category_field, fields)
+    if not values:
+        return
+    category_encoding = {
+        "field": category_field,
+        "type": "nominal",
+        "sort": [str(row[category_field]) for row in rows],
+        "axis": {"title": category_field, "labelLimit": 0, "labelAngle": 0},
+    }
+    value_encoding = {
+        "field": "Percentual",
+        "type": "quantitative",
+        "stack": "zero",
+        "scale": {"domain": [0, 100]},
+        "axis": {"title": "Participação na produção (%)", "format": ".0f"},
+    }
+    encoding = {
+        "y": category_encoding if horizontal else value_encoding,
+        "x": value_encoding if horizontal else category_encoding,
+        "color": {
+            "field": "Métrica",
+            "type": "nominal",
+            "scale": {
+                "domain": fields,
+                "range": [CHART_COLORS[field] for field in fields],
+            },
+            "legend": {"title": None},
+        },
+        "tooltip": [
+            {"field": category_field, "type": "nominal"},
+            {"field": "Métrica", "type": "nominal"},
+            {"field": "Quantidade", "type": "quantitative", "format": ".0f"},
+            {"field": "Percentual", "type": "quantitative", "format": ".1f"},
+        ],
+    }
+    target.vega_lite_chart(
+        values,
+        {
+            "mark": "bar",
+            "height": max(220, 34 * len(rows)) if horizontal else 260,
+            "encoding": encoding,
+        },
+        use_container_width=True,
+        key=key,
+    )
+
+
+def _category_values(rows, category_field, fields):
+    values = []
+    for row in rows:
+        total = sum(_numeric_chart_value(row.get(field)) or 0 for field in fields)
+        for field in fields:
+            value = _numeric_chart_value(row.get(field))
+            if value is not None:
+                values.append(
+                    {
+                        category_field: str(row[category_field]),
+                        "Métrica": field,
+                        "Quantidade": value,
+                        "Total": total,
+                    }
+                )
+    return values
+
+
+def _category_bar_chart(target, rows, category_field, fields, key, stacked=False):
+    values = _category_values(rows, category_field, fields)
+    if not values:
+        return
+    encoding = {
+        "x": {
+            "field": category_field,
+            "type": "nominal",
+            "sort": [str(row[category_field]) for row in rows],
+            "axis": {"title": category_field, "labelAngle": 0},
+        },
+        "y": {
+            "field": "Quantidade",
+            "type": "quantitative",
+            "axis": {"title": "Quantidade", "format": ".0f"},
+        },
+        "color": {
+            "field": "Métrica",
+            "type": "nominal",
+            "scale": {
+                "domain": fields,
+                "range": [CHART_COLORS[field] for field in fields],
+            },
+            "legend": {"title": None},
+        },
+        "tooltip": [
+            {"field": category_field, "type": "nominal"},
+            {"field": "Métrica", "type": "nominal"},
+            {"field": "Quantidade", "type": "quantitative", "format": ".0f"},
+            {"field": "Total", "type": "quantitative", "format": ".0f"},
+        ],
+    }
+    if not stacked:
+        encoding["xOffset"] = {"field": "Métrica"}
+    target.vega_lite_chart(
+        values,
+        {"mark": "bar", "height": 260, "encoding": encoding},
+        use_container_width=True,
+        key=key,
+    )
+
+
+HISTORICAL_DURATION_BANDS = (
+    ("Até 7 dias", 7),
+    ("8 a 15 dias", 15),
+    ("16 a 30 dias", 30),
+    ("31 a 60 dias", 60),
+    ("Acima de 60 dias", None),
+)
+
+
+def _productive_event_rows(events):
+    rows = []
+    for event in events:
+        if event["tipo_movimentacao"] != "SAIDA" or event[
+            "classificacao_producao"
+        ] not in ("PARECER", "COTA"):
+            continue
+        days = _numeric_chart_value(turnaround_days(event))
+        if days is None:
+            continue
+        rows.append({**event, "dias": days})
+    return rows
+
+
+def _duration_distribution(events):
+    counts = {label: 0 for label, _ in HISTORICAL_DURATION_BANDS}
+    for event in _productive_event_rows(events):
+        for label, upper_bound in HISTORICAL_DURATION_BANDS:
+            if upper_bound is None or event["dias"] <= upper_bound:
+                counts[label] += 1
+                break
+    total = sum(counts.values())
+    return [
+        {
+            "Faixa": label,
+            "Produções": count,
+            "Percentual": count / total * 100 if total else None,
+        }
+        for label, count in counts.items()
+    ]
+
+
+def _duration_chart(target, events, key):
+    values = _duration_distribution(events)
+    if not any(row["Produções"] for row in values):
+        return
+    target.vega_lite_chart(
+        values,
+        {
+            "mark": "bar",
+            "encoding": {
+                "x": {
+                    "field": "Faixa",
+                    "type": "ordinal",
+                    "sort": [label for label, _ in HISTORICAL_DURATION_BANDS],
+                    "axis": {"title": "Faixa de permanência", "labelAngle": 0},
+                },
+                "y": {
+                    "field": "Produções",
+                    "type": "quantitative",
+                    "axis": {"title": "Quantidade de produções", "format": ".0f"},
+                },
+                "color": {"value": CHART_COLORS["Mediana de permanência"]},
+                "tooltip": [
+                    {"field": "Faixa", "type": "nominal"},
+                    {"field": "Produções", "type": "quantitative", "format": ".0f"},
+                    {"field": "Percentual", "type": "quantitative", "format": ".1f"},
+                ],
+            },
+        },
+        use_container_width=True,
+        key=key,
+    )
+
+
+def _distinct_protocols(events):
+    return len(
+        {
+            event["protocolo"]
+            for event in events
+            if event["tipo_movimentacao"] == "ENTRADA" and event["protocolo"]
+        }
+    )
+
+
+def _cumulative_monthly_rows(monthly):
+    distributed = production = 0
+    rows = []
+    for row in _monthly_rows(monthly):
+        distributed += row["Distribuídos"]
+        production += row["Produção"]
+        rows.append(
+            {
+                "Mês": row["Mês"],
+                "Distribuídos": distributed,
+                "Produção": production,
+            }
+        )
+    return rows
+
+
+def _production_heatmap(target, events, key):
+    by_cell = {}
+    for event in _productive_event_rows(events):
+        month = MONTHS[int(event["data_evento"][5:7]) - 1][:3]
+        procurador = event["procurador"] or "Não identificado"
+        cell = by_cell.setdefault(
+            (month, procurador),
+            {
+                "Mês": month,
+                "Procurador": procurador,
+                "Produção": 0,
+                "Pareceres": 0,
+                "Cotas": 0,
+            },
+        )
+        cell["Produção"] += 1
+        cell[
+            "Pareceres" if event["classificacao_producao"] == "PARECER" else "Cotas"
+        ] += 1
+    values = list(by_cell.values())
+    if not values:
+        return
+    people = sorted(
+        {row["Procurador"] for row in values},
+        key=lambda name: (
+            -sum(row["Produção"] for row in values if row["Procurador"] == name),
+            name,
+        ),
+    )
+    months = [month[:3] for month in MONTHS]
+    target.vega_lite_chart(
+        values,
+        {
+            "mark": "rect",
+            "height": max(220, 30 * len(people)),
+            "encoding": {
+                "x": {
+                    "field": "Mês",
+                    "type": "ordinal",
+                    "sort": months,
+                    "axis": {"title": "Mês", "labelAngle": 0},
+                },
+                "y": {
+                    "field": "Procurador",
+                    "type": "nominal",
+                    "sort": people,
+                    "axis": {"title": "Procurador", "labelLimit": 0},
+                },
+                "color": {
+                    "field": "Produção",
+                    "type": "quantitative",
+                    "scale": {"range": ["#E8F3EC", CHART_COLORS["Produção"]]},
+                    "legend": {"title": "Produção"},
+                },
+                "tooltip": [
+                    {"field": "Procurador", "type": "nominal"},
+                    {"field": "Mês", "type": "nominal"},
+                    {"field": "Produção", "type": "quantitative", "format": ".0f"},
+                    {"field": "Pareceres", "type": "quantitative", "format": ".0f"},
+                    {"field": "Cotas", "type": "quantitative", "format": ".0f"},
+                ],
+            },
+        },
+        use_container_width=True,
+        key=key,
+    )
+
+
+STOCK_DURATION_BANDS = (
+    ("0 a 15 dias", 15),
+    ("16 a 30 dias", 30),
+    ("31 a 60 dias", 60),
+    ("61 a 90 dias", 90),
+    ("91 a 120 dias", 120),
+    ("Acima de 120 dias", None),
+)
+STOCK_BAND_COLORS = (
+    CHART_COLORS["Distribuídos"],
+    CHART_COLORS["Produção"],
+    CHART_COLORS["Pareceres"],
+    CHART_COLORS["Cotas"],
+    CHART_COLORS["Mediana de permanência"],
+    CHART_COLORS["Produção/Distribuições"],
+)
+
+
+def _stock_band(days):
+    number = _numeric_chart_value(days)
+    if number is None:
+        return None
+    for label, upper_bound in STOCK_DURATION_BANDS:
+        if upper_bound is None or number <= upper_bound:
+            return label
+    return None
+
+
+def _stock_band_rows(stock_rows):
+    counts = {label: 0 for label, _ in STOCK_DURATION_BANDS}
+    for row in stock_rows:
+        band = _stock_band(row["dias_com_procurador"])
+        if band:
+            counts[band] += 1
+    return [{"Faixa": label, "Processos": count} for label, count in counts.items()]
+
+
+def _stock_band_chart(target, stock_rows, key):
+    values = _stock_band_rows(stock_rows)
+    if not any(row["Processos"] for row in values):
+        return
+    target.vega_lite_chart(
+        values,
+        {
+            "mark": "bar",
+            "encoding": {
+                "x": {
+                    "field": "Faixa",
+                    "type": "ordinal",
+                    "sort": [label for label, _ in STOCK_DURATION_BANDS],
+                    "axis": {"title": "Faixa de permanência", "labelAngle": 0},
+                },
+                "y": {
+                    "field": "Processos",
+                    "type": "quantitative",
+                    "axis": {"title": "Quantidade de processos", "format": ".0f"},
+                },
+                "color": {"value": CHART_COLORS["Mediana de permanência"]},
+                "tooltip": [
+                    {"field": "Faixa", "type": "nominal"},
+                    {"field": "Processos", "type": "quantitative", "format": ".0f"},
+                ],
+            },
+        },
+        use_container_width=True,
+        key=key,
+    )
+
+
+def _stock_by_procurador_chart(target, stock_rows, key):
+    counts = {}
+    for row in stock_rows:
+        band = _stock_band(row["dias_com_procurador"])
+        if band and row["procurador"]:
+            identifier = (row["procurador"], band)
+            counts[identifier] = counts.get(identifier, 0) + 1
+    values = [
+        {"Procurador": procurador, "Faixa": band, "Processos": count}
+        for (procurador, band), count in counts.items()
+    ]
+    if not values:
+        return
+    people = sorted({row["Procurador"] for row in values})
+    target.vega_lite_chart(
+        values,
+        {
+            "mark": "bar",
+            "height": max(240, 34 * len(people)),
+            "encoding": {
+                "y": {
+                    "field": "Procurador",
+                    "type": "nominal",
+                    "sort": people,
+                    "axis": {"title": "Procurador", "labelLimit": 0},
+                },
+                "x": {
+                    "field": "Processos",
+                    "type": "quantitative",
+                    "axis": {"title": "Quantidade de processos", "format": ".0f"},
+                },
+                "color": {
+                    "field": "Faixa",
+                    "type": "nominal",
+                    "scale": {
+                        "domain": [label for label, _ in STOCK_DURATION_BANDS],
+                        "range": list(STOCK_BAND_COLORS),
+                    },
+                    "legend": {"title": None},
+                },
+                "tooltip": [
+                    {"field": "Procurador", "type": "nominal"},
+                    {"field": "Faixa", "type": "nominal"},
+                    {"field": "Processos", "type": "quantitative", "format": ".0f"},
+                ],
+            },
+        },
+        use_container_width=True,
+        key=key,
+    )
+
+
+def _stock_top_chart(target, stock_rows, key):
+    values = [
+        {
+            "Protocolo": row["protocolo"],
+            "Dias com Procurador": _numeric_chart_value(row["dias_com_procurador"]),
+        }
+        for row in stock_rows
+        if _numeric_chart_value(row["dias_com_procurador"]) is not None
+    ]
+    values = sorted(values, key=lambda row: row["Dias com Procurador"], reverse=True)[
+        :10
+    ]
+    if not values:
+        return
+    target.vega_lite_chart(
+        values,
+        {
+            "mark": "bar",
+            "height": max(240, 30 * len(values)),
+            "encoding": {
+                "y": {
+                    "field": "Protocolo",
+                    "type": "nominal",
+                    "sort": [row["Protocolo"] for row in values],
+                    "axis": {"title": "Protocolo", "labelLimit": 0},
+                },
+                "x": {
+                    "field": "Dias com Procurador",
+                    "type": "quantitative",
+                    "axis": {"title": "Dias com Procurador", "format": ".0f"},
+                },
+                "color": {"value": CHART_COLORS["Mediana de permanência"]},
+                "tooltip": [
+                    {"field": "Protocolo", "type": "nominal"},
+                    {
+                        "field": "Dias com Procurador",
+                        "type": "quantitative",
+                        "format": ".0f",
+                    },
+                ],
+            },
         },
         use_container_width=True,
         key=key,
@@ -511,6 +1028,18 @@ def _procurador_comparison(report, key_prefix):
             ["Pareceres", "Cotas"],
             True,
             key_prefix + "_procuradores_tipos",
+        ),
+    )
+    st.subheader("Composição percentual da produção por Procurador")
+    _render_chart(
+        key_prefix + "_procuradores_percentual",
+        lambda: _composition_chart(
+            st,
+            rows,
+            "Procurador",
+            ["Pareceres", "Cotas"],
+            key_prefix + "_procuradores_percentual",
+            horizontal=True,
         ),
     )
 
@@ -589,6 +1118,17 @@ def _quarterly_summary(reports, key_prefix):
         )
 
     _render_chart(key_prefix + "_resumo_trimestres", render)
+    _render_chart(
+        key_prefix + "_resumo_trimestres_tipos",
+        lambda: _category_bar_chart(
+            st,
+            rows,
+            "Trimestre",
+            ["Pareceres", "Cotas"],
+            key_prefix + "_resumo_trimestres_tipos",
+            stacked=True,
+        ),
+    )
 
 
 def _select_year(reports, principal, key):
@@ -617,11 +1157,28 @@ def production(store, principal=None):
         format_func=lambda value: MONTHS[value - 1],
         key="rel_prod_month",
     )
-    report = read(
-        ("period", year, month), lambda: reports.monthly_reports(year, [month])[0]
+    period = read(
+        ("period_data", year, month),
+        lambda: reports.period_data(
+            f"{year}-{month:02d}-01",
+            f"{year + (month == 12):04d}-{1 if month == 12 else month + 1:02d}-01",
+        ),
     )
+    report, events = period["report"], period["events"]
     _indicator_cards(report["summary"])
+    st.caption(
+        f"Protocolos distintos no período: {_format_integer(_distinct_protocols(events))}."
+    )
     _procurador_comparison(report, f"relatorios_mensal_{year}_{month:02d}")
+    st.subheader("Distribuição da permanência")
+    _render_chart(
+        f"relatorios_mensal_{year}_{month:02d}_permanencia_faixas",
+        lambda: _duration_chart(
+            st,
+            events,
+            f"relatorios_mensal_{year}_{month:02d}_permanencia_faixas",
+        ),
+    )
 
 
 def quarterly(store, principal=None):
@@ -647,13 +1204,14 @@ def quarterly(store, principal=None):
         ("quarter_monthly", year, quarter),
         lambda: reports.monthly_reports(year, months),
     )
-    report = read(
-        ("quarter", year, quarter),
-        lambda: reports.period_report(
+    period = read(
+        ("quarter_data", year, quarter),
+        lambda: reports.period_data(
             f"{year}-{months[0]:02d}-01",
             f"{year + (months[-1] == 12):04d}-{1 if months[-1] == 12 else months[-1] + 1:02d}-01",
         ),
     )
+    report, events = period["report"], period["events"]
     previous = None
     prior_year = year if quarter > 1 else year - 1
     prior_quarter = quarter - 1 if quarter > 1 else 4
@@ -679,8 +1237,63 @@ def quarterly(store, principal=None):
             ),
         )["summary"]
     _indicator_cards(report["summary"], previous)
-    _temporal_charts(monthly, f"relatorios_trimestral_{year}_t{quarter}")
+    _temporal_charts(
+        monthly, f"relatorios_trimestral_{year}_t{quarter}", compact_period=True
+    )
+    st.subheader("Perfil mensal da produção")
+    _render_chart(
+        f"relatorios_trimestral_{year}_t{quarter}_perfil_mensal",
+        lambda: _composition_chart(
+            st,
+            _monthly_rows(monthly),
+            "Mês",
+            ["Pareceres", "Cotas"],
+            f"relatorios_trimestral_{year}_t{quarter}_perfil_mensal",
+        ),
+    )
+    st.subheader("Distribuição da permanência")
+    _render_chart(
+        f"relatorios_trimestral_{year}_t{quarter}_permanencia_faixas",
+        lambda: _duration_chart(
+            st,
+            events,
+            f"relatorios_trimestral_{year}_t{quarter}_permanencia_faixas",
+        ),
+    )
     _procurador_comparison(report, f"relatorios_trimestral_{year}_t{quarter}")
+    if previous:
+        comparison_rows = [
+            {
+                "Trimestre": f"{prior_quarter}º trimestre",
+                "Distribuídos": previous["distributed"],
+                "Produção": previous["production"],
+                "Pareceres": previous["opinions"],
+                "Cotas": previous["quotas"],
+            },
+            {
+                "Trimestre": f"{quarter}º trimestre",
+                "Distribuídos": report["summary"]["distributed"],
+                "Produção": report["summary"]["production"],
+                "Pareceres": report["summary"]["opinions"],
+                "Cotas": report["summary"]["quotas"],
+            },
+        ]
+        st.subheader("Comparação com o trimestre anterior")
+        _render_chart(
+            f"relatorios_trimestral_{year}_t{quarter}_comparacao_anterior",
+            lambda: _category_bar_chart(
+                st,
+                comparison_rows,
+                "Trimestre",
+                ["Distribuídos", "Produção", "Pareceres", "Cotas"],
+                f"relatorios_trimestral_{year}_t{quarter}_comparacao_anterior",
+            ),
+        )
+        st.caption(
+            "Mediana de permanência: "
+            f"{_number(previous['median_days'], ' dias')} no trimestre anterior e "
+            f"{_number(report['summary']['median_days'], ' dias')} no trimestre selecionado."
+        )
 
 
 def annual(store, principal=None):
@@ -701,10 +1314,11 @@ def annual(store, principal=None):
             "Cobertura histórica incompleta: existem meses sem dados entre janeiro e "
             f"{MONTHS[coverage['last_month'] - 1].lower()}."
         )
-    report = read(
-        ("annual", year),
-        lambda: reports.period_report(f"{year}-01-01", f"{year + 1}-01-01"),
+    period = read(
+        ("annual_data", year),
+        lambda: reports.period_data(f"{year}-01-01", f"{year + 1}-01-01"),
     )
+    report, events = period["report"], period["events"]
     previous = None
     if reports.months_for_year(year - 1):
         previous = read(
@@ -716,9 +1330,60 @@ def annual(store, principal=None):
     )
     _indicator_cards(report["summary"], previous)
     _temporal_charts(monthly, f"relatorios_anual_{year}")
+    st.subheader("Evolução acumulada no ano")
+    st.caption(
+        "As séries representam volumes acumulados de distribuições e produção; a diferença entre elas não corresponde ao estoque processual."
+    )
+    _render_chart(
+        f"relatorios_anual_{year}_acumulado",
+        lambda: _line_chart(
+            st,
+            _cumulative_monthly_rows(monthly),
+            ["Distribuídos", "Produção"],
+            "Quantidade acumulada",
+            f"relatorios_anual_{year}_acumulado",
+        ),
+    )
+    st.subheader("Composição mensal da produção")
+    composition_left, composition_right = st.columns(2)
+    _render_chart(
+        f"relatorios_anual_{year}_composicao_mensal",
+        lambda: _category_bar_chart(
+            composition_left,
+            _monthly_rows(monthly),
+            "Mês",
+            ["Pareceres", "Cotas"],
+            f"relatorios_anual_{year}_composicao_mensal",
+            stacked=True,
+        ),
+    )
+    _render_chart(
+        f"relatorios_anual_{year}_perfil_mensal",
+        lambda: _composition_chart(
+            composition_right,
+            _monthly_rows(monthly),
+            "Mês",
+            ["Pareceres", "Cotas"],
+            f"relatorios_anual_{year}_perfil_mensal",
+        ),
+    )
     quarterly = read(("annual_quarters", year), lambda: reports.quarterly_reports(year))
     _quarterly_summary(quarterly, f"relatorios_anual_{year}")
     _procurador_comparison(report, f"relatorios_anual_{year}")
+    st.subheader("Mapa mensal da produção")
+    _render_chart(
+        f"relatorios_anual_{year}_mapa_producao",
+        lambda: _production_heatmap(
+            st, events, f"relatorios_anual_{year}_mapa_producao"
+        ),
+    )
+    st.subheader("Distribuição da permanência no ano")
+    _render_chart(
+        f"relatorios_anual_{year}_permanencia_faixas",
+        lambda: _duration_chart(
+            st, events, f"relatorios_anual_{year}_permanencia_faixas"
+        ),
+    )
 
 
 def current_view(store, principal=None):
@@ -778,6 +1443,31 @@ def current_view(store, principal=None):
             for row in sorted(summary, key=lambda row: row["procurador"])
             if row["procurador"]
         ],
+    )
+    stock_visuals = read(
+        ("stock_visual_data", snapshot), lambda: reports.stock_visual_data(snapshot)
+    )
+    st.subheader("Permanência do estoque atual")
+    _render_chart(
+        "relatorios_estoque_faixas",
+        lambda: _stock_band_chart(st, stock_visuals, "relatorios_estoque_faixas"),
+    )
+    st.subheader("Permanência por Procurador")
+    st.caption(
+        "O gráfico representa a permanência dos processos atualmente vinculados a cada Procurador e não constitui indicador isolado de desempenho."
+    )
+    _render_chart(
+        "relatorios_estoque_por_procurador",
+        lambda: _stock_by_procurador_chart(
+            st, stock_visuals, "relatorios_estoque_por_procurador"
+        ),
+    )
+    st.subheader("Maiores permanências atuais")
+    _render_chart(
+        "relatorios_estoque_maiores_permanencias",
+        lambda: _stock_top_chart(
+            st, stock_visuals, "relatorios_estoque_maiores_permanencias"
+        ),
     )
     fields = (
         ("natureza", "Natureza", "subcategoria"),

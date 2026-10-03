@@ -5,11 +5,21 @@ import pandas as pd
 
 from services.relatorios_ui import (
     _chart_values,
+    _composition_chart,
+    _composition_values,
+    _cumulative_monthly_rows,
+    _duration_chart,
+    _duration_distribution,
     _format_integer,
     _indicator_cards,
     _line_chart,
     _number,
     _procurador_chart,
+    _production_heatmap,
+    _stock_band_chart,
+    _stock_band_rows,
+    _stock_by_procurador_chart,
+    _stock_top_chart,
     _temporal_charts,
     annual,
     production,
@@ -34,7 +44,7 @@ def test_display_formatters_keep_counts_integer_and_fractional_metrics_precise()
 
 def test_historical_views_share_period_aggregation_and_required_charts():
     source = inspect.getsource(production)
-    assert "reports.monthly_reports(year, [month])" in source
+    assert "reports.period_data" in source
     assert "period_report" in inspect.getsource(quarterly)
     assert "_temporal_charts" in inspect.getsource(quarterly)
     assert "_temporal_charts" in inspect.getsource(annual)
@@ -88,6 +98,107 @@ def test_chart_specs_render_grouped_and_stacked_comparisons_without_exceptions()
     assert target.calls[0][1]["encoding"]["tooltip"][2]["format"] == ".0f"
     assert target.calls[1][1]["encoding"]["x"]["axis"]["format"] == ".0f"
     assert target.calls[1][1]["encoding"]["tooltip"][2]["format"] == ".0f"
+
+
+def test_new_visual_derivations_use_numeric_reusable_period_data():
+    class ChartTarget:
+        def __init__(self):
+            self.calls = []
+
+        def vega_lite_chart(self, values, spec, **kwargs):
+            self.calls.append((values, spec, kwargs))
+
+    monthly = [
+        {
+            "month": 1,
+            "summary": {
+                "distributed": 10,
+                "production": 8,
+                "opinions": 6,
+                "quotas": 2,
+                "median_days": 7.5,
+                "production_rate": 80.0,
+            },
+        },
+        {
+            "month": 2,
+            "summary": {
+                "distributed": 20,
+                "production": 18,
+                "opinions": 9,
+                "quotas": 9,
+                "median_days": 8.0,
+                "production_rate": 90.0,
+            },
+        },
+    ]
+    events = [
+        {
+            "tipo_movimentacao": "SAIDA",
+            "classificacao_producao": "PARECER",
+            "procurador": "Procurador A",
+            "protocolo": "1/2026",
+            "data_evento": "2026-01-09 10:00",
+            "data_realizacao": "2026-01-02 10:00",
+            "data_devolucao": "2026-01-09 10:00",
+        },
+        {
+            "tipo_movimentacao": "SAIDA",
+            "classificacao_producao": "COTA",
+            "procurador": "Procurador B",
+            "protocolo": "2/2026",
+            "data_evento": "2026-02-20 10:00",
+            "data_realizacao": "2026-01-10 10:00",
+            "data_devolucao": "2026-02-20 10:00",
+        },
+    ]
+    composition = _composition_values(
+        [
+            {"Mês": "Janeiro", "Pareceres": 6, "Cotas": 2},
+            {"Mês": "Fevereiro", "Pareceres": 9, "Cotas": 9},
+        ],
+        "Mês",
+        ["Pareceres", "Cotas"],
+    )
+    assert [row["Percentual"] for row in composition[:2]] == [75.0, 25.0]
+    assert _cumulative_monthly_rows(monthly) == [
+        {"Mês": "Janeiro", "Distribuídos": 10, "Produção": 8},
+        {"Mês": "Fevereiro", "Distribuídos": 30, "Produção": 26},
+    ]
+    durations = _duration_distribution(events)
+    assert durations[0]["Produções"] == 1
+    assert durations[3]["Produções"] == 1
+
+    target = ChartTarget()
+    rows = [{"Mês": "Janeiro", "Pareceres": 6, "Cotas": 2}]
+    _composition_chart(target, rows, "Mês", ["Pareceres", "Cotas"], "percentual")
+    _duration_chart(target, events, "faixas")
+    _production_heatmap(target, events, "heatmap")
+    stock = [
+        {
+            "protocolo": "1/2026",
+            "procurador": "Procurador A",
+            "dias_com_procurador": 10,
+        },
+        {
+            "protocolo": "2/2026",
+            "procurador": "Procurador B",
+            "dias_com_procurador": 140,
+        },
+    ]
+    assert _stock_band_rows(stock)[0]["Processos"] == 1
+    assert _stock_band_rows(stock)[-1]["Processos"] == 1
+    _stock_band_chart(target, stock, "estoque_faixas")
+    _stock_by_procurador_chart(target, stock, "estoque_procuradores")
+    _stock_top_chart(target, stock, "estoque_top")
+    assert [call[2]["key"] for call in target.calls] == [
+        "percentual",
+        "faixas",
+        "heatmap",
+        "estoque_faixas",
+        "estoque_procuradores",
+        "estoque_top",
+    ]
 
 
 def test_annual_time_series_normalize_nine_numeric_points_and_use_distinct_keys():
