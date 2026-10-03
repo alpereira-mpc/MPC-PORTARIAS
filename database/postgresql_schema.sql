@@ -266,6 +266,7 @@ CREATE TABLE IF NOT EXISTS tramita_importacoes (
     hash_arquivo TEXT NOT NULL UNIQUE, quantidade_registros INTEGER NOT NULL,
     quantidade_inserida INTEGER NOT NULL DEFAULT 0,
     quantidade_duplicada INTEGER NOT NULL DEFAULT 0,
+    origem_historica TEXT NOT NULL DEFAULT 'LEGADO',
     importado_em TEXT NOT NULL, importado_por TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'CONCLUIDA'
 );

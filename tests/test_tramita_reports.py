@@ -317,7 +317,11 @@ def test_historical_schema_upgrade_is_idempotent_for_existing_sqlite_database(tm
             "procurador_original",
             "chave_evento",
         } <= movement_columns
-        assert {"quantidade_inserida", "quantidade_duplicada"} <= import_columns
+    assert {
+        "quantidade_inserida",
+        "quantidade_duplicada",
+        "origem_historica",
+    } <= import_columns
 
 
 def test_indicators_and_aging_rules():
@@ -384,10 +388,18 @@ def test_historical_import_is_idempotent_and_uses_event_dates(tmp_path):
     assert [row["opinions"] for row in quarters] == [398, 498, 424]
     assert [row["quotas"] for row in quarters] == [157, 202, 170]
     assert [round(row["median_days"], 1) for row in quarters] == [11.2, 14.1, 7.8]
+    assert reports.months_for_year(2026) == list(range(1, 10))
+    assert reports.historical_coverage(2026)["complete_through_last_month"]
+    grouped_quarters = reports.quarterly_reports(2026, (1, 2, 3))
+    assert [row["summary"]["distributed"] for row in grouped_quarters] == [
+        528,
+        687,
+        545,
+    ]
 
     second = import_reference_reports(store, source, "admin@tce.pb.gov.br")
     assert all(item["already_imported"] for item in second)
-    assert sum(item["inserted"] for item in second) == 3609
+    assert sum(item["inserted"] for item in second) == 0
     with store.connection(read_only=True) as c:
         assert (
             c.execute("SELECT COUNT(*) FROM tramita_movimentacoes").fetchone()[0]
@@ -625,3 +637,115 @@ def test_reports_use_module_permission_and_imports_remain_administrator_only():
     assert has_permission(administrator, "relatorios")
     with pytest.raises(ValueError, match="administradores"):
         imports(None, authorized)
+
+
+def test_reconciliation_repairs_events_missing_from_an_already_recorded_hash(tmp_path):
+    reports = TramitaReportsStore(Store(tmp_path / "tramita.db"))
+    row = {
+        "protocolo": "123/2026",
+        "procurador": "Procurador A",
+        "data_realizacao": "2026-09-01 09:00",
+        "motivo_distribuicao": "Ao Procurador",
+        "data_devolucao": None,
+        "motivo_devolucao": "",
+    }
+    first = reports.import_historical_rows(
+        kind="ENTRADAS",
+        file_name="distribuidosmes9.xls",
+        file_hash="reconcile-missing-event",
+        actor="admin",
+        source_competence="2026-09",
+        rows=[row],
+    )
+    assert first["inserted"] == 1
+    with reports.store.connection() as connection:
+        connection.execute("DELETE FROM tramita_movimentacoes")
+    repaired = reports.import_historical_rows(
+        kind="ENTRADAS",
+        file_name="distribuidosmes9.xls",
+        file_hash="reconcile-missing-event",
+        actor="admin",
+        source_competence="2026-09",
+        rows=[row],
+    )
+    assert repaired["already_imported"]
+    assert repaired["inserted"] == 1
+    assert reports.months_for_year(2026) == [9]
+    repeated = reports.import_historical_rows(
+        kind="ENTRADAS",
+        file_name="distribuidosmes9.xls",
+        file_hash="reconcile-missing-event",
+        actor="admin",
+        source_competence="2026-09",
+        rows=[row],
+    )
+    assert repeated["inserted"] == 0
+
+
+def test_historical_indicators_exclude_unverified_legacy_imports(tmp_path):
+    reports = TramitaReportsStore(Store(tmp_path / "tramita.db"))
+    reference = {
+        "protocolo": "referencia/2026",
+        "procurador": "Procurador A",
+        "data_realizacao": "2026-08-01 09:00",
+        "motivo_distribuicao": "Ao Procurador",
+        "data_devolucao": None,
+        "motivo_devolucao": "",
+    }
+    reports.import_historical_rows(
+        kind="ENTRADAS",
+        file_name="distribuidosmes8.xls",
+        file_hash="reference-entry",
+        actor="admin",
+        source_competence="2026-08",
+        rows=[reference],
+    )
+    reports.import_rows(
+        kind="ENTRADAS",
+        file_name="legado.xls",
+        file_hash="legacy-entry",
+        actor="admin",
+        competence="2026-08",
+        rows=[
+            {
+                **reference,
+                "protocolo": "legado/2026",
+                "data_realizacao": "2026-08-02 09:00",
+            }
+        ],
+    )
+    assert reports.months_for_year(2026) == [8]
+    assert (
+        reports.period_report("2026-08-01", "2026-09-01")["summary"]["distributed"] == 1
+    )
+    audit = reports.historical_audit(2026)
+    assert {row["origem_historica"] for row in audit} == {
+        "REFERENCIA_TRAMITA_2026",
+        "LEGADO",
+    }
+
+
+def test_historical_coverage_reports_gaps_between_january_and_latest_month(tmp_path):
+    reports = TramitaReportsStore(Store(tmp_path / "tramita.db"))
+    for month in (8, 9):
+        reports.import_historical_rows(
+            kind="ENTRADAS",
+            file_name=f"distribuidosmes{month}.xls",
+            file_hash=f"coverage-{month}",
+            actor="admin",
+            source_competence=f"2026-{month:02d}",
+            rows=[
+                {
+                    "protocolo": f"{month}/2026",
+                    "procurador": "Procurador A",
+                    "data_realizacao": f"2026-{month:02d}-01 09:00",
+                    "motivo_distribuicao": "Ao Procurador",
+                    "data_devolucao": None,
+                    "motivo_devolucao": "",
+                }
+            ],
+        )
+    coverage = reports.historical_coverage(2026)
+    assert coverage["months"] == [8, 9]
+    assert coverage["missing_months"] == list(range(1, 8))
+    assert not coverage["complete_through_last_month"]

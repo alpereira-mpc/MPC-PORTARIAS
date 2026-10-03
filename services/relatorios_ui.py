@@ -36,6 +36,12 @@ MONTHS = (
     "Dezembro",
 )
 LOGGER = logging.getLogger(__name__)
+CHART_COLORS = {
+    "Distribuídos": "#1F77B4",
+    "Produção": "#2CA02C",
+    "Pareceres": "#9467BD",
+    "Cotas": "#FF7F0E",
+}
 DAY_COLUMNS = (
     "Tempo médio até devolução",
     "Tempo médio com procurador",
@@ -253,47 +259,253 @@ def _monthly_rows(reports):
     ]
 
 
-def _temporal_charts(monthly):
+def _render_chart(name, render):
+    """Keep a chart fault local while retaining actionable server diagnostics."""
+    try:
+        render()
+    except Exception:
+        LOGGER.exception("Falha ao renderizar o gráfico de relatórios: %s", name)
+        st.warning("Não foi possível exibir este gráfico no momento.")
+
+
+def _chart_values(rows, fields):
+    return [
+        {"Mês": row["Mês"], "Métrica": field, "Valor": row[field]}
+        for row in rows
+        for field in fields
+        if row[field] is not None
+    ]
+
+
+def _line_chart(target, rows, fields, y_title, key):
+    values = _chart_values(rows, fields)
+    if not values:
+        return
+    target.vega_lite_chart(
+        values,
+        {
+            "mark": {"type": "line", "point": True},
+            "encoding": {
+                "x": {
+                    "field": "Mês",
+                    "type": "ordinal",
+                    "sort": [row["Mês"] for row in rows],
+                    "axis": {"title": "Mês", "labelAngle": 0},
+                },
+                "y": {
+                    "field": "Valor",
+                    "type": "quantitative",
+                    "axis": {"title": y_title},
+                },
+                "color": {
+                    "field": "Métrica",
+                    "type": "nominal",
+                    "scale": {
+                        "domain": fields,
+                        "range": [CHART_COLORS[field] for field in fields],
+                    },
+                    "legend": {"title": None},
+                },
+                "tooltip": [
+                    {"field": "Mês", "type": "nominal"},
+                    {"field": "Métrica", "type": "nominal"},
+                    {"field": "Valor", "type": "quantitative", "format": ".1f"},
+                ],
+            },
+        },
+        use_container_width=True,
+        key=key,
+    )
+
+
+def _temporal_charts(monthly, key_prefix):
     rows = _monthly_rows(monthly)
     if not rows:
         return
     st.subheader("Evolução da produção")
     left, right = st.columns(2)
-    left.line_chart(
-        rows, x="Mês", y=["Distribuídos", "Produção"], use_container_width=True
+    _render_chart(
+        key_prefix + "_fluxo",
+        lambda: _line_chart(
+            left,
+            rows,
+            ["Distribuídos", "Produção"],
+            "Quantidade",
+            key_prefix + "_fluxo",
+        ),
     )
-    right.line_chart(rows, x="Mês", y=["Pareceres", "Cotas"], use_container_width=True)
-    st.subheader("Eficiência temporal")
+    _render_chart(
+        key_prefix + "_tipos",
+        lambda: _line_chart(
+            right, rows, ["Pareceres", "Cotas"], "Quantidade", key_prefix + "_tipos"
+        ),
+    )
+    st.subheader("Permanência e relação entre fluxos")
     left, right = st.columns(2)
-    left.line_chart(rows, x="Mês", y="Mediana de permanência", use_container_width=True)
-    right.line_chart(
-        rows, x="Mês", y="Produção/Distribuições", use_container_width=True
+    _render_chart(
+        key_prefix + "_permanencia",
+        lambda: _line_chart(
+            left,
+            rows,
+            ["Mediana de permanência"],
+            "Mediana de permanência (dias)",
+            key_prefix + "_permanencia",
+        ),
+    )
+    _render_chart(
+        key_prefix + "_relacao",
+        lambda: _line_chart(
+            right,
+            rows,
+            ["Produção/Distribuições"],
+            "Produção/Distribuições (%)",
+            key_prefix + "_relacao",
+        ),
     )
 
 
-def _procurador_comparison(report, annual=False):
+def _procurador_chart(target, rows, fields, stacked, key):
+    values = [
+        {"Procurador": row["Procurador"], "Métrica": field, "Quantidade": row[field]}
+        for row in rows
+        for field in fields
+    ]
+    encoding = {
+        "y": {
+            "field": "Procurador",
+            "type": "nominal",
+            "sort": [row["Procurador"] for row in rows],
+            "axis": {"title": "Procurador", "labelLimit": 0},
+        },
+        "x": {
+            "field": "Quantidade",
+            "type": "quantitative",
+            "axis": {"title": "Quantidade"},
+        },
+        "color": {
+            "field": "Métrica",
+            "type": "nominal",
+            "scale": {
+                "domain": fields,
+                "range": [CHART_COLORS[field] for field in fields],
+            },
+            "legend": {"title": None},
+        },
+        "tooltip": [
+            {"field": "Procurador", "type": "nominal"},
+            {"field": "Métrica", "type": "nominal"},
+            {"field": "Quantidade", "type": "quantitative"},
+        ],
+    }
+    if not stacked:
+        encoding["yOffset"] = {"field": "Métrica"}
+    target.vega_lite_chart(
+        values,
+        {
+            "mark": "bar",
+            "height": max(240, 34 * len(rows)),
+            "encoding": encoding,
+        },
+        use_container_width=True,
+        key=key,
+    )
+
+
+def _procurador_comparison(report, key_prefix):
     rows = _procurador_rows(report)
     st.subheader("Comparativo por Procurador")
+    rows = sorted(rows, key=lambda row: (-row["Produção"], row["Procurador"]))
     _report_table(st, rows)
     if not rows:
         return
     left, right = st.columns(2)
-    chart_rows = sorted(rows, key=lambda row: row["Produção"], reverse=annual)
-    left.bar_chart(
-        chart_rows,
-        x="Procurador",
-        y=["Distribuídos", "Produção"],
-        horizontal=annual,
-        use_container_width=True,
+    _render_chart(
+        key_prefix + "_procuradores_fluxo",
+        lambda: _procurador_chart(
+            left,
+            rows,
+            ["Distribuídos", "Produção"],
+            False,
+            key_prefix + "_procuradores_fluxo",
+        ),
     )
-    right.bar_chart(
-        chart_rows,
-        x="Procurador",
-        y=["Pareceres", "Cotas"],
-        stack="normal",
-        horizontal=annual,
-        use_container_width=True,
+    _render_chart(
+        key_prefix + "_procuradores_tipos",
+        lambda: _procurador_chart(
+            right,
+            rows,
+            ["Pareceres", "Cotas"],
+            True,
+            key_prefix + "_procuradores_tipos",
+        ),
     )
+
+
+def _quarterly_summary(reports, key_prefix):
+    st.subheader("Resumo por trimestre")
+    rows = [
+        {
+            "Trimestre": f"{item['quarter']}º trimestre",
+            "Distribuídos": item["summary"]["distributed"],
+            "Produção": item["summary"]["production"],
+            "Pareceres": item["summary"]["opinions"],
+            "Cotas": item["summary"]["quotas"],
+            "Produção/Distribuições": item["summary"]["production_rate"],
+            "Mediana de permanência": item["summary"]["median_days"],
+        }
+        for item in reports
+        if item["summary"]["distributed"] or item["summary"]["production"]
+    ]
+    _report_table(st, rows)
+    if not rows:
+        return
+
+    def render():
+        values = [
+            {
+                "Trimestre": row["Trimestre"],
+                "Métrica": field,
+                "Quantidade": row[field],
+            }
+            for row in rows
+            for field in ("Distribuídos", "Produção")
+        ]
+        st.vega_lite_chart(
+            values,
+            {
+                "mark": "bar",
+                "encoding": {
+                    "x": {
+                        "field": "Trimestre",
+                        "type": "nominal",
+                        "sort": [row["Trimestre"] for row in rows],
+                        "axis": {"title": "Trimestre", "labelAngle": 0},
+                    },
+                    "xOffset": {"field": "Métrica"},
+                    "y": {
+                        "field": "Quantidade",
+                        "type": "quantitative",
+                        "axis": {"title": "Quantidade"},
+                    },
+                    "color": {
+                        "field": "Métrica",
+                        "type": "nominal",
+                        "scale": {
+                            "domain": ["Distribuídos", "Produção"],
+                            "range": [
+                                CHART_COLORS["Distribuídos"],
+                                CHART_COLORS["Produção"],
+                            ],
+                        },
+                        "legend": {"title": None},
+                    },
+                },
+            },
+            use_container_width=True,
+            key=key_prefix + "_resumo_trimestres",
+        )
+
+    _render_chart(key_prefix + "_resumo_trimestres", render)
 
 
 def _select_year(reports, principal, key):
@@ -316,13 +528,17 @@ def production(store, principal=None):
         return
     months = read(("historical_months", year), lambda: reports.months_for_year(year))
     month = st.selectbox(
-        "Mês", months, format_func=lambda value: MONTHS[value - 1], key="rel_prod_month"
+        "Mês",
+        months,
+        index=len(months) - 1,
+        format_func=lambda value: MONTHS[value - 1],
+        key="rel_prod_month",
     )
     report = read(
         ("period", year, month), lambda: reports.monthly_reports(year, [month])[0]
     )
     _indicator_cards(report["summary"])
-    _procurador_comparison(report)
+    _procurador_comparison(report, f"relatorios_mensal_{year}_{month:02d}")
 
 
 def quarterly(store, principal=None):
@@ -339,6 +555,7 @@ def quarterly(store, principal=None):
     quarter = st.selectbox(
         "Trimestre",
         quarters,
+        index=len(quarters) - 1,
         format_func=lambda value: f"{value}º trimestre",
         key="rel_quarter",
     )
@@ -379,8 +596,8 @@ def quarterly(store, principal=None):
             ),
         )["summary"]
     _indicator_cards(report["summary"], previous)
-    _temporal_charts(monthly)
-    _procurador_comparison(report)
+    _temporal_charts(monthly, f"relatorios_trimestral_{year}_t{quarter}")
+    _procurador_comparison(report, f"relatorios_trimestral_{year}_t{quarter}")
 
 
 def annual(store, principal=None):
@@ -389,7 +606,18 @@ def annual(store, principal=None):
     if year is None:
         return
     months = read(("historical_months", year), lambda: reports.months_for_year(year))
-    st.caption(f"{year} — acumulado até {MONTHS[max(months) - 1].lower()}")
+    coverage = read(
+        ("historical_coverage", year), lambda: reports.historical_coverage(year)
+    )
+    if coverage["complete_through_last_month"]:
+        st.caption(
+            f"{year} — acumulado até {MONTHS[coverage['last_month'] - 1].lower()}"
+        )
+    else:
+        st.warning(
+            "Cobertura histórica incompleta: existem meses sem dados entre janeiro e "
+            f"{MONTHS[coverage['last_month'] - 1].lower()}."
+        )
     report = read(
         ("annual", year),
         lambda: reports.period_report(f"{year}-01-01", f"{year + 1}-01-01"),
@@ -404,8 +632,10 @@ def annual(store, principal=None):
         ("annual_monthly", year), lambda: reports.monthly_reports(year, months)
     )
     _indicator_cards(report["summary"], previous)
-    _temporal_charts(monthly)
-    _procurador_comparison(report, annual=True)
+    _temporal_charts(monthly, f"relatorios_anual_{year}")
+    quarterly = read(("annual_quarters", year), lambda: reports.quarterly_reports(year))
+    _quarterly_summary(quarterly, f"relatorios_anual_{year}")
+    _procurador_comparison(report, f"relatorios_anual_{year}")
 
 
 def current_view(store, principal=None):
@@ -575,18 +805,19 @@ def imports(store, principal):
     reports = TramitaReportsStore(store)
     st.subheader("Importar Histórico Inicial")
     st.caption(
-        "Importa os 18 relatórios de janeiro a setembro de 2026 uma única vez. Depois da importação, a aplicação consulta somente a base local."
+        "Reconcilia os 18 relatórios de janeiro a setembro de 2026. O hash é auditável; "
+        "a proteção contra duplicidade é a identidade de cada evento. Depois, a aplicação consulta somente a base local."
     )
     source_dir = Path(__file__).resolve().parents[1] / "referencias"
     if source_dir.exists():
-        if st.button("Importar histórico de janeiro a setembro de 2026"):
+        if st.button("Reconciliar histórico de janeiro a setembro de 2026"):
             results = import_reference_reports(store, source_dir, principal.email)
             imported = sum(item["inserted"] for item in results)
             duplicates = sum(item["duplicates"] for item in results)
             skipped = sum(item["already_imported"] for item in results)
             registrar_evento(
                 store,
-                evento="TRAMITA_HISTORICO_IMPORTADO",
+                evento="TRAMITA_HISTORICO_RECONCILIADO",
                 modulo="relatorios",
                 acao="IMPORTAR",
                 principal=principal,
@@ -599,13 +830,68 @@ def imports(store, principal):
             )
             st.session_state.pop("_reports_read_cache", None)
             st.success(
-                f"Histórico processado: {imported} eventos inseridos e {duplicates} duplicidades evitadas."
+                f"Histórico reconciliado: {imported} eventos inseridos e {duplicates} já existentes."
             )
             st.rerun()
     else:
         st.info(
             "A fonte de migração não está disponível neste ambiente. O histórico já importado continua funcionando normalmente."
         )
+    st.subheader("Cobertura histórica")
+    available_years = reports.historical_years()
+    coverage_years = sorted({2026, *available_years}, reverse=True)
+    coverage_year = st.selectbox(
+        "Ano da cobertura", coverage_years, key="rel_coverage_year"
+    )
+    coverage = reports.historical_coverage(coverage_year)
+    if coverage["last_month"]:
+        coverage_rows = _monthly_rows(
+            reports.monthly_reports(
+                coverage_year, list(range(1, coverage["last_month"] + 1))
+            )
+        )
+        _report_table(
+            st,
+            [
+                {
+                    key: row[key]
+                    for key in ("Mês", "Distribuídos", "Produção", "Pareceres", "Cotas")
+                }
+                for row in coverage_rows
+            ],
+        )
+        if not coverage["complete_through_last_month"]:
+            st.caption(
+                "Cobertura histórica incompleta: existem meses sem dados entre janeiro e "
+                f"{MONTHS[coverage['last_month'] - 1].lower()}."
+            )
+    else:
+        st.caption(
+            "Ainda não há eventos históricos normalizados para o ano selecionado."
+        )
+    with st.expander("Diagnóstico de eventos importados"):
+        audit_rows = reports.historical_audit(coverage_year)
+        if audit_rows:
+            _report_table(
+                st,
+                [
+                    {
+                        "Mês": row["period"],
+                        "Origem": (
+                            "Referência histórica reconciliada"
+                            if row["origem_historica"] == "REFERENCIA_TRAMITA_2026"
+                            else "Legado ou importação não reconciliada"
+                        ),
+                        "Movimentação": row["tipo_movimentacao"],
+                        "Classificação de produção": row["classificacao_producao"]
+                        or "Não produtiva / distribuição",
+                        "Eventos": row["total"],
+                    }
+                    for row in audit_rows
+                ],
+            )
+        else:
+            st.caption("Não há eventos importados para o ano selecionado.")
     st.divider()
     st.subheader("Importar Produção Mensal")
     st.caption("Competência")

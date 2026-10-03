@@ -123,7 +123,11 @@ def test_tramita_history_migration_repairs_existing_postgresql_schema(pg_store):
             c.execute(
                 f"ALTER TABLE tramita_movimentacoes DROP COLUMN IF EXISTS {column}"
             )
-        for column in ("quantidade_inserida", "quantidade_duplicada"):
+        for column in (
+            "quantidade_inserida",
+            "quantidade_duplicada",
+            "origem_historica",
+        ):
             c.execute(f"ALTER TABLE tramita_importacoes DROP COLUMN IF EXISTS {column}")
 
     pg_store.migrate()
@@ -143,6 +147,14 @@ def test_tramita_history_migration_repairs_existing_postgresql_schema(pg_store):
             "procurador_original",
             "chave_evento",
         } <= columns
+        import_columns = {
+            row[0]
+            for row in c.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=current_schema() AND table_name='tramita_importacoes'"
+            )
+        }
+        assert "origem_historica" in import_columns
         assert c.execute(
             "SELECT array_agg(version ORDER BY version) FROM schema_migrations"
         ).fetchone()[0] == [1, 2]

@@ -32,7 +32,7 @@ class TramitaReportsStore:
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             c.execute(
-                f"CREATE TABLE IF NOT EXISTS tramita_importacoes (id {identity}, tipo TEXT NOT NULL CHECK(tipo IN ('ENTRADAS','SAIDAS','ESTOQUE')), competencia TEXT, data_snapshot TEXT, nome_arquivo TEXT NOT NULL, hash_arquivo TEXT NOT NULL UNIQUE, quantidade_registros INTEGER NOT NULL, quantidade_inserida INTEGER NOT NULL DEFAULT 0, quantidade_duplicada INTEGER NOT NULL DEFAULT 0, importado_em TEXT NOT NULL, importado_por TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'CONCLUIDA')"
+                f"CREATE TABLE IF NOT EXISTS tramita_importacoes (id {identity}, tipo TEXT NOT NULL CHECK(tipo IN ('ENTRADAS','SAIDAS','ESTOQUE')), competencia TEXT, data_snapshot TEXT, nome_arquivo TEXT NOT NULL, hash_arquivo TEXT NOT NULL UNIQUE, quantidade_registros INTEGER NOT NULL, quantidade_inserida INTEGER NOT NULL DEFAULT 0, quantidade_duplicada INTEGER NOT NULL DEFAULT 0, origem_historica TEXT NOT NULL DEFAULT 'LEGADO', importado_em TEXT NOT NULL, importado_por TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'CONCLUIDA')"
             )
             c.execute(
                 f"CREATE TABLE IF NOT EXISTS tramita_movimentacoes (id {identity}, importacao_id INTEGER NOT NULL REFERENCES tramita_importacoes(id), competencia TEXT NOT NULL, tipo_movimentacao TEXT NOT NULL CHECK(tipo_movimentacao IN ('ENTRADA','SAIDA')), protocolo TEXT NOT NULL, tipo TEXT NOT NULL DEFAULT '', subcategoria TEXT NOT NULL DEFAULT '', origem TEXT NOT NULL DEFAULT '', data_realizacao TEXT, procurador TEXT NOT NULL DEFAULT '', procurador_original TEXT NOT NULL DEFAULT '', motivo_distribuicao TEXT NOT NULL DEFAULT '', data_devolucao TEXT, motivo_devolucao TEXT NOT NULL DEFAULT '', data_evento TEXT, classificacao_producao TEXT NOT NULL DEFAULT '', chave_evento TEXT NOT NULL DEFAULT '')"
@@ -46,6 +46,9 @@ class TramitaReportsStore:
             )
             c.execute(
                 "CREATE INDEX IF NOT EXISTS tramita_movimentacoes_evento_idx ON tramita_movimentacoes(data_evento, tipo_movimentacao, procurador)"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS tramita_importacoes_origem_historica_idx ON tramita_importacoes(origem_historica)"
             )
             c.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS tramita_movimentacoes_chave_unica ON tramita_movimentacoes(chave_evento) WHERE chave_evento<>''"
@@ -99,10 +102,15 @@ class TramitaReportsStore:
                 connection.execute(
                     f"ALTER TABLE tramita_movimentacoes ADD COLUMN {name} {definition}"
                 )
-        for name in ("quantidade_inserida", "quantidade_duplicada"):
+        import_additions = {
+            "quantidade_inserida": "INTEGER NOT NULL DEFAULT 0",
+            "quantidade_duplicada": "INTEGER NOT NULL DEFAULT 0",
+            "origem_historica": "TEXT NOT NULL DEFAULT 'LEGADO'",
+        }
+        for name, definition in import_additions.items():
             if name not in import_columns:
                 connection.execute(
-                    f"ALTER TABLE tramita_importacoes ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0"
+                    f"ALTER TABLE tramita_importacoes ADD COLUMN {name} {definition}"
                 )
         self._backfill_event_fields(connection)
 
@@ -217,53 +225,70 @@ class TramitaReportsStore:
     def import_historical_rows(
         self, *, kind, file_name, file_hash, actor, source_competence, rows
     ):
-        """Import an immutable Tramita source and report idempotent outcomes."""
+        """Reconcile one immutable historical source by its event identity.
+
+        The source hash is retained for audit, but never decides whether the
+        events are complete.  This permits repairing a prior interrupted
+        import whose file record exists while one or more events do not.
+        """
         rows = list(rows)
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             existing = c.execute(
-                "SELECT id,quantidade_registros,quantidade_inserida,quantidade_duplicada "
-                "FROM tramita_importacoes WHERE hash_arquivo=?",
+                "SELECT id FROM tramita_importacoes WHERE hash_arquivo=?",
                 (file_hash,),
             ).fetchone()
-            if existing:
-                return {
-                    "file_name": file_name,
-                    "source_rows": existing[1],
-                    "inserted": existing[2],
-                    "duplicates": existing[3],
-                    "already_imported": True,
-                }
-            prepared, duplicates = self._prepared_events(c, kind, rows)
             from database.store import now
 
-            inserted = c.execute(
-                "INSERT INTO tramita_importacoes("
-                "tipo,competencia,nome_arquivo,hash_arquivo,quantidade_registros,"
-                "quantidade_inserida,quantidade_duplicada,importado_em,importado_por) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
-                (
-                    kind,
-                    source_competence,
-                    file_name,
-                    file_hash,
-                    len(rows),
-                    len(prepared),
-                    duplicates,
-                    now(),
-                    actor or "",
-                ),
+            if existing:
+                import_id = existing[0]
+                c.execute(
+                    "UPDATE tramita_importacoes SET tipo=?,competencia=?,nome_arquivo=?,"
+                    "origem_historica='REFERENCIA_TRAMITA_2026' WHERE id=?",
+                    (kind, source_competence, file_name, import_id),
+                )
+            else:
+                inserted = c.execute(
+                    "INSERT INTO tramita_importacoes("
+                    "tipo,competencia,nome_arquivo,hash_arquivo,quantidade_registros,"
+                    "quantidade_inserida,quantidade_duplicada,origem_historica,importado_em,importado_por) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        kind,
+                        source_competence,
+                        file_name,
+                        file_hash,
+                        len(rows),
+                        0,
+                        0,
+                        "REFERENCIA_TRAMITA_2026",
+                        now(),
+                        actor or "",
+                    ),
+                )
+                import_id = inserted.lastrowid
+            prepared, duplicates = self._prepared_events(
+                c, kind, rows, reconcile_import_id=import_id
             )
-            self._insert_events(c, inserted.lastrowid, prepared)
+            self._insert_events(c, import_id, prepared)
+            stored = c.execute(
+                "SELECT COUNT(*) FROM tramita_movimentacoes WHERE importacao_id=?",
+                (import_id,),
+            ).fetchone()[0]
+            c.execute(
+                "UPDATE tramita_importacoes SET quantidade_registros=?,quantidade_inserida=?,"
+                "quantidade_duplicada=? WHERE id=?",
+                (len(rows), stored, duplicates, import_id),
+            )
         return {
             "file_name": file_name,
             "source_rows": len(rows),
             "inserted": len(prepared),
             "duplicates": duplicates,
-            "already_imported": False,
+            "already_imported": bool(existing),
         }
 
-    def _prepared_events(self, connection, kind, rows):
+    def _prepared_events(self, connection, kind, rows, reconcile_import_id=None):
         from services.tramita_reports import (
             movement_event_key,
             production_classification,
@@ -273,9 +298,10 @@ class TramitaReportsStore:
             return [], 0
         movement = "ENTRADA" if kind == "ENTRADAS" else "SAIDA"
         existing = {
-            row[0]
+            row["chave_evento"]: row
             for row in connection.execute(
-                "SELECT chave_evento FROM tramita_movimentacoes WHERE chave_evento<>''"
+                "SELECT id,importacao_id,chave_evento FROM tramita_movimentacoes "
+                "WHERE chave_evento<>''"
             )
         }
         prepared, duplicates = [], 0
@@ -291,8 +317,18 @@ class TramitaReportsStore:
             key = movement_event_key(kind, row)
             if key in existing:
                 duplicates += 1
+                # A matching legacy event is the same recorded fact.  Link it
+                # to the verified reference import instead of duplicating it.
+                if (
+                    reconcile_import_id is not None
+                    and existing[key]["importacao_id"] != reconcile_import_id
+                ):
+                    connection.execute(
+                        "UPDATE tramita_movimentacoes SET importacao_id=? WHERE id=?",
+                        (reconcile_import_id, existing[key]["id"]),
+                    )
                 continue
-            existing.add(key)
+            existing[key] = {"importacao_id": reconcile_import_id}
             prepared.append(
                 (
                     event_date[:7],
@@ -330,7 +366,9 @@ class TramitaReportsStore:
             return [
                 r[0]
                 for r in c.execute(
-                    "SELECT DISTINCT substr(data_evento,1,7) FROM tramita_movimentacoes WHERE data_evento IS NOT NULL ORDER BY 1 DESC"
+                    "SELECT DISTINCT substr(m.data_evento,1,7) FROM tramita_movimentacoes m "
+                    "JOIN tramita_importacoes i ON i.id=m.importacao_id "
+                    "WHERE m.data_evento IS NOT NULL AND i.origem_historica='REFERENCIA_TRAMITA_2026' ORDER BY 1 DESC"
                 )
             ]
 
@@ -339,8 +377,9 @@ class TramitaReportsStore:
             return [
                 int(row[0])
                 for row in c.execute(
-                    "SELECT DISTINCT substr(data_evento,1,4) FROM tramita_movimentacoes "
-                    "WHERE data_evento IS NOT NULL ORDER BY 1 DESC"
+                    "SELECT DISTINCT substr(m.data_evento,1,4) FROM tramita_movimentacoes m "
+                    "JOIN tramita_importacoes i ON i.id=m.importacao_id "
+                    "WHERE m.data_evento IS NOT NULL AND i.origem_historica='REFERENCIA_TRAMITA_2026' ORDER BY 1 DESC"
                 )
             ]
 
@@ -350,11 +389,38 @@ class TramitaReportsStore:
             return [
                 int(row[0][5:7])
                 for row in c.execute(
-                    "SELECT DISTINCT substr(data_evento,1,7) FROM tramita_movimentacoes "
-                    "WHERE data_evento LIKE ? ORDER BY 1",
+                    "SELECT DISTINCT substr(m.data_evento,1,7) FROM tramita_movimentacoes m "
+                    "JOIN tramita_importacoes i ON i.id=m.importacao_id "
+                    "WHERE m.data_evento LIKE ? AND i.origem_historica='REFERENCIA_TRAMITA_2026' ORDER BY 1",
                     (prefix + "%",),
                 )
             ]
+
+    def historical_coverage(self, year):
+        """Describe actual historical coverage without inferring months from files."""
+        months = self.months_for_year(year)
+        last = max(months) if months else None
+        expected = list(range(1, last + 1)) if last else []
+        missing = [month for month in expected if month not in months]
+        return {
+            "months": months,
+            "last_month": last,
+            "missing_months": missing,
+            "complete_through_last_month": not missing,
+        }
+
+    def historical_audit(self, year):
+        """Return the event matrix, retaining the import lineage for diagnosis."""
+        prefix = f"{int(year):04d}-"
+        rows = self._read(
+            "SELECT substr(m.data_evento,1,7) AS period, i.origem_historica,"
+            "m.tipo_movimentacao,m.classificacao_producao,COUNT(*) AS total "
+            "FROM tramita_movimentacoes m JOIN tramita_importacoes i "
+            "ON i.id=m.importacao_id WHERE m.data_evento LIKE ? "
+            "GROUP BY 1,2,3,4 ORDER BY 1,2,3,4",
+            (prefix + "%",),
+        )
+        return rows
 
     def period_report(self, start, end):
         """Aggregate all indicators once for a half-open calendar period.
@@ -366,8 +432,10 @@ class TramitaReportsStore:
         """
         rows = self._read(
             "SELECT tipo_movimentacao,procurador,data_realizacao,data_devolucao,"
-            "classificacao_producao FROM tramita_movimentacoes "
-            "WHERE data_evento>=? AND data_evento<?",
+            "classificacao_producao FROM tramita_movimentacoes m "
+            "JOIN tramita_importacoes i ON i.id=m.importacao_id "
+            "WHERE m.data_evento>=? AND m.data_evento<? "
+            "AND i.origem_historica='REFERENCIA_TRAMITA_2026'",
             (start, end),
         )
         return self._aggregate_period(rows)
@@ -431,8 +499,10 @@ class TramitaReportsStore:
         start, end = date(int(year), 1, 1), date(int(year) + 1, 1, 1)
         rows = self._read(
             "SELECT tipo_movimentacao,procurador,data_realizacao,data_devolucao,"
-            "classificacao_producao,data_evento FROM tramita_movimentacoes "
-            "WHERE data_evento>=? AND data_evento<?",
+            "classificacao_producao,data_evento FROM tramita_movimentacoes m "
+            "JOIN tramita_importacoes i ON i.id=m.importacao_id "
+            "WHERE m.data_evento>=? AND m.data_evento<? "
+            "AND i.origem_historica='REFERENCIA_TRAMITA_2026'",
             (start.isoformat(), end.isoformat()),
         )
         by_month = defaultdict(list)
@@ -441,6 +511,29 @@ class TramitaReportsStore:
         return [
             {"month": int(month), **self._aggregate_period(by_month[int(month)])}
             for month in months
+        ]
+
+    def quarterly_reports(self, year, quarters=None):
+        """Aggregate all requested quarters from a single annual event read."""
+        quarters = quarters or (1, 2, 3, 4)
+        start, end = date(int(year), 1, 1), date(int(year) + 1, 1, 1)
+        rows = self._read(
+            "SELECT m.tipo_movimentacao,m.procurador,m.data_realizacao,m.data_devolucao,"
+            "m.classificacao_producao,m.data_evento FROM tramita_movimentacoes m "
+            "JOIN tramita_importacoes i ON i.id=m.importacao_id "
+            "WHERE m.data_evento>=? AND m.data_evento<? "
+            "AND i.origem_historica='REFERENCIA_TRAMITA_2026'",
+            (start.isoformat(), end.isoformat()),
+        )
+        by_quarter = defaultdict(list)
+        for row in rows:
+            by_quarter[(int(row["data_evento"][5:7]) - 1) // 3 + 1].append(row)
+        return [
+            {
+                "quarter": int(quarter),
+                **self._aggregate_period(by_quarter[int(quarter)]),
+            }
+            for quarter in quarters
         ]
 
     def latest_snapshot(self):

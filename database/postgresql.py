@@ -120,6 +120,8 @@ TRAMITA_HISTORY_MIGRATION_SQL = (
     "ADD COLUMN IF NOT EXISTS quantidade_inserida INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE tramita_importacoes "
     "ADD COLUMN IF NOT EXISTS quantidade_duplicada INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE tramita_importacoes "
+    "ADD COLUMN IF NOT EXISTS origem_historica TEXT NOT NULL DEFAULT 'LEGADO'",
     "ALTER TABLE tramita_movimentacoes "
     "ADD COLUMN IF NOT EXISTS procurador_original TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE tramita_movimentacoes ADD COLUMN IF NOT EXISTS data_evento TEXT",
@@ -131,6 +133,8 @@ TRAMITA_HISTORY_MIGRATION_SQL = (
     "ON tramita_movimentacoes(data_evento, tipo_movimentacao, procurador)",
     "CREATE UNIQUE INDEX IF NOT EXISTS tramita_movimentacoes_chave_unica "
     "ON tramita_movimentacoes(chave_evento) WHERE chave_evento<>''",
+    "CREATE INDEX IF NOT EXISTS tramita_importacoes_origem_historica_idx "
+    "ON tramita_importacoes(origem_historica)",
 )
 
 
