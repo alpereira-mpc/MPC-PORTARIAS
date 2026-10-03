@@ -1,9 +1,13 @@
 import inspect
+import json
 from pathlib import Path
 
 import pytest
 
+import services.ai_service as ai_service
+
 from database.institutional_reports import InstitutionalReportsStore
+from database.audit import AuditStore
 from database.postgresql import INSTITUTIONAL_REPORTS_MIGRATION_SQL, PostgresBackend
 from database.store import Store
 from services.institutional_reports import (
@@ -11,6 +15,12 @@ from services.institutional_reports import (
     build_report_snapshot,
     can_finalize,
 )
+from services.institutional_report_content import (
+    InstitutionalReportContentService,
+    build_ai_context,
+    validate_numbers,
+)
+from services.access import Principal
 from services.relatorios_ui import (
     INSTITUTIONAL_STATUS_LABELS,
     _institutional_coverage_text,
@@ -179,3 +189,136 @@ def test_institutional_preview_uses_friendly_covered_period_and_frozen_rows():
         }
     ]
     assert INSTITUTIONAL_STATUS_LABELS["FINALIZADO"] == "Finalizado"
+
+
+def _content_snapshot():
+    return {
+        "metadados": {
+            "tipo": "TRIMESTRAL",
+            "ano": 2026,
+            "trimestre": 3,
+            "descricao_periodo": "01/07 a 30/09/2026",
+            "periodo_parcial": False,
+            "data_inicio": "2026-07-01",
+            "data_fim": "2026-10-01",
+        },
+        "indicadores_gerais": {
+            "distributed": 545,
+            "production": 594,
+            "opinions": 424,
+            "quotas": 170,
+            "production_rate": 109.0,
+            "median_days": 7.8,
+        },
+        "serie_mensal": [
+            {"month": 7, "summary": {"distributed": 221, "production": 227}}
+        ],
+        "composicao_producao": {"pareceres_percentual": 71.4, "cotas_percentual": 28.6},
+        "por_procurador": [{"procurador": "A", "distributed": 10, "production": 12}],
+        "faixas_permanencia": [{"faixa": "0–7 dias", "quantidade": 100}],
+        "comparacao_periodo_anterior": None,
+        "cobertura_historica": {
+            "meses_disponiveis": [7, 8, 9],
+            "meses_ausentes": [],
+            "lacunas_no_ano": [],
+        },
+        "nota_metodologica": {"producao": "Produção considera Parecer e Cota."},
+    }
+
+
+def _admin():
+    return Principal(
+        1, "Admin", "admin@test", "ADMINISTRADOR", True, False, False, False, True, ()
+    )
+
+
+def test_content_generation_manual_edits_and_finalized_read_only(tmp_path, monkeypatch):
+    store = Store(tmp_path / "content.db")
+    repository = InstitutionalReportsStore(store)
+    snapshot = _content_snapshot()
+    report = repository.create(
+        tipo="TRIMESTRAL",
+        ano=2026,
+        trimestre=3,
+        data_inicio="2026-07-01",
+        data_fim="2026-10-01",
+        periodo_parcial=False,
+        descricao_periodo="T3",
+        snapshot_dados=snapshot,
+        conteudo_estruturado={},
+        actor="admin@test",
+    )
+    service = InstitutionalReportContentService(store)
+    generated = {
+        key: f"Texto com {545 if key == 'resumo_executivo' else 594}."
+        for key in (
+            "resumo_executivo",
+            "evolucao_periodo",
+            "composicao_producao",
+            "permanencia",
+            "producao_procurador",
+            "comparacao_periodo_anterior",
+            "sintese_pontos_atencao",
+        )
+    }
+    monkeypatch.setattr(
+        "services.institutional_report_content.ai_service.gerar_conteudo_relatorio_institucional",
+        lambda context, secao=None: (
+            {secao: "Nova seção com 545."} if secao else generated,
+            "modelo-teste",
+        ),
+    )
+    updated = service.generate_all(report["id"], _admin())
+    assert updated["status"] == "EM_REVISAO"
+    assert updated["conteudo_estruturado"]["resumo_executivo"]["gerado_por_ia"]
+    assert updated["snapshot_dados"] == snapshot
+    assert AuditStore(store).count({"evento": "RELATORIO_INSTITUCIONAL_IA_GERADA"}) == 1
+    regenerated = service.regenerate(report["id"], "permanencia", _admin())
+    assert (
+        regenerated["conteudo_estruturado"]["permanencia"]["texto"]
+        == "Nova seção com 545."
+    )
+    assert (
+        regenerated["conteudo_estruturado"]["resumo_executivo"]["texto"]
+        == generated["resumo_executivo"]
+    )
+    saved = service.save_manual(
+        report["id"], {"resumo_executivo": "Texto manual com 545."}, _admin()
+    )
+    assert saved["conteudo_estruturado"]["resumo_executivo"]["editado_manualmente"]
+    repository.finalize(report["id"], "admin@test")
+    with pytest.raises(ValueError, match="somente leitura"):
+        service.save_manual(report["id"], {"resumo_executivo": "não salvar"}, _admin())
+
+
+def test_ai_context_excludes_raw_events_and_flags_unknown_numbers():
+    snapshot = _content_snapshot()
+    context = build_ai_context(snapshot)
+    assert "eventos" not in context and "tramita_movimentacoes" not in str(context)
+    assert validate_numbers(
+        "Foram registrados 545 eventos e 999 processos.", snapshot
+    ) == ["999"]
+    assert (
+        validate_numbers("A proporção foi 109,0% e a mediana 7.8 dias.", snapshot) == []
+    )
+
+
+def test_ai_generation_uses_one_structured_call_and_validates_sections(monkeypatch):
+    expected = {
+        section: "Texto institucional." for section in ai_service.RELATORIO_SECOES_IA
+    }
+    raw = {"candidates": [{"content": {"parts": [{"text": json.dumps(expected)}]}}]}
+    calls = []
+    monkeypatch.setattr(
+        ai_service,
+        "_executar",
+        lambda mount, label, operation: (
+            calls.append(operation) or json.dumps(raw).encode(),
+            "modelo-teste",
+        ),
+    )
+    result, model = ai_service.gerar_conteudo_relatorio_institucional(
+        {"indicadores_gerais": {"distributed": 545}}
+    )
+    assert result == expected and model == "modelo-teste"
+    assert calls == ["relatorio_conteudo"]

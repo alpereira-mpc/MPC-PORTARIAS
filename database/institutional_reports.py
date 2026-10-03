@@ -267,3 +267,33 @@ class InstitutionalReportsStore:
                 (actor or "", stamp, actor or "", stamp, identifier),
             )
         return self.get(identifier)
+
+    def save_content(self, identifier, content, actor, *, status=None):
+        """Persist textual content only while the immutable snapshot is editable."""
+        if status is not None and status not in ("RASCUNHO", "EM_REVISAO"):
+            raise ValueError("Status de edição inválido.")
+        with self.store.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status FROM relatorios_institucionais WHERE id=? AND ativo=1",
+                (identifier,),
+            ).fetchone()
+            if not row:
+                raise ValueError("Relatório institucional não encontrado.")
+            if row["status"] not in ("RASCUNHO", "EM_REVISAO"):
+                raise ValueError(
+                    "Relatório finalizado é somente leitura; crie uma nova versão."
+                )
+            stamp = now()
+            connection.execute(
+                "UPDATE relatorios_institucionais SET conteudo_estruturado=?, status=?, "
+                "atualizado_por=?, atualizado_em=? WHERE id=?",
+                (
+                    json.dumps(content, ensure_ascii=False, sort_keys=True),
+                    status or row["status"],
+                    actor or "",
+                    stamp,
+                    identifier,
+                ),
+            )
+        return self.get(identifier)

@@ -11,6 +11,7 @@ import streamlit as st
 
 from database.tramita_reports import TramitaReportsStore
 from database.institutional_reports import InstitutionalReportsStore
+from services import ai_service
 from services.access import require_permission
 from services.audit import registrar_evento
 from services.date_format import format_date_br, format_datetime_br
@@ -18,6 +19,12 @@ from services.institutional_reports import (
     EMPTY_STRUCTURED_CONTENT,
     build_report_snapshot,
     can_finalize,
+)
+from services.institutional_report_content import (
+    AI_SECTIONS,
+    SECTIONS,
+    InstitutionalReportContentService,
+    normalize_content,
 )
 from services.themes import theme_tokens
 from services.tramita_reports import (
@@ -1251,7 +1258,7 @@ def _institutional_snapshot_rows(snapshot):
     return rows
 
 
-def _institutional_preview(report, principal):
+def _institutional_preview(report, principal, store):
     """Friendly, read-only rendering of the persisted snapshot."""
     snapshot = report["snapshot_dados"]
     metadata = snapshot["metadados"]
@@ -1324,6 +1331,85 @@ def _institutional_preview(report, principal):
         with st.expander("Diagnóstico técnico"):
             st.json({"metadados": metadata, "snapshot": snapshot})
 
+    _institutional_text_content(report, principal, store)
+
+
+def _institutional_text_content(report, principal, store):
+    """Read/write content separately from the frozen numerical preview."""
+    content = normalize_content(
+        report["conteudo_estruturado"], report["snapshot_dados"]
+    )
+    editable = getattr(principal, "administrator", False) and report["status"] in (
+        "RASCUNHO",
+        "EM_REVISAO",
+    )
+    service = InstitutionalReportContentService(store) if editable else None
+    st.subheader("Conteúdo textual")
+    if editable and service:
+        actions = st.columns(3)
+        if actions[0].button(
+            "Gerar conteúdo com IA", key=f"institutional_ai_all_{report['id']}"
+        ):
+            try:
+                service.generate_all(report["id"], principal)
+                st.success("Conteúdo gerado e encaminhado para revisão.")
+                st.rerun()
+            except (ValueError, PermissionError, ai_service.GeminiErro) as exc:
+                st.error(str(exc))
+        if actions[1].button(
+            "Salvar alterações", key=f"institutional_save_{report['id']}"
+        ):
+            try:
+                texts = {
+                    key: st.session_state.get(
+                        f"institutional_text_{report['id']}_{key}", value["texto"]
+                    )
+                    for key, value in content.items()
+                }
+                service.save_manual(report["id"], texts, principal)
+                st.success("Alterações salvas.")
+                st.rerun()
+            except (ValueError, PermissionError) as exc:
+                st.error(str(exc))
+        if actions[2].button(
+            "Marcar para revisão", key=f"institutional_review_{report['id']}"
+        ):
+            try:
+                service.mark_for_review(report["id"], principal)
+                st.success("Relatório marcado como Em revisão.")
+                st.rerun()
+            except (ValueError, PermissionError) as exc:
+                st.warning(str(exc))
+    for index, (key, label) in enumerate(SECTIONS):
+        section = content[key]
+        with st.expander(label, expanded=index == 0):
+            if editable:
+                st.text_area(
+                    label,
+                    section["texto"],
+                    key=f"institutional_text_{report['id']}_{key}",
+                    height=150,
+                    label_visibility="collapsed",
+                )
+                if (
+                    key in AI_SECTIONS
+                    and service
+                    and st.button(
+                        "Regenerar com IA",
+                        key=f"institutional_regen_{report['id']}_{key}",
+                    )
+                ):
+                    try:
+                        service.regenerate(report["id"], key, principal)
+                        st.success(f"{label} regenerada.")
+                        st.rerun()
+                    except (ValueError, PermissionError, ai_service.GeminiErro) as exc:
+                        st.error(str(exc))
+            else:
+                st.write(section["texto"] or "Seção ainda não preenchida.")
+            if section.get("requer_revisao"):
+                st.warning("Esta seção contém valores que devem ser revisados.")
+
 
 def _institutional_period_report(store, principal, tipo, year, quarter=None):
     """Small Phase 1 entry point; rendering never rebuilds a saved snapshot."""
@@ -1356,10 +1442,11 @@ def _institutional_period_report(store, principal, tipo, year, quarter=None):
             f"criado em {format_datetime_br(current['criado_em'])} · "
             f"corte: {format_datetime_br(current['data_corte'])}"
         )
-        if st.button(
-            "Abrir relatório", key=f"institutional_open_{tipo}_{year}_{quarter}"
-        ):
-            _institutional_preview(current, principal)
+        open_key = f"institutional_open_{tipo}_{year}_{quarter}"
+        if st.button("Abrir relatório", key=open_key):
+            st.session_state[open_key] = True
+        if st.session_state.get(open_key):
+            _institutional_preview(current, principal, store)
     if not getattr(principal, "administrator", False):
         return
 
@@ -1414,6 +1501,24 @@ def _institutional_period_report(store, principal, tipo, year, quarter=None):
                 st.warning(str(exc))
 
     if current and current["status"] in ("RASCUNHO", "EM_REVISAO"):
+        content = normalize_content(
+            current["conteudo_estruturado"], current["snapshot_dados"]
+        )
+        unsaved_text = any(
+            st.session_state.get(
+                f"institutional_text_{current['id']}_{key}", section["texto"]
+            )
+            != section["texto"]
+            for key, section in content.items()
+        )
+        if unsaved_text:
+            st.warning("Salve as alterações textuais antes de finalizar o relatório.")
+        if any(not section["texto"].strip() for section in content.values()):
+            st.info("Há seções textuais vazias; a finalização continua disponível.")
+        if any(section.get("requer_revisao") for section in content.values()):
+            st.warning(
+                "Há seções com valores que devem ser revisados antes da finalização."
+            )
         eligible = can_finalize(current["snapshot_dados"])
         if not eligible:
             st.warning(
@@ -1422,12 +1527,12 @@ def _institutional_period_report(store, principal, tipo, year, quarter=None):
         confirmed = st.checkbox(
             "Confirmo a finalização e o congelamento deste snapshot.",
             key=f"institutional_confirm_{current['id']}",
-            disabled=not eligible,
+            disabled=not eligible or unsaved_text,
         )
         if st.button(
             "Finalizar relatório",
             key=f"institutional_finalize_{current['id']}",
-            disabled=not (eligible and confirmed),
+            disabled=not (eligible and confirmed and not unsaved_text),
         ):
             report = repository.finalize(current["id"], principal.email)
             registrar_evento(
