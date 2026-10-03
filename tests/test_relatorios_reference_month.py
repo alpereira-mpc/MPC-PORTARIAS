@@ -1,17 +1,28 @@
 import inspect
 
-from services.relatorios_ui import production
+from services.relatorios_ui import _indicator_cards, annual, production, quarterly
 
 
-def test_reference_month_label_replaces_competence_selector():
+def test_monthly_view_uses_year_and_month_instead_of_import_competence():
     source = inspect.getsource(production)
-    assert "selector.selectbox(" in source
-    assert '"Mês de referência:"' in source
+    assert '"Ano"' not in source  # shared year selector owns this control
+    assert '"Mês"' in source
     assert "Competência" not in source
 
 
-def test_reference_month_keeps_competence_selection():
+def test_historical_views_share_period_aggregation_and_required_charts():
     source = inspect.getsource(production)
-    assert 'format_func=lambda value: f"{value[5:7]}/{value[:4]}"' in source
-    assert "reports.production_summary(competence)" in source
-    assert "st.columns([1.45, 4.55])" in source
+    assert "reports.monthly_reports(year, [month])" in source
+    assert "period_report" in inspect.getsource(quarterly)
+    assert "_temporal_charts" in inspect.getsource(quarterly)
+    assert "_temporal_charts" in inspect.getsource(annual)
+
+
+def test_indicator_cards_share_methodology_help_and_nonproductive_diagnostic():
+    source = inspect.getsource(_indicator_cards)
+    assert "Produção/Distribuições" in source
+    assert "Quantidade de eventos de distribuição" in source
+    assert "Devoluções produtivas registradas" in source
+    assert "Relação entre devoluções produtivas" in source
+    assert "Intervalo mediano entre a distribuição" in source
+    assert "Devoluções não produtivas no período" in source
