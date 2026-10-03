@@ -20,6 +20,11 @@ MONTHS = (
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 )
 LOGGER = logging.getLogger(__name__)
+DAY_COLUMNS = (
+    "Tempo médio até devolução",
+    "Tempo médio com procurador",
+    "Maior permanência atual",
+)
 
 
 def style_report_table(rows, theme_name="vermelho"):
@@ -39,6 +44,13 @@ def style_report_table(rows, theme_name="vermelho"):
         * len(row),
         axis=1,
     )
+    day_formatters = {
+        column: "{:.1f}" for column in DAY_COLUMNS if column in frame.columns
+    }
+    if day_formatters:
+        # Styler changes presentation only: dataframe values stay numeric for
+        # Streamlit sorting and any future table interactions.
+        styler = styler.format(day_formatters)
     return styler.set_table_styles(
         [
             {

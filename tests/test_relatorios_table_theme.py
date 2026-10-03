@@ -36,3 +36,21 @@ def test_every_theme_defines_report_table_palette():
     for palette in THEMES.values():
         assert required <= palette.keys()
         assert palette["themed_table_bg"] != palette["themed_table_stripe_bg"]
+
+
+def test_report_table_formats_day_columns_without_changing_numeric_values():
+    rows = [
+        {
+            "Tempo médio com procurador": 6.3,
+            "Maior permanência atual": 16.0,
+            "Quantidade": 184.0,
+        }
+    ]
+
+    styler = style_report_table(rows)
+    html = styler.to_html()
+
+    assert styler.data.to_dict("records") == rows
+    assert ">6.3<" in html
+    assert ">16.0<" in html
+    assert ">184.000000<" in html
