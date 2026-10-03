@@ -9,9 +9,15 @@ import pandas as pd
 import streamlit as st
 
 from database.tramita_reports import TramitaReportsStore
+from database.institutional_reports import InstitutionalReportsStore
 from services.access import require_permission
 from services.audit import registrar_evento
-from services.date_format import format_date_br
+from services.date_format import format_date_br, format_datetime_br
+from services.institutional_reports import (
+    EMPTY_STRUCTURED_CONTENT,
+    build_report_snapshot,
+    can_finalize,
+)
 from services.themes import theme_tokens
 from services.tramita_reports import (
     file_hash,
@@ -1181,6 +1187,124 @@ def production(store, principal=None):
     )
 
 
+def _institutional_period_report(store, principal, tipo, year, quarter=None):
+    """Small Phase 1 entry point; rendering never rebuilds a saved snapshot."""
+    repository = InstitutionalReportsStore(store)
+    current = repository.latest_for_period(tipo, year, quarter)
+    label = f"{quarter}º trimestre de {year}" if quarter else str(year)
+    st.subheader("Relatório do período")
+    if not current:
+        st.caption(f"Nenhum relatório institucional criado para {label}.")
+    else:
+        partial = " — acumulado parcial" if current["periodo_parcial"] else ""
+        st.caption(
+            f"Versão {current['versao']} · {current['status']}{partial} · "
+            f"criado em {format_datetime_br(current['criado_em'])} · "
+            f"corte: {format_datetime_br(current['data_corte'])}"
+        )
+        if st.button(
+            "Abrir relatório", key=f"institutional_open_{tipo}_{year}_{quarter}"
+        ):
+            st.json(
+                {
+                    "metadados": current["snapshot_dados"]["metadados"],
+                    "status": current["status"],
+                    "versao": current["versao"],
+                    "data_corte": current["data_corte"],
+                    "snapshot": current["snapshot_dados"],
+                }
+            )
+    if not getattr(principal, "administrator", False):
+        return
+
+    creating_new = bool(current and current["status"] in ("FINALIZADO", "ENVIADO"))
+    create_label = "Criar nova versão" if creating_new else "Criar relatório"
+    if not current or creating_new:
+        if st.button(create_label, key=f"institutional_create_{tipo}_{year}_{quarter}"):
+            try:
+                snapshot = build_report_snapshot(
+                    store, tipo=tipo, ano=year, trimestre=quarter
+                )
+                metadata = snapshot["metadados"]
+                params = {
+                    "tipo": tipo,
+                    "ano": year,
+                    "trimestre": quarter,
+                    "data_inicio": metadata["data_inicio"],
+                    "data_fim": metadata["data_fim"],
+                    "periodo_parcial": metadata["periodo_parcial"],
+                    "descricao_periodo": metadata["descricao_periodo"],
+                    "snapshot_dados": snapshot,
+                    "conteudo_estruturado": EMPTY_STRUCTURED_CONTENT,
+                    "actor": principal.email,
+                }
+                report = (
+                    repository.create_new_version(**params)
+                    if creating_new
+                    else repository.create(**params)
+                )
+                registrar_evento(
+                    store,
+                    evento=(
+                        "RELATORIO_INSTITUCIONAL_NOVA_VERSAO"
+                        if creating_new
+                        else "RELATORIO_INSTITUCIONAL_CRIADO"
+                    ),
+                    modulo="relatorios",
+                    acao="CRIAR_NOVA_VERSAO" if creating_new else "CRIAR",
+                    principal=principal,
+                    entidade_tipo="relatorio_institucional",
+                    entidade_id=report["id"],
+                    detalhes={
+                        "tipo": tipo,
+                        "ano": year,
+                        "trimestre": quarter,
+                        "versao": report["versao"],
+                    },
+                )
+                st.success(f"Relatório institucional versão {report['versao']} criado.")
+                st.rerun()
+            except ValueError as exc:
+                st.warning(str(exc))
+
+    if current and current["status"] in ("RASCUNHO", "EM_REVISAO"):
+        eligible = can_finalize(current["snapshot_dados"])
+        if not eligible:
+            st.warning(
+                "Finalização indisponível: há lacunas na cobertura de dados do período."
+            )
+        confirmed = st.checkbox(
+            "Confirmo a finalização e o congelamento deste snapshot.",
+            key=f"institutional_confirm_{current['id']}",
+            disabled=not eligible,
+        )
+        if st.button(
+            "Finalizar relatório",
+            key=f"institutional_finalize_{current['id']}",
+            disabled=not (eligible and confirmed),
+        ):
+            report = repository.finalize(current["id"], principal.email)
+            registrar_evento(
+                store,
+                evento="RELATORIO_INSTITUCIONAL_FINALIZADO",
+                modulo="relatorios",
+                acao="FINALIZAR",
+                principal=principal,
+                entidade_tipo="relatorio_institucional",
+                entidade_id=report["id"],
+                detalhes={
+                    "tipo": tipo,
+                    "ano": year,
+                    "trimestre": quarter,
+                    "versao": report["versao"],
+                },
+            )
+            st.success(
+                "Relatório finalizado; o snapshot desta versão permanece congelado."
+            )
+            st.rerun()
+
+
 def quarterly(store, principal=None):
     reports = TramitaReportsStore(store)
     year, read = _select_year(reports, principal, "rel_quarter_year")
@@ -1237,6 +1361,7 @@ def quarterly(store, principal=None):
             ),
         )["summary"]
     _indicator_cards(report["summary"], previous)
+    _institutional_period_report(store, principal, "TRIMESTRAL", year, quarter)
     _temporal_charts(
         monthly, f"relatorios_trimestral_{year}_t{quarter}", compact_period=True
     )
@@ -1329,6 +1454,7 @@ def annual(store, principal=None):
         ("annual_monthly", year), lambda: reports.monthly_reports(year, months)
     )
     _indicator_cards(report["summary"], previous)
+    _institutional_period_report(store, principal, "ANUAL", year)
     _temporal_charts(monthly, f"relatorios_anual_{year}")
     st.subheader("Evolução acumulada no ano")
     st.caption(
