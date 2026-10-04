@@ -283,9 +283,20 @@ def test_finalized_and_sent_editors_are_read_only():
     assert not app.exception, app.exception
     labels = [button.label for button in app.button]
     assert labels.count("Criar nova versão") == 2
-    assert "Regenerar com IA" not in labels
     assert "Salvar alterações" not in labels
-    assert "Gerar conteúdo com IA" not in labels
+    generate = [
+        button
+        for button in app.button
+        if button.label == relatorios_ui.AI_GENERATE_LABEL
+    ]
+    regenerate = [
+        button
+        for button in app.button
+        if button.label == relatorios_ui.AI_REGENERATE_LABEL
+    ]
+    assert len(generate) == 2
+    assert regenerate
+    assert all(button.disabled for button in generate + regenerate)
     assert not app.text_area
 
 

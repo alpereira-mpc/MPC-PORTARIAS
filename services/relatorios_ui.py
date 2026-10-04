@@ -1849,6 +1849,34 @@ def _create_institutional_version(
     return report
 
 
+AI_GENERATE_LABEL = "✨ Gerar conteúdo com IA"
+AI_REGENERATE_LABEL = "✨ Regenerar com IA"
+AI_GENERATE_SUCCESS = "Conteúdo gerado com IA com sucesso."
+AI_REGENERATE_SUCCESS = "Seção regenerada com IA com sucesso."
+AI_GENERATE_FAILURE = "Não foi possível gerar o conteúdo com IA neste momento."
+AI_REGENERATE_FAILURE = "Não foi possível regenerar esta seção com IA neste momento."
+
+
+def _run_institutional_ai(operation, *, failure, success, report_id, sections, waiting):
+    """Keep the editor on screen when the provider or the parser fails."""
+    try:
+        with st.spinner(waiting):
+            operation()
+    except (ai_service.GeminiErro, ai_service.GeminiNaoConfigurada) as exc:
+        LOGGER.exception(failure)
+        st.error(f"{failure} {exc}".strip())
+    except (ValueError, PermissionError) as exc:
+        LOGGER.exception(failure)
+        st.error(str(exc))
+    except Exception:
+        LOGGER.exception(failure)
+        st.error(failure)
+    else:
+        _request_text_refresh(report_id, sections)
+        _flash("success", success)
+        st.rerun()
+
+
 def _render_institutional_editor(
     store, principal, report, *, is_latest, tipo, year, quarter, versions=None
 ):
@@ -1859,9 +1887,13 @@ def _render_institutional_editor(
     locked = report["status"] in ("FINALIZADO", "ENVIADO")
     editable = getattr(principal, "administrator", False) and not locked
     if locked:
-        if is_latest:
+        if report["status"] == "ENVIADO":
             st.caption(
-                "Relatório finalizado. O texto e o snapshot desta versão não podem ser alterados."
+                "Relatório enviado. O texto, a geração com IA e o snapshot desta versão não podem ser alterados."
+            )
+        elif is_latest:
+            st.caption(
+                "Relatório finalizado. O texto, a geração com IA e o snapshot desta versão não podem ser alterados."
             )
         else:
             st.caption("Versão encerrada, disponível somente para consulta.")
@@ -1893,22 +1925,27 @@ def _render_institutional_editor(
                 st.rerun()
             except ValueError as exc:
                 st.warning(str(exc))
+        if getattr(principal, "administrator", False):
+            st.button(
+                AI_GENERATE_LABEL,
+                key=f"inst_ai_all_{report['id']}",
+                disabled=True,
+            )
     elif editable:
         repository = InstitutionalReportsStore(store)
         _bind_text_state(report)
         unsaved = _has_unsaved_text(report["id"], content)
         service = InstitutionalReportContentService(store)
         actions = st.columns(3)
-        if actions[0].button(
-            "Gerar conteúdo com IA", key=f"inst_ai_all_{report['id']}"
-        ):
-            try:
-                service.generate_all(report["id"], principal)
-                _request_text_refresh(report["id"], AI_SECTIONS)
-                _flash("success", "Conteúdo gerado e encaminhado para revisão.")
-                st.rerun()
-            except (ValueError, PermissionError, ai_service.GeminiErro) as exc:
-                st.error(str(exc))
+        if actions[0].button(AI_GENERATE_LABEL, key=f"inst_ai_all_{report['id']}"):
+            _run_institutional_ai(
+                lambda: service.generate_all(report["id"], principal),
+                failure=AI_GENERATE_FAILURE,
+                success=AI_GENERATE_SUCCESS,
+                report_id=report["id"],
+                sections=AI_SECTIONS,
+                waiting="Gerando conteúdo com IA...",
+            )
         if actions[1].button("Salvar alterações", key=f"inst_save_{report['id']}"):
             try:
                 service.save_manual(
@@ -1937,16 +1974,20 @@ def _render_institutional_editor(
                     label_visibility="collapsed",
                 )
                 if key in AI_SECTIONS and st.button(
-                    "Regenerar com IA",
+                    AI_REGENERATE_LABEL,
                     key=f"inst_regen_{report['id']}_{key}",
                 ):
-                    try:
-                        service.regenerate(report["id"], key, principal)
-                        _request_text_refresh(report["id"], [key])
-                        _flash("success", f"{label} regenerada.")
-                        st.rerun()
-                    except (ValueError, PermissionError, ai_service.GeminiErro) as exc:
-                        st.error(str(exc))
+                    section_key = key
+                    _run_institutional_ai(
+                        lambda section_key=section_key: service.regenerate(
+                            report["id"], section_key, principal
+                        ),
+                        failure=AI_REGENERATE_FAILURE,
+                        success=AI_REGENERATE_SUCCESS,
+                        report_id=report["id"],
+                        sections=[section_key],
+                        waiting="Regenerando a seção com IA...",
+                    )
                 if section.get("requer_revisao"):
                     st.warning("Esta seção contém valores que devem ser revisados.")
         if unsaved:
@@ -2050,6 +2091,16 @@ def _render_institutional_editor(
                 st.markdown(text)
             else:
                 st.caption("Seção ainda não preenchida.")
+            if (
+                locked
+                and key in AI_SECTIONS
+                and getattr(principal, "administrator", False)
+            ):
+                st.button(
+                    AI_REGENERATE_LABEL,
+                    key=f"inst_regen_{report['id']}_{key}",
+                    disabled=True,
+                )
 
 
 def _covered_period_or_blank(snapshot):
