@@ -296,7 +296,7 @@ def test_finalized_and_sent_editors_are_read_only():
     app = AppTest.from_function(page, default_timeout=30).run()
     assert not app.exception, app.exception
     labels = [button.label for button in app.button]
-    assert labels.count("Criar nova versão para continuar") == 2
+    assert labels.count("Criar nova versão para editar") == 2
     assert "Salvar alterações" not in labels
     assert relatorios_ui.AI_GENERATE_LABEL not in labels
     assert relatorios_ui.AI_REGENERATE_LABEL not in labels
@@ -506,7 +506,9 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     assert "Finalizado" in _visible(app)
     assert not app.text_area
     new_version = next(
-        button for button in app.button if button.label == "Criar nova versão"
+        button
+        for button in app.button
+        if button.label == "Criar nova versão para editar"
     )
     _keep_orphan_widgets(app)
     new_version.click().run()
@@ -607,7 +609,7 @@ def test_finalized_empty_annual_opens_the_new_draft(tmp_path, monkeypatch):
     labels = [button.label for button in app.button]
     assert relatorios_ui.AI_GENERATE_LABEL not in labels
     assert relatorios_ui.AI_REGENERATE_LABEL not in labels
-    assert "Criar nova versão para continuar" in labels
+    assert "Criar nova versão para editar" in labels
     assert "Versão encerrada, disponível somente para consulta." in visible
     assert "Seção não preenchida nesta versão." in visible
     assert not app.text_area
@@ -682,10 +684,9 @@ def test_closed_version_opens_the_existing_review(tmp_path, monkeypatch):
     assert not app.exception, app.exception
     labels = [button.label for button in app.button]
     visible = _visible(app)
-    assert "Criar nova versão" not in labels
-    assert "Criar nova versão para continuar" not in labels
-    assert "Abrir versão em revisão" in labels
-    assert "Já existe uma versão em revisão deste relatório." in visible
+    assert "Criar nova versão para editar" not in labels
+    assert "Abrir versão em elaboração" in labels
+    assert "Já existe uma versão em elaboração." in visible
     assert relatorios_ui.AI_GENERATE_LABEL not in labels
     app.button(key=f"inst_open_editor_{first['id']}").click().run()
     assert not app.exception, app.exception

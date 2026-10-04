@@ -125,13 +125,15 @@ def test_latest_draft_and_review_can_be_deleted(tmp_path):
     assert repository.list_for_period("TRIMESTRAL", 2026, 3) == []
 
 
-def test_finalized_and_sent_versions_cannot_be_deleted(tmp_path):
+def test_finalized_unpublished_can_be_deleted_but_sent_cannot(tmp_path):
     repository = _repository(tmp_path)
     finalized = _open(repository, status="FINALIZADO")
-    with pytest.raises(ValueError, match="não podem ser excluídas"):
-        delete_editable_report_version(repository.store, finalized["id"], _admin())
-    sent = repository.mark_distributed(finalized["id"], "admin@test")
-    with pytest.raises(ValueError, match="não podem ser excluídas"):
+    removed = delete_editable_report_version(
+        repository.store, finalized["id"], _admin()
+    )
+    assert removed["status"] == "FINALIZADO"
+    sent = _open(repository, status="ENVIADO")
+    with pytest.raises(ValueError, match="enviadas"):
         delete_editable_report_version(repository.store, sent["id"], _admin())
     assert repository.get(finalized["id"])["status"] == "ENVIADO"
 
@@ -272,7 +274,7 @@ def test_bulk_deletion_stops_at_the_frozen_version(tmp_path):
     assert [item["versao"] for item in remaining] == [2, 1]
     assert remaining[0]["id"] == second["id"]
     assert repository.get(first["id"])["status"] == "FINALIZADO"
-    with pytest.raises(ValueError, match="não podem ser excluídas"):
+    with pytest.raises(ValueError, match="mais recente"):
         delete_editable_report_version(repository.store, first["id"], _admin())
 
 
@@ -331,4 +333,4 @@ def test_deletion_screen_confirms_before_removing_and_selects_the_rest(
     assert app.selectbox(key="inst_versao").value == "1 - Finalizado"
     app.run()
     labels = [button.label for button in app.button]
-    assert not any(label.startswith("Excluir") for label in labels), labels
+    assert labels == ["Excluir versão não publicada"]

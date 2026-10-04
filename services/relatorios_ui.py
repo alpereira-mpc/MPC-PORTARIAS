@@ -19,8 +19,9 @@ from services.date_format import format_date_br, format_datetime_br
 from services.institutional_reports import (
     EMPTY_STRUCTURED_CONTENT,
     build_report_snapshot,
-    delete_editable_period_versions,
     delete_editable_report_version,
+    deletion_eligibility,
+    report_workflow_state,
     can_finalize,
 )
 from services.institutional_report_content import (
@@ -1334,7 +1335,7 @@ def _forget_deleted_reports(identifiers):
             pending.append(identifier)
     st.session_state["inst_forget_reports"] = pending
     st.session_state.pop("inst_delete_pending", None)
-    st.session_state.pop("inst_delete_bulk_pending", None)
+    st.session_state.pop("inst_ai_replace_pending", None)
     _prefer_latest_version()
 
 
@@ -1351,6 +1352,8 @@ def _apply_forgotten_reports():
         )
         exact = {
             f"inst_ai_all_{token}",
+            f"inst_ai_replace_confirm_{token}",
+            f"inst_ai_replace_cancel_{token}",
             f"inst_save_{token}",
             f"inst_review_{token}",
             f"inst_confirm_{token}",
@@ -1406,9 +1409,13 @@ def _render_delete_confirmation(store, principal, versions):
             "Esta versão será excluída permanentemente. Esta ação não pode ser desfeita."
         )
         st.caption(_delete_identity(target))
+        if target.get("status") == "FINALIZADO":
+            st.caption(
+                "Esta versão está finalizada, mas não possui PDF oficial nem distribuição."
+            )
         confirm, cancel = st.columns(2)
         if confirm.button(
-            "Confirmar exclusão", key=f"inst_delete_confirm_{target['id']}"
+            "Confirmar exclusão definitiva", key=f"inst_delete_confirm_{target['id']}"
         ):
             try:
                 removed = delete_editable_report_version(store, target["id"], principal)
@@ -1422,77 +1429,29 @@ def _render_delete_confirmation(store, principal, versions):
         if cancel.button("Cancelar", key=f"inst_delete_cancel_{target['id']}"):
             st.session_state.pop("inst_delete_pending", None)
             st.rerun()
-    bulk = st.session_state.get("inst_delete_bulk_pending")
-    if not bulk or not versions:
-        return
-    tail = _editable_tail(versions)
-    token = _period_token(
-        versions[0].get("tipo"), versions[0].get("ano"), versions[0].get("trimestre")
-    )
-    if bulk != token or not tail:
-        st.session_state.pop("inst_delete_bulk_pending", None)
-        return
-    st.warning(
-        "As versões em elaboração serão excluídas permanentemente, "
-        "da mais recente para a anterior. Esta ação não pode ser desfeita."
-    )
-    for item in tail:
-        st.caption(_delete_identity(item))
-    confirm, cancel = st.columns(2)
-    if confirm.button("Confirmar exclusão", key=f"inst_delete_bulk_confirm_{token}"):
-        try:
-            removed = delete_editable_period_versions(
-                store,
-                versions[0]["tipo"],
-                versions[0]["ano"],
-                versions[0]["trimestre"],
-                principal,
-            )
-        except (ValueError, PermissionError) as exc:
-            st.session_state.pop("inst_delete_bulk_pending", None)
-            st.error(str(exc))
-        else:
-            _forget_deleted_reports([item["id"] for item in removed])
-            _flash(
-                "success",
-                "Versões em elaboração excluídas: "
-                + ", ".join(str(item["versao"]) for item in removed)
-                + ".",
-            )
-            st.rerun()
-    if cancel.button("Cancelar", key=f"inst_delete_bulk_cancel_{token}"):
-        st.session_state.pop("inst_delete_bulk_pending", None)
-        st.rerun()
 
 
-def _render_delete_buttons(report, versions, *, placement):
-    """Offer deletion only for the latest draft or review version."""
+def _render_delete_buttons(report, versions, *, placement, repository=None):
+    """Offer one administrative deletion path only when policy allows it."""
     if not versions:
         return
-    tail = _editable_tail(versions)
-    latest = tail[0] if tail else None
-    if latest and report and report.get("id") == latest.get("id"):
+    latest = versions[0]
+    if report and report.get("id") == latest.get("id"):
+        eligible = latest.get("status") in ("RASCUNHO", "EM_REVISAO", "FINALIZADO")
+        if repository is not None and eligible:
+            try:
+                deletion_eligibility(repository, latest["id"])
+            except ValueError:
+                eligible = False
+        if not eligible:
+            return
         label = (
             "Excluir relatório em elaboração"
-            if placement == "header"
-            else "Excluir versão"
+            if latest.get("status") in ("RASCUNHO", "EM_REVISAO")
+            else "Excluir versão não publicada"
         )
         if st.button(label, key=f"inst_delete_ask_{placement}_{latest['id']}"):
             st.session_state["inst_delete_pending"] = latest["id"]
-            st.session_state.pop("inst_delete_bulk_pending", None)
-            st.rerun()
-    if placement == "versions" and len(versions) > 1 and len(tail) > 1:
-        token = _period_token(
-            versions[0].get("tipo"),
-            versions[0].get("ano"),
-            versions[0].get("trimestre"),
-        )
-        if st.button(
-            "Excluir versões em elaboração",
-            key=f"inst_delete_bulk_ask_{token}",
-        ):
-            st.session_state["inst_delete_bulk_pending"] = token
-            st.session_state.pop("inst_delete_pending", None)
             st.rerun()
 
 
@@ -2066,7 +2025,12 @@ def _run_institutional_ai(operation, *, failure, success, report_id, sections, w
     try:
         with st.spinner(waiting):
             operation()
-    except (ai_service.GeminiErro, ai_service.GeminiNaoConfigurada) as exc:
+    except ai_service.GeminiNaoConfigurada:
+        LOGGER.exception(failure)
+        st.error(
+            "Não foi possível gerar o conteúdo com IA: serviço de IA não configurado."
+        )
+    except ai_service.GeminiErro as exc:
         LOGGER.exception(failure)
         st.error(f"{failure} {exc}".strip())
     except (ValueError, PermissionError) as exc:
@@ -2114,34 +2078,25 @@ def _render_version_continuation(
     """Offer the next step for a closed version without editing it."""
     if not getattr(principal, "administrator", False):
         return
+    workflow = report_workflow_state(versions or [report], report.get("id"))
     if report.get("status") not in ("FINALIZADO", "ENVIADO"):
         return
-    successor = _latest_open_version(report, versions)
+    successor = workflow["editable"] if workflow["has_editable_successor"] else None
     if successor:
-        if successor.get("status") == "EM_REVISAO":
-            st.caption("Já existe uma versão em revisão deste relatório.")
-            label = "Abrir versão em revisão"
-        else:
-            st.caption("Já existe uma versão em elaboração deste relatório.")
-            label = "Abrir versão em elaboração"
+        st.caption("Já existe uma versão em elaboração.")
+        label = "Abrir versão em elaboração"
         if st.button(label, key=f"inst_open_{placement}_{report['id']}"):
             _remember_open_editor()
             st.rerun()
         return
-    if not _selected_is_latest_closed(report, versions):
+    if not workflow["can_create_new"]:
         return
-    from services.institutional_report_validation import essential_content_gaps
-
     if placement == "editor":
         st.caption(
             "Para alterar ou gerar o conteúdo desta versão, "
             "crie uma nova versão em elaboração."
         )
-    label = (
-        "Criar nova versão para continuar"
-        if essential_content_gaps(report)
-        else "Criar nova versão"
-    )
+    label = "Criar nova versão para editar"
     key = (
         f"inst_new_{report['id']}"
         if placement == "editor"
@@ -2209,7 +2164,33 @@ def _render_institutional_editor(
         unsaved = _has_unsaved_text(report["id"], content)
         service = InstitutionalReportContentService(store)
         actions = st.columns(3)
-        if _ai_button(actions[0], AI_GENERATE_LABEL, f"inst_ai_all_{report['id']}"):
+        has_content = any(content[key].get("texto", "").strip() for key in AI_SECTIONS)
+        generate_label = "Gerar novamente com IA" if has_content else AI_GENERATE_LABEL
+        generate_requested = _ai_button(
+            actions[0], generate_label, f"inst_ai_all_{report['id']}"
+        )
+        pending_replace = (
+            st.session_state.get("inst_ai_replace_pending") == report["id"]
+        )
+        if generate_requested and has_content:
+            st.session_state["inst_ai_replace_pending"] = report["id"]
+            st.rerun()
+        if pending_replace:
+            st.warning(
+                "Gerar novamente o conteúdo com IA? Os textos atuais serão substituídos."
+            )
+            confirm, cancel = st.columns(2)
+            if confirm.button(
+                "Confirmar geração com IA",
+                key=f"inst_ai_replace_confirm_{report['id']}",
+                icon=AI_ICON,
+            ):
+                st.session_state.pop("inst_ai_replace_pending", None)
+                generate_requested = True
+            if cancel.button("Cancelar", key=f"inst_ai_replace_cancel_{report['id']}"):
+                st.session_state.pop("inst_ai_replace_pending", None)
+                st.rerun()
+        if generate_requested and (not has_content or pending_replace):
             _run_institutional_ai(
                 lambda: service.generate_all(report["id"], principal),
                 failure=AI_GENERATE_FAILURE,
@@ -2242,16 +2223,18 @@ def _render_institutional_editor(
             actions[2].caption("Em revisão")
         for index, (key, label) in enumerate(SECTIONS):
             section = content[key]
+            text = section.get("texto") or ""
             with st.expander(label, expanded=index == 0):
                 st.text_area(
                     label,
-                    section.get("texto") or "",
+                    text,
                     key=_text_widget_key(report["id"], key),
                     height=150,
                     label_visibility="collapsed",
                 )
                 if (
                     key in AI_SECTIONS
+                    and text.strip()
                     and (
                         key != "comparacao_periodo_anterior"
                         or _comparison_can_regenerate(report)
@@ -2600,7 +2583,9 @@ def _institutional_workspace(store, principal):
     snapshot = report.get("snapshot_dados") or {}
     _render_report_identity(report, snapshot)
     if getattr(principal, "administrator", False):
-        _render_delete_buttons(report, versions, placement="header")
+        _render_delete_buttons(
+            report, versions, placement="header", repository=repository
+        )
         _render_delete_confirmation(store, principal, versions)
     if open_editor:
         st.session_state["inst_exibicao"] = "Conteúdo e revisão"
@@ -2661,7 +2646,9 @@ def _institutional_workspace(store, principal):
     else:
         _render_version_history(versions)
         if getattr(principal, "administrator", False):
-            _render_delete_buttons(versions[0], versions, placement="versions")
+            _render_delete_buttons(
+                versions[0], versions, placement="versions", repository=repository
+            )
         from services.institutional_governance_ui import render_version_comparison
 
         render_version_comparison(store, versions)

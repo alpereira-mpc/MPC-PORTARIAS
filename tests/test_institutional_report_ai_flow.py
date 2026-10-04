@@ -155,7 +155,9 @@ def test_draft_generation_persists_and_reruns(tmp_path, monkeypatch):
     database, _store, repository, report = _create(tmp_path)
     app = _open(monkeypatch, database, report)
     assert relatorios_ui.AI_GENERATE_LABEL in [button.label for button in app.button]
-    assert relatorios_ui.AI_REGENERATE_LABEL in [button.label for button in app.button]
+    assert relatorios_ui.AI_REGENERATE_LABEL not in [
+        button.label for button in app.button
+    ]
     assert any(button.label == "Marcar para revisão" for button in app.button)
     generate = app.button(key=f"inst_ai_all_{report['id']}")
     assert generate.proto.icon == ":material/auto_awesome:"
@@ -273,7 +275,7 @@ def test_provider_failure_keeps_the_page_and_previous_text(tmp_path, monkeypatch
     app = _open(monkeypatch, database, report)
     app.button(key=f"inst_regen_{report['id']}_permanencia").click().run()
     assert not app.exception, app.exception
-    assert relatorios_ui.AI_REGENERATE_FAILURE in _shown(app.error)
+    assert "serviço de IA não configurado" in _shown(app.error)
     assert app.text_area
     assert _values(app)[f"inst_text_{report['id']}_permanencia"] == (
         "GERADO permanencia."
@@ -299,6 +301,7 @@ def test_unexpected_failure_does_not_crash_or_erase_content(tmp_path, monkeypatc
     _patch(monkeypatch, _unexpected)
     app = _open(monkeypatch, database, report)
     app.button(key=f"inst_ai_all_{report['id']}").click().run()
+    app.button(key=f"inst_ai_replace_confirm_{report['id']}").click().run()
     assert not app.exception, app.exception
     visible = _shown(app.error)
     assert relatorios_ui.AI_GENERATE_FAILURE in visible
@@ -319,7 +322,7 @@ def test_finalized_report_blocks_ai_actions(tmp_path, monkeypatch):
     labels = [button.label for button in app.button]
     assert relatorios_ui.AI_GENERATE_LABEL not in labels
     assert relatorios_ui.AI_REGENERATE_LABEL not in labels
-    assert "Criar nova versão" in labels
+    assert "Criar nova versão para editar" in labels
     assert not app.text_area
     with pytest.raises(ValueError, match="somente leitura"):
         InstitutionalReportContentService(store).generate_all(report["id"], _admin())
@@ -340,7 +343,7 @@ def test_sent_report_blocks_ai_actions(tmp_path, monkeypatch):
     labels = [button.label for button in app.button]
     assert relatorios_ui.AI_GENERATE_LABEL not in labels
     assert relatorios_ui.AI_REGENERATE_LABEL not in labels
-    assert "Criar nova versão" in labels
+    assert "Criar nova versão para editar" in labels
     assert not app.text_area
     assert "Relatório enviado" in _shown(app.caption)
     with pytest.raises(ValueError, match="somente leitura"):

@@ -166,13 +166,83 @@ def _require_administrator(principal):
         )
 
 
+def report_workflow_state(versions, selected_id=None):
+    """Return the one, user-facing workflow decision for a report period.
+
+    Versions arrive newest first.  Keeping this small decision object outside the
+    Streamlit views prevents the header, editor and history from inventing
+    conflicting rules of their own.
+    """
+    versions = list(versions or [])
+    editable = next(
+        (item for item in versions if item.get("status") in ("RASCUNHO", "EM_REVISAO")),
+        None,
+    )
+    official = next(
+        (item for item in versions if item.get("status") in ("FINALIZADO", "ENVIADO")),
+        None,
+    )
+    selected = next((item for item in versions if item.get("id") == selected_id), None)
+    latest = versions[0] if versions else None
+    return {
+        "kind": "EMPTY" if not versions else ("EDITABLE" if editable else "OFFICIAL"),
+        "latest": latest,
+        "selected": selected or latest,
+        "editable": editable,
+        "official": official,
+        "has_editable_successor": bool(
+            selected
+            and selected.get("status") in ("FINALIZADO", "ENVIADO")
+            and editable
+            and editable.get("id") != selected.get("id")
+        ),
+        "can_create": bool(not versions),
+        "can_create_new": bool(
+            latest and latest.get("status") in ("FINALIZADO", "ENVIADO")
+        ),
+    }
+
+
+def deletion_eligibility(repository, identifier):
+    """Validate the only supported permanent-deletion policy.
+
+    A finalised version is still removable when it never became an official
+    artifact: it must be the newest version and have neither PDF nor delivery.
+    """
+    report = repository.get(identifier)
+    if not report:
+        raise ValueError("Relatório institucional não encontrado.")
+    versions = repository.list_for_period(
+        report["tipo"], report["ano"], report["trimestre"]
+    )
+    if not versions or versions[0]["id"] != report["id"]:
+        raise ValueError("Somente a versão mais recente do período pode ser excluída.")
+    if report["status"] == "ENVIADO":
+        raise ValueError("Versões enviadas não podem ser excluídas.")
+    if repository.pdf_artifact(identifier):
+        raise ValueError("Esta versão possui PDF oficial e não pode ser excluída.")
+    if repository.list_distributions(identifier):
+        raise ValueError(
+            "Esta versão possui histórico de distribuição e não pode ser excluída."
+        )
+    if report["status"] not in ("RASCUNHO", "EM_REVISAO", "FINALIZADO"):
+        raise ValueError("Esta versão não pode ser excluída.")
+    reason = {
+        "RASCUNHO": "RASCUNHO_EXCLUIDO",
+        "EM_REVISAO": "REVISAO_EXCLUIDA",
+        "FINALIZADO": "FINALIZADO_NAO_PUBLICADO_EXCLUIDO",
+    }[report["status"]]
+    return {**report, "motivo_tecnico": reason}
+
+
 def delete_editable_report_version(store, identifier, principal):
-    """Delete one latest draft or review version and keep an audit record."""
+    """Permanently delete one eligible latest version, with a minimal audit trail."""
     from database.institutional_reports import InstitutionalReportsStore
     from services.audit import registrar_evento
 
     _require_administrator(principal)
-    removed = InstitutionalReportsStore(store).delete_editable_version(identifier)
+    repository = InstitutionalReportsStore(store)
+    eligible = deletion_eligibility(repository, identifier)
     registrar_evento(
         store,
         evento="RELATORIO_INSTITUCIONAL_VERSAO_EXCLUIDA",
@@ -180,16 +250,17 @@ def delete_editable_report_version(store, identifier, principal):
         acao="EXCLUIR_VERSAO",
         principal=principal,
         entidade_tipo="relatorio_institucional",
-        entidade_id=removed["id"],
+        entidade_id=eligible["id"],
         detalhes={
-            "tipo": removed["tipo"],
-            "ano": removed["ano"],
-            "trimestre": removed["trimestre"],
-            "versao": removed["versao"],
-            "status": removed["status"],
+            "tipo": eligible["tipo"],
+            "ano": eligible["ano"],
+            "trimestre": eligible["trimestre"],
+            "versao": eligible["versao"],
+            "status_anterior": eligible["status"],
+            "motivo_tecnico": eligible["motivo_tecnico"],
         },
     )
-    return removed
+    return repository.delete_version(identifier)
 
 
 def delete_editable_period_versions(store, tipo, ano, trimestre, principal):

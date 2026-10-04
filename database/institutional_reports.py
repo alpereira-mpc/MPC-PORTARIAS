@@ -172,8 +172,12 @@ class InstitutionalReportsStore:
         rows = self.list_for_period(tipo, ano, trimestre)
         return rows[0] if rows else None
 
-    def delete_editable_version(self, identifier):
-        """Hard-delete the latest draft or review version of its period."""
+    def delete_version(self, identifier):
+        """Hard-delete an eligible latest version.
+
+        Authorization and the user-facing policy live in the service layer;
+        this repository guard preserves the invariant for every caller.
+        """
         with self.store.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -182,10 +186,8 @@ class InstitutionalReportsStore:
             ).fetchone()
             if not row:
                 raise ValueError("Relatório institucional não encontrado.")
-            if row["status"] not in ("RASCUNHO", "EM_REVISAO"):
-                raise ValueError(
-                    "Versões finalizadas ou enviadas não podem ser excluídas."
-                )
+            if row["status"] not in ("RASCUNHO", "EM_REVISAO", "FINALIZADO"):
+                raise ValueError("Versões enviadas não podem ser excluídas.")
             clause, params = self._period_clause(
                 row["tipo"], row["ano"], row["trimestre"]
             )
@@ -240,6 +242,11 @@ class InstitutionalReportsStore:
                     ) from exc
                 raise
         return removed
+
+    # Kept for integrations that used the old repository method.  New callers
+    # must use delete_version through services.institutional_reports.
+    def delete_editable_version(self, identifier):
+        return self.delete_version(identifier)
 
     def get(self, identifier):
         with self.store.connection(read_only=True) as connection:
