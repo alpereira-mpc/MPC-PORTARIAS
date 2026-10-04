@@ -296,23 +296,10 @@ def test_finalized_and_sent_editors_are_read_only():
     app = AppTest.from_function(page, default_timeout=30).run()
     assert not app.exception, app.exception
     labels = [button.label for button in app.button]
-    assert labels.count("Criar nova versão") == 2
+    assert labels.count("Criar nova versão para continuar") == 2
     assert "Salvar alterações" not in labels
-    generate = [
-        button
-        for button in app.button
-        if button.label == relatorios_ui.AI_GENERATE_LABEL
-    ]
-    regenerate = [
-        button
-        for button in app.button
-        if button.label == relatorios_ui.AI_REGENERATE_LABEL
-    ]
-    assert len(generate) == 2
-    assert regenerate
-    assert all(button.disabled for button in generate + regenerate)
-    assert all(button.proto.icon == ":material/auto_awesome:" for button in generate)
-    assert all(button.proto.icon == ":material/auto_awesome:" for button in regenerate)
+    assert relatorios_ui.AI_GENERATE_LABEL not in labels
+    assert relatorios_ui.AI_REGENERATE_LABEL not in labels
     assert not app.text_area
 
 
@@ -552,3 +539,165 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     assert "Evolução acumulada no ano" in annual_visible
     assert "1760" in annual_visible
     assert not any(button.label == "Abrir relatório" for button in annual_panel.button)
+
+
+def _annual_reference(tmp_path, name):
+    database = tmp_path / name
+    store = Store(database)
+    store.configure(export_dir=str(tmp_path / "exports"))
+    import_reference_reports(
+        store, Path(__file__).resolve().parents[1] / "referencias", "admin@test"
+    )
+    snapshot = build_report_snapshot(store, tipo="ANUAL", ano=2026, trimestre=None)
+    metadata = snapshot["metadados"]
+    from database.institutional_reports import InstitutionalReportsStore
+    from services.institutional_reports import EMPTY_STRUCTURED_CONTENT
+
+    repository = InstitutionalReportsStore(store)
+    created = repository.create(
+        tipo="ANUAL",
+        ano=2026,
+        trimestre=None,
+        data_inicio=metadata["data_inicio"],
+        data_fim=metadata["data_fim"],
+        periodo_parcial=metadata["periodo_parcial"],
+        descricao_periodo=metadata["descricao_periodo"],
+        snapshot_dados=snapshot,
+        conteudo_estruturado=EMPTY_STRUCTURED_CONTENT,
+        actor="admin@test",
+    )
+    return database, repository, repository.finalize(created["id"], "admin@test")
+
+
+def test_finalized_empty_annual_opens_the_new_draft(tmp_path, monkeypatch):
+    database, repository, first = _annual_reference(tmp_path, "continue.db")
+    from services.institutional_report_validation import snapshot_hash
+
+    frozen_hash = snapshot_hash(first["snapshot_dados"])
+    monkeypatch.setenv("MPC_CONTINUE_DB", str(database))
+
+    def page():
+        import os
+
+        from database.store import Store
+        from services.access import Principal
+        import services.relatorios_ui as ui
+
+        local = Store(os.environ["MPC_CONTINUE_DB"])
+        admin = Principal(
+            1,
+            "Admin",
+            "admin@test",
+            "ADMINISTRADOR",
+            True,
+            True,
+            True,
+            True,
+            True,
+            (),
+        )
+        ui.institutional_reports(local, admin)
+
+    app = AppTest.from_function(page, default_timeout=120).run()
+    assert not app.exception, app.exception
+    app.radio(key="inst_tipo").set_value("Relatório Anual").run()
+    app.radio(key="inst_exibicao").set_value("Conteúdo e revisão").run()
+    assert not app.exception, app.exception
+    visible = _visible(app)
+    labels = [button.label for button in app.button]
+    assert relatorios_ui.AI_GENERATE_LABEL not in labels
+    assert relatorios_ui.AI_REGENERATE_LABEL not in labels
+    assert "Criar nova versão para continuar" in labels
+    assert "Versão encerrada, disponível somente para consulta." in visible
+    assert "Seção não preenchida nesta versão." in visible
+    assert not app.text_area
+    app.button(key=f"inst_new_{first['id']}").click().run()
+    assert not app.exception, app.exception
+    versions = repository.list_for_period("ANUAL", 2026, None)
+    assert [item["versao"] for item in versions] == [2, 1]
+    assert versions[0]["status"] == "RASCUNHO"
+    kept = repository.get(first["id"])
+    assert kept["status"] == "FINALIZADO"
+    assert snapshot_hash(kept["snapshot_dados"]) == frozen_hash
+    assert app.radio(key="inst_exibicao").value == "Conteúdo e revisão"
+    assert app.selectbox(key="inst_versao").value == "2 - Rascunho"
+    generate = app.button(key=f"inst_ai_all_{versions[0]['id']}")
+    assert generate.label == relatorios_ui.AI_GENERATE_LABEL
+    assert generate.disabled is False
+    assert app.text_area
+
+
+def test_closed_version_opens_the_existing_review(tmp_path, monkeypatch):
+    database, repository, first = _annual_reference(tmp_path, "open-review.db")
+    metadata = first["snapshot_dados"]["metadados"]
+    second = repository.create_new_version(
+        tipo="ANUAL",
+        ano=2026,
+        trimestre=None,
+        data_inicio=metadata["data_inicio"],
+        data_fim=metadata["data_fim"],
+        periodo_parcial=metadata["periodo_parcial"],
+        descricao_periodo=metadata["descricao_periodo"],
+        snapshot_dados=first["snapshot_dados"],
+        conteudo_estruturado={
+            "resumo_executivo": {"texto": "Texto da versão em revisão."}
+        },
+        actor="admin@test",
+    )
+    repository.save_content(
+        second["id"],
+        second["conteudo_estruturado"],
+        "admin@test",
+        status="EM_REVISAO",
+    )
+    monkeypatch.setenv("MPC_OPEN_REVIEW_DB", str(database))
+
+    def page():
+        import os
+
+        from database.store import Store
+        from services.access import Principal
+        import services.relatorios_ui as ui
+
+        local = Store(os.environ["MPC_OPEN_REVIEW_DB"])
+        admin = Principal(
+            1,
+            "Admin",
+            "admin@test",
+            "ADMINISTRADOR",
+            True,
+            True,
+            True,
+            True,
+            True,
+            (),
+        )
+        ui.institutional_reports(local, admin)
+
+    app = AppTest.from_function(page, default_timeout=120).run()
+    assert not app.exception, app.exception
+    app.radio(key="inst_tipo").set_value("Relatório Anual").run()
+    app.selectbox(key="inst_versao").set_value("1 - Finalizado").run()
+    app.radio(key="inst_exibicao").set_value("Conteúdo e revisão").run()
+    assert not app.exception, app.exception
+    labels = [button.label for button in app.button]
+    visible = _visible(app)
+    assert "Criar nova versão" not in labels
+    assert "Criar nova versão para continuar" not in labels
+    assert "Abrir versão em revisão" in labels
+    assert "Já existe uma versão em revisão deste relatório." in visible
+    assert relatorios_ui.AI_GENERATE_LABEL not in labels
+    app.button(key=f"inst_open_editor_{first['id']}").click().run()
+    assert not app.exception, app.exception
+    assert [
+        item["versao"] for item in repository.list_for_period("ANUAL", 2026, None)
+    ] == [
+        2,
+        1,
+    ]
+    assert repository.get(first["id"])["status"] == "FINALIZADO"
+    assert app.selectbox(key="inst_versao").value == "2 - Em revisão"
+    assert app.radio(key="inst_exibicao").value == "Conteúdo e revisão"
+    generate = app.button(key=f"inst_ai_all_{second['id']}")
+    assert generate.disabled is False
+    assert app.text_area

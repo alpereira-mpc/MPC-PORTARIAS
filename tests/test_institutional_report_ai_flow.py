@@ -316,20 +316,10 @@ def test_finalized_report_blocks_ai_actions(tmp_path, monkeypatch):
     InstitutionalReportContentService(store).generate_all(report["id"], _admin())
     repository.finalize(report["id"], "admin@test")
     app = _open(monkeypatch, database, report)
-    generate = app.button(key=f"inst_ai_all_{report['id']}")
-    assert generate.disabled
-    assert generate.label == relatorios_ui.AI_GENERATE_LABEL
-    assert generate.proto.icon == ":material/auto_awesome:"
-    assert all(
-        button.proto.icon == ":material/auto_awesome:"
-        for button in app.button
-        if button.label == relatorios_ui.AI_REGENERATE_LABEL
-    )
-    assert all(
-        button.disabled
-        for button in app.button
-        if button.label == relatorios_ui.AI_REGENERATE_LABEL
-    )
+    labels = [button.label for button in app.button]
+    assert relatorios_ui.AI_GENERATE_LABEL not in labels
+    assert relatorios_ui.AI_REGENERATE_LABEL not in labels
+    assert "Criar nova versão" in labels
     assert not app.text_area
     with pytest.raises(ValueError, match="somente leitura"):
         InstitutionalReportContentService(store).generate_all(report["id"], _admin())
@@ -347,12 +337,10 @@ def test_sent_report_blocks_ai_actions(tmp_path, monkeypatch):
     repository.mark_distributed(report["id"], "admin@test")
     app = _open(monkeypatch, database, report)
     assert repository.get(report["id"])["status"] == "ENVIADO"
-    assert app.button(key=f"inst_ai_all_{report['id']}").disabled
-    assert all(
-        button.disabled
-        for button in app.button
-        if (button.key or "").startswith("inst_regen_")
-    )
+    labels = [button.label for button in app.button]
+    assert relatorios_ui.AI_GENERATE_LABEL not in labels
+    assert relatorios_ui.AI_REGENERATE_LABEL not in labels
+    assert "Criar nova versão" in labels
     assert not app.text_area
     assert "Relatório enviado" in _shown(app.caption)
     with pytest.raises(ValueError, match="somente leitura"):

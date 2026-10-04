@@ -2081,6 +2081,94 @@ def _run_institutional_ai(operation, *, failure, success, report_id, sections, w
         st.rerun()
 
 
+def _remember_open_editor():
+    """Next run selects the latest version and opens Conteúdo e revisão."""
+    _prefer_latest_version()
+    st.session_state["inst_open_editor"] = True
+
+
+def _latest_open_version(report, versions):
+    """Editable successor of a closed version, when one already exists."""
+    ordered = list(versions or [])
+    if not ordered:
+        return None
+    latest = ordered[0]
+    if latest.get("id") == report.get("id"):
+        return None
+    if latest.get("status") in ("RASCUNHO", "EM_REVISAO"):
+        return latest
+    return None
+
+
+def _selected_is_latest_closed(report, versions):
+    ordered = list(versions or [])
+    latest = ordered[0] if ordered else report
+    return report.get("status") in ("FINALIZADO", "ENVIADO") and latest.get(
+        "id"
+    ) == report.get("id")
+
+
+def _render_version_continuation(
+    store, principal, report, versions, *, tipo, year, quarter, placement
+):
+    """Offer the next step for a closed version without editing it."""
+    if not getattr(principal, "administrator", False):
+        return
+    if report.get("status") not in ("FINALIZADO", "ENVIADO"):
+        return
+    successor = _latest_open_version(report, versions)
+    if successor:
+        if successor.get("status") == "EM_REVISAO":
+            st.caption("Já existe uma versão em revisão deste relatório.")
+            label = "Abrir versão em revisão"
+        else:
+            st.caption("Já existe uma versão em elaboração deste relatório.")
+            label = "Abrir versão em elaboração"
+        if st.button(label, key=f"inst_open_{placement}_{report['id']}"):
+            _remember_open_editor()
+            st.rerun()
+        return
+    if not _selected_is_latest_closed(report, versions):
+        return
+    from services.institutional_report_validation import essential_content_gaps
+
+    if placement == "editor":
+        st.caption(
+            "Para alterar ou gerar o conteúdo desta versão, "
+            "crie uma nova versão em elaboração."
+        )
+    label = (
+        "Criar nova versão para continuar"
+        if essential_content_gaps(report)
+        else "Criar nova versão"
+    )
+    key = (
+        f"inst_new_{report['id']}"
+        if placement == "editor"
+        else f"inst_new_header_{report['id']}"
+    )
+    if st.button(label, key=key):
+        try:
+            repository = InstitutionalReportsStore(store)
+            created = _create_institutional_version(
+                store,
+                repository,
+                principal,
+                tipo,
+                year,
+                quarter,
+                new_version=True,
+            )
+            _flash(
+                "success",
+                f"Relatório institucional versão {created['versao']} criado.",
+            )
+            _remember_open_editor()
+            st.rerun()
+        except ValueError as exc:
+            st.warning(str(exc))
+
+
 def _render_institutional_editor(
     store, principal, report, *, is_latest, tipo, year, quarter, versions=None
 ):
@@ -2091,51 +2179,30 @@ def _render_institutional_editor(
     locked = report["status"] in ("FINALIZADO", "ENVIADO")
     editable = getattr(principal, "administrator", False) and not locked
     if locked:
+        st.caption("Versão encerrada, disponível somente para consulta.")
         if report["status"] == "ENVIADO":
             st.caption(
-                "Relatório enviado. O texto, a geração com IA e o snapshot desta versão não podem ser alterados."
+                "Relatório enviado. O texto e o snapshot desta versão não podem ser alterados."
             )
-        elif is_latest:
-            st.caption(
-                "Relatório finalizado. O texto, a geração com IA e o snapshot desta versão não podem ser alterados."
-            )
-        else:
-            st.caption("Versão encerrada, disponível somente para consulta.")
-        if (
-            is_latest
-            and locked
-            and getattr(principal, "administrator", False)
-            and st.button(
-                "Criar nova versão",
-                key=f"inst_new_{report['id']}",
-            )
-        ):
-            try:
-                repository = InstitutionalReportsStore(store)
-                created = _create_institutional_version(
-                    store,
-                    repository,
-                    principal,
-                    tipo,
-                    year,
-                    quarter,
-                    new_version=True,
-                )
-                _flash(
-                    "success",
-                    f"Relatório institucional versão {created['versao']} criado.",
-                )
-                _prefer_latest_version()
-                st.rerun()
-            except ValueError as exc:
-                st.warning(str(exc))
-        if getattr(principal, "administrator", False):
-            _ai_button(
-                st,
-                AI_GENERATE_LABEL,
-                f"inst_ai_all_{report['id']}",
-                disabled=True,
-            )
+        _render_version_continuation(
+            store,
+            principal,
+            report,
+            versions,
+            tipo=tipo,
+            year=year,
+            quarter=quarter,
+            placement="editor",
+        )
+        for key, label in SECTIONS:
+            section = content[key]
+            with st.expander(label, expanded=False):
+                text = section.get("texto") or ""
+                if text.strip():
+                    st.markdown(text)
+                else:
+                    st.caption("Seção não preenchida nesta versão.")
+        return
     elif editable:
         repository = InstitutionalReportsStore(store)
         _bind_text_state(report)
@@ -2213,12 +2280,6 @@ def _render_institutional_editor(
         if unsaved:
             st.warning("Salve as alterações textuais antes de finalizar o relatório.")
         if any(
-            not (section.get("texto") or "").strip() for section in content.values()
-        ):
-            st.info(
-                "Há seções textuais vazias. Elas não bloqueiam a finalização, mas pedem confirmação."
-            )
-        if any(
             validate_numbers(section.get("texto") or "", report["snapshot_dados"])
             for section in content.values()
         ):
@@ -2237,35 +2298,34 @@ def _render_institutional_editor(
         readiness = finalization_readiness(
             validation, status=report["status"], unsaved=unsaved
         )
-        eligible = can_finalize(report["snapshot_dados"]) and not readiness["bloqueado"]
-        if readiness["bloqueado"]:
-            st.warning(readiness["rotulo"])
-            for item in readiness["erros"]:
-                st.caption(item["mensagem"])
-        elif not can_finalize(report["snapshot_dados"]):
-            st.warning(
-                "Finalização indisponível: há lacunas na cobertura de dados do período."
-            )
-        elif readiness["requer_confirmacao"]:
+        coverage_ready = can_finalize(report["snapshot_dados"])
+        if readiness["bloqueado"] or not coverage_ready:
+            st.error("Não é possível finalizar.")
+            if readiness["bloqueado"]:
+                st.caption(readiness["rotulo"])
+                for item in readiness["erros"]:
+                    st.caption(item["mensagem"])
+            elif not coverage_ready:
+                st.caption(
+                    "Finalização indisponível: há lacunas na cobertura de dados do período."
+                )
+            return
+        if readiness["requer_confirmacao"]:
             st.warning(readiness["rotulo"])
         confirmed = st.checkbox(
             "Confirmo a finalização e o congelamento deste snapshot.",
             key=f"inst_confirm_{report['id']}",
-            disabled=not eligible or unsaved,
         )
         attention_confirmed = True
         if readiness["requer_confirmacao"]:
             attention_confirmed = st.checkbox(
                 f"Existem {len(readiness['atencoes'])} pontos de atenção. Deseja finalizar mesmo assim?",
                 key=f"institutional_governance_attention_{report['id']}",
-                disabled=not eligible or unsaved,
             )
         if st.button(
             "Finalizar relatório",
             key=f"inst_finalize_{report['id']}",
-            disabled=not (
-                eligible and confirmed and attention_confirmed and not unsaved
-            ),
+            disabled=not (confirmed and attention_confirmed),
         ):
             fresh = repository.get(report["id"])
             fresh_validation = validate_institutional_report_version(
@@ -2279,7 +2339,9 @@ def _render_institutional_editor(
                 unsaved=_has_unsaved_text(report["id"], content),
             )
             if fresh_ready["bloqueado"] or not can_finalize(fresh["snapshot_dados"]):
-                st.error("Existem pendências que impedem a finalização")
+                st.error("Não é possível finalizar.")
+                for item in fresh_ready["erros"]:
+                    st.caption(item["mensagem"])
                 return
             if fresh_ready["requer_confirmacao"] and not attention_confirmed:
                 st.warning(fresh_ready["rotulo"])
@@ -2314,21 +2376,6 @@ def _render_institutional_editor(
                 st.markdown(text)
             else:
                 st.caption("Seção ainda não preenchida.")
-            if (
-                locked
-                and key in AI_SECTIONS
-                and getattr(principal, "administrator", False)
-                and (
-                    key != "comparacao_periodo_anterior"
-                    or _comparison_can_regenerate(report)
-                )
-            ):
-                _ai_button(
-                    st,
-                    AI_REGENERATE_LABEL,
-                    f"inst_regen_{report['id']}_{key}",
-                    disabled=True,
-                )
 
 
 def _covered_period_or_blank(snapshot):
@@ -2368,6 +2415,8 @@ def _render_report_identity(report, snapshot):
         f"corte: {format_datetime_br(report.get('data_corte'))}"
     )
     st.caption(f"Responsável: {report.get('criado_por') or 'Não informado'}")
+    if report.get("status") in ("FINALIZADO", "ENVIADO"):
+        st.caption("Esta versão está encerrada e não pode mais ser alterada.")
     covered = _covered_period_or_blank(snapshot)
     if covered != "—":
         st.caption(f"Período coberto: {covered}")
@@ -2541,7 +2590,8 @@ def _institutional_workspace(store, principal):
         return
 
     labels = [_version_label(item) for item in versions]
-    if st.session_state.pop("inst_prefer_latest", False):
+    open_editor = st.session_state.pop("inst_open_editor", False)
+    if st.session_state.pop("inst_prefer_latest", False) or open_editor:
         st.session_state.pop("inst_versao", None)
     _drop_invalid_widget("inst_versao", labels)
     selected = st.selectbox("Versão", labels, index=0, key="inst_versao")
@@ -2552,6 +2602,8 @@ def _institutional_workspace(store, principal):
     if getattr(principal, "administrator", False):
         _render_delete_buttons(report, versions, placement="header")
         _render_delete_confirmation(store, principal, versions)
+    if open_editor:
+        st.session_state["inst_exibicao"] = "Conteúdo e revisão"
     view = st.radio(
         "Exibição",
         (
@@ -2564,6 +2616,17 @@ def _institutional_workspace(store, principal):
         horizontal=True,
         key="inst_exibicao",
     )
+    if view != "Conteúdo e revisão":
+        _render_version_continuation(
+            store,
+            principal,
+            report,
+            versions,
+            tipo=tipo,
+            year=year,
+            quarter=quarter,
+            placement="header",
+        )
     if view == "Visualização":
         _render_institutional_pdf_action(store, principal, report)
         _render_institutional_document(report)

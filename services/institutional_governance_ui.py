@@ -128,6 +128,22 @@ def _checklist_table(result, readiness):
         else:
             state = "OK"
         rows.append({"Item": title, "Situação": state})
+    essential = [
+        item
+        for item in result.get("checks") or []
+        if item.get("codigo") == "CONTEUDO_ESSENCIAL_COMPLETO"
+    ]
+    if essential:
+        status = essential[0]["status"]
+        if status == "ERRO":
+            essential_state = "Pendência"
+        elif status == "ATENCAO":
+            essential_state = "Atenção"
+        else:
+            essential_state = "OK"
+        rows.append(
+            {"Item": "Conteúdo institucional completo", "Situação": essential_state}
+        )
     rows.append(
         {
             "Item": "Nenhuma edição pendente",

@@ -11,6 +11,7 @@ import re
 from datetime import date, datetime
 
 from document_generator.institutional_report_pdf import institutional_pdf_filename
+from services.institutional_presentation import comparison_available
 from services.institutional_report_content import (
     SECTIONS,
     _number_value,
@@ -47,6 +48,14 @@ SUMMARY_FIELDS = (
     ("quotas", "Cotas", "inteiro"),
     ("production_rate", "Produção/Distribuições", "percentual"),
     ("median_days", "Mediana", "dias"),
+)
+ESSENTIAL_CONTENT_KEYS = (
+    "resumo_executivo",
+    "evolucao_periodo",
+    "composicao_producao",
+    "permanencia",
+    "producao_procurador",
+    "sintese_pontos_atencao",
 )
 FINALIZATION_SCOPES = {
     "snapshot",
@@ -739,6 +748,55 @@ def _ignored_number(value, report, snapshot):
     return False
 
 
+def essential_content_gaps(report):
+    """Human labels of essential sections that still have no text."""
+    report = report or {}
+    snapshot = report.get("snapshot_dados") or {}
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    content = normalize_content(report.get("conteudo_estruturado"), snapshot)
+    labels = dict(SECTIONS)
+    missing = [
+        labels[key]
+        for key in ESSENTIAL_CONTENT_KEYS
+        if not ((content.get(key) or {}).get("texto") or "").strip()
+    ]
+    comparison = (content.get("comparacao_periodo_anterior") or {}).get("texto") or ""
+    if comparison_available(snapshot) and not comparison.strip():
+        missing.append(labels["comparacao_periodo_anterior"])
+    return missing
+
+
+def _essential_content_check(report, snapshot):
+    missing = essential_content_gaps(report)
+    if not missing:
+        return _check(
+            "CONTEUDO_ESSENCIAL_COMPLETO",
+            OK,
+            "Conteúdo institucional",
+            "As seções essenciais possuem conteúdo.",
+            escopo="conteudo",
+        )
+    listed = " ".join(missing)
+    closed = (report or {}).get("status") in {"FINALIZADO", "ENVIADO"}
+    if closed:
+        return _check(
+            "CONTEUDO_ESSENCIAL_COMPLETO",
+            ATENCAO,
+            "Conteúdo institucional",
+            "Conteúdo institucional incompleto. " + listed,
+            escopo="conteudo",
+        )
+    return _check(
+        "CONTEUDO_ESSENCIAL_COMPLETO",
+        ERRO,
+        "Conteúdo institucional",
+        "O relatório ainda possui seções obrigatórias sem conteúdo. " + listed,
+        escopo="conteudo",
+        bloqueia_finalizacao=True,
+    )
+
+
 def _content_checks(report, snapshot):
     raw = report.get("conteudo_estruturado")
     checks = []
@@ -752,6 +810,7 @@ def _content_checks(report, snapshot):
                 escopo="conteudo",
             )
         )
+        checks.append(_essential_content_check(report, snapshot))
         return checks
     checks.append(
         _check(
@@ -763,9 +822,12 @@ def _content_checks(report, snapshot):
         )
     )
     if not isinstance(snapshot, dict) or not snapshot.get("metadados"):
+        checks.append(_essential_content_check(report, snapshot))
         return checks
     content = normalize_content(raw, snapshot)
     for key, label in SECTIONS:
+        if key == "comparacao_periodo_anterior" and not comparison_available(snapshot):
+            continue
         text = (content.get(key) or {}).get("texto") or ""
         stripped = text.strip()
         if not stripped:
@@ -851,6 +913,7 @@ def _content_checks(report, snapshot):
                     valor=token,
                 )
             )
+    checks.append(_essential_content_check(report, snapshot))
     return checks
 
 

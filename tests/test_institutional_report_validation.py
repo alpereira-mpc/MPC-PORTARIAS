@@ -300,7 +300,13 @@ def test_empty_section_is_attention():
         item["codigo"] == "SECAO_VAZIA" and item["secao"] == "resumo_executivo"
         for item in result["checks"]
     )
-    assert finalization_readiness(result, status="RASCUNHO")["bloqueado"] is False
+    assert finalization_readiness(result, status="RASCUNHO")["bloqueado"] is True
+    assert _status(result, "CONTEUDO_ESSENCIAL_COMPLETO") == ERRO
+    assert "Resumo executivo" in next(
+        item["mensagem"]
+        for item in result["checks"]
+        if item["codigo"] == "CONTEUDO_ESSENCIAL_COMPLETO"
+    )
 
 
 def test_partial_content_keeps_the_filled_section():
@@ -326,6 +332,115 @@ def test_manual_text_with_known_numbers_has_no_numeric_attention():
         )
     )
     assert "NUMERO_NAO_RECONHECIDO" not in _codes(result)
+
+
+def test_essential_content_gates_finalization():
+    empty = validate_institutional_report_version(
+        _report(conteudo_estruturado=_content(""))
+    )
+    empty_ready = finalization_readiness(empty, status="RASCUNHO")
+    assert empty_ready["bloqueado"]
+    assert "seções obrigatórias sem conteúdo" in next(
+        item["mensagem"]
+        for item in empty["checks"]
+        if item["codigo"] == "CONTEUDO_ESSENCIAL_COMPLETO"
+    )
+    for label in (
+        "Resumo executivo",
+        "Evolução do período",
+        "Composição da produção",
+        "Permanência",
+        "Produção por Procurador",
+        "Síntese do período",
+    ):
+        assert label in next(
+            item["mensagem"]
+            for item in empty["checks"]
+            if item["codigo"] == "CONTEUDO_ESSENCIAL_COMPLETO"
+        )
+
+    one = _content()
+    one["permanencia"] = {"texto": ""}
+    one_result = validate_institutional_report_version(
+        _report(conteudo_estruturado=one)
+    )
+    assert finalization_readiness(one_result, status="RASCUNHO")["bloqueado"]
+    assert "Permanência" in next(
+        item["mensagem"]
+        for item in one_result["checks"]
+        if item["codigo"] == "CONTEUDO_ESSENCIAL_COMPLETO"
+    )
+
+    manual = _content("Texto institucional preenchido manualmente nesta seção.")
+    for section in manual.values():
+        section["gerado_por_ia"] = False
+        section["editado_manualmente"] = True
+    manual_result = validate_institutional_report_version(
+        _report(conteudo_estruturado=manual)
+    )
+    assert _status(manual_result, "CONTEUDO_ESSENCIAL_COMPLETO") == OK
+    assert not finalization_readiness(manual_result, status="RASCUNHO")["bloqueado"]
+
+    generated = _content("Texto institucional gerado e revisado nesta seção.")
+    for section in generated.values():
+        section["gerado_por_ia"] = True
+    generated_result = validate_institutional_report_version(
+        _report(conteudo_estruturado=generated)
+    )
+    assert not finalization_readiness(generated_result, status="EM_REVISAO")[
+        "bloqueado"
+    ]
+
+    without_prior = _content()
+    without_prior["comparacao_periodo_anterior"] = {"texto": ""}
+    prior_result = validate_institutional_report_version(
+        _report(
+            snapshot=_snapshot(comparison=False),
+            conteudo_estruturado=without_prior,
+        )
+    )
+    assert _status(prior_result, "CONTEUDO_ESSENCIAL_COMPLETO") == OK
+    assert not finalization_readiness(prior_result, status="RASCUNHO")["bloqueado"]
+
+    note = _content()
+    note["nota_metodologica"] = {"texto": ""}
+    from services.institutional_report_content import normalize_content
+
+    assert normalize_content(note, _snapshot())["nota_metodologica"]["texto"].strip()
+    note_result = validate_institutional_report_version(
+        _report(conteudo_estruturado=note)
+    )
+    assert _status(note_result, "CONTEUDO_ESSENCIAL_COMPLETO") == OK
+
+    required_comparison = _content()
+    required_comparison["comparacao_periodo_anterior"] = {"texto": ""}
+    comparison_result = validate_institutional_report_version(
+        _report(conteudo_estruturado=required_comparison)
+    )
+    assert finalization_readiness(comparison_result, status="RASCUNHO")["bloqueado"]
+    assert "Comparação com período anterior" in next(
+        item["mensagem"]
+        for item in comparison_result["checks"]
+        if item["codigo"] == "CONTEUDO_ESSENCIAL_COMPLETO"
+    )
+
+    historical = _report(status="FINALIZADO", conteudo_estruturado=_content(""))
+    historical_result = validate_institutional_report_version(historical)
+    assert historical["status"] == "FINALIZADO"
+    assert _status(historical_result, "CONTEUDO_ESSENCIAL_COMPLETO") == ATENCAO
+    assert "Conteúdo institucional incompleto" in next(
+        item["mensagem"]
+        for item in historical_result["checks"]
+        if item["codigo"] == "CONTEUDO_ESSENCIAL_COMPLETO"
+    )
+    assert not any(
+        item["codigo"] == "CONTEUDO_ESSENCIAL_COMPLETO" and item["bloqueia_finalizacao"]
+        for item in historical_result["checks"]
+    )
+    assert (
+        finalization_readiness(historical_result, status="FINALIZADO")["rotulo"]
+        == "Versão já finalizada"
+    )
 
 
 def test_sound_report_is_ready_to_finalize():
