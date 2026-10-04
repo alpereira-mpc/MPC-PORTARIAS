@@ -146,14 +146,17 @@ def test_governance_tab_comparison_suggestion_and_pdf_button(tmp_path, monkeypat
     )
     assert before == 0
     assert calls["n"] == 0
-    diagnostic = next(
-        item for item in app.expander if item.label == "Diagnóstico técnico"
-    )
-    assert diagnostic.proto.expanded is False
+    assert not any(item.label == "Diagnóstico técnico" for item in app.expander)
     assert len(_keys(app)) == len(set(_keys(app)))
 
     app.radio(key="inst_exibicao").set_value("Validação e governança").run()
     assert not app.exception, app.exception
+    diagnostic = next(
+        item for item in app.expander if item.label == "Diagnóstico técnico"
+    )
+    raw = next(item for item in app.expander if item.label == "Dados brutos")
+    assert diagnostic.proto.expanded is False
+    assert raw.proto.expanded is False
     governed = _visible(app)
     assert "Integridade da versão:" in governed
     assert "Prontidão para finalização" in governed
@@ -201,3 +204,4 @@ def test_governance_tab_comparison_suggestion_and_pdf_button(tmp_path, monkeypat
     assert not any(
         (button.key or "").startswith("inst_create_") for button in reader.button
     )
+    assert not any(item.label == "Diagnóstico técnico" for item in reader.expander)

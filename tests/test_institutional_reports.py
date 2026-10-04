@@ -116,6 +116,10 @@ def test_institutional_reports_are_versioned_snapshots_from_canonical_history(tm
     assert annual["metadados"]["periodo_parcial"]
     assert annual["metadados"]["trimestre"] is None
     assert annual["comparacao_periodo_anterior"] is None
+    assert (
+        annual["metadados"]["descricao_periodo"]
+        == "Acumulado de janeiro a setembro de 2026"
+    )
     assert annual["cobertura_historica"]["meses_disponiveis"] == list(range(1, 10))
     assert can_finalize(annual)
     assert _create(repository, annual)["periodo_parcial"]
@@ -267,7 +271,14 @@ def test_content_generation_manual_edits_and_finalized_read_only(tmp_path, monke
     monkeypatch.setattr(
         "services.institutional_report_content.ai_service.gerar_conteudo_relatorio_institucional",
         lambda context, secao=None: (
-            {secao: "Nova seção com 545."} if secao else generated,
+            (
+                {secao: "Nova seção com 545."}
+                if isinstance(secao, str)
+                else {
+                    key: generated[key]
+                    for key in (generated if secao is None else secao)
+                }
+            ),
             "modelo-teste",
         ),
     )

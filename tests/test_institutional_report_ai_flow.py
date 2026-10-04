@@ -53,8 +53,15 @@ def _admin():
 
 
 def _fake_ai(_context, secao=None):
-    sections = (secao,) if secao else AI_SECTIONS
-    prefix = "REGEN" if secao else "GERADO"
+    if isinstance(secao, str):
+        sections = (secao,)
+        prefix = "REGEN"
+    elif secao:
+        sections = tuple(secao)
+        prefix = "GERADO"
+    else:
+        sections = AI_SECTIONS
+        prefix = "GERADO"
     return {key: f"{prefix} {key}." for key in sections}, "modelo-teste"
 
 
@@ -149,7 +156,15 @@ def test_draft_generation_persists_and_reruns(tmp_path, monkeypatch):
     app = _open(monkeypatch, database, report)
     assert relatorios_ui.AI_GENERATE_LABEL in [button.label for button in app.button]
     assert relatorios_ui.AI_REGENERATE_LABEL in [button.label for button in app.button]
-    app.button(key=f"inst_ai_all_{report['id']}").click().run()
+    assert any(button.label == "Marcar para revisão" for button in app.button)
+    generate = app.button(key=f"inst_ai_all_{report['id']}")
+    assert generate.proto.icon == ":material/auto_awesome:"
+    assert all(
+        button.proto.icon == ":material/auto_awesome:"
+        for button in app.button
+        if button.label == relatorios_ui.AI_REGENERATE_LABEL
+    )
+    app = generate.click().run()
     assert not app.exception, app.exception
     assert relatorios_ui.AI_GENERATE_SUCCESS in _shown(app.success)
     saved = repository.get(report["id"])
@@ -163,6 +178,20 @@ def test_draft_generation_persists_and_reruns(tmp_path, monkeypatch):
         == "GERADO resumo_executivo."
     )
     assert saved["conteudo_estruturado"]["resumo_executivo"]["gerado_por_ia"]
+    assert (
+        saved["conteudo_estruturado"]["resumo_executivo"]["prompt_version"]
+        == "editorial-2026-10"
+    )
+    assert (
+        values[f"inst_text_{report['id']}_comparacao_periodo_anterior"]
+        == "Não há período anterior disponível para comparação."
+    )
+    assert not any(button.label == "Marcar para revisão" for button in app.button)
+    assert "Em revisão" in _shown(app.caption)
+    assert not any(
+        button.key == f"inst_regen_{report['id']}_comparacao_periodo_anterior"
+        for button in app.button
+    )
     assert "Parecer" in values[f"inst_text_{report['id']}_nota_metodologica"]
     assert "inst_refresh_text" not in app.session_state
 
@@ -175,6 +204,8 @@ def test_review_with_empty_content_can_generate(tmp_path, monkeypatch):
     )
     app = _open(monkeypatch, database, report)
     assert repository.get(report["id"])["status"] == "EM_REVISAO"
+    assert not any(button.label == "Marcar para revisão" for button in app.button)
+    assert "Em revisão" in _shown(app.caption)
     app.button(key=f"inst_ai_all_{report['id']}").click().run()
     assert not app.exception, app.exception
     assert relatorios_ui.AI_GENERATE_SUCCESS in _shown(app.success)
@@ -288,6 +319,12 @@ def test_finalized_report_blocks_ai_actions(tmp_path, monkeypatch):
     generate = app.button(key=f"inst_ai_all_{report['id']}")
     assert generate.disabled
     assert generate.label == relatorios_ui.AI_GENERATE_LABEL
+    assert generate.proto.icon == ":material/auto_awesome:"
+    assert all(
+        button.proto.icon == ":material/auto_awesome:"
+        for button in app.button
+        if button.label == relatorios_ui.AI_REGENERATE_LABEL
+    )
     assert all(
         button.disabled
         for button in app.button

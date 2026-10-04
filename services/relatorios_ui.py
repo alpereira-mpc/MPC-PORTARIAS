@@ -2,6 +2,7 @@
 
 import logging
 import math
+import re
 from calendar import monthrange
 from datetime import date, datetime
 from pathlib import Path
@@ -25,6 +26,7 @@ from services.institutional_report_content import (
     SECTIONS,
     InstitutionalReportContentService,
     normalize_content,
+    validate_numbers,
 )
 from services.themes import theme_tokens
 from services.tramita_reports import (
@@ -1279,16 +1281,10 @@ def _institutional_title(snapshot, *, formal=False):
 
 
 def _institutional_period_label(snapshot):
-    """Human period from frozen metadata. Annual never reads trimestre."""
-    metadata = snapshot.get("metadados") or {}
-    year = metadata.get("ano")
-    if metadata.get("tipo") == "TRIMESTRAL":
-        return f"{metadata.get('trimestre')}º trimestre de {year}"
-    coverage = snapshot.get("cobertura_historica") or {}
-    months = coverage.get("meses_disponiveis") or []
-    if not months:
-        return f"Acumulado de {year}"
-    return "Acumulado de " + _institutional_month_span(months, year)
+    """Human period from frozen coverage. Stored wording is left untouched."""
+    from services.institutional_presentation import format_report_period
+
+    return format_report_period(snapshot)
 
 
 def _institutional_status_label(status):
@@ -1497,25 +1493,39 @@ def _render_frozen_bands(target, bands, key):
     )
 
 
+_HTML_TAG = re.compile(r"</?[^>\n]+>")
+
+
 def _document_prose(content, key, empty):
     text = ""
     section = content.get(key) if isinstance(content, dict) else None
     if isinstance(section, dict):
         text = section.get("texto") or ""
-    if str(text).strip():
+    text = _HTML_TAG.sub("", str(text))
+    if text.strip():
         st.markdown(text)
     else:
         st.caption(empty)
 
 
 def _snapshot_indicator_cards(summary):
+    from services.institutional_presentation import (
+        format_count,
+        format_days,
+        format_percent,
+    )
+
+    def shown(value, formatter):
+        formatted = formatter(value)
+        return formatted if formatted is not None else "—"
+
     labels = (
-        ("Distribuídos", _format_integer(summary["distributed"])),
-        ("Produção", _format_integer(summary["production"])),
-        ("Pareceres", _format_integer(summary["opinions"])),
-        ("Cotas", _format_integer(summary["quotas"])),
-        ("Produção/Distribuições", _format_decimal_br(summary["production_rate"], "%")),
-        ("Mediana de permanência", _format_decimal_br(summary["median_days"], " dias")),
+        ("Distribuídos", shown(summary["distributed"], format_count)),
+        ("Produção", shown(summary["production"], format_count)),
+        ("Pareceres", shown(summary["opinions"], format_count)),
+        ("Cotas", shown(summary["quotas"], format_count)),
+        ("Produção/Distribuições", shown(summary["production_rate"], format_percent)),
+        ("Mediana de permanência", shown(summary["median_days"], format_days)),
     )
     for column, (label, value) in zip(st.columns(len(labels)), labels):
         with column:
@@ -1790,11 +1800,11 @@ def _render_institutional_document(report):
     else:
         st.caption("Não há trimestre anterior disponível para comparação.")
 
-    st.subheader("Síntese e pontos de atenção")
+    st.subheader("Síntese do período")
     _document_prose(
         content,
         "sintese_pontos_atencao",
-        "Síntese e pontos de atenção ainda não elaborados.",
+        "Síntese do período ainda não elaborada.",
     )
 
     with st.expander("Nota metodológica"):
@@ -1849,12 +1859,24 @@ def _create_institutional_version(
     return report
 
 
-AI_GENERATE_LABEL = "✨ Gerar conteúdo com IA"
-AI_REGENERATE_LABEL = "✨ Regenerar com IA"
+AI_ICON = ":material/auto_awesome:"
+AI_GENERATE_LABEL = "Gerar conteúdo com IA"
+AI_REGENERATE_LABEL = "Regenerar com IA"
 AI_GENERATE_SUCCESS = "Conteúdo gerado com IA com sucesso."
 AI_REGENERATE_SUCCESS = "Seção regenerada com IA com sucesso."
 AI_GENERATE_FAILURE = "Não foi possível gerar o conteúdo com IA neste momento."
 AI_REGENERATE_FAILURE = "Não foi possível regenerar esta seção com IA neste momento."
+
+
+def _ai_button(container, label, key, *, disabled=False):
+    """Material icon in the button slot. The label itself stays plain text."""
+    return container.button(label, key=key, icon=AI_ICON, disabled=disabled)
+
+
+def _comparison_can_regenerate(report):
+    from services.institutional_presentation import comparison_available
+
+    return comparison_available(report.get("snapshot_dados"))
 
 
 def _run_institutional_ai(operation, *, failure, success, report_id, sections, waiting):
@@ -1926,9 +1948,10 @@ def _render_institutional_editor(
             except ValueError as exc:
                 st.warning(str(exc))
         if getattr(principal, "administrator", False):
-            st.button(
+            _ai_button(
+                st,
                 AI_GENERATE_LABEL,
-                key=f"inst_ai_all_{report['id']}",
+                f"inst_ai_all_{report['id']}",
                 disabled=True,
             )
     elif editable:
@@ -1937,7 +1960,7 @@ def _render_institutional_editor(
         unsaved = _has_unsaved_text(report["id"], content)
         service = InstitutionalReportContentService(store)
         actions = st.columns(3)
-        if actions[0].button(AI_GENERATE_LABEL, key=f"inst_ai_all_{report['id']}"):
+        if _ai_button(actions[0], AI_GENERATE_LABEL, f"inst_ai_all_{report['id']}"):
             _run_institutional_ai(
                 lambda: service.generate_all(report["id"], principal),
                 failure=AI_GENERATE_FAILURE,
@@ -1956,13 +1979,18 @@ def _render_institutional_editor(
                 st.rerun()
             except (ValueError, PermissionError) as exc:
                 st.error(str(exc))
-        if actions[2].button("Marcar para revisão", key=f"inst_review_{report['id']}"):
-            try:
-                service.mark_for_review(report["id"], principal)
-                _flash("success", "Relatório marcado como Em revisão.")
-                st.rerun()
-            except (ValueError, PermissionError) as exc:
-                st.warning(str(exc))
+        if report["status"] == "RASCUNHO":
+            if actions[2].button(
+                "Marcar para revisão", key=f"inst_review_{report['id']}"
+            ):
+                try:
+                    service.mark_for_review(report["id"], principal)
+                    _flash("success", "Relatório marcado como Em revisão.")
+                    st.rerun()
+                except (ValueError, PermissionError) as exc:
+                    st.warning(str(exc))
+        else:
+            actions[2].caption("Em revisão")
         for index, (key, label) in enumerate(SECTIONS):
             section = content[key]
             with st.expander(label, expanded=index == 0):
@@ -1973,9 +2001,17 @@ def _render_institutional_editor(
                     height=150,
                     label_visibility="collapsed",
                 )
-                if key in AI_SECTIONS and st.button(
-                    AI_REGENERATE_LABEL,
-                    key=f"inst_regen_{report['id']}_{key}",
+                if (
+                    key in AI_SECTIONS
+                    and (
+                        key != "comparacao_periodo_anterior"
+                        or _comparison_can_regenerate(report)
+                    )
+                    and _ai_button(
+                        st,
+                        AI_REGENERATE_LABEL,
+                        f"inst_regen_{report['id']}_{key}",
+                    )
                 ):
                     section_key = key
                     _run_institutional_ai(
@@ -1988,7 +2024,9 @@ def _render_institutional_editor(
                         sections=[section_key],
                         waiting="Regenerando a seção com IA...",
                     )
-                if section.get("requer_revisao"):
+                if validate_numbers(
+                    section.get("texto") or "", report["snapshot_dados"]
+                ):
                     st.warning("Esta seção contém valores que devem ser revisados.")
         if unsaved:
             st.warning("Salve as alterações textuais antes de finalizar o relatório.")
@@ -1998,7 +2036,10 @@ def _render_institutional_editor(
             st.info(
                 "Há seções textuais vazias. Elas não bloqueiam a finalização, mas pedem confirmação."
             )
-        if any(section.get("requer_revisao") for section in content.values()):
+        if any(
+            validate_numbers(section.get("texto") or "", report["snapshot_dados"])
+            for section in content.values()
+        ):
             st.warning(
                 "Há seções com valores que devem ser revisados antes da finalização."
             )
@@ -2095,10 +2136,15 @@ def _render_institutional_editor(
                 locked
                 and key in AI_SECTIONS
                 and getattr(principal, "administrator", False)
+                and (
+                    key != "comparacao_periodo_anterior"
+                    or _comparison_can_regenerate(report)
+                )
             ):
-                st.button(
+                _ai_button(
+                    st,
                     AI_REGENERATE_LABEL,
-                    key=f"inst_regen_{report['id']}_{key}",
+                    f"inst_regen_{report['id']}_{key}",
                     disabled=True,
                 )
 
@@ -2179,6 +2225,7 @@ def _render_period_suggestions(
             period_plan(coverage, latest_rows),
             administrator=getattr(principal, "administrator", False),
             selected_token=_period_token(tipo, year, quarter),
+            tipo=tipo,
         )
         if not clicked:
             return
@@ -2354,6 +2401,7 @@ def _institutional_workspace(store, principal):
                 report["id"],
                 normalize_content(report.get("conteudo_estruturado"), snapshot),
             ),
+            administrator=getattr(principal, "administrator", False),
         )
     elif view == "Distribuição":
         from services.institutional_distribution_ui import render_distribution
@@ -2364,26 +2412,6 @@ def _institutional_workspace(store, principal):
         from services.institutional_governance_ui import render_version_comparison
 
         render_version_comparison(store, versions)
-    if getattr(principal, "administrator", False):
-        with st.expander("Diagnóstico técnico"):
-            from services.institutional_report_validation import (
-                content_hash,
-                snapshot_hash,
-            )
-
-            pdf_meta = repository.pdf_metadata(report["id"])
-            st.json(
-                {
-                    "id": report["id"],
-                    "status": report["status"],
-                    "versao": report["versao"],
-                    "snapshot_hash": snapshot_hash(snapshot),
-                    "conteudo_hash": content_hash(report.get("conteudo_estruturado")),
-                    "pdf_sha256": (pdf_meta or {}).get("sha256"),
-                    "snapshot": snapshot,
-                    "conteudo_estruturado": report.get("conteudo_estruturado"),
-                }
-            )
 
 
 def institutional_reports(store, principal):

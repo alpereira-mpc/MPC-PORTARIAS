@@ -43,6 +43,11 @@ from reportlab.platypus import (
 )
 
 from services.date_format import format_date_br, format_datetime_br
+from services.institutional_presentation import (
+    ANNUAL_WITHOUT_PRIOR,
+    PRIOR_WITHOUT_DATA,
+    format_report_period,
+)
 from services.institutional_report_content import normalize_content
 
 
@@ -89,8 +94,6 @@ SOURCE = (
     "Fonte: Tramita/TCE-PB. Dados consolidados pelo Ministério Público de "
     "Contas do Estado da Paraíba."
 )
-ANNUAL_WITHOUT_PRIOR = "Não há período anual anterior disponível para comparação."
-PRIOR_WITHOUT_DATA = "Não há período anterior disponível para comparação."
 _BULLET = re.compile(r"^([-*•]|\d+[.)])\s+")
 _ATTENTION = re.compile(r"(?im)^(?:#+\s*)?pontos de atenção\s*:?\s*$")
 _SYNTHESIS_HEADING = re.compile(r"(?im)^(?:#+\s*)?síntese\s*:?\s*")
@@ -107,21 +110,8 @@ def institutional_pdf_filename(report):
 
 
 def period_label(snapshot):
-    """Human coverage taken from the frozen metadata."""
-    metadata = snapshot.get("metadados") or {}
-    year = metadata.get("ano")
-    if metadata.get("tipo") == "TRIMESTRAL":
-        return f"{metadata.get('trimestre')}º trimestre de {year}"
-    months = (snapshot.get("cobertura_historica") or {}).get("meses_disponiveis") or []
-    if not months:
-        return f"Acumulado de {year}"
-    ordered = sorted({int(month) for month in months})
-    names = [MONTHS[month - 1].lower() for month in ordered]
-    if ordered == list(range(ordered[0], ordered[-1] + 1)):
-        span = f"{names[0]} a {names[-1]} de {year}"
-    else:
-        span = f"{', '.join(names)} de {year}"
-    return "Acumulado de " + span
+    """Human coverage from the frozen months. Stored wording stays unchanged."""
+    return format_report_period(snapshot)
 
 
 def document_title(snapshot, *, formal=False):
@@ -1146,9 +1136,10 @@ def _synthesis(content, styles):
     if not raw.strip():
         return []
     prose, attention = _split_attention(raw)
-    story = [CondPageBreak(90), Paragraph("Síntese e pontos de atenção", styles["h1"])]
-    if prose:
+    story = [CondPageBreak(90), Paragraph("Síntese do período", styles["h1"])]
+    if prose and attention:
         story.append(Paragraph("Síntese", styles["h2"]))
+    if prose:
         story.extend(_flow_text(prose, styles["body"], styles["bullet"]))
     if attention:
         story.append(Paragraph("Pontos de atenção", styles["h2"]))
@@ -1214,11 +1205,20 @@ def _flow_text(text, body, bullet):
     flow = []
     for block in re.split(r"\n\s*\n", cleaned):
         lines = [line.strip() for line in block.splitlines() if line.strip()]
-        if lines and all(_BULLET.match(line) for line in lines):
-            for line in lines:
+        prose = []
+
+        def flush():
+            if prose:
+                flow.append(Paragraph(_escape(" ".join(prose)), body))
+                prose.clear()
+
+        for line in lines:
+            if _BULLET.match(line):
+                flush()
                 flow.append(Paragraph("• " + _escape(_BULLET.sub("", line)), bullet))
-        else:
-            flow.append(Paragraph(_escape(" ".join(lines)), body))
+            else:
+                prose.append(line)
+        flush()
     return flow
 
 
@@ -1227,6 +1227,7 @@ def _clean(text):
         return ""
     value = str(text).replace("\r\n", "\n").replace("\r", "\n")
     value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", value)
+    value = re.sub(r"</?[^>\n]+>", "", value)
     return value.strip()
 
 

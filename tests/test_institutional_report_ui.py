@@ -217,7 +217,7 @@ def test_document_renders_frozen_annual_partial_without_widgets(monkeypatch):
     assert "Evolução do período ainda não elaborada." in visible
     assert "Não há período anual anterior disponível para comparação." in visible
     assert "Ponto de atenção congelado." in visible
-    assert "1760" in visible
+    assert "1.760" in visible
     assert "11,0" in visible
     assert "71,4%" in visible
     assert not app.text_area
@@ -297,6 +297,8 @@ def test_finalized_and_sent_editors_are_read_only():
     assert len(generate) == 2
     assert regenerate
     assert all(button.disabled for button in generate + regenerate)
+    assert all(button.proto.icon == ":material/auto_awesome:" for button in generate)
+    assert all(button.proto.icon == ":material/auto_awesome:" for button in regenerate)
     assert not app.text_area
 
 
@@ -379,7 +381,12 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     monkeypatch.setattr(relatorios_ui, "build_report_snapshot", counting_build)
 
     def fake_ai(_context, secao=None):
-        sections = (secao,) if secao else content_service.AI_SECTIONS
+        if isinstance(secao, str):
+            sections = (secao,)
+        elif secao:
+            sections = tuple(secao)
+        else:
+            sections = content_service.AI_SECTIONS
         return {
             key: f"Texto institucional de {key}." for key in sections
         }, "modelo-teste"
@@ -450,9 +457,9 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     visible = _visible(app)
     assert "Relatório Anual de Produção" in visible
     assert "Acumulado de janeiro a setembro de 2026" in visible
-    assert "1760" in visible
-    assert "1849" in visible
-    assert "1320" in visible
+    assert "1.760" in visible
+    assert "1.849" in visible
+    assert "1.320" in visible
     assert "529" in visible
     assert "11,0" in visible
     assert "Não há período anual anterior disponível para comparação." in visible

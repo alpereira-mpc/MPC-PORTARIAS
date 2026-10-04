@@ -6,6 +6,12 @@ from database.institutional_reports import InstitutionalReportsStore
 from database.store import now
 from services import ai_service
 from services.audit import registrar_evento
+from services.institutional_presentation import (
+    comparison_available,
+    editorial_facts,
+    format_report_period,
+    missing_comparison_text,
+)
 
 
 SECTIONS = (
@@ -15,36 +21,38 @@ SECTIONS = (
     ("permanencia", "Permanência"),
     ("producao_procurador", "Produção por Procurador"),
     ("comparacao_periodo_anterior", "Comparação com período anterior"),
-    ("sintese_pontos_atencao", "Síntese e pontos de atenção"),
+    ("sintese_pontos_atencao", "Síntese do período"),
     ("nota_metodologica", "Nota metodológica"),
 )
 AI_SECTIONS = tuple(key for key, _label in SECTIONS[:-1])
+PROMPT_VERSION = "editorial-2026-10"
 NUMBER = re.compile(r"(?<![\w/])\d{1,3}(?:[.]\d{3})*(?:[,\.]\d+)?%?(?![\w/])")
+BAND_NUMBER = re.compile(r"\d+")
 
 
 def build_ai_context(snapshot, *, data_corte=None):
-    """Select only aggregate, frozen facts; no raw Tramita events reach the AI."""
+    """Formatted facts for prose, with raw values kept apart from the wording."""
     meta = snapshot["metadados"]
+    facts = editorial_facts(snapshot)
+    coverage = snapshot.get("cobertura_historica") or {}
     return {
-        "metadados": {
-            "tipo": meta["tipo"],
-            "ano": meta["ano"],
-            "trimestre": meta["trimestre"],
-            "descricao_periodo": meta["descricao_periodo"],
-            "periodo_parcial": meta["periodo_parcial"],
-            "data_corte": data_corte,
+        "tipo_relatorio": meta["tipo"],
+        "periodo": format_report_period(snapshot),
+        "periodo_parcial": meta.get("periodo_parcial"),
+        "ano": meta.get("ano"),
+        "trimestre": meta.get("trimestre"),
+        "data_corte": data_corte,
+        "fatos_para_redacao": facts,
+        "dados_tecnicos": {
+            "indicadores_gerais": snapshot.get("indicadores_gerais") or {},
+            "composicao_producao": snapshot.get("composicao_producao") or {},
         },
-        "indicadores_gerais": snapshot["indicadores_gerais"],
-        "serie_mensal": [
-            {"mes": row["month"], "indicadores": row["summary"]}
-            for row in snapshot.get("serie_mensal", [])
-        ],
-        "composicao_producao": snapshot.get("composicao_producao", {}),
-        "por_procurador": snapshot.get("por_procurador", []),
-        "faixas_permanencia": snapshot.get("faixas_permanencia", []),
-        "comparacao_periodo_anterior": snapshot.get("comparacao_periodo_anterior"),
-        "cobertura": snapshot.get("cobertura_historica", {}),
-        "metodologia": snapshot.get("nota_metodologica", {}),
+        "cobertura": {
+            "parcial": bool(meta.get("periodo_parcial")),
+            "meses_ausentes": coverage.get("meses_ausentes") or [],
+            "lacunas_no_ano": coverage.get("lacunas_no_ano") or [],
+        },
+        "metodologia": snapshot.get("nota_metodologica") or {},
     }
 
 
@@ -54,9 +62,16 @@ def _methodology(snapshot):
 
 
 def _record(
-    text="", *, generated=False, manual=False, model=None, review=False, unknown=None
+    text="",
+    *,
+    generated=False,
+    manual=False,
+    model=None,
+    review=False,
+    unknown=None,
+    prompt_version=None,
 ):
-    return {
+    record = {
         "texto": text or "",
         "gerado_por_ia": bool(generated),
         "editado_manualmente": bool(manual),
@@ -66,6 +81,9 @@ def _record(
         "requer_revisao": bool(review),
         "valores_desconhecidos": unknown or [],
     }
+    if prompt_version:
+        record["prompt_version"] = prompt_version
+    return record
 
 
 def normalize_content(content, snapshot):
@@ -82,6 +100,8 @@ def normalize_content(content, snapshot):
         result[key].update(
             {field: current.get(field, result[key][field]) for field in result[key]}
         )
+        if current.get("prompt_version"):
+            result[key]["prompt_version"] = current["prompt_version"]
     if not result["nota_metodologica"]["texto"]:
         result["nota_metodologica"] = _record(_methodology(snapshot))
     return result
@@ -115,10 +135,23 @@ def _known_numbers(value, known):
         known.add(round(float(value)))
 
 
-def validate_numbers(text, snapshot):
+def _allowed_numbers(snapshot):
     known = set()
-    _known_numbers(build_ai_context(snapshot), known)
-    known.update(range(1, 32))
+    _known_numbers(snapshot, known)
+    known.update(range(0, 32))
+    year = (snapshot.get("metadados") or {}).get("ano")
+    if isinstance(year, (int, float)) and not isinstance(year, bool):
+        known.add(float(year))
+    for item in snapshot.get("faixas_permanencia") or []:
+        if not isinstance(item, dict):
+            continue
+        for token in BAND_NUMBER.findall(str(item.get("faixa") or "")):
+            known.add(float(token))
+    return known
+
+
+def validate_numbers(text, snapshot):
+    known = _allowed_numbers(snapshot)
     unknown = []
     for token in NUMBER.findall(text or ""):
         value = _number_value(token)
@@ -150,16 +183,30 @@ class InstitutionalReportContentService:
 
     def generate_all(self, identifier, principal):
         report = self._editable(identifier, principal)
+        snapshot = report["snapshot_dados"]
+        requested = [
+            key
+            for key in AI_SECTIONS
+            if key != "comparacao_periodo_anterior" or comparison_available(snapshot)
+        ]
         generated, model = ai_service.gerar_conteudo_relatorio_institucional(
-            build_ai_context(report["snapshot_dados"], data_corte=report["data_corte"])
+            build_ai_context(snapshot, data_corte=report["data_corte"]),
+            None if tuple(requested) == AI_SECTIONS else tuple(requested),
         )
-        content = normalize_content(
-            report["conteudo_estruturado"], report["snapshot_dados"]
-        )
+        content = normalize_content(report["conteudo_estruturado"], snapshot)
         for section, text in generated.items():
-            unknown = validate_numbers(text, report["snapshot_dados"])
+            unknown = validate_numbers(text, snapshot)
             content[section] = _record(
-                text, generated=True, model=model, review=bool(unknown), unknown=unknown
+                text,
+                generated=True,
+                model=model,
+                review=bool(unknown),
+                unknown=unknown,
+                prompt_version=PROMPT_VERSION,
+            )
+        if not comparison_available(snapshot):
+            content["comparacao_periodo_anterior"] = _record(
+                missing_comparison_text(snapshot)
             )
         updated = self.reports.save_content(
             identifier, content, principal.email, status="EM_REVISAO"
@@ -180,17 +227,27 @@ class InstitutionalReportContentService:
         if section not in AI_SECTIONS:
             raise ValueError("Esta seção não é regenerada por IA.")
         report = self._editable(identifier, principal)
+        snapshot = report["snapshot_dados"]
+        content = normalize_content(report["conteudo_estruturado"], snapshot)
+        if section == "comparacao_periodo_anterior" and not comparison_available(
+            snapshot
+        ):
+            content[section] = _record(missing_comparison_text(snapshot))
+            updated = self.reports.save_content(identifier, content, principal.email)
+            return updated
         generated, model = ai_service.gerar_conteudo_relatorio_institucional(
-            build_ai_context(report["snapshot_dados"], data_corte=report["data_corte"]),
+            build_ai_context(snapshot, data_corte=report["data_corte"]),
             section,
         )
-        content = normalize_content(
-            report["conteudo_estruturado"], report["snapshot_dados"]
-        )
         text = generated[section]
-        unknown = validate_numbers(text, report["snapshot_dados"])
+        unknown = validate_numbers(text, snapshot)
         content[section] = _record(
-            text, generated=True, model=model, review=bool(unknown), unknown=unknown
+            text,
+            generated=True,
+            model=model,
+            review=bool(unknown),
+            unknown=unknown,
+            prompt_version=PROMPT_VERSION,
         )
         updated = self.reports.save_content(identifier, content, principal.email)
         registrar_evento(
@@ -223,6 +280,7 @@ class InstitutionalReportContentService:
                 model=prior["modelo"],
                 review=bool(unknown),
                 unknown=unknown,
+                prompt_version=prior.get("prompt_version"),
             )
             changed.append(section)
         updated = self.reports.save_content(identifier, content, principal.email)

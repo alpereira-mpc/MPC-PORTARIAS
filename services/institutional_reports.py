@@ -3,6 +3,7 @@
 from datetime import date
 
 from database.tramita_reports import TramitaReportsStore
+from services.institutional_presentation import format_report_period
 from services.tramita_reports import aging_band, turnaround_days
 
 
@@ -127,12 +128,7 @@ def build_report_snapshot(store, *, tipo, ano, trimestre=None):
         None,
         12,
     )
-    description = (
-        f"Acumulado de janeiro a {coverage['ultimo_mes_disponivel']:02d}/{ano}"
-        if annual_partial
-        else f"Período {start.strftime('%d/%m/%Y')} a {(end.fromordinal(end.toordinal() - 1)).strftime('%d/%m/%Y')}"
-    )
-    return {
+    snapshot = {
         "metadados": {
             "tipo": tipo,
             "ano": int(ano),
@@ -140,7 +136,7 @@ def build_report_snapshot(store, *, tipo, ano, trimestre=None):
             "data_inicio": start.isoformat(),
             "data_fim": end.isoformat(),
             "periodo_parcial": annual_partial,
-            "descricao_periodo": description,
+            "descricao_periodo": "",
         },
         "indicadores_gerais": report["summary"],
         "serie_mensal": monthly,
@@ -153,6 +149,8 @@ def build_report_snapshot(store, *, tipo, ano, trimestre=None):
         "comparacao_periodo_anterior": prior,
         "nota_metodologica": _methodology(),
     }
+    snapshot["metadados"]["descricao_periodo"] = format_report_period(snapshot)
+    return snapshot
 
 
 def can_finalize(snapshot):

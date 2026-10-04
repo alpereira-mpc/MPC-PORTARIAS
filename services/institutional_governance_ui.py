@@ -7,11 +7,13 @@ from services.date_format import format_datetime_br
 from services.institutional_report_validation import (
     ENVIO_LABELS,
     compare_versions,
+    content_hash,
     describe_audit_events,
     distribution_readiness,
     finalization_readiness,
     overview_row,
     report_cycle,
+    snapshot_hash,
     suggest_periods,
     validate_institutional_report_version,
     verify_pdf_bytes,
@@ -53,12 +55,18 @@ def render_overview(rows):
     st.table(table)
 
 
-def render_ready_periods(plan, *, administrator, selected_token):
-    """Suggest periods. The clicked item is created by the existing flow."""
+def render_ready_periods(plan, *, administrator, selected_token, tipo=None):
+    """Suggest periods of the selected type. The click uses the existing flow."""
     clicked = None
-    for gap in plan.get("lacunas") or []:
+    gaps = list(plan.get("lacunas") or [])
+    suggestions = list(plan.get("sugestoes") or [])
+    if tipo in ("TRIMESTRAL", "ANUAL"):
+        suggestions = [item for item in suggestions if item.get("tipo") == tipo]
+    if tipo == "TRIMESTRAL":
+        gaps = []
+    for gap in gaps:
         st.info(gap["mensagem"])
-    for item in plan.get("sugestoes") or []:
+    for item in suggestions:
         if item["tipo"] == "ANUAL" and item["parcial"]:
             st.markdown("**Relatório anual parcial disponível**")
         elif item["tipo"] == "ANUAL":
@@ -146,15 +154,37 @@ def _checklist_table(result, readiness):
     return rows
 
 
-def render_governance(store, report, versions, *, unsaved=False):
+def _render_technical_diagnosis(repository, report):
+    """Administrative detail. Raw JSON stays inside a second collapsed panel."""
+    snapshot = report.get("snapshot_dados") or {}
+    pdf_meta = repository.pdf_metadata(report["id"])
+    with st.expander("Diagnóstico técnico", expanded=False):
+        st.caption(f"ID: {report.get('id')}")
+        st.caption(f"Versão: {report.get('versao')}")
+        st.caption(f"Status: {report.get('status')}")
+        st.caption(f"Snapshot hash: {snapshot_hash(snapshot)}")
+        st.caption(f"Conteúdo hash: {content_hash(report.get('conteudo_estruturado'))}")
+        st.caption(f"PDF hash: {(pdf_meta or {}).get('sha256') or '—'}")
+        with st.expander("Dados brutos", expanded=False):
+            st.json(
+                {
+                    "snapshot": snapshot,
+                    "conteudo_estruturado": report.get("conteudo_estruturado"),
+                }
+            )
+
+
+def render_governance(store, report, versions, *, unsaved=False, administrator=False):
     """Validation tab. Failures stay inside the tab."""
     try:
-        _render_governance(store, report, versions, unsaved=unsaved)
+        _render_governance(
+            store, report, versions, unsaved=unsaved, administrator=administrator
+        )
     except Exception:
         st.error("Não foi possível concluir a validação desta versão.")
 
 
-def _render_governance(store, report, versions, *, unsaved=False):
+def _render_governance(store, report, versions, *, unsaved=False, administrator=False):
     repository = InstitutionalReportsStore(store)
     pdf_metadata = repository.pdf_metadata(report["id"])
     summaries = repository.distribution_summaries(report["id"])
@@ -227,6 +257,8 @@ def _render_governance(store, report, versions, *, unsaved=False):
     else:
         for event in events:
             st.caption(f"{format_datetime_br(event['quando'])} — {event['titulo']}")
+    if administrator:
+        _render_technical_diagnosis(repository, report)
 
 
 def _render_pdf_check(repository, report, pdf_metadata):
