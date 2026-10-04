@@ -38,6 +38,10 @@ JITTER_MAX_SECONDS = 0.25
 RETRY_AFTER_MAX_SECONDS = 30
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_RESPONSE_BYTES = 1_000_000
+# A complete institutional report has six or seven independent prose fields.
+# Make the provider limit explicit instead of relying on a model default that
+# can be too small for a valid structured response.
+REPORT_MAX_OUTPUT_TOKENS = 4096
 MENSAGEM_NAO_CONFIGURADA = "Gemini API não configurada neste ambiente."
 MENSAGEM_LIMITE_TEMPORARIO = (
     "O serviço de IA está temporariamente com muitas solicitações. "
@@ -550,6 +554,14 @@ def gerar_conteudo_relatorio_institucional(contexto, secao=None):
     text = json.dumps(
         contexto, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
+    report_type = str(contexto.get("tipo_relatorio") or "")
+    LOGGER.info(
+        "RELATORIO_IA | etapa=contexto | tipo=%s | chars=%s | bytes=%s | secoes=%s",
+        report_type,
+        len(text),
+        len(text.encode("utf-8")),
+        len(sections),
+    )
     if len(text.encode("utf-8")) > 120_000:
         raise GeminiErro("Há muitas informações para gerar o conteúdo de uma só vez.")
     schema = (
@@ -576,11 +588,19 @@ def gerar_conteudo_relatorio_institucional(contexto, secao=None):
     )
     prompt = PROMPT_RELATORIO_INSTITUCIONAL + "\nSEÇÕES: " + ", ".join(sections)
     raw, model = _executar(
-        lambda key, selected: _request_texto(text, key, prompt, selected, schema),
+        lambda key, selected: _request_texto(
+            text,
+            key,
+            prompt,
+            selected,
+            schema,
+            max_output_tokens=REPORT_MAX_OUTPUT_TOKENS,
+        ),
         "conteúdo de relatório institucional",
         operation,
     )
     try:
+        LOGGER.info("RELATORIO_IA | etapa=parse_inicio | tipo=%s", report_type)
         result = json.loads(_texto_resposta(raw))
     except (TypeError, ValueError, json.JSONDecodeError):
         raise GeminiErro("A IA não retornou conteúdo estruturado válido.") from None
@@ -588,7 +608,15 @@ def gerar_conteudo_relatorio_institucional(contexto, secao=None):
         not isinstance(result.get(key), str) for key in sections
     ):
         raise GeminiErro("A IA não retornou todas as seções solicitadas.")
-    return {key: result[key].strip() for key in sections}, model
+    cleaned = {key: result[key].strip() for key in sections}
+    LOGGER.info(
+        "RELATORIO_IA | etapa=parse_ok | tipo=%s | modelo=%s | secoes=%s | chars_resposta=%s",
+        report_type,
+        model,
+        len(cleaned),
+        sum(len(value) for value in cleaned.values()),
+    )
+    return cleaned, model
 
 
 def _consultar(document, prompt, rotulo, schema=None, operacao="laboratorio_resumo"):
@@ -623,7 +651,22 @@ def _executar(montar, rotulo, operacao):
         estado["tentativas"] += 1
         estado["modelo"] = modelo
         try:
-            raw = _post(montar(key, modelo))
+            request = montar(key, modelo)
+            if operacao.startswith("relatorio_"):
+                LOGGER.info(
+                    "RELATORIO_IA | etapa=provider_inicio | operacao=%s | modelo=%s | tentativa=%s",
+                    operacao,
+                    modelo,
+                    attempt,
+                )
+            raw = _post(request)
+            if operacao.startswith("relatorio_"):
+                LOGGER.info(
+                    "RELATORIO_IA | etapa=provider_fim | operacao=%s | modelo=%s | bytes_resposta=%s",
+                    operacao,
+                    modelo,
+                    len(raw or b""),
+                )
         except TimeoutError:
             # The call already waited TIMEOUT_SECONDS. Another round could
             # hold the page for several minutes, so this failure is final.
@@ -764,7 +807,9 @@ def _request(document, key, prompt, schema=None, model=GEMINI_MODEL):
     )
 
 
-def _request_texto(texto, key, prompt, model=GEMINI_MODEL, schema=None):
+def _request_texto(
+    texto, key, prompt, model=GEMINI_MODEL, schema=None, *, max_output_tokens=None
+):
     payload = {
         "contents": [
             {
@@ -778,6 +823,8 @@ def _request_texto(texto, key, prompt, model=GEMINI_MODEL, schema=None):
             "responseMimeType": "application/json",
             "responseSchema": schema,
         }
+        if max_output_tokens is not None:
+            payload["generationConfig"]["maxOutputTokens"] = int(max_output_tokens)
     return urllib.request.Request(
         _endpoint(model),
         data=json.dumps(payload).encode("utf-8"),

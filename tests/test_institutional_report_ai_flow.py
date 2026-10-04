@@ -1,6 +1,7 @@
 """Conteúdo e revisão: geração, regeneração, falhas e bloqueio por status."""
 
 import pytest
+from copy import deepcopy
 from streamlit.testing.v1 import AppTest
 
 from database.institutional_reports import InstitutionalReportsStore
@@ -95,6 +96,41 @@ def _create(tmp_path):
         periodo_parcial=False,
         descricao_periodo="T3",
         snapshot_dados=SNAPSHOT,
+        conteudo_estruturado=EMPTY_STRUCTURED_CONTENT,
+        actor="admin@test",
+    )
+    return database, store, repository, report
+
+
+def _create_annual(tmp_path):
+    database = tmp_path / "annual-ai-flow.db"
+    store = Store(database)
+    repository = InstitutionalReportsStore(store)
+    snapshot = deepcopy(SNAPSHOT)
+    snapshot["metadados"].update(
+        {
+            "tipo": "ANUAL",
+            "trimestre": None,
+            "descricao_periodo": "Acumulado de janeiro a setembro de 2026",
+            "periodo_parcial": True,
+            "data_inicio": "2026-01-01",
+            "data_fim": "2027-01-01",
+        }
+    )
+    snapshot["cobertura_historica"]["meses_disponiveis"] = list(range(1, 10))
+    snapshot["serie_mensal"] = [
+        {"month": month, "summary": {"distributed": month, "production": month}}
+        for month in range(1, 10)
+    ]
+    report = repository.create(
+        tipo="ANUAL",
+        ano=2026,
+        trimestre=None,
+        data_inicio="2026-01-01",
+        data_fim="2027-01-01",
+        periodo_parcial=True,
+        descricao_periodo=snapshot["metadados"]["descricao_periodo"],
+        snapshot_dados=snapshot,
         conteudo_estruturado=EMPTY_STRUCTURED_CONTENT,
         actor="admin@test",
     )
@@ -219,6 +255,28 @@ def test_review_with_empty_content_can_generate(tmp_path, monkeypatch):
     assert _values(app)[f"inst_text_{report['id']}_evolucao_periodo"] == (
         "GERADO evolucao_periodo."
     )
+
+
+def test_annual_button_calls_the_real_editor_contract_and_persists(
+    tmp_path, monkeypatch
+):
+    """Annual keeps trimestre=None through click, service and database reload."""
+    _patch(monkeypatch, _fake_ai)
+    database, _store, repository, report = _create_annual(tmp_path)
+    app = _open(monkeypatch, database, report)
+    button = app.button(key=f"inst_ai_all_{report['id']}")
+    assert button.disabled is False
+    assert button.proto.icon == ":material/auto_awesome:"
+    button.click().run()
+    assert not app.exception, app.exception
+    saved = repository.get(report["id"])
+    assert saved["tipo"] == "ANUAL"
+    assert saved["trimestre"] is None
+    assert saved["status"] == "EM_REVISAO"
+    assert saved["conteudo_estruturado"]["resumo_executivo"]["texto"]
+    assert saved["conteudo_estruturado"]["evolucao_periodo"]["texto"]
+    assert saved["conteudo_estruturado"]["comparacao_periodo_anterior"]["texto"]
+    assert _values(app)[f"inst_text_{report['id']}_resumo_executivo"]
 
 
 def test_section_regeneration_persists_only_that_section(tmp_path, monkeypatch):

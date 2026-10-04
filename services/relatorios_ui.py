@@ -2022,6 +2022,11 @@ def _comparison_can_regenerate(report):
 
 def _run_institutional_ai(operation, *, failure, success, report_id, sections, waiting):
     """Keep the editor on screen when the provider or the parser fails."""
+    LOGGER.info(
+        "RELATORIO_IA | etapa=botao | report_id=%s | secoes=%s",
+        report_id,
+        len(sections),
+    )
     try:
         with st.spinner(waiting):
             operation()
@@ -2042,6 +2047,7 @@ def _run_institutional_ai(operation, *, failure, success, report_id, sections, w
     else:
         _request_text_refresh(report_id, sections)
         _flash("success", success)
+        LOGGER.info("RELATORIO_IA | etapa=rerun | report_id=%s", report_id)
         st.rerun()
 
 
@@ -2197,7 +2203,7 @@ def _render_institutional_editor(
                 success=AI_GENERATE_SUCCESS,
                 report_id=report["id"],
                 sections=AI_SECTIONS,
-                waiting="Gerando conteúdo com IA...",
+                waiting="Gerando conteúdo institucional com IA...",
             )
         if actions[1].button("Salvar alterações", key=f"inst_save_{report['id']}"):
             try:

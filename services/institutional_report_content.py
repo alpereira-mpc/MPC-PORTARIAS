@@ -1,6 +1,7 @@
 """Human-reviewed textual content for frozen institutional report snapshots."""
 
 import re
+import logging
 
 from database.institutional_reports import InstitutionalReportsStore
 from database.store import now
@@ -13,6 +14,9 @@ from services.institutional_presentation import (
     missing_comparison_text,
     writing_indicators,
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 SECTIONS = (
@@ -187,6 +191,15 @@ class InstitutionalReportContentService:
     def generate_all(self, identifier, principal):
         report = self._editable(identifier, principal)
         snapshot = report["snapshot_dados"]
+        metadata = snapshot.get("metadados") or {}
+        LOGGER.info(
+            "RELATORIO_IA | etapa=generate_all | report_id=%s | tipo=%s | versao=%s | trimestre=%s | status=%s",
+            identifier,
+            metadata.get("tipo"),
+            report.get("versao"),
+            report.get("trimestre"),
+            report.get("status"),
+        )
         requested = [
             key
             for key in AI_SECTIONS
@@ -211,8 +224,17 @@ class InstitutionalReportContentService:
             content["comparacao_periodo_anterior"] = _record(
                 missing_comparison_text(snapshot)
             )
+        LOGGER.info(
+            "RELATORIO_IA | etapa=persistencia_inicio | report_id=%s", identifier
+        )
         updated = self.reports.save_content(
             identifier, content, principal.email, status="EM_REVISAO"
+        )
+        LOGGER.info(
+            "RELATORIO_IA | etapa=persistencia_ok | report_id=%s | status=%s | secoes=%s",
+            identifier,
+            updated.get("status"),
+            len(generated),
         )
         registrar_evento(
             self.store,
