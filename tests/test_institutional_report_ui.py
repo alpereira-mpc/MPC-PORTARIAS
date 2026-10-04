@@ -30,6 +30,17 @@ def _admin():
     )
 
 
+def _keep_orphan_widgets(app):
+    """AppTest keeps widgets from the fragment before st.rerun().
+
+    Streamlit already dropped those values. A neutral value lets the next
+    interaction serialize the tree.
+    """
+    for box in app.checkbox:
+        if box.key and box.key not in app.session_state:
+            app.session_state[box.key] = False
+
+
 def _month(month):
     return {
         "month": month,
@@ -219,6 +230,9 @@ def test_document_renders_frozen_annual_partial_without_widgets(monkeypatch):
     assert "Ponto de atenção congelado." in visible
     assert "1.760" in visible
     assert "11,0" in visible
+    assert "Pareceres" in visible
+    assert "opiniões" not in visible.lower()
+    assert "opinions" not in visible.lower()
     assert "71,4%" in visible
     assert not app.text_area
     assert not calls
@@ -507,6 +521,7 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     new_version = next(
         button for button in app.button if button.label == "Criar nova versão"
     )
+    _keep_orphan_widgets(app)
     new_version.click().run()
     assert not app.exception, app.exception
     assert "Rascunho" in _visible(app)

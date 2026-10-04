@@ -107,6 +107,7 @@ PROMPT_RELATORIO_INSTITUCIONAL = (
     "Não interprete a mediana nem as faixas como rapidez, lentidão, melhora ou piora. "
     "Sem HTML. Sem outro Markdown. "
     "Não use as palavras itens nem a expressão produção total. "
+    "O tipo de produção é Pareceres. Nunca escreva opiniões nem opinions. "
     "Vocabulário preferido: período, produção, Distribuições, Pareceres, Cotas, permanência, registros, série mensal, composição. "
     "Diga 'a produção registrada no período foi de' seguido do valor e da palavra registros. "
     "Se o período for parcial, copie o campo periodo, que já está escrito por extenso. "

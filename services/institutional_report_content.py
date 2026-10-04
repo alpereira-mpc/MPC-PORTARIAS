@@ -11,6 +11,7 @@ from services.institutional_presentation import (
     editorial_facts,
     format_report_period,
     missing_comparison_text,
+    writing_indicators,
 )
 
 
@@ -44,7 +45,9 @@ def build_ai_context(snapshot, *, data_corte=None):
         "data_corte": data_corte,
         "fatos_para_redacao": facts,
         "dados_tecnicos": {
-            "indicadores_gerais": snapshot.get("indicadores_gerais") or {},
+            "indicadores_gerais": writing_indicators(
+                snapshot.get("indicadores_gerais") or {}
+            ),
             "composicao_producao": snapshot.get("composicao_producao") or {},
         },
         "cobertura": {

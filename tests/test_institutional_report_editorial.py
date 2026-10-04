@@ -101,6 +101,31 @@ def _quarterly_snapshot():
     }
 
 
+def test_ai_context_uses_pareceres_and_hides_the_technical_key():
+    import json
+
+    from services.institutional_report_content import build_ai_context
+    from services.relatorios_ui import _snapshot_procurador_rows
+
+    snapshot = _annual_snapshot()
+    frozen = json.dumps(snapshot["indicadores_gerais"])
+    context = build_ai_context(snapshot)
+    rendered = json.dumps(context, ensure_ascii=False)
+    assert "opinions" not in rendered
+    assert "opiniões" not in rendered.lower()
+    assert context["fatos_para_redacao"]["indicadores"]["pareceres"]["raw"] == 1320
+    assert context["dados_tecnicos"]["indicadores_gerais"]["pareceres"] == 1320
+    assert "opinions" in frozen
+    assert snapshot["indicadores_gerais"]["opinions"] == 1320
+    prompt = ai_service.PROMPT_RELATORIO_INSTITUCIONAL.lower()
+    assert "nunca escreva opiniões nem opinions" in prompt
+    assert "pareceres" in prompt
+    rows = _snapshot_procurador_rows(snapshot)
+    assert rows[0]["Pareceres"] == 120
+    assert "opinions" not in rows[0]
+    assert "opiniões" not in json.dumps(rows, ensure_ascii=False).lower()
+
+
 def test_old_period_wording_is_presented_without_rewriting_the_snapshot():
     snapshot = _annual_snapshot()
     frozen = snapshot["metadados"]["descricao_periodo"]

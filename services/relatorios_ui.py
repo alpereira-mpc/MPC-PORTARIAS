@@ -19,6 +19,8 @@ from services.date_format import format_date_br, format_datetime_br
 from services.institutional_reports import (
     EMPTY_STRUCTURED_CONTENT,
     build_report_snapshot,
+    delete_editable_period_versions,
+    delete_editable_report_version,
     can_finalize,
 )
 from services.institutional_report_content import (
@@ -1314,6 +1316,186 @@ def _prefer_latest_version():
     st.session_state["inst_prefer_latest"] = True
 
 
+def _editable_tail(versions):
+    """Newest editable versions, stopping at the first frozen version."""
+    tail = []
+    for item in versions or []:
+        if item.get("status") not in ("RASCUNHO", "EM_REVISAO"):
+            break
+        tail.append(item)
+    return tail
+
+
+def _forget_deleted_reports(identifiers):
+    """Clear the deleted ids on the next run, before their widgets are created."""
+    pending = list(st.session_state.get("inst_forget_reports") or [])
+    for identifier in identifiers:
+        if identifier not in pending:
+            pending.append(identifier)
+    st.session_state["inst_forget_reports"] = pending
+    st.session_state.pop("inst_delete_pending", None)
+    st.session_state.pop("inst_delete_bulk_pending", None)
+    _prefer_latest_version()
+
+
+def _apply_forgotten_reports():
+    identifiers = st.session_state.pop("inst_forget_reports", None) or []
+    if not identifiers:
+        return
+    doomed = []
+    for identifier in identifiers:
+        token = str(identifier)
+        prefixes = (
+            f"inst_text_{token}_",
+            f"inst_regen_{token}_",
+        )
+        exact = {
+            f"inst_ai_all_{token}",
+            f"inst_save_{token}",
+            f"inst_review_{token}",
+            f"inst_confirm_{token}",
+            f"inst_new_{token}",
+            f"inst_finalize_{token}",
+            f"inst_pdf_prepare_{token}",
+            f"inst_pdf_download_{token}",
+            f"inst_delete_ask_header_{token}",
+            f"inst_delete_ask_versions_{token}",
+            f"inst_delete_confirm_{token}",
+            f"inst_delete_cancel_{token}",
+            f"institutional_governance_attention_{token}",
+            f"institutional_governance_pdf_{token}",
+            f"institutional_governance_pdf_result_{token}",
+        }
+        for key in list(st.session_state.keys()):
+            text = str(key)
+            if text in exact or text.startswith(prefixes):
+                doomed.append(key)
+    refresh = dict(st.session_state.get("inst_refresh_text") or {})
+    for identifier in identifiers:
+        refresh.pop(str(identifier), None)
+    if refresh:
+        st.session_state["inst_refresh_text"] = refresh
+    else:
+        st.session_state.pop("inst_refresh_text", None)
+    for key in doomed:
+        st.session_state.pop(key, None)
+
+
+def _delete_identity(report):
+    snapshot = report.get("snapshot_dados") or {}
+    kind = (
+        "Relatório trimestral"
+        if report.get("tipo") == "TRIMESTRAL"
+        else "Relatório anual"
+    )
+    return (
+        f"{kind} · {_institutional_period_label(snapshot)} · "
+        f"Versão {report.get('versao')} · "
+        f"{_institutional_status_label(report.get('status'))}"
+    )
+
+
+def _render_delete_confirmation(store, principal, versions):
+    """Second step only. The first button never deletes."""
+    pending = st.session_state.get("inst_delete_pending")
+    target = next((item for item in versions or [] if item.get("id") == pending), None)
+    if pending and target is None:
+        st.session_state.pop("inst_delete_pending", None)
+    if target:
+        st.warning(
+            "Esta versão será excluída permanentemente. Esta ação não pode ser desfeita."
+        )
+        st.caption(_delete_identity(target))
+        confirm, cancel = st.columns(2)
+        if confirm.button(
+            "Confirmar exclusão", key=f"inst_delete_confirm_{target['id']}"
+        ):
+            try:
+                removed = delete_editable_report_version(store, target["id"], principal)
+            except (ValueError, PermissionError) as exc:
+                st.session_state.pop("inst_delete_pending", None)
+                st.error(str(exc))
+            else:
+                _forget_deleted_reports([removed["id"]])
+                _flash("success", f"Versão {removed['versao']} excluída.")
+                st.rerun()
+        if cancel.button("Cancelar", key=f"inst_delete_cancel_{target['id']}"):
+            st.session_state.pop("inst_delete_pending", None)
+            st.rerun()
+    bulk = st.session_state.get("inst_delete_bulk_pending")
+    if not bulk or not versions:
+        return
+    tail = _editable_tail(versions)
+    token = _period_token(
+        versions[0].get("tipo"), versions[0].get("ano"), versions[0].get("trimestre")
+    )
+    if bulk != token or not tail:
+        st.session_state.pop("inst_delete_bulk_pending", None)
+        return
+    st.warning(
+        "As versões em elaboração serão excluídas permanentemente, "
+        "da mais recente para a anterior. Esta ação não pode ser desfeita."
+    )
+    for item in tail:
+        st.caption(_delete_identity(item))
+    confirm, cancel = st.columns(2)
+    if confirm.button("Confirmar exclusão", key=f"inst_delete_bulk_confirm_{token}"):
+        try:
+            removed = delete_editable_period_versions(
+                store,
+                versions[0]["tipo"],
+                versions[0]["ano"],
+                versions[0]["trimestre"],
+                principal,
+            )
+        except (ValueError, PermissionError) as exc:
+            st.session_state.pop("inst_delete_bulk_pending", None)
+            st.error(str(exc))
+        else:
+            _forget_deleted_reports([item["id"] for item in removed])
+            _flash(
+                "success",
+                "Versões em elaboração excluídas: "
+                + ", ".join(str(item["versao"]) for item in removed)
+                + ".",
+            )
+            st.rerun()
+    if cancel.button("Cancelar", key=f"inst_delete_bulk_cancel_{token}"):
+        st.session_state.pop("inst_delete_bulk_pending", None)
+        st.rerun()
+
+
+def _render_delete_buttons(report, versions, *, placement):
+    """Offer deletion only for the latest draft or review version."""
+    if not versions:
+        return
+    tail = _editable_tail(versions)
+    latest = tail[0] if tail else None
+    if latest and report and report.get("id") == latest.get("id"):
+        label = (
+            "Excluir relatório em elaboração"
+            if placement == "header"
+            else "Excluir versão"
+        )
+        if st.button(label, key=f"inst_delete_ask_{placement}_{latest['id']}"):
+            st.session_state["inst_delete_pending"] = latest["id"]
+            st.session_state.pop("inst_delete_bulk_pending", None)
+            st.rerun()
+    if placement == "versions" and len(versions) > 1 and len(tail) > 1:
+        token = _period_token(
+            versions[0].get("tipo"),
+            versions[0].get("ano"),
+            versions[0].get("trimestre"),
+        )
+        if st.button(
+            "Excluir versões em elaboração",
+            key=f"inst_delete_bulk_ask_{token}",
+        ):
+            st.session_state["inst_delete_bulk_pending"] = token
+            st.session_state.pop("inst_delete_pending", None)
+            st.rerun()
+
+
 def _flash(level, message):
     st.session_state["inst_flash"] = (level, message)
 
@@ -2256,6 +2438,7 @@ def _render_period_suggestions(
 
 
 def _institutional_workspace(store, principal):
+    _apply_forgotten_reports()
     reports = TramitaReportsStore(store)
     read = lambda key, load: _cached_report(store, principal, key, load)
     years = read(("historical_years",), reports.historical_years)
@@ -2330,6 +2513,8 @@ def _institutional_workspace(store, principal):
         quarter,
     )
     if not versions:
+        if st.session_state.pop("inst_prefer_latest", False):
+            st.session_state.pop("inst_versao", None)
         st.caption("Nenhum relatório criado para este período.")
         if getattr(principal, "administrator", False) and st.button(
             "Criar relatório",
@@ -2364,6 +2549,9 @@ def _institutional_workspace(store, principal):
     latest = versions[0]
     snapshot = report.get("snapshot_dados") or {}
     _render_report_identity(report, snapshot)
+    if getattr(principal, "administrator", False):
+        _render_delete_buttons(report, versions, placement="header")
+        _render_delete_confirmation(store, principal, versions)
     view = st.radio(
         "Exibição",
         (
@@ -2409,6 +2597,8 @@ def _institutional_workspace(store, principal):
         render_distribution(store, principal, report)
     else:
         _render_version_history(versions)
+        if getattr(principal, "administrator", False):
+            _render_delete_buttons(versions[0], versions, placement="versions")
         from services.institutional_governance_ui import render_version_comparison
 
         render_version_comparison(store, versions)

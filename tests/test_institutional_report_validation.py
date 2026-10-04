@@ -19,6 +19,7 @@ from services.institutional_report_validation import (
     content_hash,
     distribution_readiness,
     finalization_readiness,
+    overview_row,
     snapshot_hash,
     suggest_periods,
     validate_institutional_report_version,
@@ -778,3 +779,36 @@ def test_latest_listing_does_not_load_pdf_bytes(tmp_path):
     assert "conteudo" not in rows[0]
     summaries = repository.distribution_summaries(report["id"])
     assert summaries == []
+
+
+def test_overview_omits_version_and_uses_human_periods():
+    quarterly = overview_row(_report())
+    assert list(quarterly) == [
+        "Período",
+        "Status",
+        "Validação",
+        "PDF",
+        "Distribuição",
+    ]
+    assert quarterly["Período"] == "3º trimestre de 2026"
+    assert quarterly["Status"] == "Rascunho"
+    assert quarterly["PDF"] == "—"
+    assert quarterly["Distribuição"] == "—"
+    annual = overview_row(
+        _report(
+            _snapshot(tipo="ANUAL", comparison=False),
+            status="EM_REVISAO",
+            pdf_sha256="abc",
+        )
+    )
+    assert annual["Período"] == "Anual — janeiro a setembro de 2026"
+    assert annual["Status"] == "Em revisão"
+    assert annual["PDF"] == "OK"
+    frozen = overview_row(_report(status="FINALIZADO"))
+    assert frozen["Distribuição"] == "Pendente"
+    sent = overview_row(
+        _report(status="ENVIADO", ultimo_envio="ENVIADO", pdf_sha256="abc")
+    )
+    assert sent["Status"] == "Enviado"
+    assert sent["Distribuição"] == "Enviado"
+    assert sent["PDF"] == "OK"

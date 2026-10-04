@@ -172,6 +172,75 @@ class InstitutionalReportsStore:
         rows = self.list_for_period(tipo, ano, trimestre)
         return rows[0] if rows else None
 
+    def delete_editable_version(self, identifier):
+        """Hard-delete the latest draft or review version of its period."""
+        with self.store.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM relatorios_institucionais WHERE id=? AND ativo=1",
+                (identifier,),
+            ).fetchone()
+            if not row:
+                raise ValueError("Relatório institucional não encontrado.")
+            if row["status"] not in ("RASCUNHO", "EM_REVISAO"):
+                raise ValueError(
+                    "Versões finalizadas ou enviadas não podem ser excluídas."
+                )
+            clause, params = self._period_clause(
+                row["tipo"], row["ano"], row["trimestre"]
+            )
+            latest = connection.execute(
+                "SELECT id FROM relatorios_institucionais WHERE "
+                + clause
+                + " AND ativo=1 ORDER BY versao DESC LIMIT 1",
+                params,
+            ).fetchone()
+            if not latest or latest["id"] != row["id"]:
+                raise ValueError(
+                    "Somente a versão mais recente do período pode ser excluída."
+                )
+            if connection.execute(
+                "SELECT 1 FROM relatorios_institucionais_pdf WHERE relatorio_id=?",
+                (identifier,),
+            ).fetchone():
+                raise ValueError(
+                    "Esta versão possui PDF oficial e não pode ser excluída."
+                )
+            if connection.execute(
+                "SELECT 1 FROM relatorios_institucionais_envios WHERE relatorio_id=?",
+                (identifier,),
+            ).fetchone():
+                raise ValueError(
+                    "Esta versão possui histórico de distribuição e não pode ser excluída."
+                )
+            removed = {
+                "id": identifier,
+                "tipo": row["tipo"],
+                "ano": row["ano"],
+                "trimestre": row["trimestre"],
+                "versao": row["versao"],
+                "status": row["status"],
+            }
+            try:
+                connection.execute(
+                    "DELETE FROM relatorios_institucionais WHERE id=?",
+                    (identifier,),
+                )
+            except Exception as exc:
+                if (
+                    type(exc).__name__
+                    in {
+                        "IntegrityError",
+                        "ForeignKeyViolation",
+                    }
+                    or "foreign key" in str(exc).lower()
+                ):
+                    raise ValueError(
+                        "Esta versão possui registros dependentes e não pode ser excluída."
+                    ) from exc
+                raise
+        return removed
+
     def get(self, identifier):
         with self.store.connection(read_only=True) as connection:
             return self._row(

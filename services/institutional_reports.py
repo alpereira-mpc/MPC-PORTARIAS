@@ -157,3 +157,53 @@ def can_finalize(snapshot):
     """Annual accumulated reports may be partial, but no period may contain gaps."""
     coverage = snapshot["cobertura_historica"]
     return not coverage["meses_ausentes"] and not coverage["lacunas_no_ano"]
+
+
+def _require_administrator(principal):
+    if not getattr(principal, "administrator", False):
+        raise PermissionError(
+            "Apenas administradores podem excluir uma versão em elaboração."
+        )
+
+
+def delete_editable_report_version(store, identifier, principal):
+    """Delete one latest draft or review version and keep an audit record."""
+    from database.institutional_reports import InstitutionalReportsStore
+    from services.audit import registrar_evento
+
+    _require_administrator(principal)
+    removed = InstitutionalReportsStore(store).delete_editable_version(identifier)
+    registrar_evento(
+        store,
+        evento="RELATORIO_INSTITUCIONAL_VERSAO_EXCLUIDA",
+        modulo="relatorios",
+        acao="EXCLUIR_VERSAO",
+        principal=principal,
+        entidade_tipo="relatorio_institucional",
+        entidade_id=removed["id"],
+        detalhes={
+            "tipo": removed["tipo"],
+            "ano": removed["ano"],
+            "trimestre": removed["trimestre"],
+            "versao": removed["versao"],
+            "status": removed["status"],
+        },
+    )
+    return removed
+
+
+def delete_editable_period_versions(store, tipo, ano, trimestre, principal):
+    """Delete the newest editable versions, stopping at a frozen one."""
+    from database.institutional_reports import InstitutionalReportsStore
+
+    _require_administrator(principal)
+    repository = InstitutionalReportsStore(store)
+    removed = []
+    while True:
+        latest = repository.latest_for_period(tipo, ano, trimestre)
+        if not latest or latest["status"] not in ("RASCUNHO", "EM_REVISAO"):
+            break
+        removed.append(delete_editable_report_version(store, latest["id"], principal))
+    if not removed:
+        raise ValueError("Não há versão em elaboração para excluir.")
+    return removed

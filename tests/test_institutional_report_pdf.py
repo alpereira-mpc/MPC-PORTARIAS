@@ -175,6 +175,9 @@ def test_quarterly_pdf_uses_the_frozen_snapshot_and_persisted_text(reference):
     assert "Elvira Samara Pereira de Oliveira" in text
     assert "Nota metodológica" in text
     assert "Parecer ou Cota" in text
+    assert "Pareceres" in text
+    assert "opiniões" not in text.lower()
+    assert "opinions" not in text.lower()
     assert "Fonte: Tramita/TCE-PB" in text
     assert "30/09/2026" in text
     assert "Página 1 /" in text
@@ -204,6 +207,9 @@ def test_partial_annual_pdf_states_coverage_and_skips_empty_comparison(reference
     assert ANNUAL_WITHOUT_PRIOR in text
     assert "Período atual e período anterior" not in text
     assert "RELATÓRIO ANUAL DE PRODUÇÃO" in text
+    assert "Pareceres" in text
+    assert "opiniões" not in text.lower()
+    assert "opinions" not in text.lower()
 
 
 def test_draft_is_marked_and_review_is_not_a_final_document(reference):

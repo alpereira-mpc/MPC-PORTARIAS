@@ -94,6 +94,48 @@ def _months(snapshot):
     return sorted(set(months))
 
 
+_WRITING_KEYS = {
+    "distributed": "distribuicoes",
+    "production": "producao",
+    "opinions": "pareceres",
+    "quotas": "cotas",
+    "production_rate": "producao_distribuicoes",
+    "median_days": "mediana",
+}
+
+
+def writing_indicators(summary):
+    """Rename technical keys before they reach the model. Snapshots stay unchanged."""
+    renamed = {}
+    for key, value in (summary or {}).items():
+        if "opinion" in str(key).lower():
+            renamed["pareceres"] = value
+            continue
+        renamed[_WRITING_KEYS.get(key, key)] = value
+    return renamed
+
+
+def overview_period_label(report):
+    """Human period for the index. Version stays out of this label."""
+    snapshot = (report or {}).get("snapshot_dados") or {}
+    metadata = snapshot.get("metadados") or {}
+    tipo = report.get("tipo") or metadata.get("tipo")
+    year = report.get("ano") or metadata.get("ano")
+    if tipo == "TRIMESTRAL":
+        if snapshot:
+            return format_report_period(snapshot)
+        quarter = report.get("trimestre") or metadata.get("trimestre")
+        return f"{int(quarter)}º trimestre de {year}"
+    if snapshot:
+        human = format_report_period(snapshot)
+        if human.lower().startswith("acumulado de "):
+            human = human[13:]
+        elif human:
+            human = human[0].lower() + human[1:]
+        return f"Anual — {human}"
+    return f"Anual — {year}"
+
+
 def editorial_facts(snapshot):
     """Separate calculation values from the wording the model should copy."""
     snapshot = snapshot or {}
@@ -338,7 +380,8 @@ def _procurador_facts(snapshot):
         "mediana_maxima": format_days(max(medians)) if medians else None,
         "instrucao": (
             "Interprete o conjunto em um ou dois parágrafos. "
-            "Não transcreva as linhas, não cite todos os nomes e não faça ranking."
+            "Não transcreva as linhas, não cite todos os nomes e não faça ranking. "
+            "Quando falar desse tipo de produção, escreva Pareceres."
         ),
     }
 

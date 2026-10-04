@@ -73,6 +73,7 @@ TIMELINE_LABELS = {
     "RELATORIO_DISTRIBUICAO_PARCIAL": "Distribuição parcial",
     "RELATORIO_DISTRIBUICAO_FALHOU": "Falha na distribuição",
     "RELATORIO_DISTRIBUICAO_BLOQUEADA": "Distribuição bloqueada",
+    "RELATORIO_INSTITUCIONAL_VERSAO_EXCLUIDA": "Versão em elaboração excluída",
 }
 ENVIO_LABELS = {
     "PREPARADO": "Preparado",
@@ -1452,14 +1453,10 @@ def compare_versions(left, right, *, left_pdf=None, right_pdf=None):
 
 def overview_row(report):
     """Light status for the institutional index. No PDF bytes are read."""
+    from services.institutional_presentation import overview_period_label
+
     result = validate_institutional_report_version(report)
-    quarter = report.get("trimestre")
-    if report.get("tipo") == "TRIMESTRAL":
-        period = f"T{int(quarter)}/{int(report['ano'])}"
-    elif report.get("periodo_parcial"):
-        period = f"Anual parcial/{int(report['ano'])}"
-    else:
-        period = f"Anual/{int(report['ano'])}"
+    period = overview_period_label(report)
     pdf = "OK" if report.get("pdf_sha256") else "—"
     delivery = report.get("ultimo_envio")
     if delivery == "ENVIADO":
@@ -1472,7 +1469,6 @@ def overview_row(report):
         delivery_label = "—"
     return {
         "Período": period,
-        "Versão atual": f"v{report.get('versao')}",
         "Status": {
             "RASCUNHO": "Rascunho",
             "EM_REVISAO": "Em revisão",
