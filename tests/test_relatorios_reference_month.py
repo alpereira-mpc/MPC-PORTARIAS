@@ -297,5 +297,7 @@ def test_reports_section_defaults_to_current_view_in_the_requested_order():
     assert source.index('"Visão Atual"') < source.index('"Produção Mensal"')
     assert source.index('"Produção Mensal"') < source.index('"Avaliação Trimestral"')
     assert source.index('"Avaliação Trimestral"') < source.index('"Avaliação Anual"')
+    assert source.index('"Avaliação Anual"') < source.index('"Relatórios Institucionais"')
+    assert source.index('"Relatórios Institucionais"') < source.index('"Importações"')
     assert 'key="relatorios_section"' in source
     assert "index=0" in source

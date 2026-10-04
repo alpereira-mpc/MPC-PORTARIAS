@@ -13,9 +13,22 @@ from services.email_transport import (
     DeliveryUncertain,
 )
 
-_UNCERTAIN = ("timeout", "timed out", "connection reset", "remote end closed", "temporarily unavailable")
-_KNOWN_CODES = ("admin_policy_enforced", "access_denied", "invalid_grant", "insufficient_scope")
-_SECRET = re.compile(r"(?i)(bearer\s+\S+|ya29\.[A-Za-z0-9_\-]+|refresh_token[\"'\s:=]+\S+|client_secret[\"'\s:=]+\S+)")
+_UNCERTAIN = (
+    "timeout",
+    "timed out",
+    "connection reset",
+    "remote end closed",
+    "temporarily unavailable",
+)
+_KNOWN_CODES = (
+    "admin_policy_enforced",
+    "access_denied",
+    "invalid_grant",
+    "insufficient_scope",
+)
+_SECRET = re.compile(
+    r"(?i)(bearer\s+\S+|ya29\.[A-Za-z0-9_\-]+|refresh_token[\"'\s:=]+\S+|client_secret[\"'\s:=]+\S+)"
+)
 
 
 class GmailTransport:
@@ -28,8 +41,15 @@ class GmailTransport:
         try:
             from googleapiclient.discovery import build
 
-            service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
-            sent = service.users().messages().send(userId="me", body={"raw": raw}).execute()
+            service = build(
+                "gmail", "v1", credentials=credentials, cache_discovery=False
+            )
+            sent = (
+                service.users()
+                .messages()
+                .send(userId="me", body={"raw": raw})
+                .execute()
+            )
         except DeliveryRejected:
             raise
         except DeliveryUncertain:
@@ -43,7 +63,9 @@ class GmailTransport:
     def _credentials(self):
         mode = self.settings.get("mode")
         if self.settings.get("sender") != SENDER_ADDRESS:
-            raise DeliveryRejected("O remetente institucional deve ser mpc@tce.pb.gov.br.")
+            raise DeliveryRejected(
+                "O remetente institucional deve ser mpc@tce.pb.gov.br."
+            )
         if mode == "user_oauth":
             return _user_credentials(self.settings)
         return _service_credentials(self.settings)
@@ -90,6 +112,14 @@ def _raw_message(message):
     mail.set_content(message["text"])
     if message.get("html"):
         mail.add_alternative(message["html"], subtype="html")
+    attachment = message.get("attachment")
+    if attachment:
+        mail.add_attachment(
+            attachment["content"],
+            maintype="application",
+            subtype="pdf",
+            filename=attachment["filename"],
+        )
     return base64.urlsafe_b64encode(mail.as_bytes()).decode("ascii")
 
 

@@ -34,7 +34,14 @@ from services.tramita_reports import (
     parse_stock,
     turnaround_days,
 )
-from services.ui_theme import empty_state, filter_mark, kpi_mark, section_label
+from services.ui_theme import (
+    empty_state,
+    filter_mark,
+    html_text,
+    kpi_mark,
+    render_html,
+    section_label,
+)
 
 
 MONTHS = (
@@ -1258,284 +1265,762 @@ def _institutional_snapshot_rows(snapshot):
     return rows
 
 
-def _institutional_preview(report, principal, store):
-    """Friendly, read-only rendering of the persisted snapshot."""
-    snapshot = report["snapshot_dados"]
-    metadata = snapshot["metadados"]
-    summary = snapshot["indicadores_gerais"]
-    type_label = (
-        "Relatório Trimestral de Produção"
-        if metadata["tipo"] == "TRIMESTRAL"
-        else f"Relatório Anual de Produção — {metadata['ano']}"
-    )
-    period_label = (
-        f"{metadata['trimestre']}º trimestre de {metadata['ano']}"
-        if metadata["tipo"] == "TRIMESTRAL"
-        else "Acumulado de "
-        + _institutional_month_span(
-            snapshot["cobertura_historica"].get("meses_disponiveis"), metadata["ano"]
+def _institutional_title(snapshot, *, formal=False):
+    metadata = snapshot.get("metadados") or {}
+    if metadata.get("tipo") == "TRIMESTRAL":
+        return (
+            "RELATÓRIO TRIMESTRAL DE PRODUÇÃO"
+            if formal
+            else "Relatório Trimestral de Produção"
         )
-    )
-    st.markdown(f"#### {type_label}")
-    st.caption(period_label)
-    st.caption(
-        f"Versão {report['versao']} · {INSTITUTIONAL_STATUS_LABELS.get(report['status'], report['status'])}"
-    )
-    st.caption(_institutional_covered_period(snapshot))
-    st.caption(f"Data de corte: {format_datetime_br(report['data_corte'])}")
-    st.caption(f"Responsável: {report['criado_por'] or 'Não informado'}")
+    if formal:
+        return "RELATÓRIO ANUAL DE PRODUÇÃO"
+    return f"Relatório Anual de Produção — {metadata.get('ano')}"
 
-    labels = ("Distribuídos", "Produção", "Pareceres", "Cotas")
-    values = (
-        summary["distributed"],
-        summary["production"],
-        summary["opinions"],
-        summary["quotas"],
-    )
-    for column, label, value in zip(st.columns(4), labels, values):
-        with column:
-            st.metric(label, _format_integer(value))
-    ratio, duration = st.columns(2)
-    ratio.metric(
-        "Produção/Distribuições", _format_decimal_br(summary["production_rate"], "%")
-    )
-    duration.metric(
-        "Mediana de permanência", _format_decimal_br(summary["median_days"], " dias")
+
+def _institutional_period_label(snapshot):
+    """Human period from frozen metadata. Annual never reads trimestre."""
+    metadata = snapshot.get("metadados") or {}
+    year = metadata.get("ano")
+    if metadata.get("tipo") == "TRIMESTRAL":
+        return f"{metadata.get('trimestre')}º trimestre de {year}"
+    coverage = snapshot.get("cobertura_historica") or {}
+    months = coverage.get("meses_disponiveis") or []
+    if not months:
+        return f"Acumulado de {year}"
+    return "Acumulado de " + _institutional_month_span(months, year)
+
+
+def _institutional_status_label(status):
+    return INSTITUTIONAL_STATUS_LABELS.get(status, status or "—")
+
+
+def _version_label(report):
+    return f"{report['versao']} - {_institutional_status_label(report['status'])}"
+
+
+def _drop_invalid_widget(key, valid):
+    """Forget a widget value before it is instantiated, never after."""
+    if key in st.session_state and st.session_state[key] not in valid:
+        del st.session_state[key]
+
+
+def _period_token(tipo, year, quarter):
+    return f"{tipo}_{year}_{0 if quarter is None else quarter}"
+
+
+def _text_widget_key(report_id, section):
+    return f"inst_text_{report_id}_{section}"
+
+
+def _prefer_latest_version():
+    """Ask the next run to select the newest version before the widget exists."""
+    st.session_state["inst_prefer_latest"] = True
+
+
+def _flash(level, message):
+    st.session_state["inst_flash"] = (level, message)
+
+
+def _consume_flash():
+    item = st.session_state.pop("inst_flash", None)
+    if not item:
+        return
+    level, message = item
+    getattr(st, level)(message)
+
+
+def _request_text_refresh(report_id, keys):
+    pending = dict(st.session_state.get("inst_refresh_text") or {})
+    current = set(pending.get(str(report_id), []))
+    current.update(keys)
+    pending[str(report_id)] = sorted(current)
+    st.session_state["inst_refresh_text"] = pending
+
+
+def _apply_text_refresh(report_id):
+    pending = dict(st.session_state.get("inst_refresh_text") or {})
+    keys = pending.pop(str(report_id), [])
+    if pending:
+        st.session_state["inst_refresh_text"] = pending
+    else:
+        st.session_state.pop("inst_refresh_text", None)
+    for key in keys:
+        st.session_state.pop(_text_widget_key(report_id, key), None)
+
+
+def _bind_text_state(report):
+    """Drop stale editor keys before the text areas are instantiated."""
+    _apply_text_refresh(report["id"])
+
+
+def _texts_from_state(report_id, content):
+    return {
+        key: st.session_state.get(
+            _text_widget_key(report_id, key), section.get("texto") or ""
+        )
+        for key, section in content.items()
+    }
+
+
+def _has_unsaved_text(report_id, content):
+    return any(
+        st.session_state.get(
+            _text_widget_key(report_id, key), section.get("texto") or ""
+        )
+        != (section.get("texto") or "")
+        for key, section in content.items()
     )
 
-    st.subheader("Cobertura dos dados")
-    st.caption(_institutional_coverage_text(snapshot))
-    st.subheader("Produção por Procurador")
-    _report_table(
-        st,
-        [
+
+def _safe_monthly_rows(snapshot):
+    """Chart rows copied from the frozen series. Incomplete months are omitted."""
+    required = (
+        "distributed",
+        "production",
+        "opinions",
+        "quotas",
+        "median_days",
+        "production_rate",
+    )
+    usable = []
+    for item in snapshot.get("serie_mensal") or []:
+        summary = item.get("summary") if isinstance(item, dict) else None
+        month = item.get("month") if isinstance(item, dict) else None
+        if not summary or not month:
+            continue
+        if any(key not in summary for key in required):
+            continue
+        usable.append({"month": int(month), "summary": summary})
+    return _monthly_rows(usable)
+
+
+def _snapshot_procurador_rows(snapshot):
+    rows = []
+    for row in snapshot.get("por_procurador") or []:
+        if not isinstance(row, dict):
+            continue
+        rows.append(
             {
-                "Procurador": row["procurador"],
-                "Distribuídos": row["distributed"],
-                "Produção": row["production"],
-                "Pareceres": row["opinions"],
-                "Cotas": row["quotas"],
-                "Produção/Distribuições": row["production_rate"],
-                "Mediana de permanência": row["median_days"],
+                "Procurador": row.get("procurador") or "Não identificado",
+                "Distribuídos": row.get("distributed"),
+                "Produção": row.get("production"),
+                "Pareceres": row.get("opinions"),
+                "Cotas": row.get("quotas"),
+                "Produção/Distribuições": row.get("production_rate"),
+                "Mediana de permanência": row.get("median_days"),
             }
-            for row in snapshot.get("por_procurador", [])
-        ],
+        )
+    return rows
+
+
+def _comparison_rows(snapshot):
+    """Pair the frozen current summary with the frozen previous period, if any."""
+    prior = snapshot.get("comparacao_periodo_anterior")
+    summary = snapshot.get("indicadores_gerais") or {}
+    metadata = snapshot.get("metadados") or {}
+    if not isinstance(prior, dict):
+        return None
+    needed = ("distributed", "production", "opinions", "quotas")
+    if any(key not in prior or key not in summary for key in needed):
+        return None
+    if metadata.get("tipo") == "TRIMESTRAL":
+        quarter = int(metadata.get("trimestre") or 0)
+        prior_quarter = quarter - 1 if quarter > 1 else 4
+        prior_label = f"{prior_quarter}º trimestre"
+        current_label = f"{quarter}º trimestre"
+    else:
+        year = int(metadata.get("ano") or 0)
+        prior_label = str(year - 1)
+        current_label = str(year)
+
+    def pack(label, source):
+        return {
+            "Período": label,
+            "Distribuídos": source["distributed"],
+            "Produção": source["production"],
+            "Pareceres": source["opinions"],
+            "Cotas": source["quotas"],
+        }
+
+    return [pack(prior_label, prior), pack(current_label, summary)]
+
+
+def _render_table_safely(rows, empty):
+    if not rows:
+        st.caption(empty)
+        return
+    try:
+        _report_table(st, rows)
+    except Exception:
+        LOGGER.exception("Falha ao renderizar tabela do relatório institucional")
+        st.warning("Não foi possível exibir esta tabela do relatório.")
+
+
+def _render_frozen_bands(target, bands, key):
+    rows = []
+    for item in bands or []:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("faixa")
+        quantity = item.get("quantidade")
+        if not label or quantity is None:
+            continue
+        rows.append({"Faixa": str(label), "Quantidade": quantity})
+    if not rows:
+        return
+    target.vega_lite_chart(
+        rows,
+        {
+            "mark": "bar",
+            "encoding": {
+                "x": {
+                    "field": "Faixa",
+                    "type": "ordinal",
+                    "sort": [row["Faixa"] for row in rows],
+                    "axis": {"title": "Faixa de permanência", "labelAngle": 0},
+                },
+                "y": {
+                    "field": "Quantidade",
+                    "type": "quantitative",
+                    "axis": {"title": "Quantidade", "format": ".0f"},
+                },
+                "color": {"value": CHART_COLORS["Mediana de permanência"]},
+                "tooltip": [
+                    {"field": "Faixa", "type": "nominal"},
+                    {"field": "Quantidade", "type": "quantitative", "format": ".0f"},
+                ],
+            },
+        },
+        use_container_width=True,
+        key=key,
     )
-    st.subheader("Série do período")
-    _report_table(st, _institutional_snapshot_rows(snapshot))
-    with st.expander("Sobre os dados deste relatório"):
-        for text in snapshot.get("nota_metodologica", {}).values():
-            if isinstance(text, str) and text:
-                st.write(text)
-    if getattr(principal, "administrator", False):
-        with st.expander("Diagnóstico técnico"):
-            st.json({"metadados": metadata, "snapshot": snapshot})
-
-    _institutional_text_content(report, principal, store)
 
 
-def _institutional_text_content(report, principal, store):
-    """Read/write content separately from the frozen numerical preview."""
+def _document_prose(content, key, empty):
+    text = ""
+    section = content.get(key) if isinstance(content, dict) else None
+    if isinstance(section, dict):
+        text = section.get("texto") or ""
+    if str(text).strip():
+        st.markdown(text)
+    else:
+        st.caption(empty)
+
+
+def _snapshot_indicator_cards(summary):
+    labels = (
+        ("Distribuídos", _format_integer(summary["distributed"])),
+        ("Produção", _format_integer(summary["production"])),
+        ("Pareceres", _format_integer(summary["opinions"])),
+        ("Cotas", _format_integer(summary["quotas"])),
+        ("Produção/Distribuições", _format_decimal_br(summary["production_rate"], "%")),
+        ("Mediana de permanência", _format_decimal_br(summary["median_days"], " dias")),
+    )
+    for column, (label, value) in zip(st.columns(len(labels)), labels):
+        with column:
+            kpi_mark("brand")
+            st.metric(label, value)
+
+
+def _render_institutional_pdf_action(store, principal, report):
+    """Prepare this version's PDF only when the user asks. Never on a rerun."""
+    official = report.get("status") in ("FINALIZADO", "ENVIADO")
+    label = "Baixar PDF" if official else "Baixar prévia em PDF"
+    signature = f"{report.get('id')}:{report.get('versao')}:{report.get('status')}"
+    ready = st.session_state.get("inst_pdf_export")
+    if not ready or ready.get("signature") != signature:
+        if st.button(label, key=f"inst_pdf_prepare_{report.get('id')}"):
+            try:
+                from services.institutional_report_pdf import deliver_institutional_pdf
+
+                payload = deliver_institutional_pdf(
+                    store, report, principal, official=official
+                )
+            except Exception:
+                LOGGER.exception(
+                    "Falha ao gerar o PDF do relatório institucional %s versão %s",
+                    report.get("id"),
+                    report.get("versao"),
+                )
+                st.error("Não foi possível gerar o PDF desta versão no momento.")
+            else:
+                st.session_state["inst_pdf_export"] = {
+                    "signature": signature,
+                    "data": payload["conteudo"],
+                    "name": payload["nome"],
+                }
+                st.rerun()
+        return
+    st.download_button(
+        label,
+        ready["data"],
+        ready["name"],
+        mime="application/pdf",
+        key=f"inst_pdf_download_{report.get('id')}",
+    )
+
+
+def _render_institutional_document(report):
+    """Phase 3 document. Uses only this version's snapshot and persisted prose."""
+    snapshot = report.get("snapshot_dados") or {}
+    metadata = snapshot.get("metadados") or {}
+    content = normalize_content(report.get("conteudo_estruturado"), snapshot)
+    summary = snapshot.get("indicadores_gerais") or {}
+    annual = metadata.get("tipo") == "ANUAL"
+    report_id = report.get("id") or "preview"
+    render_html(
+        '<div style="border-top:3px solid var(--mpc-brand,#8E1B2C);'
+        'padding:4px 0 8px;margin:4px 0 12px">'
+        '<p style="letter-spacing:.12em;font-size:.78rem;margin:0;'
+        'color:var(--mpc-text-secondary,#5C6570)">MPC-PB</p>'
+        '<p style="font-weight:700;margin:2px 0 0;color:var(--mpc-text-primary,#202832)">'
+        "MINISTÉRIO PÚBLICO DE CONTAS DO ESTADO DA PARAÍBA</p>"
+        '<p style="font-size:1.2rem;font-weight:700;margin:10px 0 0">'
+        f"{html_text(_institutional_title(snapshot, formal=True))}</p>"
+        '<p style="margin:4px 0 0">'
+        f"{html_text(_institutional_period_label(snapshot))}</p>"
+        '<p style="margin:8px 0 0;font-size:.85rem;color:var(--mpc-text-secondary,#5C6570)">'
+        f"Versão {html_text(report.get('versao'))} · "
+        f"{html_text(_institutional_status_label(report.get('status')))} · "
+        f"Data de corte: {html_text(format_datetime_br(report.get('data_corte')))}"
+        "</p></div>"
+    )
+
+    st.subheader("Resumo executivo")
+    _document_prose(
+        content, "resumo_executivo", "Resumo executivo ainda não elaborado."
+    )
+
+    st.subheader("Indicadores do período")
+    required = (
+        "distributed",
+        "production",
+        "opinions",
+        "quotas",
+        "production_rate",
+        "median_days",
+    )
+    if all(key in summary for key in required):
+        _snapshot_indicator_cards(summary)
+    else:
+        st.caption("Os indicadores deste snapshot estão incompletos.")
+
+    st.subheader("Evolução do período")
+    _document_prose(
+        content, "evolucao_periodo", "Evolução do período ainda não elaborada."
+    )
+    monthly = _safe_monthly_rows(snapshot)
+    if not monthly:
+        st.caption("A série mensal deste snapshot não está disponível.")
+    elif annual:
+        left, right = st.columns(2)
+        _render_chart(
+            f"inst_doc_{report_id}_fluxo",
+            lambda: _line_chart(
+                left,
+                monthly,
+                ["Distribuídos", "Produção"],
+                "Quantidade",
+                f"inst_doc_{report_id}_fluxo",
+            ),
+        )
+        _render_chart(
+            f"inst_doc_{report_id}_tipos",
+            lambda: _category_bar_chart(
+                right,
+                monthly,
+                "Mês",
+                ["Pareceres", "Cotas"],
+                f"inst_doc_{report_id}_tipos",
+                stacked=True,
+            ),
+        )
+    else:
+        left, right = st.columns(2)
+        _render_chart(
+            f"inst_doc_{report_id}_fluxo",
+            lambda: _category_bar_chart(
+                left,
+                monthly,
+                "Mês",
+                ["Distribuídos", "Produção"],
+                f"inst_doc_{report_id}_fluxo",
+            ),
+        )
+        _render_chart(
+            f"inst_doc_{report_id}_tipos",
+            lambda: _category_bar_chart(
+                right,
+                monthly,
+                "Mês",
+                ["Pareceres", "Cotas"],
+                f"inst_doc_{report_id}_tipos",
+                stacked=True,
+            ),
+        )
+
+    st.subheader("Composição da produção")
+    _document_prose(
+        content, "composicao_producao", "Composição da produção ainda não elaborada."
+    )
+    composition = snapshot.get("composicao_producao") or {}
+    if "opinions" in summary and "quotas" in summary:
+        _render_chart(
+            f"inst_doc_{report_id}_composicao",
+            lambda: _category_bar_chart(
+                st,
+                [
+                    {
+                        "Composição": "Produção",
+                        "Pareceres": summary["opinions"],
+                        "Cotas": summary["quotas"],
+                    }
+                ],
+                "Composição",
+                ["Pareceres", "Cotas"],
+                f"inst_doc_{report_id}_composicao",
+                stacked=True,
+            ),
+        )
+    opinions_pct = (
+        composition.get("pareceres_percentual")
+        if isinstance(composition, dict)
+        else None
+    )
+    quotas_pct = (
+        composition.get("cotas_percentual") if isinstance(composition, dict) else None
+    )
+    if opinions_pct is not None or quotas_pct is not None:
+        st.caption(
+            "Composição percentual registrada: "
+            f"Pareceres {_format_decimal_br(opinions_pct, '%')} · "
+            f"Cotas {_format_decimal_br(quotas_pct, '%')}."
+        )
+
+    st.subheader("Permanência")
+    _document_prose(content, "permanencia", "Permanência ainda não elaborada.")
+    if "median_days" in summary:
+        st.metric(
+            "Mediana de permanência",
+            _format_decimal_br(summary["median_days"], " dias"),
+        )
+    bands = snapshot.get("faixas_permanencia") or []
+    if bands:
+        _render_chart(
+            f"inst_doc_{report_id}_faixas",
+            lambda: _render_frozen_bands(st, bands, f"inst_doc_{report_id}_faixas"),
+        )
+    if monthly:
+        _render_chart(
+            f"inst_doc_{report_id}_mediana",
+            lambda: _line_chart(
+                st,
+                monthly,
+                ["Mediana de permanência"],
+                "Mediana de permanência (dias)",
+                f"inst_doc_{report_id}_mediana",
+            ),
+        )
+
+    st.subheader("Produção por Procurador")
+    _document_prose(
+        content,
+        "producao_procurador",
+        "Produção por Procurador ainda não elaborada.",
+    )
+    procuradores = _snapshot_procurador_rows(snapshot)
+    _render_table_safely(procuradores, "Não há produção por Procurador neste snapshot.")
+    if procuradores:
+        left, right = st.columns(2)
+        _render_chart(
+            f"inst_doc_{report_id}_proc_fluxo",
+            lambda: _procurador_chart(
+                left,
+                procuradores,
+                ["Distribuídos", "Produção"],
+                False,
+                f"inst_doc_{report_id}_proc_fluxo",
+            ),
+        )
+        _render_chart(
+            f"inst_doc_{report_id}_proc_tipos",
+            lambda: _procurador_chart(
+                right,
+                procuradores,
+                ["Pareceres", "Cotas"],
+                True,
+                f"inst_doc_{report_id}_proc_tipos",
+            ),
+        )
+
+    st.subheader("Comparação com período anterior")
+    comparison_section = content.get("comparacao_periodo_anterior")
+    comparison_text = (
+        comparison_section.get("texto") if isinstance(comparison_section, dict) else ""
+    )
+    if str(comparison_text or "").strip():
+        st.markdown(comparison_text)
+    comparison = _comparison_rows(snapshot)
+    if not str(comparison_text or "").strip() and comparison:
+        st.caption("Comparação com período anterior ainda não elaborada.")
+    if comparison:
+        _render_chart(
+            f"inst_doc_{report_id}_comparacao",
+            lambda: _category_bar_chart(
+                st,
+                comparison,
+                "Período",
+                ["Distribuídos", "Produção", "Pareceres", "Cotas"],
+                f"inst_doc_{report_id}_comparacao",
+            ),
+        )
+        prior = snapshot.get("comparacao_periodo_anterior") or {}
+        if (
+            prior.get("median_days") is not None
+            and summary.get("median_days") is not None
+        ):
+            st.caption(
+                "Mediana de permanência: "
+                f"{_format_decimal_br(prior['median_days'], ' dias')} no período anterior e "
+                f"{_format_decimal_br(summary['median_days'], ' dias')} no período selecionado."
+            )
+    elif annual:
+        st.caption("Não há período anual anterior disponível para comparação.")
+    else:
+        st.caption("Não há trimestre anterior disponível para comparação.")
+
+    st.subheader("Síntese e pontos de atenção")
+    _document_prose(
+        content,
+        "sintese_pontos_atencao",
+        "Síntese e pontos de atenção ainda não elaborados.",
+    )
+
+    with st.expander("Nota metodológica"):
+        _document_prose(
+            content,
+            "nota_metodologica",
+            "Nota metodológica ainda não registrada.",
+        )
+
+
+def _create_institutional_version(
+    store, repository, principal, tipo, year, quarter, *, new_version
+):
+    snapshot = build_report_snapshot(store, tipo=tipo, ano=year, trimestre=quarter)
+    metadata = snapshot["metadados"]
+    params = {
+        "tipo": tipo,
+        "ano": year,
+        "trimestre": quarter,
+        "data_inicio": metadata["data_inicio"],
+        "data_fim": metadata["data_fim"],
+        "periodo_parcial": metadata["periodo_parcial"],
+        "descricao_periodo": metadata["descricao_periodo"],
+        "snapshot_dados": snapshot,
+        "conteudo_estruturado": EMPTY_STRUCTURED_CONTENT,
+        "actor": principal.email,
+    }
+    report = (
+        repository.create_new_version(**params)
+        if new_version
+        else repository.create(**params)
+    )
+    registrar_evento(
+        store,
+        evento=(
+            "RELATORIO_INSTITUCIONAL_NOVA_VERSAO"
+            if new_version
+            else "RELATORIO_INSTITUCIONAL_CRIADO"
+        ),
+        modulo="relatorios",
+        acao="CRIAR_NOVA_VERSAO" if new_version else "CRIAR",
+        principal=principal,
+        entidade_tipo="relatorio_institucional",
+        entidade_id=report["id"],
+        detalhes={
+            "tipo": tipo,
+            "ano": year,
+            "trimestre": quarter,
+            "versao": report["versao"],
+        },
+    )
+    return report
+
+
+def _render_institutional_editor(
+    store, principal, report, *, is_latest, tipo, year, quarter, versions=None
+):
+    """Phase 2 controls. Finalized and sent versions stay read-only."""
     content = normalize_content(
         report["conteudo_estruturado"], report["snapshot_dados"]
     )
-    editable = getattr(principal, "administrator", False) and report["status"] in (
-        "RASCUNHO",
-        "EM_REVISAO",
-    )
-    service = InstitutionalReportContentService(store) if editable else None
-    st.subheader("Conteúdo textual")
-    if editable and service:
-        actions = st.columns(3)
-        if actions[0].button(
-            "Gerar conteúdo com IA", key=f"institutional_ai_all_{report['id']}"
-        ):
-            try:
-                service.generate_all(report["id"], principal)
-                st.success("Conteúdo gerado e encaminhado para revisão.")
-                st.rerun()
-            except (ValueError, PermissionError, ai_service.GeminiErro) as exc:
-                st.error(str(exc))
-        if actions[1].button(
-            "Salvar alterações", key=f"institutional_save_{report['id']}"
-        ):
-            try:
-                texts = {
-                    key: st.session_state.get(
-                        f"institutional_text_{report['id']}_{key}", value["texto"]
-                    )
-                    for key, value in content.items()
-                }
-                service.save_manual(report["id"], texts, principal)
-                st.success("Alterações salvas.")
-                st.rerun()
-            except (ValueError, PermissionError) as exc:
-                st.error(str(exc))
-        if actions[2].button(
-            "Marcar para revisão", key=f"institutional_review_{report['id']}"
-        ):
-            try:
-                service.mark_for_review(report["id"], principal)
-                st.success("Relatório marcado como Em revisão.")
-                st.rerun()
-            except (ValueError, PermissionError) as exc:
-                st.warning(str(exc))
-    for index, (key, label) in enumerate(SECTIONS):
-        section = content[key]
-        with st.expander(label, expanded=index == 0):
-            if editable:
-                st.text_area(
-                    label,
-                    section["texto"],
-                    key=f"institutional_text_{report['id']}_{key}",
-                    height=150,
-                    label_visibility="collapsed",
-                )
-                if (
-                    key in AI_SECTIONS
-                    and service
-                    and st.button(
-                        "Regenerar com IA",
-                        key=f"institutional_regen_{report['id']}_{key}",
-                    )
-                ):
-                    try:
-                        service.regenerate(report["id"], key, principal)
-                        st.success(f"{label} regenerada.")
-                        st.rerun()
-                    except (ValueError, PermissionError, ai_service.GeminiErro) as exc:
-                        st.error(str(exc))
-            else:
-                st.write(section["texto"] or "Seção ainda não preenchida.")
-            if section.get("requer_revisao"):
-                st.warning("Esta seção contém valores que devem ser revisados.")
-
-
-def _institutional_period_report(store, principal, tipo, year, quarter=None):
-    """Small Phase 1 entry point; rendering never rebuilds a saved snapshot."""
-    repository = InstitutionalReportsStore(store)
-    current = repository.latest_for_period(tipo, year, quarter)
-    label = f"{quarter}º trimestre de {year}" if quarter else str(year)
-    st.subheader("Relatório do período")
-    if not current:
-        st.caption(f"Nenhum relatório institucional criado para {label}.")
-    else:
-        snapshot = current["snapshot_dados"]
-        title = (
-            "Relatório Trimestral de Produção"
-            if tipo == "TRIMESTRAL"
-            else f"Relatório Anual de Produção — {year}"
-        )
-        period = (
-            f"{quarter}º trimestre de {year}"
-            if tipo == "TRIMESTRAL"
-            else "Acumulado de "
-            + _institutional_month_span(
-                snapshot["cobertura_historica"].get("meses_disponiveis"), year
+    locked = report["status"] in ("FINALIZADO", "ENVIADO")
+    editable = getattr(principal, "administrator", False) and not locked
+    if locked:
+        if is_latest:
+            st.caption(
+                "Relatório finalizado. O texto e o snapshot desta versão não podem ser alterados."
             )
-        )
-        st.markdown(f"**{title}**")
-        st.caption(period)
-        st.caption(
-            f"Status: {INSTITUTIONAL_STATUS_LABELS.get(current['status'], current['status'])} · "
-            f"Versão {current['versao']} · "
-            f"criado em {format_datetime_br(current['criado_em'])} · "
-            f"corte: {format_datetime_br(current['data_corte'])}"
-        )
-        open_key = f"institutional_open_{tipo}_{year}_{quarter}"
-        open_state_key = f"{open_key}_visible"
-        if st.button("Abrir relatório", key=open_key):
-            st.session_state[open_state_key] = True
-        if st.session_state.get(open_state_key):
-            _institutional_preview(current, principal, store)
-    if not getattr(principal, "administrator", False):
-        return
-
-    creating_new = bool(current and current["status"] in ("FINALIZADO", "ENVIADO"))
-    create_label = "Criar nova versão" if creating_new else "Criar relatório"
-    if not current or creating_new:
-        if st.button(create_label, key=f"institutional_create_{tipo}_{year}_{quarter}"):
+        else:
+            st.caption("Versão encerrada, disponível somente para consulta.")
+        if (
+            is_latest
+            and locked
+            and getattr(principal, "administrator", False)
+            and st.button(
+                "Criar nova versão",
+                key=f"inst_new_{report['id']}",
+            )
+        ):
             try:
-                snapshot = build_report_snapshot(
-                    store, tipo=tipo, ano=year, trimestre=quarter
-                )
-                metadata = snapshot["metadados"]
-                params = {
-                    "tipo": tipo,
-                    "ano": year,
-                    "trimestre": quarter,
-                    "data_inicio": metadata["data_inicio"],
-                    "data_fim": metadata["data_fim"],
-                    "periodo_parcial": metadata["periodo_parcial"],
-                    "descricao_periodo": metadata["descricao_periodo"],
-                    "snapshot_dados": snapshot,
-                    "conteudo_estruturado": EMPTY_STRUCTURED_CONTENT,
-                    "actor": principal.email,
-                }
-                report = (
-                    repository.create_new_version(**params)
-                    if creating_new
-                    else repository.create(**params)
-                )
-                registrar_evento(
+                repository = InstitutionalReportsStore(store)
+                created = _create_institutional_version(
                     store,
-                    evento=(
-                        "RELATORIO_INSTITUCIONAL_NOVA_VERSAO"
-                        if creating_new
-                        else "RELATORIO_INSTITUCIONAL_CRIADO"
-                    ),
-                    modulo="relatorios",
-                    acao="CRIAR_NOVA_VERSAO" if creating_new else "CRIAR",
-                    principal=principal,
-                    entidade_tipo="relatorio_institucional",
-                    entidade_id=report["id"],
-                    detalhes={
-                        "tipo": tipo,
-                        "ano": year,
-                        "trimestre": quarter,
-                        "versao": report["versao"],
-                    },
+                    repository,
+                    principal,
+                    tipo,
+                    year,
+                    quarter,
+                    new_version=True,
                 )
-                st.success(f"Relatório institucional versão {report['versao']} criado.")
+                _flash(
+                    "success",
+                    f"Relatório institucional versão {created['versao']} criado.",
+                )
+                _prefer_latest_version()
                 st.rerun()
             except ValueError as exc:
                 st.warning(str(exc))
-
-    if current and current["status"] in ("RASCUNHO", "EM_REVISAO"):
-        content = normalize_content(
-            current["conteudo_estruturado"], current["snapshot_dados"]
-        )
-        unsaved_text = any(
-            st.session_state.get(
-                f"institutional_text_{current['id']}_{key}", section["texto"]
-            )
-            != section["texto"]
-            for key, section in content.items()
-        )
-        if unsaved_text:
+    elif editable:
+        repository = InstitutionalReportsStore(store)
+        _bind_text_state(report)
+        unsaved = _has_unsaved_text(report["id"], content)
+        service = InstitutionalReportContentService(store)
+        actions = st.columns(3)
+        if actions[0].button(
+            "Gerar conteúdo com IA", key=f"inst_ai_all_{report['id']}"
+        ):
+            try:
+                service.generate_all(report["id"], principal)
+                _request_text_refresh(report["id"], AI_SECTIONS)
+                _flash("success", "Conteúdo gerado e encaminhado para revisão.")
+                st.rerun()
+            except (ValueError, PermissionError, ai_service.GeminiErro) as exc:
+                st.error(str(exc))
+        if actions[1].button("Salvar alterações", key=f"inst_save_{report['id']}"):
+            try:
+                service.save_manual(
+                    report["id"], _texts_from_state(report["id"], content), principal
+                )
+                _request_text_refresh(report["id"], [key for key, _label in SECTIONS])
+                _flash("success", "Alterações salvas.")
+                st.rerun()
+            except (ValueError, PermissionError) as exc:
+                st.error(str(exc))
+        if actions[2].button("Marcar para revisão", key=f"inst_review_{report['id']}"):
+            try:
+                service.mark_for_review(report["id"], principal)
+                _flash("success", "Relatório marcado como Em revisão.")
+                st.rerun()
+            except (ValueError, PermissionError) as exc:
+                st.warning(str(exc))
+        for index, (key, label) in enumerate(SECTIONS):
+            section = content[key]
+            with st.expander(label, expanded=index == 0):
+                st.text_area(
+                    label,
+                    section.get("texto") or "",
+                    key=_text_widget_key(report["id"], key),
+                    height=150,
+                    label_visibility="collapsed",
+                )
+                if key in AI_SECTIONS and st.button(
+                    "Regenerar com IA",
+                    key=f"inst_regen_{report['id']}_{key}",
+                ):
+                    try:
+                        service.regenerate(report["id"], key, principal)
+                        _request_text_refresh(report["id"], [key])
+                        _flash("success", f"{label} regenerada.")
+                        st.rerun()
+                    except (ValueError, PermissionError, ai_service.GeminiErro) as exc:
+                        st.error(str(exc))
+                if section.get("requer_revisao"):
+                    st.warning("Esta seção contém valores que devem ser revisados.")
+        if unsaved:
             st.warning("Salve as alterações textuais antes de finalizar o relatório.")
-        if any(not section["texto"].strip() for section in content.values()):
-            st.info("Há seções textuais vazias; a finalização continua disponível.")
+        if any(
+            not (section.get("texto") or "").strip() for section in content.values()
+        ):
+            st.info(
+                "Há seções textuais vazias. Elas não bloqueiam a finalização, mas pedem confirmação."
+            )
         if any(section.get("requer_revisao") for section in content.values()):
             st.warning(
                 "Há seções com valores que devem ser revisados antes da finalização."
             )
-        eligible = can_finalize(current["snapshot_dados"])
-        if not eligible:
+        from services.institutional_report_validation import (
+            finalization_readiness,
+            validate_institutional_report_version,
+        )
+
+        summaries = repository.distribution_summaries(report["id"])
+        validation = validate_institutional_report_version(
+            report, distributions=summaries, versions=versions
+        )
+        readiness = finalization_readiness(
+            validation, status=report["status"], unsaved=unsaved
+        )
+        eligible = can_finalize(report["snapshot_dados"]) and not readiness["bloqueado"]
+        if readiness["bloqueado"]:
+            st.warning(readiness["rotulo"])
+            for item in readiness["erros"]:
+                st.caption(item["mensagem"])
+        elif not can_finalize(report["snapshot_dados"]):
             st.warning(
                 "Finalização indisponível: há lacunas na cobertura de dados do período."
             )
+        elif readiness["requer_confirmacao"]:
+            st.warning(readiness["rotulo"])
         confirmed = st.checkbox(
             "Confirmo a finalização e o congelamento deste snapshot.",
-            key=f"institutional_confirm_{current['id']}",
-            disabled=not eligible or unsaved_text,
+            key=f"inst_confirm_{report['id']}",
+            disabled=not eligible or unsaved,
         )
+        attention_confirmed = True
+        if readiness["requer_confirmacao"]:
+            attention_confirmed = st.checkbox(
+                f"Existem {len(readiness['atencoes'])} pontos de atenção. Deseja finalizar mesmo assim?",
+                key=f"institutional_governance_attention_{report['id']}",
+                disabled=not eligible or unsaved,
+            )
         if st.button(
             "Finalizar relatório",
-            key=f"institutional_finalize_{current['id']}",
-            disabled=not (eligible and confirmed and not unsaved_text),
+            key=f"inst_finalize_{report['id']}",
+            disabled=not (
+                eligible and confirmed and attention_confirmed and not unsaved
+            ),
         ):
-            report = repository.finalize(current["id"], principal.email)
+            fresh = repository.get(report["id"])
+            fresh_validation = validate_institutional_report_version(
+                fresh,
+                distributions=repository.distribution_summaries(report["id"]),
+                versions=versions,
+            )
+            fresh_ready = finalization_readiness(
+                fresh_validation,
+                status=fresh["status"],
+                unsaved=_has_unsaved_text(report["id"], content),
+            )
+            if fresh_ready["bloqueado"] or not can_finalize(fresh["snapshot_dados"]):
+                st.error("Existem pendências que impedem a finalização")
+                return
+            if fresh_ready["requer_confirmacao"] and not attention_confirmed:
+                st.warning(fresh_ready["rotulo"])
+                return
+            finalized = repository.finalize(report["id"], principal.email)
             registrar_evento(
                 store,
                 evento="RELATORIO_INSTITUCIONAL_FINALIZADO",
@@ -1543,29 +2028,325 @@ def _institutional_period_report(store, principal, tipo, year, quarter=None):
                 acao="FINALIZAR",
                 principal=principal,
                 entidade_tipo="relatorio_institucional",
-                entidade_id=report["id"],
+                entidade_id=finalized["id"],
                 detalhes={
                     "tipo": tipo,
                     "ano": year,
                     "trimestre": quarter,
-                    "versao": report["versao"],
+                    "versao": finalized["versao"],
                 },
             )
-            st.success(
-                "Relatório finalizado; o snapshot desta versão permanece congelado."
+            _flash(
+                "success",
+                "Relatório finalizado; o snapshot desta versão permanece congelado.",
             )
             st.rerun()
+        return
+    for key, label in SECTIONS:
+        section = content[key]
+        with st.expander(label, expanded=False):
+            text = section.get("texto") or ""
+            if text.strip():
+                st.markdown(text)
+            else:
+                st.caption("Seção ainda não preenchida.")
 
 
-def _render_institutional_safely(store, principal, tipo, year, quarter=None):
-    """A complementary report must never interrupt the analytical panel."""
+def _covered_period_or_blank(snapshot):
     try:
-        _institutional_period_report(store, principal, tipo, year, quarter)
+        return _institutional_covered_period(snapshot).replace("Período coberto: ", "")
+    except (KeyError, TypeError, ValueError):
+        return "—"
+
+
+def _render_version_history(versions):
+    rows = []
+    for item in versions:
+        snapshot = item.get("snapshot_dados") or {}
+        rows.append(
+            {
+                "Versão": item["versao"],
+                "Status": _institutional_status_label(item["status"]),
+                "Data de corte": format_datetime_br(item.get("data_corte")),
+                "Criado em": format_datetime_br(item.get("criado_em")),
+                "Responsável": item.get("criado_por") or "Não informado",
+                "Período coberto": _covered_period_or_blank(snapshot),
+            }
+        )
+    _render_table_safely(rows, "Nenhuma versão encontrada para este período.")
+    st.caption(
+        "A versão mais recente vem selecionada. Versões finalizadas permanecem congeladas."
+    )
+
+
+def _render_report_identity(report, snapshot):
+    st.markdown(f"#### {_institutional_title(snapshot)}")
+    st.caption(_institutional_period_label(snapshot))
+    st.caption(
+        f"Status: {_institutional_status_label(report['status'])} · "
+        f"Versão {report['versao']} · "
+        f"criado em {format_datetime_br(report.get('criado_em'))} · "
+        f"corte: {format_datetime_br(report.get('data_corte'))}"
+    )
+    st.caption(f"Responsável: {report.get('criado_por') or 'Não informado'}")
+    covered = _covered_period_or_blank(snapshot)
+    if covered != "—":
+        st.caption(f"Período coberto: {covered}")
+    try:
+        st.caption(_institutional_coverage_text(snapshot))
+    except (KeyError, TypeError, ValueError):
+        st.caption("Cobertura indisponível neste snapshot.")
+
+
+def _render_period_suggestions(
+    store,
+    reports,
+    read,
+    years,
+    latest_rows,
+    principal,
+    repository,
+    tipo,
+    year,
+    quarter,
+):
+    """Offer ready periods. Creation still requires the existing explicit action."""
+    try:
+        from services.institutional_governance_ui import (
+            period_plan,
+            render_ready_periods,
+        )
+
+        coverage = {}
+        for item in years:
+            item = int(item)
+            coverage[item] = read(
+                ("historical_months", item),
+                lambda item=item: reports.months_for_year(item),
+            )
+        clicked = render_ready_periods(
+            period_plan(coverage, latest_rows),
+            administrator=getattr(principal, "administrator", False),
+            selected_token=_period_token(tipo, year, quarter),
+        )
+        if not clicked:
+            return
+        created = _create_institutional_version(
+            store,
+            repository,
+            principal,
+            clicked["tipo"],
+            clicked["ano"],
+            clicked["trimestre"],
+            new_version=False,
+        )
+        st.session_state["institutional_governance_open"] = {
+            "tipo": clicked["tipo"],
+            "ano": int(clicked["ano"]),
+            "trimestre": clicked["trimestre"],
+        }
+        _flash(
+            "success",
+            f"Relatório institucional versão {created['versao']} criado.",
+        )
+        _prefer_latest_version()
+        st.rerun()
+    except ValueError as exc:
+        st.warning(str(exc))
     except Exception:
-        LOGGER.exception("Falha ao renderizar relatório institucional")
+        LOGGER.exception("Falha ao identificar períodos prontos para relatório")
+
+
+def _institutional_workspace(store, principal):
+    reports = TramitaReportsStore(store)
+    read = lambda key, load: _cached_report(store, principal, key, load)
+    years = read(("historical_years",), reports.historical_years)
+    if not years:
+        empty_state(
+            "Nenhum histórico Tramita foi importado. Utilize a área Importações para carregar a base inicial."
+        )
+        return
+    pending = st.session_state.pop("institutional_governance_open", None)
+    if isinstance(pending, dict):
+        st.session_state["inst_tipo"] = (
+            "Relatório Trimestral"
+            if pending.get("tipo") == "TRIMESTRAL"
+            else "Relatório Anual"
+        )
+        if pending.get("ano") in years:
+            st.session_state["inst_ano"] = pending["ano"]
+        if pending.get("trimestre"):
+            st.session_state["inst_trimestre"] = int(pending["trimestre"])
+        st.session_state["inst_prefer_latest"] = True
+    _consume_flash()
+    repository = InstitutionalReportsStore(store)
+    latest_rows = []
+    try:
+        from services.institutional_governance_ui import render_overview
+
+        latest_rows = repository.list_latest_versions()
+        render_overview(latest_rows)
+    except Exception:
+        LOGGER.exception("Falha ao resumir os relatórios institucionais")
+    tipo_label = st.radio(
+        "Tipo",
+        ("Relatório Trimestral", "Relatório Anual"),
+        horizontal=True,
+        key="inst_tipo",
+    )
+    tipo = "TRIMESTRAL" if tipo_label == "Relatório Trimestral" else "ANUAL"
+    _drop_invalid_widget("inst_ano", years)
+    year = st.selectbox("Ano", years, key="inst_ano")
+    quarter = None
+    if tipo == "TRIMESTRAL":
+        available = read(
+            ("historical_months", year), lambda: reports.months_for_year(year)
+        )
+        quarters = [
+            item
+            for item in range(1, 5)
+            if any((item - 1) * 3 < month <= item * 3 for month in available)
+        ]
+        if not quarters:
+            empty_state("Não há meses históricos para montar um trimestre neste ano.")
+            return
+        _drop_invalid_widget("inst_trimestre", quarters)
+        quarter = st.selectbox(
+            "Trimestre",
+            quarters,
+            index=len(quarters) - 1,
+            format_func=lambda value: f"{value}º trimestre",
+            key="inst_trimestre",
+        )
+    versions = repository.list_for_period(tipo, year, quarter)
+    _render_period_suggestions(
+        store,
+        reports,
+        read,
+        years,
+        latest_rows,
+        principal,
+        repository,
+        tipo,
+        year,
+        quarter,
+    )
+    if not versions:
+        st.caption("Nenhum relatório criado para este período.")
+        if getattr(principal, "administrator", False) and st.button(
+            "Criar relatório",
+            key=f"inst_create_{_period_token(tipo, year, quarter)}",
+        ):
+            try:
+                created = _create_institutional_version(
+                    store,
+                    repository,
+                    principal,
+                    tipo,
+                    year,
+                    quarter,
+                    new_version=False,
+                )
+                _flash(
+                    "success",
+                    f"Relatório institucional versão {created['versao']} criado.",
+                )
+                _prefer_latest_version()
+                st.rerun()
+            except ValueError as exc:
+                st.warning(str(exc))
+        return
+
+    labels = [_version_label(item) for item in versions]
+    if st.session_state.pop("inst_prefer_latest", False):
+        st.session_state.pop("inst_versao", None)
+    _drop_invalid_widget("inst_versao", labels)
+    selected = st.selectbox("Versão", labels, index=0, key="inst_versao")
+    report = versions[labels.index(selected)]
+    latest = versions[0]
+    snapshot = report.get("snapshot_dados") or {}
+    _render_report_identity(report, snapshot)
+    view = st.radio(
+        "Exibição",
+        (
+            "Visualização",
+            "Conteúdo e revisão",
+            "Validação e governança",
+            "Versões",
+            "Distribuição",
+        ),
+        horizontal=True,
+        key="inst_exibicao",
+    )
+    if view == "Visualização":
+        _render_institutional_pdf_action(store, principal, report)
+        _render_institutional_document(report)
+    elif view == "Conteúdo e revisão":
+        _render_institutional_editor(
+            store,
+            principal,
+            report,
+            is_latest=report["id"] == latest["id"],
+            tipo=tipo,
+            year=year,
+            quarter=quarter,
+            versions=versions,
+        )
+    elif view == "Validação e governança":
+        from services.institutional_governance_ui import render_governance
+
+        render_governance(
+            store,
+            report,
+            versions,
+            unsaved=_has_unsaved_text(
+                report["id"],
+                normalize_content(report.get("conteudo_estruturado"), snapshot),
+            ),
+        )
+    elif view == "Distribuição":
+        from services.institutional_distribution_ui import render_distribution
+
+        render_distribution(store, principal, report)
+    else:
+        _render_version_history(versions)
+        from services.institutional_governance_ui import render_version_comparison
+
+        render_version_comparison(store, versions)
+    if getattr(principal, "administrator", False):
+        with st.expander("Diagnóstico técnico"):
+            from services.institutional_report_validation import (
+                content_hash,
+                snapshot_hash,
+            )
+
+            pdf_meta = repository.pdf_metadata(report["id"])
+            st.json(
+                {
+                    "id": report["id"],
+                    "status": report["status"],
+                    "versao": report["versao"],
+                    "snapshot_hash": snapshot_hash(snapshot),
+                    "conteudo_hash": content_hash(report.get("conteudo_estruturado")),
+                    "pdf_sha256": (pdf_meta or {}).get("sha256"),
+                    "snapshot": snapshot,
+                    "conteudo_estruturado": report.get("conteudo_estruturado"),
+                }
+            )
+
+
+def institutional_reports(store, principal):
+    """Dedicated home for institutional reports. Analytical panels do not call this."""
+    try:
+        st.subheader("Relatórios Institucionais")
+        st.caption(
+            "Geração, revisão e histórico dos relatórios trimestrais e anuais do MPC-PB"
+        )
+        _institutional_workspace(store, principal)
+    except Exception:
+        LOGGER.exception("Falha ao renderizar a seção Relatórios Institucionais")
         st.error(
-            "Não foi possível carregar o relatório institucional neste momento. "
-            "Os indicadores do período permanecem disponíveis."
+            "Não foi possível carregar os relatórios institucionais neste momento."
         )
 
 
@@ -1625,7 +2406,6 @@ def quarterly(store, principal=None):
             ),
         )["summary"]
     _indicator_cards(report["summary"], previous)
-    _render_institutional_safely(store, principal, "TRIMESTRAL", year, quarter)
     _temporal_charts(
         monthly, f"relatorios_trimestral_{year}_t{quarter}", compact_period=True
     )
@@ -1718,7 +2498,6 @@ def annual(store, principal=None):
         ("annual_monthly", year), lambda: reports.monthly_reports(year, months)
     )
     _indicator_cards(report["summary"], previous)
-    _render_institutional_safely(store, principal, "ANUAL", year)
     _temporal_charts(monthly, f"relatorios_anual_{year}")
     st.subheader("Evolução acumulada no ano")
     st.caption(
@@ -2186,6 +2965,7 @@ def render(store, principal):
         "Produção Mensal",
         "Avaliação Trimestral",
         "Avaliação Anual",
+        "Relatórios Institucionais",
     )
     if principal.administrator:
         sections += ("Importações",)
@@ -2204,6 +2984,8 @@ def render(store, principal):
         _render_indicators("avaliação trimestral", quarterly, store, principal)
     elif section == "Avaliação Anual":
         _render_indicators("avaliação anual", annual, store, principal)
+    elif section == "Relatórios Institucionais":
+        institutional_reports(store, principal)
     else:
         imports(store, principal)
 

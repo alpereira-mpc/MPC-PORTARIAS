@@ -114,6 +114,8 @@ def test_institutional_reports_are_versioned_snapshots_from_canonical_history(tm
     assert annual["indicadores_gerais"]["opinions"] == 1320
     assert annual["indicadores_gerais"]["quotas"] == 529
     assert annual["metadados"]["periodo_parcial"]
+    assert annual["metadados"]["trimestre"] is None
+    assert annual["comparacao_periodo_anterior"] is None
     assert annual["cobertura_historica"]["meses_disponiveis"] == list(range(1, 10))
     assert can_finalize(annual)
     assert _create(repository, annual)["periodo_parcial"]
@@ -329,11 +331,11 @@ def test_institutional_render_error_is_localized_and_does_not_escape(monkeypatch
     messages = []
     monkeypatch.setattr(
         relatorios_ui,
-        "_institutional_period_report",
+        "_institutional_workspace",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("falha simulada")),
     )
     monkeypatch.setattr(relatorios_ui.st, "error", messages.append)
-    relatorios_ui._render_institutional_safely(None, None, "TRIMESTRAL", 2026, 3)
+    relatorios_ui.institutional_reports(None, None)
     assert len(messages) == 1
-    assert "relatório institucional" in messages[0]
+    assert "relatórios institucionais" in messages[0]
     assert "Não foi possível carregar os indicadores" not in messages[0]

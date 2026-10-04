@@ -118,6 +118,10 @@ def build_report_snapshot(store, *, tipo, ano, trimestre=None):
             prior = reports.period_report(
                 prior_start.isoformat(), prior_end.isoformat()
             )["summary"]
+    elif reports.months_for_year(ano - 1):
+        prior = reports.period_report(
+            date(ano - 1, 1, 1).isoformat(), date(ano, 1, 1).isoformat()
+        )["summary"]
     protocols = len({row["protocolo"] for row in period["events"] if row["protocolo"]})
     annual_partial = tipo == "ANUAL" and coverage["ultimo_mes_disponivel"] not in (
         None,

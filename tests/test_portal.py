@@ -322,6 +322,7 @@ def test_relatorios_card_menu_and_route_follow_module_permission(store, monkeypa
         "Produção Mensal",
         "Avaliação Trimestral",
         "Avaliação Anual",
+        "Relatórios Institucionais",
     ]
     assert section.value == "Visão Atual"
     for view in section.options:
