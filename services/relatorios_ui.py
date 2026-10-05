@@ -1311,7 +1311,37 @@ def _period_token(tipo, year, quarter):
 
 
 def _text_widget_key(report_id, section):
-    return f"inst_text_{report_id}_{section}"
+    return (
+        f"inst_text_{report_id}_{section}_"
+        f"{_editor_epoch(report_id)}_{_section_epoch(report_id, section)}"
+    )
+
+
+def _editor_epoch_key(report_id):
+    return f"institutional_editor_epoch_{report_id}"
+
+
+def _section_epoch_key(report_id, section):
+    return f"institutional_section_epoch_{report_id}_{section}"
+
+
+def _editor_epoch(report_id):
+    return int(st.session_state.get(_editor_epoch_key(report_id), 0))
+
+
+def _section_epoch(report_id, section):
+    return int(st.session_state.get(_section_epoch_key(report_id, section), 0))
+
+
+def _advance_editor_epoch(report_id):
+    """Make every text widget for a report a new Streamlit identity."""
+    st.session_state[_editor_epoch_key(report_id)] = _editor_epoch(report_id) + 1
+
+
+def _advance_section_epoch(report_id, section):
+    """Refresh only one generated section, retaining other local drafts."""
+    key = _section_epoch_key(report_id, section)
+    st.session_state[key] = _section_epoch(report_id, section) + 1
 
 
 def _prefer_latest_version():
@@ -1375,13 +1405,6 @@ def _apply_forgotten_reports():
             text = str(key)
             if text in exact or text.startswith(prefixes):
                 doomed.append(key)
-    refresh = dict(st.session_state.get("inst_refresh_text") or {})
-    for identifier in identifiers:
-        refresh.pop(str(identifier), None)
-    if refresh:
-        st.session_state["inst_refresh_text"] = refresh
-    else:
-        st.session_state.pop("inst_refresh_text", None)
     for key in doomed:
         st.session_state.pop(key, None)
 
@@ -1469,20 +1492,6 @@ def _consume_flash():
     getattr(st, level)(message)
 
 
-def _request_text_refresh(report_id, keys):
-    pending = dict(st.session_state.get("inst_refresh_text") or {})
-    current = set(pending.get(str(report_id), []))
-    current.update(keys)
-    pending[str(report_id)] = sorted(current)
-    st.session_state["inst_refresh_text"] = pending
-
-
-def _clear_text_widget_state(report_id, keys):
-    """Forget widget-owned drafts before the next render reads persisted prose."""
-    for key in keys:
-        st.session_state.pop(_text_widget_key(report_id, key), None)
-
-
 def _text_sync_value(value):
     text = str(value or "")
     return len(text), hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
@@ -1503,7 +1512,8 @@ def _log_text_sync(report, content, section="resumo_executivo"):
     LOGGER.info(
         "RELATORIO_IA | etapa=text_sync | report_id=%s | secao=%s | "
         "db_len=%s | db_hash=%s | normalized_len=%s | normalized_hash=%s | "
-        "widget_key=%s | widget_value_len=%s | widget_hash=%s | session_exists=%s",
+        "widget_key=%s | editor_epoch=%s | section_epoch=%s | "
+        "widget_value_len=%s | widget_hash=%s | session_exists=%s",
         report["id"],
         section,
         db_len,
@@ -1511,25 +1521,20 @@ def _log_text_sync(report, content, section="resumo_executivo"):
         normalized_len,
         normalized_hash,
         widget_key,
+        _editor_epoch(report["id"]),
+        _section_epoch(report["id"], section),
         session_len,
         session_hash,
         session_exists,
     )
 
 
-def _apply_text_refresh(report_id):
-    pending = dict(st.session_state.get("inst_refresh_text") or {})
-    keys = pending.pop(str(report_id), [])
-    if pending:
-        st.session_state["inst_refresh_text"] = pending
-    else:
-        st.session_state.pop("inst_refresh_text", None)
-    _clear_text_widget_state(report_id, keys)
-
-
-def _bind_text_state(report):
-    """Drop stale editor keys before the text areas are instantiated."""
-    _apply_text_refresh(report["id"])
+def _initialize_text_widget(report_id, section, persisted_text):
+    """Seed a fresh widget identity from the persisted source of truth."""
+    widget_key = _text_widget_key(report_id, section)
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = persisted_text or ""
+    return widget_key
 
 
 def _texts_from_state(report_id, content):
@@ -2098,6 +2103,14 @@ def _request_institutional_ai_action(report, action, *, section=None):
     if current and current.get("status") in ("PENDING", "RUNNING"):
         LOGGER.info("RELATORIO_IA | etapa=click_ignored | report_id=%s", report["id"])
         return
+    drafts = {}
+    if action == "REGENERATE_SECTION":
+        for candidate, _label in SECTIONS:
+            if candidate == section:
+                continue
+            widget_key = _text_widget_key(report["id"], candidate)
+            if widget_key in st.session_state:
+                drafts[candidate] = st.session_state[widget_key]
     payload = {
         "action": action,
         "report_id": report["id"],
@@ -2105,6 +2118,7 @@ def _request_institutional_ai_action(report, action, *, section=None):
         "section": section,
         "nonce": uuid4().hex,
         "status": "PENDING",
+        "drafts": drafts,
     }
     st.session_state[_AI_ACTION_KEY] = payload
     _set_ai_attempt(
@@ -2155,21 +2169,16 @@ def _process_pending_institutional_ai_action(service, principal, report):
     st.session_state[_AI_ACTION_KEY] = action
     operation = action["action"]
     section = action.get("section")
-    all_sections = list(AI_SECTIONS)
     if operation == "GENERATE_ALL":
         call = lambda: service.generate_all(report["id"], principal)
-        success, failure, refresh, waiting = (
+        success, waiting = (
             AI_GENERATE_SUCCESS,
-            AI_GENERATE_FAILURE,
-            all_sections,
             "Gerando conteúdo institucional com IA...",
         )
     elif operation == "REGENERATE_SECTION" and section in AI_SECTIONS:
         call = lambda: service.regenerate(report["id"], section, principal)
-        success, failure, refresh, waiting = (
+        success, waiting = (
             AI_REGENERATE_SUCCESS,
-            AI_REGENERATE_FAILURE,
-            [section],
             "Regenerando a seção com IA...",
         )
     else:
@@ -2204,11 +2213,18 @@ def _process_pending_institutional_ai_action(service, principal, report):
         LOGGER.exception("RELATORIO_IA | etapa=error | report_id=%s", report["id"])
         detail = "Ocorreu um erro inesperado."
     else:
-        # A widget's stale session value takes precedence over text_area's
-        # value argument.  Remove it now (before rerun) and once more on the
-        # next render, when fresh report content is loaded from the database.
-        _clear_text_widget_state(report["id"], refresh)
-        _request_text_refresh(report["id"], refresh)
+        # Read the saved row again.  The following epoch identifies a new
+        # widget, so a stale Streamlit value can never mask this persisted text.
+        updated = service.reports.get(report["id"])
+        if updated is None:
+            raise ValueError("Relatório não encontrado após salvar o conteúdo.")
+        if operation == "GENERATE_ALL":
+            _advance_editor_epoch(report["id"])
+        else:
+            _advance_section_epoch(report["id"], section)
+            for candidate, draft in (action.get("drafts") or {}).items():
+                if candidate != section:
+                    st.session_state[_text_widget_key(report["id"], candidate)] = draft
         _log_text_sync(
             updated,
             normalize_content(
@@ -2372,8 +2388,6 @@ def _render_institutional_editor(
         return
     elif editable:
         repository = InstitutionalReportsStore(store)
-        _bind_text_state(report)
-        _log_text_sync(report, content)
         _render_institutional_ai_flash(report["id"])
         _render_last_institutional_ai_attempt(principal, report["id"])
         unsaved = _has_unsaved_text(report["id"], content)
@@ -2431,7 +2445,6 @@ def _render_institutional_editor(
                 service.save_manual(
                     report["id"], _texts_from_state(report["id"], content), principal
                 )
-                _request_text_refresh(report["id"], [key for key, _label in SECTIONS])
                 _flash("success", "Alterações salvas.")
                 st.rerun()
             except (ValueError, PermissionError) as exc:
@@ -2452,10 +2465,12 @@ def _render_institutional_editor(
             section = content[key]
             text = section.get("texto") or ""
             with st.expander(label, expanded=index == 0):
+                widget_key = _initialize_text_widget(report["id"], key, text)
+                if key == "resumo_executivo":
+                    _log_text_sync(report, content, key)
                 st.text_area(
                     label,
-                    text,
-                    key=_text_widget_key(report["id"], key),
+                    key=widget_key,
                     height=150,
                     label_visibility="collapsed",
                 )

@@ -183,6 +183,15 @@ def _values(app):
     return {area.key: area.value for area in app.text_area}
 
 
+def _text_key(report, section):
+    return relatorios_ui._text_widget_key(report["id"], section)
+
+
+def _text_area(app, report, section):
+    prefix = f"inst_text_{report['id']}_{section}_"
+    return next(area for area in app.text_area if area.key.startswith(prefix))
+
+
 def _shown(elements):
     return "\n".join(element.value for element in elements)
 
@@ -209,7 +218,8 @@ def test_draft_generation_persists_and_reruns(tmp_path, monkeypatch):
     saved = repository.get(report["id"])
     assert saved["status"] == "EM_REVISAO"
     values = _values(app)
-    assert values[f"inst_text_{report['id']}_resumo_executivo"] == (
+    assert all(_text_area(app, report, key).value.strip() for key in AI_SECTIONS)
+    assert _text_area(app, report, "resumo_executivo").value == (
         "GERADO resumo_executivo."
     )
     assert (
@@ -222,7 +232,7 @@ def test_draft_generation_persists_and_reruns(tmp_path, monkeypatch):
         == "editorial-2026-10"
     )
     assert (
-        values[f"inst_text_{report['id']}_comparacao_periodo_anterior"]
+        _text_area(app, report, "comparacao_periodo_anterior").value
         == "Não há período anterior disponível para comparação."
     )
     assert not any(button.label == "Marcar para revisão" for button in app.button)
@@ -231,7 +241,7 @@ def test_draft_generation_persists_and_reruns(tmp_path, monkeypatch):
         button.key == f"inst_regen_{report['id']}_comparacao_periodo_anterior"
         for button in app.button
     )
-    assert "Parecer" in values[f"inst_text_{report['id']}_nota_metodologica"]
+    assert "Parecer" in _text_area(app, report, "nota_metodologica").value
     assert "inst_refresh_text" not in app.session_state
 
 
@@ -253,7 +263,7 @@ def test_review_with_empty_content_can_generate(tmp_path, monkeypatch):
     assert saved["conteudo_estruturado"]["evolucao_periodo"]["texto"] == (
         "GERADO evolucao_periodo."
     )
-    assert _values(app)[f"inst_text_{report['id']}_evolucao_periodo"] == (
+    assert _text_area(app, report, "evolucao_periodo").value == (
         "GERADO evolucao_periodo."
     )
 
@@ -277,7 +287,7 @@ def test_annual_button_calls_the_real_editor_contract_and_persists(
     assert saved["conteudo_estruturado"]["resumo_executivo"]["texto"]
     assert saved["conteudo_estruturado"]["evolucao_periodo"]["texto"]
     assert saved["conteudo_estruturado"]["comparacao_periodo_anterior"]["texto"]
-    assert _values(app)[f"inst_text_{report['id']}_resumo_executivo"]
+    assert all(_text_area(app, report, key).value.strip() for key in AI_SECTIONS)
 
 
 def test_pending_annual_action_survives_an_intermediate_rerun(tmp_path, monkeypatch):
@@ -306,13 +316,15 @@ def test_generated_content_replaces_a_stale_empty_textarea_state(
     creator = _create_annual if annual else _create
     database, _store, repository, report = creator(tmp_path)
     app = _open(monkeypatch, database, report)
-    widget_key = f"inst_text_{report['id']}_resumo_executivo"
+    widget_key = _text_key(report, "resumo_executivo")
     # This reproduces Streamlit's stale empty widget value from the prior run.
     app.session_state[widget_key] = ""
     app.button(key=f"inst_ai_all_{report['id']}").click().run()
     saved = repository.get(report["id"])
     assert saved["conteudo_estruturado"]["resumo_executivo"]["texto"]
-    assert app.text_area(key=widget_key).value == "GERADO resumo_executivo."
+    assert _text_area(app, report, "resumo_executivo").value == (
+        "GERADO resumo_executivo."
+    )
 
 
 def test_double_click_generates_once(tmp_path, monkeypatch):
@@ -346,23 +358,41 @@ def test_section_regeneration_persists_only_that_section(tmp_path, monkeypatch):
     assert (
         content["sintese_pontos_atencao"]["texto"] == "GERADO sintese_pontos_atencao."
     )
-    values = _values(app)
-    assert values[f"inst_text_{report['id']}_permanencia"] == "REGEN permanencia."
-    assert values[f"inst_text_{report['id']}_resumo_executivo"] == (
+    assert _text_area(app, report, "permanencia").value == "REGEN permanencia."
+    assert _text_area(app, report, "resumo_executivo").value == (
         "GERADO resumo_executivo."
     )
+
+
+def test_section_regeneration_preserves_unsaved_text_in_other_sections(
+    tmp_path, monkeypatch
+):
+    _patch(monkeypatch, _fake_ai)
+    database, store, _repository, report = _create(tmp_path)
+    InstitutionalReportContentService(store).generate_all(report["id"], _admin())
+    app = _open(monkeypatch, database, report)
+    summary_key = _text_key(report, "resumo_executivo")
+    app.text_area(key=summary_key).set_value("RASCUNHO LOCAL PRESERVADO").run()
+    app.button(key=f"inst_regen_{report['id']}_permanencia").click().run()
+    assert not app.exception, app.exception
+    assert _text_area(app, report, "resumo_executivo").value == (
+        "RASCUNHO LOCAL PRESERVADO"
+    )
+    assert _text_area(app, report, "permanencia").value == ("REGEN permanencia.")
 
 
 def test_typed_text_does_not_stay_after_generation(tmp_path, monkeypatch):
     _patch(monkeypatch, _fake_ai)
     database, _store, _repository, report = _create(tmp_path)
     app = _open(monkeypatch, database, report)
-    widget = f"inst_text_{report['id']}_resumo_executivo"
+    widget = _text_key(report, "resumo_executivo")
     app.text_area(key=widget).set_value("TEXTO PRESO NA SESSAO").run()
     assert app.text_area(key=widget).value == "TEXTO PRESO NA SESSAO"
     app.button(key=f"inst_ai_all_{report['id']}").click().run()
     assert not app.exception, app.exception
-    assert app.text_area(key=widget).value == "GERADO resumo_executivo."
+    assert _text_area(app, report, "resumo_executivo").value == (
+        "GERADO resumo_executivo."
+    )
     assert "TEXTO PRESO NA SESSAO" not in _values(app).values()
     assert "inst_refresh_text" not in app.session_state
     keys = [button.key for button in app.button] + list(_values(app))
@@ -388,10 +418,8 @@ def test_provider_failure_keeps_the_page_and_previous_text(tmp_path, monkeypatch
     assert "Não foi possível gerar o conteúdo com IA." in _shown(app.error)
     assert "Serviço de IA não configurado" in _shown(app.caption)
     assert app.text_area
-    assert _values(app)[f"inst_text_{report['id']}_permanencia"] == (
-        "GERADO permanencia."
-    )
-    assert _values(app)[f"inst_text_{report['id']}_resumo_executivo"] == (
+    assert _text_area(app, report, "permanencia").value == "GERADO permanencia."
+    assert _text_area(app, report, "resumo_executivo").value == (
         "GERADO resumo_executivo."
     )
     assert repository.get(report["id"])["conteudo_estruturado"] == before
@@ -417,7 +445,7 @@ def test_unexpected_failure_does_not_crash_or_erase_content(tmp_path, monkeypatc
     visible = _shown(app.error)
     assert "Não foi possível gerar o conteúdo com IA." in visible
     assert "detalhe interno que nao pode vazar" not in visible
-    assert _values(app)[f"inst_text_{report['id']}_resumo_executivo"] == (
+    assert _text_area(app, report, "resumo_executivo").value == (
         "GERADO resumo_executivo."
     )
     assert repository.get(report["id"])["conteudo_estruturado"] == before
