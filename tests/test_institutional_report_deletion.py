@@ -12,6 +12,7 @@ from services.access import Principal
 from services.institutional_report_content import InstitutionalReportContentService
 from services.institutional_reports import (
     EMPTY_STRUCTURED_CONTENT,
+    delete_institutional_report_period,
     delete_editable_period_versions,
     delete_editable_report_version,
 )
@@ -123,6 +124,31 @@ def test_latest_draft_and_review_can_be_deleted(tmp_path):
     review = _open(repository, status="EM_REVISAO")
     delete_editable_report_version(repository.store, review["id"], _admin())
     assert repository.list_for_period("TRIMESTRAL", 2026, 3) == []
+
+
+def test_administrative_delete_removes_all_versions_and_official_pdf(tmp_path):
+    repository = _repository(tmp_path)
+    finalized = _open(repository, status="FINALIZADO")
+    repository.save_pdf_artifact(
+        finalized["id"],
+        nome_arquivo="relatorio.pdf",
+        conteudo=b"%PDF-1.4\nfixture",
+        sha256="fixture",
+        tamanho=16,
+        actor="admin@test",
+    )
+    draft = _next(repository, SNAPSHOT)
+
+    removed = delete_institutional_report_period(
+        repository.store, "TRIMESTRAL", 2026, 3, _admin()
+    )
+
+    assert {item["id"] for item in removed} == {finalized["id"], draft["id"]}
+    assert repository.list_for_period("TRIMESTRAL", 2026, 3) == []
+    assert repository.pdf_artifact(finalized["id"]) is None
+    with repository.store.connection(read_only=True) as connection:
+        events = connection.execute("SELECT evento FROM auditoria_eventos").fetchall()
+    assert any(row[0] == "RELATORIO_INSTITUCIONAL_EXCLUIDO_ADMINISTRATIVAMENTE" for row in events)
 
 
 def test_finalized_unpublished_can_be_deleted_but_sent_cannot(tmp_path):

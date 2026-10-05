@@ -248,6 +248,52 @@ class InstitutionalReportsStore:
     def delete_editable_version(self, identifier):
         return self.delete_version(identifier)
 
+    def delete_period_administratively(self, tipo, ano, trimestre=None):
+        """Hard-delete every version and child artifact for one report period only."""
+        clause, params = self._period_clause(tipo, ano, trimestre)
+        with self.store.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT id,tipo,ano,trimestre,versao,status FROM relatorios_institucionais "
+                "WHERE " + clause + " AND ativo=1 ORDER BY versao DESC",
+                params,
+            ).fetchall()
+            if not rows:
+                raise ValueError("Relatório institucional não encontrado.")
+            identifiers = [row["id"] for row in rows]
+            marks = ",".join("?" * len(identifiers))
+            envio_ids = [
+                row["id"]
+                for row in connection.execute(
+                    "SELECT id FROM relatorios_institucionais_envios "
+                    f"WHERE relatorio_id IN ({marks})",
+                    identifiers,
+                )
+            ]
+            if envio_ids:
+                envio_marks = ",".join("?" * len(envio_ids))
+                connection.execute(
+                    "DELETE FROM relatorios_institucionais_envio_destinatarios "
+                    f"WHERE envio_id IN ({envio_marks})",
+                    envio_ids,
+                )
+                connection.execute(
+                    "DELETE FROM relatorios_institucionais_envios "
+                    f"WHERE id IN ({envio_marks})",
+                    envio_ids,
+                )
+            connection.execute(
+                "DELETE FROM relatorios_institucionais_pdf "
+                f"WHERE relatorio_id IN ({marks})",
+                identifiers,
+            )
+            connection.execute(
+                "DELETE FROM relatorios_institucionais "
+                f"WHERE id IN ({marks})",
+                identifiers,
+            )
+        return [dict(row) for row in rows]
+
     def get(self, identifier):
         with self.store.connection(read_only=True) as connection:
             return self._row(

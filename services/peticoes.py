@@ -156,11 +156,28 @@ def update(store, identifier, data, principal, upload=None):
     return record
 
 
-def add_progress(store, identifier, data, description, principal):
+def add_progress(store, identifier, data, description, principal, documents=()):
     if not description.strip():
         raise ValueError("Informe a descrição do andamento.")
-    PeticoesStore(store).add_progress(identifier, data, description, _actor(principal))
-    _audit(store, principal, "PETICAO_ANDAMENTO_CRIADO", "CRIAR", identifier)
+    prepared = []
+    for document in documents or ():
+        name, mime, content, category = document
+        validate_upload(name, content)
+        if category not in ("OFICIO_RESPOSTA", "ANEXO", "OUTRO"):
+            raise ValueError("Classificação de documento inválida.")
+        prepared.append((name, mime, content, category))
+    progress_id = PeticoesStore(store).add_progress(
+        identifier, data, description, _actor(principal), prepared
+    )
+    _audit(
+        store,
+        principal,
+        "PETICAO_ANDAMENTO_CRIADO",
+        "CRIAR",
+        identifier,
+        {"andamento_id": progress_id, "documentos": len(prepared)},
+    )
+    return progress_id
 
 
 def remove_progress(store, progress_id, reason, principal):

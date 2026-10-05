@@ -21,6 +21,7 @@ from services.date_format import format_date_br, format_datetime_br
 from services.institutional_reports import (
     EMPTY_STRUCTURED_CONTENT,
     build_report_snapshot,
+    delete_institutional_report_period,
     delete_editable_report_version,
     deletion_eligibility,
     report_workflow_state,
@@ -2824,7 +2825,7 @@ def _render_institutional_created_reports(store, principal, repository, latest_r
             if coverage:
                 st.caption(_institutional_month_span(coverage, report.get("ano")))
             st.caption(" · ".join(details))
-            actions = st.columns(2)
+            actions = st.columns(3 if getattr(principal, "administrator", False) else 2)
             if actions[0].button("Abrir", key=f"inst_open_created_{report['id']}"):
                 _open_institutional_report(report)
                 st.rerun()
@@ -2832,6 +2833,48 @@ def _render_institutional_created_reports(store, principal, repository, latest_r
                 with actions[1]:
                     # The existing action keeps PDF bytes lazy and audits downloads.
                     _render_institutional_pdf_action(store, principal, report)
+            if getattr(principal, "administrator", False) and actions[2].button(
+                "Excluir", key=f"inst_admin_delete_ask_{report['id']}"
+            ):
+                st.session_state["inst_admin_delete_pending"] = {
+                    "tipo": report["tipo"],
+                    "ano": report["ano"],
+                    "trimestre": report.get("trimestre"),
+                    "periodo": period,
+                }
+                st.rerun()
+
+
+def _render_administrative_delete_confirmation(store, principal):
+    """Administrator-only confirmation for removing a whole report period."""
+    pending = st.session_state.get("inst_admin_delete_pending")
+    if not pending or not getattr(principal, "administrator", False):
+        return
+    st.warning("Excluir relatório institucional?")
+    st.caption(
+        f"Esta ação excluirá definitivamente o relatório '{pending['periodo']}' "
+        "e todas as suas versões. Os dados originais dos módulos do MPC-PB não serão excluídos."
+    )
+    cancel, confirm = st.columns(2)
+    if cancel.button("Cancelar", key="inst_admin_delete_cancel"):
+        st.session_state.pop("inst_admin_delete_pending", None)
+        st.rerun()
+    if confirm.button("Excluir definitivamente", key="inst_admin_delete_confirm"):
+        try:
+            removed = delete_institutional_report_period(
+                store,
+                pending["tipo"],
+                pending["ano"],
+                pending.get("trimestre"),
+                principal,
+            )
+        except (ValueError, PermissionError) as exc:
+            st.error(str(exc))
+        else:
+            st.session_state.pop("inst_admin_delete_pending", None)
+            _forget_deleted_reports([item["id"] for item in removed])
+            _flash("success", "Relatório institucional excluído com sucesso.")
+            st.rerun()
 
 
 def _render_institutional_creation(store, principal, repository, reports, read, years, latest_rows):
@@ -3026,6 +3069,7 @@ def _institutional_workspace(store, principal):
             selected_period.get("trimestre"),
         )
     elif section == "Relatórios criados":
+        _render_administrative_delete_confirmation(store, principal)
         _render_institutional_created_reports(store, principal, repository, latest_rows)
     else:
         _render_institutional_creation(store, principal, repository, reports, read, years, latest_rows)

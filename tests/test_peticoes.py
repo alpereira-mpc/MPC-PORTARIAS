@@ -145,6 +145,42 @@ def test_edit_requests_progress_results_conclusion_and_audit(store):
     assert hidden[0] == 1 and hidden[1] == "Lançamento duplicado."
 
 
+def test_progress_documents_are_linked_without_replacing_the_principal_pdf(store):
+    principal = _principal(store)
+    record = create(
+        store, _payload(store), principal, ("principal.pdf", "application/pdf", _pdf())
+    )
+    main_before = PeticoesStore(store).document(record["id"])["arquivo"]
+    first, second = _pdf(), _pdf()
+    add_progress(
+        store,
+        record["id"],
+        "2026-10-05",
+        "Recebido ofício-resposta com anexos.",
+        principal,
+        (
+            ("Oficio-resposta.pdf", "application/pdf", first, "OFICIO_RESPOSTA"),
+            ("Anexo-I.pdf", "application/pdf", second, "ANEXO"),
+        ),
+    )
+    timeline = PeticoesStore(store).progress(record["id"])
+    progress = next(item for item in timeline if item["descricao"].startswith("Recebido"))
+    assert [(item["nome"], item["categoria"]) for item in progress["documentos"]] == [
+        ("Oficio-resposta.pdf", "OFICIO_RESPOSTA"),
+        ("Anexo-I.pdf", "ANEXO"),
+    ]
+    assert PeticoesStore(store).document(record["id"])["arquivo"] == main_before
+    with pytest.raises(ValueError, match="PDF"):
+        add_progress(
+            store,
+            record["id"],
+            "2026-10-06",
+            "Arquivo inválido.",
+            principal,
+            (("texto.pdf", "application/pdf", b"invalido", "OUTRO"),),
+        )
+
+
 def test_permissions_are_independent(store):
     from tests.access_testing import seed_access
 

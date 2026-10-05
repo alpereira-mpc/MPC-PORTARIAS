@@ -354,20 +354,29 @@ def _preview(text):
     return compact[: PREVIEW_LIMIT - 1].rstrip() + "…"
 
 
-def _registrar_andamento(store, principal, identifier, date_key, text_key, error_key):
+def _registrar_andamento(store, principal, identifier, date_key, text_key, error_key, uploads=()):
     try:
+        documents = []
+        for uploaded, category in uploads or ():
+            documents.append(
+                (uploaded.name, uploaded.type or "application/pdf", uploaded.getvalue(), category)
+            )
         add_progress(
             store,
             identifier,
             st.session_state[date_key].isoformat(),
             st.session_state.get(text_key) or "",
             principal,
+            documents,
         )
     except ValueError as exc:
         st.session_state[error_key] = str(exc)
     else:
         st.session_state[text_key] = ""
         st.session_state.pop(error_key, None)
+        for key in list(st.session_state):
+            if key.startswith(f"peticoes_andamento_documento_{identifier}"):
+                st.session_state.pop(key, None)
 
 
 def _salvar_resultado(store, principal, identifier, key, error_key):
@@ -439,6 +448,28 @@ def _card(store, db, principal, record, index, *, acompanhar):
                     "Descrição do andamento",
                     key=f"peticoes_andamento_texto_{identifier}",
                 )
+                upload_key = f"peticoes_andamento_documento_{identifier}"
+                uploads = st.file_uploader(
+                    "Documentos recebidos neste andamento",
+                    type=["pdf"],
+                    accept_multiple_files=True,
+                    key=upload_key,
+                    help="Opcional. Anexe o ofício, resposta, manifestação ou outros documentos recebidos relacionados a este andamento.",
+                )
+                categories = []
+                for index, uploaded in enumerate(uploads or []):
+                    category = st.selectbox(
+                        uploaded.name,
+                        ("Ofício/Resposta", "Anexo", "Outro documento"),
+                        key=f"{upload_key}_categoria_{index}",
+                    )
+                    categories.append(
+                        {
+                            "Ofício/Resposta": "OFICIO_RESPOSTA",
+                            "Anexo": "ANEXO",
+                            "Outro documento": "OUTRO",
+                        }[category]
+                    )
                 error_key = f"peticoes_andamento_erro_{identifier}"
                 st.button(
                     "Registrar",
@@ -451,6 +482,7 @@ def _card(store, db, principal, record, index, *, acompanhar):
                         f"peticoes_andamento_data_{identifier}",
                         f"peticoes_andamento_texto_{identifier}",
                         error_key,
+                        tuple(zip(uploads or [], categories)),
                     ),
                 )
                 if message := st.session_state.get(error_key):
@@ -525,12 +557,42 @@ def _card(store, db, principal, record, index, *, acompanhar):
             if record.get("resultados_anteriores"):
                 st.caption("Histórico de resultados anteriores")
                 _render_resultados_anteriores(record["resultados_anteriores"])
+            received = [
+                (item, document)
+                for item in db.progress(identifier)
+                for document in item.get("documentos") or []
+            ]
+            if received:
+                st.markdown("**Documentos recebidos**")
+                for item, document in received:
+                    st.caption(
+                        f"{format_date_br(item['data'])} — {document['nome']}"
+                    )
         if history_open:
             items = db.progress(identifier)
+            document_bytes = {
+                item["id"]: item for item in db.progress_documents(identifier)
+            }
             if not items:
                 st.caption("Nenhum andamento registrado.")
             for item in items:
                 st.write(f"{format_date_br(item['data'])} — {item['descricao']}")
+                for document in item.get("documentos") or []:
+                    category = {
+                        "OFICIO_RESPOSTA": "Ofício/Resposta",
+                        "ANEXO": "Anexo",
+                        "OUTRO": "Outro documento",
+                    }.get(document.get("categoria"), "Documento")
+                    st.caption(f"PDF · {category}: {document['nome']}")
+                    payload = document_bytes.get(document["id"])
+                    if payload:
+                        st.download_button(
+                            "Baixar PDF",
+                            payload["arquivo"],
+                            payload["nome"],
+                            payload["mime_type"],
+                            key=f"peticoes_documento_download_{document['id']}",
+                        )
                 if has_permission(
                     principal, "peticoes_registrar_andamento"
                 ) and st.button(

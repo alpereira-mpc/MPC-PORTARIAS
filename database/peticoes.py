@@ -24,7 +24,10 @@ class PeticoesStore:
             for column, definition in (("excluido", "INTEGER NOT NULL DEFAULT 0 CHECK(excluido IN (0,1))"), ("excluido_em", "TEXT"), ("excluido_por", "TEXT NOT NULL DEFAULT ''"), ("motivo_exclusao", "TEXT NOT NULL DEFAULT ''")):
                 if column not in columns: c.execute(f"ALTER TABLE peticoes_pedidos ADD COLUMN {column} {definition}")
             c.execute(f"CREATE TABLE IF NOT EXISTS peticoes_andamentos (id {identity},peticao_id {fk} NOT NULL REFERENCES peticoes(id) ON DELETE CASCADE,data TEXT NOT NULL,descricao TEXT NOT NULL,criado_em TEXT NOT NULL,criado_por TEXT NOT NULL,excluido INTEGER NOT NULL DEFAULT 0 CHECK(excluido IN (0,1)),excluido_em TEXT,excluido_por TEXT NOT NULL DEFAULT '',motivo_exclusao TEXT NOT NULL DEFAULT '')")
-            c.execute(f"CREATE TABLE IF NOT EXISTS peticoes_documentos (id TEXT PRIMARY KEY,peticao_id {fk} NOT NULL REFERENCES peticoes(id) ON DELETE CASCADE,nome TEXT NOT NULL,mime_type TEXT NOT NULL,tamanho INTEGER NOT NULL CHECK(tamanho>0),arquivo {binary} NOT NULL,criado_em TEXT NOT NULL,criado_por TEXT NOT NULL)")
+            c.execute(f"CREATE TABLE IF NOT EXISTS peticoes_documentos (id TEXT PRIMARY KEY,peticao_id {fk} NOT NULL REFERENCES peticoes(id) ON DELETE CASCADE,andamento_id {fk} REFERENCES peticoes_andamentos(id) ON DELETE CASCADE,tipo_documento TEXT NOT NULL DEFAULT 'PRINCIPAL',categoria TEXT NOT NULL DEFAULT '',nome TEXT NOT NULL,mime_type TEXT NOT NULL,tamanho INTEGER NOT NULL CHECK(tamanho>0),arquivo {binary} NOT NULL,criado_em TEXT NOT NULL,criado_por TEXT NOT NULL)")
+            document_columns = {row[0] for row in c.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='peticoes_documentos'")} if self.store.backend == "postgresql" else {row[1] for row in c.execute("PRAGMA table_info(peticoes_documentos)")}
+            for column, definition in (("andamento_id", f"{fk} REFERENCES peticoes_andamentos(id) ON DELETE CASCADE"), ("tipo_documento", "TEXT NOT NULL DEFAULT 'PRINCIPAL'"), ("categoria", "TEXT NOT NULL DEFAULT ''")):
+                if column not in document_columns: c.execute(f"ALTER TABLE peticoes_documentos ADD COLUMN {column} {definition}")
             for sql in ("CREATE INDEX IF NOT EXISTS peticoes_lista_idx ON peticoes(situacao,data_protocolo DESC,id DESC)","CREATE INDEX IF NOT EXISTS peticoes_andamentos_idx ON peticoes_andamentos(peticao_id,data DESC,id DESC)","CREATE INDEX IF NOT EXISTS peticoes_pedidos_idx ON peticoes_pedidos(peticao_id,ordem)"): c.execute(sql)
         _READY.add(key)
 
@@ -68,7 +71,7 @@ class PeticoesStore:
                 if 'unique' in str(exc).lower(): raise ValueError('Já existe uma Petição com este número Tramita.') from exc
                 raise
             identifier=row.lastrowid; self._replace_relations(c,identifier,data,stamp)
-            name,mime,content=upload; c.execute("INSERT INTO peticoes_documentos VALUES(?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,identifier,name,mime,len(content),content,stamp,actor)); c.execute("INSERT INTO peticoes_andamentos(peticao_id,data,descricao,criado_em,criado_por) VALUES(?,?,?,?,?)",(identifier,data['data_protocolo'],'Petição protocolada.',stamp,actor))
+            name,mime,content=upload; c.execute("INSERT INTO peticoes_documentos(id,peticao_id,andamento_id,tipo_documento,categoria,nome,mime_type,tamanho,arquivo,criado_em,criado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,identifier,None,'PRINCIPAL','',name,mime,len(content),content,stamp,actor)); c.execute("INSERT INTO peticoes_andamentos(peticao_id,data,descricao,criado_em,criado_por) VALUES(?,?,?,?,?)",(identifier,data['data_protocolo'],'Petição protocolada.',stamp,actor))
         return self.get(identifier)
 
     def update(self,identifier,data,actor,upload=None):
@@ -92,7 +95,7 @@ class PeticoesStore:
                     c, identifier, {"signatarios": signers, "pedidos": data["pedidos"]}, stamp, actor
                 )
             if upload:
-                name,mime,content=upload; c.execute("DELETE FROM peticoes_documentos WHERE peticao_id=?",(identifier,)); c.execute("INSERT INTO peticoes_documentos VALUES(?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,identifier,name,mime,len(content),content,stamp,actor))
+                name,mime,content=upload; c.execute("DELETE FROM peticoes_documentos WHERE peticao_id=? AND tipo_documento='PRINCIPAL'",(identifier,)); c.execute("INSERT INTO peticoes_documentos(id,peticao_id,andamento_id,tipo_documento,categoria,nome,mime_type,tamanho,arquivo,criado_em,criado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,identifier,None,'PRINCIPAL','',name,mime,len(content),content,stamp,actor))
         return self.get(identifier), removed
 
     def get(self,identifier):
@@ -193,10 +196,29 @@ class PeticoesStore:
                 record["resultados_anteriores"] = grouped["anteriores"]
             return records
     def progress(self,identifier):
-        with self.store.connection(read_only=True) as c:return [dict(x) for x in c.execute("SELECT id,data,descricao,criado_em,criado_por FROM peticoes_andamentos WHERE peticao_id=? AND excluido=0 ORDER BY data DESC,id DESC",(identifier,))]
-    def add_progress(self,identifier,data,description,actor):
+        with self.store.connection(read_only=True) as c:
+            items=[dict(x) for x in c.execute("SELECT id,data,descricao,criado_em,criado_por FROM peticoes_andamentos WHERE peticao_id=? AND excluido=0 ORDER BY data DESC,id DESC",(identifier,))]
+            if not items:return items
+            ids=[item['id'] for item in items]; marks=','.join('?'*len(ids))
+            documents={}
+            for row in c.execute(f"SELECT id,andamento_id,categoria,nome,mime_type,tamanho FROM peticoes_documentos WHERE andamento_id IN ({marks}) ORDER BY criado_em,id",ids): documents.setdefault(row['andamento_id'],[]).append(dict(row))
+            for item in items:item['documentos']=documents.get(item['id'],[])
+            return items
+    def add_progress(self,identifier,data,description,actor,documents=()):
         stamp=now()
-        with self.store.connection() as c:c.execute("BEGIN IMMEDIATE");c.execute("INSERT INTO peticoes_andamentos(peticao_id,data,descricao,criado_em,criado_por) VALUES(?,?,?,?,?)",(identifier,data,description,stamp,actor));c.execute("UPDATE peticoes SET situacao='EM_ACOMPANHAMENTO',atualizado_em=?,atualizado_por=? WHERE id=? AND situacao!='CONCLUIDA'",(stamp,actor,identifier))
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE"); row=c.execute("INSERT INTO peticoes_andamentos(peticao_id,data,descricao,criado_em,criado_por) VALUES(?,?,?,?,?)",(identifier,data,description,stamp,actor)); andamento_id=row.lastrowid
+            for name,mime,content,categoria in documents:c.execute("INSERT INTO peticoes_documentos(id,peticao_id,andamento_id,tipo_documento,categoria,nome,mime_type,tamanho,arquivo,criado_em,criado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,identifier,andamento_id,'RECEBIDO',categoria,name,mime,len(content),content,stamp,actor))
+            c.execute("UPDATE peticoes SET situacao='EM_ACOMPANHAMENTO',atualizado_em=?,atualizado_por=? WHERE id=? AND situacao!='CONCLUIDA'",(stamp,actor,identifier)); return andamento_id
+    def progress_documents(self, identifier):
+        """Bytes only for the petition whose history the user explicitly opened."""
+        with self.store.connection(read_only=True) as c:
+            return [dict(row) for row in c.execute(
+                "SELECT d.id,d.andamento_id,d.categoria,d.nome,d.mime_type,d.arquivo "
+                "FROM peticoes_documentos d JOIN peticoes_andamentos a ON a.id=d.andamento_id "
+                "WHERE d.peticao_id=? AND a.excluido=0 ORDER BY d.criado_em,d.id",
+                (identifier,),
+            )]
     def remove_progress(self,progress_id,actor,reason):
         stamp=now()
         with self.store.connection() as c:
@@ -253,4 +275,4 @@ class PeticoesStore:
             ]
     def document(self,identifier):
         with self.store.connection(read_only=True) as c:
-            row=c.execute("SELECT nome,mime_type,arquivo FROM peticoes_documentos WHERE peticao_id=? ORDER BY criado_em LIMIT 1",(identifier,)).fetchone();return dict(row) if row else None
+            row=c.execute("SELECT nome,mime_type,arquivo FROM peticoes_documentos WHERE peticao_id=? AND tipo_documento='PRINCIPAL' ORDER BY criado_em LIMIT 1",(identifier,)).fetchone();return dict(row) if row else None

@@ -278,3 +278,34 @@ def delete_editable_period_versions(store, tipo, ano, trimestre, principal):
     if not removed:
         raise ValueError("Não há versão em elaboração para excluir.")
     return removed
+
+
+def delete_institutional_report_period(store, tipo, ano, trimestre, principal):
+    """Administrator-only removal of a whole institutional-report period.
+
+    This deliberately removes only report snapshots and their dependent PDF and
+    distribution records. Source data is never referenced by this operation.
+    """
+    from database.institutional_reports import InstitutionalReportsStore
+    from services.audit import registrar_evento
+
+    _require_administrator(principal)
+    removed = InstitutionalReportsStore(store).delete_period_administratively(
+        tipo, ano, trimestre
+    )
+    registrar_evento(
+        store,
+        evento="RELATORIO_INSTITUCIONAL_EXCLUIDO_ADMINISTRATIVAMENTE",
+        modulo="relatorios",
+        acao="EXCLUIR_ADMINISTRATIVAMENTE",
+        principal=principal,
+        entidade_tipo="relatorio_institucional",
+        entidade_id=removed[0]["id"],
+        detalhes={
+            "tipo": tipo,
+            "ano": int(ano),
+            "trimestre": trimestre,
+            "versoes_removidas": [item["id"] for item in removed],
+        },
+    )
+    return removed
