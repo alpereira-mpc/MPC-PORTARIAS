@@ -1721,19 +1721,35 @@ def _snapshot_indicator_cards(summary):
 
 
 def _render_institutional_pdf_action(store, principal, report):
-    """Prepare this version's PDF only when the user asks. Never on a rerun."""
+    """Render a real one-click download when an official artifact exists."""
     official = report.get("status") in ("FINALIZADO", "ENVIADO")
-    label = "Baixar PDF" if official else "Baixar prévia em PDF"
-    signature = f"{report.get('id')}:{report.get('versao')}:{report.get('status')}"
-    ready = st.session_state.get("inst_pdf_export")
-    if not ready or ready.get("signature") != signature:
-        if st.button(label, key=f"inst_pdf_prepare_{report.get('id')}"):
+    repository = InstitutionalReportsStore(store)
+    artifact = repository.pdf_artifact(report["id"]) if official else None
+    if artifact:
+        def audit_download():
+            try:
+                # Keep the existing audit event and stored artifact semantics.
+                from services.institutional_report_pdf import deliver_institutional_pdf
+
+                deliver_institutional_pdf(store, report, principal, official=True)
+            except Exception:
+                LOGGER.exception("Falha ao registrar download do PDF institucional")
+
+        st.download_button(
+            "Baixar PDF",
+            artifact["conteudo"],
+            artifact["nome_arquivo"],
+            mime="application/pdf",
+            key=f"inst_pdf_download_{report.get('id')}",
+            on_click=audit_download,
+        )
+        return
+    if official:
+        if st.button("Gerar PDF", key=f"inst_pdf_generate_{report.get('id')}"):
             try:
                 from services.institutional_report_pdf import deliver_institutional_pdf
 
-                payload = deliver_institutional_pdf(
-                    store, report, principal, official=official
-                )
+                deliver_institutional_pdf(store, report, principal, official=True)
             except Exception:
                 LOGGER.exception(
                     "Falha ao gerar o PDF do relatório institucional %s versão %s",
@@ -1742,20 +1758,34 @@ def _render_institutional_pdf_action(store, principal, report):
                 )
                 st.error("Não foi possível gerar o PDF desta versão no momento.")
             else:
-                st.session_state["inst_pdf_export"] = {
-                    "signature": signature,
-                    "data": payload["conteudo"],
-                    "name": payload["nome"],
-                }
                 st.rerun()
         return
-    st.download_button(
-        label,
-        ready["data"],
-        ready["name"],
-        mime="application/pdf",
-        key=f"inst_pdf_download_{report.get('id')}",
-    )
+    signature = f"{report.get('id')}:{report.get('versao')}:{report.get('status')}"
+    preview = st.session_state.get("inst_pdf_preview")
+    if preview and preview.get("signature") == signature:
+        st.download_button(
+            "Baixar prévia em PDF",
+            preview["data"],
+            preview["name"],
+            mime="application/pdf",
+            key=f"inst_pdf_preview_download_{report.get('id')}",
+        )
+        return
+    if st.button("Gerar prévia em PDF", key=f"inst_pdf_preview_generate_{report.get('id')}"):
+        try:
+            from services.institutional_report_pdf import deliver_institutional_pdf
+
+            payload = deliver_institutional_pdf(store, report, principal, official=False)
+        except Exception:
+            LOGGER.exception("Falha ao gerar prévia do relatório institucional")
+            st.error("Não foi possível gerar a prévia em PDF neste momento.")
+        else:
+            st.session_state["inst_pdf_preview"] = {
+                "signature": signature,
+                "data": payload["conteudo"],
+                "name": payload["nome"],
+            }
+            st.rerun()
 
 
 def _render_institutional_document(report):
@@ -2644,6 +2674,30 @@ def _render_report_identity(report, snapshot):
         st.caption("Cobertura indisponível neste snapshot.")
 
 
+def _render_institutional_detail_header(report):
+    """Keep the operational context visible without exposing internal selectors."""
+    from services.institutional_report_validation import overview_row
+
+    snapshot = report.get("snapshot_dados") or {}
+    summary = overview_row(report)
+    st.markdown(f"## {_institutional_title(snapshot)}")
+    st.caption(_institutional_period_label(snapshot))
+    states = [summary["Status"], f"Validação: {summary['Validação']}"]
+    if summary["Distribuição"] != "—":
+        states.append(f"Distribuição: {summary['Distribuição']}")
+    st.caption(" · ".join(states))
+    created = format_datetime_br(report.get("criado_em"))
+    owner = report.get("criado_por") or "Não informado"
+    st.caption(f"Versão {report['versao']} · Responsável: {owner}" + (f" · criada em {created}" if created else ""))
+    coverage = snapshot.get("cobertura_historica") or {}
+    months = coverage.get("meses_disponiveis")
+    if months:
+        st.caption(f"Cobertura: {_institutional_month_span(months, report.get('ano'))}")
+    missing = coverage.get("meses_ausentes") or coverage.get("lacunas_no_ano") or []
+    if missing:
+        st.warning("A cobertura deste relatório possui lacunas.")
+
+
 def _render_period_suggestions(
     store,
     reports,
@@ -2704,6 +2758,196 @@ def _render_period_suggestions(
         LOGGER.exception("Falha ao identificar períodos prontos para relatório")
 
 
+def _open_institutional_report(report, *, editor=False):
+    """Reuse the established report selection state from a compact index."""
+    st.session_state["inst_tipo"] = (
+        "Relatório Trimestral"
+        if report.get("tipo") == "TRIMESTRAL"
+        else "Relatório Anual"
+    )
+    st.session_state["inst_ano"] = int(report["ano"])
+    if report.get("trimestre") is not None:
+        st.session_state["inst_trimestre"] = int(report["trimestre"])
+    st.session_state["inst_selected_period"] = {
+        "tipo": report["tipo"],
+        "ano": int(report["ano"]),
+        "trimestre": report.get("trimestre"),
+    }
+    st.session_state["inst_prefer_latest"] = True
+    st.session_state.pop("inst_selected_version_id", None)
+    if editor:
+        st.session_state["inst_open_editor"] = True
+
+
+def _render_institutional_created_reports(store, principal, repository, latest_rows):
+    """Operational index; it deliberately uses the already-loaded lightweight rows."""
+    from services.institutional_report_validation import overview_row
+
+    st.markdown("#### Relatórios criados")
+    if not latest_rows:
+        empty_state("Nenhum relatório institucional foi criado até o momento.")
+        return
+    for report in latest_rows:
+        summary = overview_row(report)
+        period = summary["Período"]
+        details = [
+            "Trimestral" if report.get("tipo") == "TRIMESTRAL" else "Anual",
+            summary["Status"],
+            f"Validação: {summary['Validação']}",
+        ]
+        if summary["Distribuição"] != "—":
+            details.append(f"Distribuição: {summary['Distribuição']}")
+        with st.container(border=True):
+            st.markdown(f"**{period}**")
+            snapshot = report.get("snapshot_dados") or {}
+            coverage = (snapshot.get("cobertura_historica") or {}).get(
+                "meses_disponiveis"
+            )
+            if coverage:
+                st.caption(_institutional_month_span(coverage, report.get("ano")))
+            st.caption(" · ".join(details))
+            actions = st.columns(2)
+            if actions[0].button("Abrir", key=f"inst_open_created_{report['id']}"):
+                _open_institutional_report(report)
+                st.rerun()
+            if report.get("pdf_sha256"):
+                with actions[1]:
+                    # The existing action keeps PDF bytes lazy and audits downloads.
+                    _render_institutional_pdf_action(store, principal, report)
+
+
+def _render_institutional_creation(store, principal, repository, reports, read, years, latest_rows):
+    """Show every currently creatable period directly, without a quarter picker."""
+    from services.institutional_governance_ui import period_plan
+
+    st.markdown("#### Criar novo relatório")
+    tipo_label = st.radio(
+        "Tipo",
+        ("Relatório Trimestral", "Relatório Anual"),
+        horizontal=True,
+        key="inst_tipo",
+    )
+    tipo = "TRIMESTRAL" if tipo_label == "Relatório Trimestral" else "ANUAL"
+    _drop_invalid_widget("inst_ano", years)
+    year = st.selectbox("Ano", years, key="inst_ano")
+    available = read(
+        ("historical_months", year), lambda: reports.months_for_year(year)
+    )
+    plan = period_plan({year: available}, latest_rows)
+    suggestions = [
+        item for item in plan.get("sugestoes") or [] if item.get("tipo") == tipo
+    ]
+    st.markdown("##### Períodos disponíveis")
+    if not suggestions:
+        st.caption("Não há períodos disponíveis para criação neste ano.")
+        return
+    for item in suggestions:
+        token = _period_token(item["tipo"], item["ano"], item["trimestre"])
+        with st.container(border=True):
+            st.markdown(f"**{item['titulo']}**")
+            st.caption(item["cobertura"].capitalize())
+            if getattr(principal, "administrator", False) and st.button(
+                "Criar relatório", key=f"inst_create_{token}"
+            ):
+                try:
+                    created = _create_institutional_version(
+                        store,
+                        repository,
+                        principal,
+                        item["tipo"],
+                        item["ano"],
+                        item["trimestre"],
+                        new_version=False,
+                    )
+                except ValueError as exc:
+                    st.warning(str(exc))
+                else:
+                    # Type and year are current widgets in this run, so only
+                    # store non-widget routing state before the normal rerun.
+                    st.session_state["inst_selected_period"] = {
+                        "tipo": created["tipo"],
+                        "ano": int(created["ano"]),
+                        "trimestre": created.get("trimestre"),
+                    }
+                    st.session_state["inst_prefer_latest"] = True
+                    st.session_state["inst_open_editor"] = True
+                    _flash(
+                        "success",
+                        f"Relatório institucional versão {created['versao']} criado.",
+                    )
+                    st.rerun()
+
+
+def _render_institutional_detail(store, principal, repository, tipo, year, quarter):
+    """The pre-existing editor/review flow, reached from the reports index."""
+    versions = repository.list_for_period(tipo, year, quarter)
+    if not versions:
+        st.warning("O relatório selecionado não está mais disponível.")
+        return
+    open_editor = st.session_state.pop("inst_open_editor", False)
+    if st.session_state.pop("inst_prefer_latest", False) or open_editor:
+        st.session_state.pop("inst_selected_version_id", None)
+    selected_version_id = st.session_state.get("inst_selected_version_id")
+    report = next(
+        (item for item in versions if item["id"] == selected_version_id), versions[0]
+    )
+    latest = versions[0]
+    snapshot = report.get("snapshot_dados") or {}
+    _render_institutional_detail_header(report)
+    actions = st.columns(2)
+    with actions[0]:
+        _render_institutional_pdf_action(store, principal, report)
+    if getattr(principal, "administrator", False):
+        with actions[1]:
+            _render_version_continuation(
+                store,
+                principal,
+                report,
+                versions,
+                tipo=tipo,
+                year=year,
+                quarter=quarter,
+                placement="header",
+            )
+        _render_delete_confirmation(store, principal, versions)
+    if open_editor:
+        st.session_state["inst_exibicao"] = "Conteúdo e revisão"
+    if st.session_state.get("inst_exibicao") == "Validação e governança":
+        st.session_state["inst_exibicao"] = "Validação"
+    view = st.radio(
+        "Navegação do relatório",
+        ("Visualização", "Conteúdo e revisão", "Validação", "Versões", "Distribuição"),
+        horizontal=True,
+        key="inst_exibicao",
+        label_visibility="collapsed",
+    )
+    if view == "Visualização":
+        _render_institutional_document(report)
+    elif view == "Conteúdo e revisão":
+        _render_institutional_editor(store, principal, report, is_latest=report["id"] == latest["id"], tipo=tipo, year=year, quarter=quarter, versions=versions)
+    elif view == "Validação":
+        from services.institutional_governance_ui import render_governance
+        render_governance(store, report, versions, unsaved=_has_unsaved_text(report["id"], normalize_content(report.get("conteudo_estruturado"), snapshot)), administrator=getattr(principal, "administrator", False))
+    elif view == "Distribuição":
+        from services.institutional_distribution_ui import render_distribution
+        render_distribution(store, principal, report)
+    else:
+        _render_version_history(versions)
+        labels = [_version_label(item) for item in versions]
+        selected = st.selectbox("Consultar versão", labels, index=labels.index(_version_label(report)), key="inst_version_history")
+        candidate = versions[labels.index(selected)]
+        if candidate["id"] != report["id"]:
+            def open_version():
+                st.session_state["inst_selected_version_id"] = candidate["id"]
+                st.session_state["inst_exibicao"] = "Visualização"
+
+            st.button("Abrir esta versão", key=f"inst_open_version_{candidate['id']}", on_click=open_version)
+        if getattr(principal, "administrator", False):
+            _render_delete_buttons(versions[0], versions, placement="versions", repository=repository)
+        from services.institutional_governance_ui import render_version_comparison
+        render_version_comparison(store, versions)
+
+
 def _institutional_workspace(store, principal):
     _apply_forgotten_reports()
     reports = TramitaReportsStore(store)
@@ -2726,167 +2970,47 @@ def _institutional_workspace(store, principal):
         if pending.get("trimestre"):
             st.session_state["inst_trimestre"] = int(pending["trimestre"])
         st.session_state["inst_prefer_latest"] = True
+        st.session_state["inst_selected_period"] = pending
     _consume_flash()
     repository = InstitutionalReportsStore(store)
     latest_rows = []
     try:
-        from services.institutional_governance_ui import render_overview
-
         latest_rows = repository.list_latest_versions()
-        render_overview(latest_rows)
     except Exception:
         LOGGER.exception("Falha ao resumir os relatórios institucionais")
-    tipo_label = st.radio(
-        "Tipo",
-        ("Relatório Trimestral", "Relatório Anual"),
+    section = st.radio(
+        "Navegação de relatórios",
+        ("Relatórios criados", "Criar novo"),
         horizontal=True,
-        key="inst_tipo",
+        key="inst_home_section",
+        label_visibility="collapsed",
     )
-    tipo = "TRIMESTRAL" if tipo_label == "Relatório Trimestral" else "ANUAL"
-    _drop_invalid_widget("inst_ano", years)
-    year = st.selectbox("Ano", years, key="inst_ano")
-    quarter = None
-    if tipo == "TRIMESTRAL":
-        available = read(
-            ("historical_months", year), lambda: reports.months_for_year(year)
-        )
-        quarters = [
-            item
-            for item in range(1, 5)
-            if any((item - 1) * 3 < month <= item * 3 for month in available)
-        ]
-        if not quarters:
-            empty_state("Não há meses históricos para montar um trimestre neste ano.")
-            return
-        _drop_invalid_widget("inst_trimestre", quarters)
-        quarter = st.selectbox(
-            "Trimestre",
-            quarters,
-            index=len(quarters) - 1,
-            format_func=lambda value: f"{value}º trimestre",
-            key="inst_trimestre",
-        )
-    versions = repository.list_for_period(tipo, year, quarter)
-    _render_period_suggestions(
-        store,
-        reports,
-        read,
-        years,
-        latest_rows,
-        principal,
-        repository,
-        tipo,
-        year,
-        quarter,
-    )
-    if not versions:
-        if st.session_state.pop("inst_prefer_latest", False):
-            st.session_state.pop("inst_versao", None)
-        st.caption("Nenhum relatório criado para este período.")
-        if getattr(principal, "administrator", False) and st.button(
-            "Criar relatório",
-            key=f"inst_create_{_period_token(tipo, year, quarter)}",
-        ):
-            try:
-                created = _create_institutional_version(
-                    store,
-                    repository,
-                    principal,
-                    tipo,
-                    year,
-                    quarter,
-                    new_version=False,
-                )
-                _flash(
-                    "success",
-                    f"Relatório institucional versão {created['versao']} criado.",
-                )
-                _prefer_latest_version()
-                st.rerun()
-            except ValueError as exc:
-                st.warning(str(exc))
-        return
+    selected_period = st.session_state.get("inst_selected_period")
+    if selected_period:
+        back, title = st.columns((1, 5))
 
-    labels = [_version_label(item) for item in versions]
-    open_editor = st.session_state.pop("inst_open_editor", False)
-    if st.session_state.pop("inst_prefer_latest", False) or open_editor:
-        st.session_state.pop("inst_versao", None)
-    _drop_invalid_widget("inst_versao", labels)
-    selected = st.selectbox("Versão", labels, index=0, key="inst_versao")
-    report = versions[labels.index(selected)]
-    latest = versions[0]
-    snapshot = report.get("snapshot_dados") or {}
-    _render_report_identity(report, snapshot)
-    if getattr(principal, "administrator", False):
-        _render_delete_buttons(
-            report, versions, placement="header", repository=repository
+        def back_to_created():
+            st.session_state.pop("inst_selected_period", None)
+            st.session_state["inst_home_section"] = "Relatórios criados"
+
+        back.button(
+            "← Relatórios criados",
+            key="inst_back_to_created",
+            on_click=back_to_created,
         )
-        _render_delete_confirmation(store, principal, versions)
-    if open_editor:
-        st.session_state["inst_exibicao"] = "Conteúdo e revisão"
-    view = st.radio(
-        "Exibição",
-        (
-            "Visualização",
-            "Conteúdo e revisão",
-            "Validação e governança",
-            "Versões",
-            "Distribuição",
-        ),
-        horizontal=True,
-        key="inst_exibicao",
-    )
-    if view != "Conteúdo e revisão":
-        _render_version_continuation(
+        title.markdown("#### Relatório selecionado")
+        _render_institutional_detail(
             store,
             principal,
-            report,
-            versions,
-            tipo=tipo,
-            year=year,
-            quarter=quarter,
-            placement="header",
+            repository,
+            selected_period["tipo"],
+            selected_period["ano"],
+            selected_period.get("trimestre"),
         )
-    if view == "Visualização":
-        _render_institutional_pdf_action(store, principal, report)
-        _render_institutional_document(report)
-    elif view == "Conteúdo e revisão":
-        _render_institutional_editor(
-            store,
-            principal,
-            report,
-            is_latest=report["id"] == latest["id"],
-            tipo=tipo,
-            year=year,
-            quarter=quarter,
-            versions=versions,
-        )
-    elif view == "Validação e governança":
-        from services.institutional_governance_ui import render_governance
-
-        render_governance(
-            store,
-            report,
-            versions,
-            unsaved=_has_unsaved_text(
-                report["id"],
-                normalize_content(report.get("conteudo_estruturado"), snapshot),
-            ),
-            administrator=getattr(principal, "administrator", False),
-        )
-    elif view == "Distribuição":
-        from services.institutional_distribution_ui import render_distribution
-
-        render_distribution(store, principal, report)
+    elif section == "Relatórios criados":
+        _render_institutional_created_reports(store, principal, repository, latest_rows)
     else:
-        _render_version_history(versions)
-        if getattr(principal, "administrator", False):
-            _render_delete_buttons(
-                versions[0], versions, placement="versions", repository=repository
-            )
-        from services.institutional_governance_ui import render_version_comparison
-
-        render_version_comparison(store, versions)
+        _render_institutional_creation(store, principal, repository, reports, read, years, latest_rows)
 
 
 def institutional_reports(store, principal):

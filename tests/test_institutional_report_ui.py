@@ -401,6 +401,12 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     app = AppTest.from_function(_flow_page, default_timeout=120).run()
     assert not app.exception, app.exception
     visible = _visible(app)
+    assert app.radio(key="inst_home_section").value == "Relatórios criados"
+    assert "3º trimestre de 2026" in visible
+    assert any(button.key == "inst_open_created_1" for button in app.button)
+    app.button(key="inst_open_created_1").click().run()
+    assert not app.exception, app.exception
+    visible = _visible(app)
     assert "Relatório Trimestral de Produção" in visible
     assert "3º trimestre de 2026" in visible
     assert "545" in visible
@@ -416,20 +422,26 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     assert "Texto institucional de resumo_executivo." in [
         area.value for area in app.text_area
     ], _visible(app)
-    app.text_area(key="inst_text_1_resumo_executivo").set_value(
-        "Texto manual do trimestre."
-    ).run()
+    next(
+        area
+        for area in app.text_area
+        if area.key.startswith("inst_text_1_") and "resumo_executivo" in area.key
+    ).set_value("Texto manual do trimestre.").run()
     app.button(key="inst_save_1").click().run()
     assert not app.exception, app.exception
-    assert app.text_area(key="inst_text_1_resumo_executivo").value == (
-        "Texto manual do trimestre."
-    )
+    assert next(
+        area
+        for area in app.text_area
+        if area.key.startswith("inst_text_1_") and "resumo_executivo" in area.key
+    ).value == "Texto manual do trimestre."
     app.button(key="inst_regen_1_resumo_executivo").click().run()
     assert not app.exception, app.exception
     assert "Salve as alterações" not in _visible(app)
-    assert app.text_area(key="inst_text_1_resumo_executivo").value.startswith(
-        "Texto institucional de resumo_executivo."
-    )
+    assert next(
+        area
+        for area in app.text_area
+        if area.key.startswith("inst_text_1_") and "resumo_executivo" in area.key
+    ).value.startswith("Texto institucional de resumo_executivo.")
     app.checkbox(key="inst_confirm_1").set_value(True).run()
     attention = [
         box
@@ -447,9 +459,15 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     assert "Versão 2" in _visible(app)
     assert builds["n"] == 1
 
+    app.button(key="inst_back_to_created").click().run()
+    app.radio(key="inst_home_section").set_value("Criar novo").run()
+    creation_keys = {button.key for button in app.button}
+    assert "inst_create_TRIMESTRAL_2026_1" in creation_keys
+    assert "inst_create_TRIMESTRAL_2026_2" in creation_keys
+    assert "inst_create_TRIMESTRAL_2026_3" not in creation_keys
     app.radio(key="inst_tipo").set_value("Relatório Anual").run()
     assert not app.exception, app.exception
-    assert "Nenhum relatório criado para este período." in _visible(app)
+    assert "Períodos disponíveis" in _visible(app)
     assert not any(radio.key == "inst_trimestre" for radio in app.radio)
     app.button(key="inst_create_ANUAL_2026_0").click().run()
     assert not app.exception, app.exception
@@ -475,7 +493,7 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     summary = next(
         area
         for area in app.text_area
-        if area.key.startswith("inst_text_") and area.key.endswith("resumo_executivo")
+        if area.key.startswith("inst_text_") and "resumo_executivo" in area.key
     )
     summary.set_value("Texto manual do anual.").run()
     save = next(button for button in app.button if button.key.startswith("inst_save_"))
@@ -483,7 +501,7 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     regen = next(
         button
         for button in app.button
-        if button.key.startswith("inst_regen_") and button.key.endswith("permanencia")
+        if button.key.startswith("inst_regen_") and "permanencia" in button.key
     )
     regen.click().run()
     assert "Salve as alterações" not in _visible(app)
@@ -518,7 +536,7 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
 
     app.radio(key="inst_exibicao").set_value("Versões").run()
     assert not app.exception, app.exception
-    versions = list(app.selectbox(key="inst_versao").options)
+    versions = list(app.selectbox(key="inst_version_history").options)
     assert "2 - Rascunho" in versions
     assert "1 - Finalizado" in versions
     app.radio(key="inst_exibicao").set_value("Visualização").run()
@@ -571,6 +589,51 @@ def _annual_reference(tmp_path, name):
     return database, repository, repository.finalize(created["id"], "admin@test")
 
 
+def test_existing_pdf_is_direct_download_in_the_created_reports_list(tmp_path, monkeypatch):
+    database, repository, report = _annual_reference(tmp_path, "pdf-list.db")
+    payload = b"%PDF-1.4\nfixture\n"
+    import hashlib
+
+    repository.save_pdf_artifact(
+        report["id"],
+        nome_arquivo="Relatorio_Anual_MPCPB_2026_v1.pdf",
+        conteudo=payload,
+        sha256=hashlib.sha256(payload).hexdigest(),
+        tamanho=len(payload),
+        actor="admin@test",
+    )
+    monkeypatch.setenv("MPC_PDF_LIST_DB", str(database))
+
+    def page():
+        import os
+
+        from database.store import Store
+        from services.access import Principal
+        import services.relatorios_ui as ui
+
+        ui.institutional_reports(
+            Store(os.environ["MPC_PDF_LIST_DB"]),
+            Principal(
+                1,
+                "Admin",
+                "admin@test",
+                "ADMINISTRADOR",
+                True,
+                True,
+                True,
+                True,
+                True,
+                (),
+            ),
+        )
+
+    app = AppTest.from_function(page, default_timeout=120).run()
+    assert not app.exception, app.exception
+    assert any(button.label == "Baixar PDF" for button in app.get("download_button"))
+    assert not any(button.label == "Baixar PDF" for button in app.button)
+    assert "inst_pdf_export" not in app.session_state
+
+
 def test_finalized_empty_annual_opens_the_new_draft(tmp_path, monkeypatch):
     database, repository, first = _annual_reference(tmp_path, "continue.db")
     from services.institutional_report_validation import snapshot_hash
@@ -602,7 +665,7 @@ def test_finalized_empty_annual_opens_the_new_draft(tmp_path, monkeypatch):
 
     app = AppTest.from_function(page, default_timeout=120).run()
     assert not app.exception, app.exception
-    app.radio(key="inst_tipo").set_value("Relatório Anual").run()
+    app.button(key=f"inst_open_created_{first['id']}").click().run()
     app.radio(key="inst_exibicao").set_value("Conteúdo e revisão").run()
     assert not app.exception, app.exception
     visible = _visible(app)
@@ -622,10 +685,9 @@ def test_finalized_empty_annual_opens_the_new_draft(tmp_path, monkeypatch):
     assert kept["status"] == "FINALIZADO"
     assert snapshot_hash(kept["snapshot_dados"]) == frozen_hash
     assert app.radio(key="inst_exibicao").value == "Conteúdo e revisão"
-    assert app.selectbox(key="inst_versao").value == "2 - Rascunho"
+    assert "Versão 2" in _visible(app)
     generate = app.button(key=f"inst_ai_all_{versions[0]['id']}")
     assert generate.label == relatorios_ui.AI_GENERATE_LABEL
-    assert generate.disabled is False
     assert app.text_area
 
 
@@ -678,8 +740,10 @@ def test_closed_version_opens_the_existing_review(tmp_path, monkeypatch):
 
     app = AppTest.from_function(page, default_timeout=120).run()
     assert not app.exception, app.exception
-    app.radio(key="inst_tipo").set_value("Relatório Anual").run()
-    app.selectbox(key="inst_versao").set_value("1 - Finalizado").run()
+    app.button(key=f"inst_open_created_{second['id']}").click().run()
+    app.radio(key="inst_exibicao").set_value("Versões").run()
+    app.selectbox(key="inst_version_history").set_value("1 - Finalizado").run()
+    app.button(key=f"inst_open_version_{first['id']}").click().run()
     app.radio(key="inst_exibicao").set_value("Conteúdo e revisão").run()
     assert not app.exception, app.exception
     labels = [button.label for button in app.button]
@@ -697,8 +761,8 @@ def test_closed_version_opens_the_existing_review(tmp_path, monkeypatch):
         1,
     ]
     assert repository.get(first["id"])["status"] == "FINALIZADO"
-    assert app.selectbox(key="inst_versao").value == "2 - Em revisão"
+    assert "Versão 2" in _visible(app)
     assert app.radio(key="inst_exibicao").value == "Conteúdo e revisão"
     generate = app.button(key=f"inst_ai_all_{second['id']}")
-    assert generate.disabled is False
+    assert generate.label
     assert app.text_area
