@@ -180,15 +180,43 @@ def annual_fallback_content(snapshot):
     peak_d = annual.get("pico_distribuicoes") or {}
     closing = annual.get("ultimo_mes") or {}
     permanence = facts["permanencia"]
+    procuradores = facts["procuradores"]
     more_60 = annual.get("quantidade_mais_60", 0)
+    more_90 = annual.get("quantidade_mais_90", 0)
+    period = facts["periodo"].replace("Acumulado de ", "").lower()
+    procurador_fields = (
+        "producao_minima",
+        "producao_maxima",
+        "distribuicoes_minimas",
+        "distribuicoes_maximas",
+        "participacao_pareceres_minima",
+        "participacao_pareceres_maxima",
+        "mediana_minima",
+        "mediana_maxima",
+    )
+    if all(procuradores.get(field) is not None for field in procurador_fields):
+        procurador_text = (
+            f"A produção individual variou entre {procuradores['producao_minima']} e "
+            f"{procuradores['producao_maxima']} registros, enquanto as distribuições "
+            f"variaram entre {procuradores['distribuicoes_minimas']} e "
+            f"{procuradores['distribuicoes_maximas']}. A participação de pareceres "
+            f"oscilou entre {procuradores['participacao_pareceres_minima']} e "
+            f"{procuradores['participacao_pareceres_maxima']}, e a mediana de "
+            f"permanência entre {procuradores['mediana_minima']} e "
+            f"{procuradores['mediana_maxima']}."
+        )
+    else:
+        procurador_text = (
+            "Não há dados individuais suficientes para análise no período."
+        )
     return {
-        "resumo_executivo": f"Este relatório consolida os indicadores de produção do MPC-PB no período de {facts['periodo'].replace('Acumulado de ', '').lower()}. Foram registradas {indicators['producao']['display']} produções e {indicators['distribuicoes']['display']} distribuições, com saldo acumulado do fluxo de {sign}{balance:.0f} registros.",
-        "evolucao_periodo": f"O maior volume de produção ocorreu em {MONTHS[int(peak_p.get('mes', 1)) - 1]} ({format_count(peak_p.get('producao'))} registros) e o maior volume de distribuições em {MONTHS[int(peak_d.get('mes', 1)) - 1]} ({format_count(peak_d.get('distribuicoes'))} registros). No último mês disponível, foram registradas {format_count(closing.get('distribuicoes'))} distribuições e {format_count(closing.get('producao'))} produções, com saldo de {closing.get('saldo', 0):+.0f} registros.",
+        "resumo_executivo": f"Este relatório consolida os indicadores de produção do MPC-PB no período de {period}. Foram registrados {indicators['producao']['display']} registros de produção e {indicators['distribuicoes']['display']} distribuições, com saldo de {sign}{balance:.0f} registros.",
+        "evolucao_periodo": f"A série mensal apresentou variações ao longo dos meses analisados. O pico de distribuições ocorreu em {MONTHS[int(peak_d.get('mes', 1)) - 1]}, com {format_count(peak_d.get('distribuicoes'))} registros, enquanto o maior volume de produção foi registrado em {MONTHS[int(peak_p.get('mes', 1)) - 1]}, com {format_count(peak_p.get('producao'))}. No último mês disponível, foram registradas {format_count(closing.get('distribuicoes'))} distribuições e {format_count(closing.get('producao'))} produções.",
         "composicao_producao": f"A produção foi composta por {indicators['pareceres']['display']} pareceres e {indicators['cotas']['display']} cotas.",
-        "permanencia": f"A mediana de permanência foi de {indicators['mediana']['display']}. Foram registrados {format_count(more_60)} eventos com permanência superior a 60 dias.",
-        "producao_procurador": "Os indicadores individuais refletem o conjunto de processos movimentados no período e não constituem, isoladamente, avaliação de desempenho, devendo ser considerados juntamente com o perfil e a complexidade do acervo.",
+        "permanencia": f"A mediana de permanência foi de {indicators['mediana']['display']}. Foram registrados {format_count(more_60)} registros com permanência superior a 60 dias.",
+        "producao_procurador": procurador_text,
         "comparacao_periodo_anterior": missing_comparison_text(snapshot),
-        "sintese_pontos_atencao": f"O saldo acumulado do fluxo foi de {sign}{balance:.0f} registros. A série concentrou o maior volume de produção em {MONTHS[int(peak_p.get('mes', 1)) - 1]} e o maior volume de distribuições em {MONTHS[int(peak_d.get('mes', 1)) - 1]}.",
+        "sintese_pontos_atencao": f"No acumulado de {period}, a produção registrou {indicators['producao']['display']} registros, frente a {indicators['distribuicoes']['display']} distribuições, resultando em saldo de {sign}{balance:.0f}. A mediana de permanência foi de {indicators['mediana']['display']}, com {format_count(more_60)} registros acima de 60 dias e {format_count(more_90)} acima de 90 dias.",
     }
 
 

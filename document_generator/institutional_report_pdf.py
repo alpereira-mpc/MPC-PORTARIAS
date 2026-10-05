@@ -613,6 +613,7 @@ def _body(report, snapshot, meta, styles):
                 ["Distribuídos", "Produção"],
                 compact=len(monthly) > 4,
                 colors=ANNUAL_CHART_COLORS if meta["annual"] else None,
+                height=172 if meta["annual"] else None,
             ),
             [
                 (
@@ -629,6 +630,7 @@ def _body(report, snapshot, meta, styles):
                 ),
             ],
             styles,
+            spacing=2 * mm if meta["annual"] else 3 * mm,
         )
     )
     story.extend(
@@ -645,6 +647,7 @@ def _body(report, snapshot, meta, styles):
                 stacked=True,
                 compact=len(monthly) > 4,
                 colors=ANNUAL_CHART_COLORS if meta["annual"] else None,
+                height=168 if meta["annual"] else None,
             ),
             [
                 (
@@ -659,29 +662,40 @@ def _body(report, snapshot, meta, styles):
                 ),
             ],
             styles,
+            spacing=2 * mm if meta["annual"] else 3 * mm,
         )
     )
     story.extend(_section(styles, "Permanência", _text(content, "permanencia")))
     if meta["annual"]:
-        story.extend(_annual_permanence_summary(snapshot, styles))
+        story.extend(_annual_permanence_summary(snapshot, styles, compact=True))
     story.extend(
         _chart(
             "Mediana de permanência por mês",
-            lambda: _median_line(monthly, compact=len(monthly) > 4),
+            lambda: _median_line(
+                monthly,
+                compact=len(monthly) > 4,
+                height=140 if meta["annual"] else None,
+            ),
             [("Mediana de permanência", CHART_COLORS["Mediana de permanência"])],
             styles,
+            spacing=2 * mm if meta["annual"] else 3 * mm,
         )
     )
     story.extend(
         _chart(
             "Faixas de permanência",
-            lambda: _band_bars(snapshot, annual=meta["annual"]),
+            lambda: _band_bars(
+                snapshot,
+                annual=meta["annual"],
+                height=150 if meta["annual"] else None,
+            ),
             (
                 []
                 if meta["annual"]
                 else [("Processos", CHART_COLORS["Mediana de permanência"])]
             ),
             styles,
+            spacing=2 * mm if meta["annual"] else 3 * mm,
         )
     )
     procuradores = _procurador_rows(snapshot)
@@ -807,7 +821,7 @@ def _annual_highlights(snapshot, styles):
     ]
 
 
-def _annual_permanence_summary(snapshot, styles):
+def _annual_permanence_summary(snapshot, styles, *, compact=False):
     facts = snapshot.get("fatos_anuais") or {}
     entries = (
         ("P75", format_decimal(facts.get("p75_permanencia"), " dias")),
@@ -846,12 +860,12 @@ def _annual_permanence_summary(snapshot, styles):
                 ("BOX", (0, 0), (-1, -1), 0.35, LINE),
                 ("INNERGRID", (0, 0), (-1, -1), 0.25, LINE),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 2 if compact else 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2 if compact else 4),
             ]
         )
     )
-    return [table, Spacer(1, 2 * mm)]
+    return [table, Spacer(1, 1 * mm if compact else 2 * mm)]
 
 
 def _section(styles, title, text):
@@ -1041,7 +1055,16 @@ def _comparison_rows(snapshot):
     return [pack(prior_label, prior), pack(current_label, summary)]
 
 
-def _bars(rows, fields, *, stacked=False, compact=False, category="Mês", colors=None):
+def _bars(
+    rows,
+    fields,
+    *,
+    stacked=False,
+    compact=False,
+    category="Mês",
+    colors=None,
+    height=None,
+):
     if not rows:
         return None
     series = [_numbers(rows, field) for field in fields]
@@ -1056,20 +1079,23 @@ def _bars(rows, fields, *, stacked=False, compact=False, category="Mês", colors
         series,
         [(colors or CHART_COLORS)[field] for field in fields],
         stacked,
+        height=height,
     )
 
 
-def _median_line(rows, *, compact=False):
+def _median_line(rows, *, compact=False, height=None):
     if not rows:
         return None
     values = _numbers(rows, "Mediana de permanência")
     if not values:
         return None
     categories = [_month_axis(row["Mês"], compact) for row in rows]
-    return _line_chart(categories, values, CHART_COLORS["Mediana de permanência"])
+    return _line_chart(
+        categories, values, CHART_COLORS["Mediana de permanência"], height=height
+    )
 
 
-def _band_bars(snapshot, *, annual=False):
+def _band_bars(snapshot, *, annual=False, height=None):
     order = (
         "0–7 dias",
         "8–15 dias",
@@ -1096,6 +1122,7 @@ def _band_bars(snapshot, *, annual=False):
         [[float(item["quantidade"]) for item in rows]],
         [CHART_COLORS["Mediana de permanência"]],
         bar_colors=ANNUAL_CHART_COLORS["Faixas de permanência"] if annual else None,
+        height=height,
     )
 
 
@@ -1152,8 +1179,8 @@ def _month_axis(name, compact):
     return name[:3] if compact else name
 
 
-def _vertical_bars(categories, series, colors, stacked):
-    height = 168 if len(categories) <= 4 else 188
+def _vertical_bars(categories, series, colors, stacked, *, height=None):
+    height = height or (168 if len(categories) <= 4 else 188)
     drawing = Drawing(CONTENT_WIDTH, height)
     chart = VerticalBarChart()
     chart.x = 38
@@ -1173,8 +1200,10 @@ def _vertical_bars(categories, series, colors, stacked):
     return drawing
 
 
-def _horizontal_bars(categories, series, colors, stacked=False, bar_colors=None):
-    height = min(440, max(130, 24 * len(categories) + 36))
+def _horizontal_bars(
+    categories, series, colors, stacked=False, bar_colors=None, height=None
+):
+    height = height or min(440, max(130, 24 * len(categories) + 36))
     drawing = Drawing(CONTENT_WIDTH, height)
     chart = HorizontalBarChart()
     label_width = 10 + max(
@@ -1207,8 +1236,8 @@ def _horizontal_bars(categories, series, colors, stacked=False, bar_colors=None)
     return drawing
 
 
-def _line_chart(categories, values, color):
-    height = 156
+def _line_chart(categories, values, color, *, height=None):
+    height = height or 156
     drawing = Drawing(CONTENT_WIDTH, height)
     chart = HorizontalLineChart()
     chart.x = 38
@@ -1272,7 +1301,7 @@ def _decimal_axis(value):
     return format_decimal(value)
 
 
-def _chart(title, builder, legend, styles):
+def _chart(title, builder, legend, styles, *, spacing=3 * mm):
     try:
         drawing = builder()
     except Exception:
@@ -1287,7 +1316,7 @@ def _chart(title, builder, legend, styles):
     ]
     if legend:
         block.append(_legend(legend, styles))
-    block.append(Spacer(1, 3 * mm))
+    block.append(Spacer(1, spacing))
     try:
         return [KeepTogether(block)]
     except Exception:
