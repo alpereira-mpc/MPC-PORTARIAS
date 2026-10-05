@@ -161,7 +161,7 @@ def _render_overview(store, principal):
             _theme_name(),
         ),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -218,7 +218,7 @@ def _render_accesses(store, principal):
             _theme_name(),
         ),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
     options = {r["email"]: r["nome"] + " · " + r["email"] for r in rows if r.get("email")}
     selected = st.selectbox(

@@ -136,7 +136,7 @@ def institutional_functions(store, principal):
             "Desde": st.column_config.DateColumn("Desde", format="DD/MM/YYYY")
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
     code = st.selectbox(
         "Função institucional", list(FUNCTIONS), format_func=FUNCTIONS.get
@@ -193,7 +193,7 @@ def institutional_functions(store, principal):
                 "Fim": st.column_config.DateColumn("Fim", format="DD/MM/YYYY"),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -258,7 +258,7 @@ def _render_access_requests(store, principal):
             )
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
     actor = getattr(principal, "email", "")
     pending = [row for row in rows if row["status"] == STATUS_PENDING]
@@ -455,7 +455,7 @@ def render(store, principal):
     st.dataframe(
         style_user_table(user_rows(users), _active_theme_name()),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         key="admin_users_table",
     )
     section_label("Cadastro")

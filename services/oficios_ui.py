@@ -1068,7 +1068,7 @@ def _render_detail_movements(service, r):
                     )
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
 

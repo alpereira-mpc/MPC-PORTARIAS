@@ -721,7 +721,7 @@ def history():
     st.dataframe(
         rows,
         column_config=history_columns,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     if not filtered:
@@ -1348,7 +1348,7 @@ try:
                 for p in store.catalog("procuradores")
             ],
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
         member_editor("members")
 except Exception as exc:

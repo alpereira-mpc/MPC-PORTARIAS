@@ -138,7 +138,7 @@ def render_admin_recipients(store, principal):
                 _theme_name(),
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     else:
         st.caption("Nenhum destinatário configurado.")

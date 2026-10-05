@@ -465,7 +465,7 @@ def _render_operacoes_recentes(store):
     st.dataframe(
         style_striped_table(tabela, _theme_name()),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
 

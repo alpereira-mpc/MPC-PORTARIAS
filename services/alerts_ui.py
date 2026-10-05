@@ -233,7 +233,7 @@ def render_bell(store, principal):
         st.session_state[widget_key] = False
     with st.popover(
         label,
-        use_container_width=True,
+        width="stretch",
         key=widget_key,
         on_change="ignore",
     ):

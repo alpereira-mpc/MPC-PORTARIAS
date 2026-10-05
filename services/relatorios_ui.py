@@ -183,7 +183,7 @@ def _report_table(target, rows):
     target.dataframe(
         style_report_table(rows, selected_theme),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -417,7 +417,7 @@ def _line_chart(target, rows, fields, y_title, key):
                 ],
             },
         },
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
@@ -551,7 +551,7 @@ def _procurador_chart(target, rows, fields, stacked, key):
             "height": max(240, 34 * len(rows)),
             "encoding": encoding,
         },
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
@@ -630,7 +630,7 @@ def _composition_chart(target, rows, category_field, fields, key, horizontal=Fal
             "height": max(220, 34 * len(rows)) if horizontal else 260,
             "encoding": encoding,
         },
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
@@ -690,7 +690,7 @@ def _category_bar_chart(target, rows, category_field, fields, key, stacked=False
     target.vega_lite_chart(
         values,
         {"mark": "bar", "height": 260, "encoding": encoding},
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
@@ -764,7 +764,7 @@ def _duration_chart(target, events, key):
                 ],
             },
         },
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
@@ -858,7 +858,7 @@ def _production_heatmap(target, events, key):
                 ],
             },
         },
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
@@ -927,7 +927,7 @@ def _stock_band_chart(target, stock_rows, key):
                 ],
             },
         },
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
@@ -979,7 +979,7 @@ def _stock_by_procurador_chart(target, stock_rows, key):
                 ],
             },
         },
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
@@ -1026,7 +1026,7 @@ def _stock_top_chart(target, stock_rows, key):
                 ],
             },
         },
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
@@ -1142,7 +1142,7 @@ def _quarterly_summary(reports, key_prefix):
                     ],
                 },
             },
-            use_container_width=True,
+            width="stretch",
             key=key_prefix + "_resumo_trimestres",
         )
 
@@ -1694,7 +1694,7 @@ def _render_frozen_bands(target, bands, key):
                 ],
             },
         },
-        use_container_width=True,
+        width="stretch",
         key=key,
     )
 
