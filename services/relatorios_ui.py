@@ -1368,13 +1368,15 @@ def _forget_deleted_reports(identifiers):
     st.session_state["inst_forget_reports"] = pending
     st.session_state.pop("inst_delete_pending", None)
     st.session_state.pop("inst_ai_replace_pending", None)
+    st.session_state["inst_return_to_created_after_delete"] = True
     _prefer_latest_version()
 
 
 def _apply_forgotten_reports():
     identifiers = st.session_state.pop("inst_forget_reports", None) or []
-    if not identifiers:
-        return
+    return_to_created = st.session_state.pop(
+        "inst_return_to_created_after_delete", False
+    )
     doomed = []
     for identifier in identifiers:
         token = str(identifier)
@@ -1391,8 +1393,10 @@ def _apply_forgotten_reports():
             f"inst_confirm_{token}",
             f"inst_new_{token}",
             f"inst_finalize_{token}",
-            f"inst_pdf_prepare_{token}",
+            f"inst_pdf_generate_{token}",
             f"inst_pdf_download_{token}",
+            f"inst_pdf_preview_generate_{token}",
+            f"inst_pdf_preview_download_{token}",
             f"inst_delete_ask_header_{token}",
             f"inst_delete_ask_versions_{token}",
             f"inst_delete_confirm_{token}",
@@ -1407,6 +1411,20 @@ def _apply_forgotten_reports():
                 doomed.append(key)
     for key in doomed:
         st.session_state.pop(key, None)
+    preview = st.session_state.get("inst_pdf_preview")
+    if isinstance(preview, dict) and any(
+        str(preview.get("signature", "")).startswith(f"{identifier}:")
+        for identifier in identifiers
+    ):
+        st.session_state.pop("inst_pdf_preview", None)
+    if return_to_created:
+        st.session_state.pop("inst_selected_period", None)
+        st.session_state.pop("inst_selected_version_id", None)
+        st.session_state.pop("inst_versao", None)
+        st.session_state.pop("inst_version_history", None)
+        st.session_state.pop("inst_exibicao", None)
+        st.session_state.pop("inst_delete_pending", None)
+        st.session_state["inst_home_section"] = "Relatórios criados"
 
 
 def _delete_identity(report):

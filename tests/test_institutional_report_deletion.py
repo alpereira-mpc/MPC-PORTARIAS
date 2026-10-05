@@ -321,6 +321,14 @@ def test_deletion_screen_confirms_before_removing_and_selects_the_rest(
     assert not app.exception, app.exception
     text_key = f"inst_text_{second['id']}_resumo_executivo"
     app.session_state[text_key] = "texto preso da versão excluída"
+    app.session_state["inst_selected_period"] = {
+        "tipo": "TRIMESTRAL",
+        "ano": 2026,
+        "trimestre": 3,
+    }
+    app.session_state["inst_selected_version_id"] = second["id"]
+    app.session_state["inst_version_history"] = "2 - Rascunho"
+    app.session_state["inst_home_section"] = "Criar novo"
     app.button(key=f"inst_delete_ask_header_{second['id']}").click().run()
     assert not app.exception, app.exception
     assert repository.get(second["id"]) is not None
@@ -330,6 +338,10 @@ def test_deletion_screen_confirms_before_removing_and_selects_the_rest(
     assert repository.get(second["id"]) is None
     assert repository.get(first["id"])["status"] == "FINALIZADO"
     assert text_key not in app.session_state
+    assert "inst_selected_period" not in app.session_state
+    assert "inst_selected_version_id" not in app.session_state
+    assert "inst_version_history" not in app.session_state
+    assert app.session_state["inst_home_section"] == "Relatórios criados"
     assert app.selectbox(key="inst_versao").value == "1 - Finalizado"
     app.run()
     labels = [button.label for button in app.button]
