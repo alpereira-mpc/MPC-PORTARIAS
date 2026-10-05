@@ -3,6 +3,7 @@
 import logging
 import math
 import re
+from uuid import uuid4
 from calendar import monthrange
 from datetime import date, datetime
 from pathlib import Path
@@ -2007,11 +2008,16 @@ AI_GENERATE_SUCCESS = "Conteúdo gerado com IA com sucesso."
 AI_REGENERATE_SUCCESS = "Seção regenerada com IA com sucesso."
 AI_GENERATE_FAILURE = "Não foi possível gerar o conteúdo com IA neste momento."
 AI_REGENERATE_FAILURE = "Não foi possível regenerar esta seção com IA neste momento."
+_AI_ACTION_KEY = "institutional_ai_action"
+_AI_FLASH_KEY = "institutional_ai_flash"
+_AI_LAST_ATTEMPT_KEY = "institutional_ai_last_attempt"
 
 
-def _ai_button(container, label, key, *, disabled=False):
+def _ai_button(container, label, key, *, disabled=False, on_click=None):
     """Material icon in the button slot. The label itself stays plain text."""
-    return container.button(label, key=key, icon=AI_ICON, disabled=disabled)
+    return container.button(
+        label, key=key, icon=AI_ICON, disabled=disabled, on_click=on_click
+    )
 
 
 def _comparison_can_regenerate(report):
@@ -2020,35 +2026,185 @@ def _comparison_can_regenerate(report):
     return comparison_available(report.get("snapshot_dados"))
 
 
-def _run_institutional_ai(operation, *, failure, success, report_id, sections, waiting):
-    """Keep the editor on screen when the provider or the parser fails."""
+def _set_ai_attempt(**values):
+    st.session_state[_AI_LAST_ATTEMPT_KEY] = {
+        "quando": datetime.now().isoformat(timespec="seconds"),
+        **values,
+    }
+
+
+def _render_last_institutional_ai_attempt(principal, report_id):
+    if not getattr(principal, "administrator", False):
+        return
+    item = st.session_state.get(_AI_LAST_ATTEMPT_KEY) or {}
+    if item.get("report_id") != report_id:
+        return
+    with st.expander("Diagnóstico técnico da IA"):
+        st.caption(
+            "Última tentativa de IA · "
+            f"{format_datetime_br(item.get('quando')) or item.get('quando')} · "
+            f"{item.get('operacao')} · etapa: {item.get('etapa')} · "
+            f"resultado: {item.get('resultado')}"
+        )
+        if item.get("modelo"):
+            st.caption(f"Modelo: {item['modelo']}")
+        if item.get("erro"):
+            st.caption(f"Erro: {item['erro']}")
+
+
+def _request_institutional_ai_action(report, action, *, section=None):
+    """Callback only: retain an intent through Streamlit's next script run."""
+    current = st.session_state.get(_AI_ACTION_KEY)
+    if current and current.get("status") in ("PENDING", "RUNNING"):
+        LOGGER.info("RELATORIO_IA | etapa=click_ignored | report_id=%s", report["id"])
+        return
+    payload = {
+        "action": action,
+        "report_id": report["id"],
+        "version": report["versao"],
+        "section": section,
+        "nonce": uuid4().hex,
+        "status": "PENDING",
+    }
+    st.session_state[_AI_ACTION_KEY] = payload
+    _set_ai_attempt(
+        report_id=report["id"],
+        operacao=action,
+        etapa="action_pending",
+        resultado="PENDENTE",
+        modelo="",
+        erro="",
+    )
     LOGGER.info(
-        "RELATORIO_IA | etapa=botao | report_id=%s | secoes=%s",
-        report_id,
-        len(sections),
+        "RELATORIO_IA | etapa=click_requested | report_id=%s | operacao=%s | secao=%s",
+        report["id"],
+        action,
+        section or "",
+    )
+    LOGGER.info("RELATORIO_IA | etapa=action_pending | report_id=%s", report["id"])
+
+
+def _render_institutional_ai_flash(report_id):
+    flash = st.session_state.get(_AI_FLASH_KEY)
+    if not flash or flash.get("report_id") != report_id:
+        return
+    st.session_state.pop(_AI_FLASH_KEY, None)
+    getattr(st, flash["level"])(flash["message"])
+    if flash.get("detail"):
+        st.caption(flash["detail"])
+    LOGGER.info(
+        "RELATORIO_IA | etapa=render_after_%s | report_id=%s", flash["level"], report_id
+    )
+
+
+def _process_pending_institutional_ai_action(service, principal, report):
+    """Execute exactly one persisted AI intent, then rerun to render its result."""
+    action = st.session_state.get(_AI_ACTION_KEY)
+    if not action:
+        return
+    if (
+        action.get("report_id") != report["id"]
+        or action.get("version") != report["versao"]
+    ):
+        LOGGER.info("RELATORIO_IA | etapa=action_cancelled | motivo=troca_relatorio")
+        st.session_state.pop(_AI_ACTION_KEY, None)
+        return
+    if action.get("status") != "PENDING":
+        return
+    action["status"] = "RUNNING"
+    st.session_state[_AI_ACTION_KEY] = action
+    operation = action["action"]
+    section = action.get("section")
+    all_sections = list(AI_SECTIONS)
+    if operation == "GENERATE_ALL":
+        call = lambda: service.generate_all(report["id"], principal)
+        success, failure, refresh, waiting = (
+            AI_GENERATE_SUCCESS,
+            AI_GENERATE_FAILURE,
+            all_sections,
+            "Gerando conteúdo institucional com IA...",
+        )
+    elif operation == "REGENERATE_SECTION" and section in AI_SECTIONS:
+        call = lambda: service.regenerate(report["id"], section, principal)
+        success, failure, refresh, waiting = (
+            AI_REGENERATE_SUCCESS,
+            AI_REGENERATE_FAILURE,
+            [section],
+            "Regenerando a seção com IA...",
+        )
+    else:
+        st.session_state.pop(_AI_ACTION_KEY, None)
+        return
+    LOGGER.info(
+        "RELATORIO_IA | etapa=action_processing | report_id=%s | operacao=%s",
+        report["id"],
+        operation,
+    )
+    _set_ai_attempt(
+        report_id=report["id"],
+        operacao=operation,
+        etapa="action_processing",
+        resultado="EXECUTANDO",
+        modelo="",
+        erro="",
     )
     try:
         with st.spinner(waiting):
-            operation()
+            updated = call()
     except ai_service.GeminiNaoConfigurada:
-        LOGGER.exception(failure)
-        st.error(
-            "Não foi possível gerar o conteúdo com IA: serviço de IA não configurado."
-        )
+        LOGGER.exception("RELATORIO_IA | etapa=error | report_id=%s", report["id"])
+        detail = "Serviço de IA não configurado neste ambiente."
     except ai_service.GeminiErro as exc:
-        LOGGER.exception(failure)
-        st.error(f"{failure} {exc}".strip())
+        LOGGER.exception("RELATORIO_IA | etapa=error | report_id=%s", report["id"])
+        detail = str(exc)
     except (ValueError, PermissionError) as exc:
-        LOGGER.exception(failure)
-        st.error(str(exc))
+        LOGGER.exception("RELATORIO_IA | etapa=error | report_id=%s", report["id"])
+        detail = str(exc)
     except Exception:
-        LOGGER.exception(failure)
-        st.error(failure)
+        LOGGER.exception("RELATORIO_IA | etapa=error | report_id=%s", report["id"])
+        detail = "Ocorreu um erro inesperado."
     else:
-        _request_text_refresh(report_id, sections)
-        _flash("success", success)
-        LOGGER.info("RELATORIO_IA | etapa=rerun | report_id=%s", report_id)
+        _request_text_refresh(report["id"], refresh)
+        st.session_state[_AI_FLASH_KEY] = {
+            "report_id": report["id"],
+            "level": "success",
+            "message": success,
+            "detail": "",
+        }
+        _set_ai_attempt(
+            report_id=report["id"],
+            operacao=operation,
+            etapa="persist_success",
+            resultado="SUCESSO",
+            modelo=next(
+                (
+                    item.get("modelo")
+                    for item in (updated.get("conteudo_estruturado") or {}).values()
+                    if isinstance(item, dict) and item.get("modelo")
+                ),
+                "",
+            ),
+            erro="",
+        )
+        st.session_state.pop(_AI_ACTION_KEY, None)
+        LOGGER.info("RELATORIO_IA | etapa=rerun_requested | report_id=%s", report["id"])
         st.rerun()
+    st.session_state[_AI_FLASH_KEY] = {
+        "report_id": report["id"],
+        "level": "error",
+        "message": "Não foi possível gerar o conteúdo com IA.",
+        "detail": detail,
+    }
+    _set_ai_attempt(
+        report_id=report["id"],
+        operacao=operation,
+        etapa="error",
+        resultado="ERRO",
+        modelo="",
+        erro=detail,
+    )
+    st.session_state.pop(_AI_ACTION_KEY, None)
+    st.rerun()
 
 
 def _remember_open_editor():
@@ -2167,20 +2323,40 @@ def _render_institutional_editor(
     elif editable:
         repository = InstitutionalReportsStore(store)
         _bind_text_state(report)
+        _render_institutional_ai_flash(report["id"])
+        _render_last_institutional_ai_attempt(principal, report["id"])
         unsaved = _has_unsaved_text(report["id"], content)
         service = InstitutionalReportContentService(store)
+        _process_pending_institutional_ai_action(service, principal, report)
+        ai_configured = ai_service.gemini_disponivel()
+        ai_busy = bool(st.session_state.get(_AI_ACTION_KEY))
         actions = st.columns(3)
         has_content = any(content[key].get("texto", "").strip() for key in AI_SECTIONS)
         generate_label = "Gerar novamente com IA" if has_content else AI_GENERATE_LABEL
-        generate_requested = _ai_button(
-            actions[0], generate_label, f"inst_ai_all_{report['id']}"
+        _ai_button(
+            actions[0],
+            generate_label,
+            f"inst_ai_all_{report['id']}",
+            disabled=not ai_configured or ai_busy,
+            on_click=(
+                (
+                    lambda report=report: _request_institutional_ai_action(
+                        report, "GENERATE_ALL"
+                    )
+                )
+                if not has_content
+                else (
+                    lambda report=report: st.session_state.__setitem__(
+                        "inst_ai_replace_pending", report["id"]
+                    )
+                )
+            ),
         )
+        if not ai_configured:
+            st.caption("Serviço de IA não configurado neste ambiente.")
         pending_replace = (
             st.session_state.get("inst_ai_replace_pending") == report["id"]
         )
-        if generate_requested and has_content:
-            st.session_state["inst_ai_replace_pending"] = report["id"]
-            st.rerun()
         if pending_replace:
             st.warning(
                 "Gerar novamente o conteúdo com IA? Os textos atuais serão substituídos."
@@ -2190,21 +2366,15 @@ def _render_institutional_editor(
                 "Confirmar geração com IA",
                 key=f"inst_ai_replace_confirm_{report['id']}",
                 icon=AI_ICON,
+                disabled=ai_busy or not ai_configured,
+                on_click=lambda report=report: _request_institutional_ai_action(
+                    report, "GENERATE_ALL"
+                ),
             ):
                 st.session_state.pop("inst_ai_replace_pending", None)
-                generate_requested = True
             if cancel.button("Cancelar", key=f"inst_ai_replace_cancel_{report['id']}"):
                 st.session_state.pop("inst_ai_replace_pending", None)
                 st.rerun()
-        if generate_requested and (not has_content or pending_replace):
-            _run_institutional_ai(
-                lambda: service.generate_all(report["id"], principal),
-                failure=AI_GENERATE_FAILURE,
-                success=AI_GENERATE_SUCCESS,
-                report_id=report["id"],
-                sections=AI_SECTIONS,
-                waiting="Gerando conteúdo institucional com IA...",
-            )
         if actions[1].button("Salvar alterações", key=f"inst_save_{report['id']}"):
             try:
                 service.save_manual(
@@ -2245,22 +2415,15 @@ def _render_institutional_editor(
                         key != "comparacao_periodo_anterior"
                         or _comparison_can_regenerate(report)
                     )
-                    and _ai_button(
+                ):
+                    _ai_button(
                         st,
                         AI_REGENERATE_LABEL,
                         f"inst_regen_{report['id']}_{key}",
-                    )
-                ):
-                    section_key = key
-                    _run_institutional_ai(
-                        lambda section_key=section_key: service.regenerate(
-                            report["id"], section_key, principal
+                        disabled=not ai_configured or ai_busy,
+                        on_click=lambda report=report, section=key: _request_institutional_ai_action(
+                            report, "REGENERATE_SECTION", section=section
                         ),
-                        failure=AI_REGENERATE_FAILURE,
-                        success=AI_REGENERATE_SUCCESS,
-                        report_id=report["id"],
-                        sections=[section_key],
-                        waiting="Regenerando a seção com IA...",
                     )
                 if validate_numbers(
                     section.get("texto") or "", report["snapshot_dados"]

@@ -81,6 +81,7 @@ def _patch(monkeypatch, function):
         "services.institutional_report_content.ai_service.gerar_conteudo_relatorio_institucional",
         function,
     )
+    monkeypatch.setattr(relatorios_ui.ai_service, "gemini_disponivel", lambda: True)
 
 
 def _create(tmp_path):
@@ -279,6 +280,40 @@ def test_annual_button_calls_the_real_editor_contract_and_persists(
     assert _values(app)[f"inst_text_{report['id']}_resumo_executivo"]
 
 
+def test_pending_annual_action_survives_an_intermediate_rerun(tmp_path, monkeypatch):
+    _patch(monkeypatch, _fake_ai)
+    database, _store, repository, report = _create_annual(tmp_path)
+    app = _open(monkeypatch, database, report)
+    app.session_state[relatorios_ui._AI_ACTION_KEY] = {
+        "action": "GENERATE_ALL",
+        "report_id": report["id"],
+        "version": report["versao"],
+        "section": None,
+        "nonce": "intermediate-rerun",
+        "status": "PENDING",
+    }
+    app.run()
+    assert repository.get(report["id"])["status"] == "EM_REVISAO"
+    assert relatorios_ui.AI_GENERATE_SUCCESS in _shown(app.success)
+    assert relatorios_ui._AI_ACTION_KEY not in app.session_state
+
+
+def test_double_click_generates_once(tmp_path, monkeypatch):
+    calls = []
+
+    def counted(context, section=None):
+        calls.append((context["tipo_relatorio"], section))
+        return _fake_ai(context, section)
+
+    _patch(monkeypatch, counted)
+    database, _store, _repository, report = _create(tmp_path)
+    app = _open(monkeypatch, database, report)
+    app.button(key=f"inst_ai_all_{report['id']}").click().run()
+    # The second interaction sees generated content and only opens confirmation.
+    app.button(key=f"inst_ai_all_{report['id']}").click().run()
+    assert len(calls) == 1
+
+
 def test_section_regeneration_persists_only_that_section(tmp_path, monkeypatch):
     _patch(monkeypatch, _fake_ai)
     database, store, repository, report = _create(tmp_path)
@@ -333,7 +368,8 @@ def test_provider_failure_keeps_the_page_and_previous_text(tmp_path, monkeypatch
     app = _open(monkeypatch, database, report)
     app.button(key=f"inst_regen_{report['id']}_permanencia").click().run()
     assert not app.exception, app.exception
-    assert "serviço de IA não configurado" in _shown(app.error)
+    assert "Não foi possível gerar o conteúdo com IA." in _shown(app.error)
+    assert "Serviço de IA não configurado" in _shown(app.caption)
     assert app.text_area
     assert _values(app)[f"inst_text_{report['id']}_permanencia"] == (
         "GERADO permanencia."
@@ -342,7 +378,7 @@ def test_provider_failure_keeps_the_page_and_previous_text(tmp_path, monkeypatch
         "GERADO resumo_executivo."
     )
     assert repository.get(report["id"])["conteudo_estruturado"] == before
-    assert relatorios_ui.AI_REGENERATE_FAILURE in logged
+    assert any("RELATORIO_IA" in message for message in logged)
 
 
 def test_unexpected_failure_does_not_crash_or_erase_content(tmp_path, monkeypatch):
@@ -362,13 +398,13 @@ def test_unexpected_failure_does_not_crash_or_erase_content(tmp_path, monkeypatc
     app.button(key=f"inst_ai_replace_confirm_{report['id']}").click().run()
     assert not app.exception, app.exception
     visible = _shown(app.error)
-    assert relatorios_ui.AI_GENERATE_FAILURE in visible
+    assert "Não foi possível gerar o conteúdo com IA." in visible
     assert "detalhe interno que nao pode vazar" not in visible
     assert _values(app)[f"inst_text_{report['id']}_resumo_executivo"] == (
         "GERADO resumo_executivo."
     )
     assert repository.get(report["id"])["conteudo_estruturado"] == before
-    assert relatorios_ui.AI_GENERATE_FAILURE in logged
+    assert any("RELATORIO_IA" in message for message in logged)
 
 
 def test_finalized_report_blocks_ai_actions(tmp_path, monkeypatch):
