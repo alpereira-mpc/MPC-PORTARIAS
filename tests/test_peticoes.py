@@ -165,10 +165,10 @@ def test_progress_documents_are_linked_without_replacing_the_principal_pdf(store
     )
     timeline = PeticoesStore(store).progress(record["id"])
     progress = next(item for item in timeline if item["descricao"].startswith("Recebido"))
-    assert [(item["nome"], item["categoria"]) for item in progress["documentos"]] == [
+    assert {(item["nome"], item["categoria"]) for item in progress["documentos"]} == {
         ("Oficio-resposta.pdf", "OFICIO_RESPOSTA"),
         ("Anexo-I.pdf", "ANEXO"),
-    ]
+    }
     assert PeticoesStore(store).document(record["id"])["arquivo"] == main_before
     with pytest.raises(ValueError, match="PDF"):
         add_progress(

@@ -375,8 +375,16 @@ def _registrar_andamento(store, principal, identifier, date_key, text_key, error
         st.session_state[text_key] = ""
         st.session_state.pop(error_key, None)
         for key in list(st.session_state):
-            if key.startswith(f"peticoes_andamento_documento_{identifier}"):
+            if key.startswith(f"peticoes_andamento_documento_{identifier}_") and "_categoria_" in key:
                 st.session_state.pop(key, None)
+        nonce_key = f"peticoes_andamento_upload_nonce_{identifier}"
+        st.session_state[nonce_key] = int(st.session_state.get(nonce_key, 0)) + 1
+        total = len(documents)
+        st.session_state[f"peticoes_andamento_ok_{identifier}"] = (
+            "Andamento registrado com sucesso."
+            if not total
+            else f"Andamento registrado com sucesso. {total} documento(s) vinculado(s)."
+        )
 
 
 def _salvar_resultado(store, principal, identifier, key, error_key):
@@ -438,7 +446,10 @@ def _card(store, db, principal, record, index, *, acompanhar):
             ),
         )
         if acompanhar and has_permission(principal, "peticoes_registrar_andamento"):
-            with st.expander("Registrar andamento"):
+            nonce = int(st.session_state.get(f"peticoes_andamento_upload_nonce_{identifier}", 0))
+            # A visually identical changing label resets Streamlit's retained
+            # expander state after a successful callback.
+            with st.expander("Registrar andamento" + ("\u200b" * nonce), expanded=False):
                 st.date_input(
                     "Data",
                     format="DD/MM/YYYY",
@@ -448,7 +459,7 @@ def _card(store, db, principal, record, index, *, acompanhar):
                     "Descrição do andamento",
                     key=f"peticoes_andamento_texto_{identifier}",
                 )
-                upload_key = f"peticoes_andamento_documento_{identifier}"
+                upload_key = f"peticoes_andamento_documento_{identifier}_{nonce}"
                 uploads = st.file_uploader(
                     "Documentos recebidos neste andamento",
                     type=["pdf"],
@@ -487,6 +498,8 @@ def _card(store, db, principal, record, index, *, acompanhar):
                 )
                 if message := st.session_state.get(error_key):
                     st.error(message)
+            if message := st.session_state.pop(f"peticoes_andamento_ok_{identifier}", None):
+                st.success(message)
         can_result = has_permission(principal, "peticoes_registrar_resultado")
         can_finish = (
             has_permission(principal, "peticoes_concluir")

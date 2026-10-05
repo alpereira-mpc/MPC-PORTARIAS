@@ -125,6 +125,9 @@ def test_acompanhamento_lists_petitions_without_a_selector(store):
     assert not app.exception
     timeline = PeticoesStore(store).progress(second["id"])
     assert timeline[0]["descricao"] == "Encaminhada à DIAFI."
+    assert app.text_area(key=f"peticoes_andamento_texto_{second['id']}").value == ""
+    assert app.session_state[f"peticoes_andamento_upload_nonce_{second['id']}"] == 1
+    assert any("Andamento registrado com sucesso." in item.value for item in app.success)
     assert all(
         item["descricao"] != "Encaminhada à DIAFI."
         for item in PeticoesStore(store).progress(first["id"])
