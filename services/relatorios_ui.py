@@ -3,6 +3,7 @@
 import logging
 import math
 import re
+import hashlib
 from uuid import uuid4
 from calendar import monthrange
 from datetime import date, datetime
@@ -1476,6 +1477,46 @@ def _request_text_refresh(report_id, keys):
     st.session_state["inst_refresh_text"] = pending
 
 
+def _clear_text_widget_state(report_id, keys):
+    """Forget widget-owned drafts before the next render reads persisted prose."""
+    for key in keys:
+        st.session_state.pop(_text_widget_key(report_id, key), None)
+
+
+def _text_sync_value(value):
+    text = str(value or "")
+    return len(text), hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def _log_text_sync(report, content, section="resumo_executivo"):
+    """Diagnose DB → normalized content → widget state without exposing prose."""
+    stored = (report.get("conteudo_estruturado") or {}).get(section, "")
+    if isinstance(stored, dict):
+        stored = stored.get("texto") or ""
+    normalized = (content.get(section) or {}).get("texto") or ""
+    widget_key = _text_widget_key(report["id"], section)
+    session_exists = widget_key in st.session_state
+    session_value = st.session_state.get(widget_key, "")
+    db_len, db_hash = _text_sync_value(stored)
+    normalized_len, normalized_hash = _text_sync_value(normalized)
+    session_len, session_hash = _text_sync_value(session_value)
+    LOGGER.info(
+        "RELATORIO_IA | etapa=text_sync | report_id=%s | secao=%s | "
+        "db_len=%s | db_hash=%s | normalized_len=%s | normalized_hash=%s | "
+        "widget_key=%s | widget_value_len=%s | widget_hash=%s | session_exists=%s",
+        report["id"],
+        section,
+        db_len,
+        db_hash,
+        normalized_len,
+        normalized_hash,
+        widget_key,
+        session_len,
+        session_hash,
+        session_exists,
+    )
+
+
 def _apply_text_refresh(report_id):
     pending = dict(st.session_state.get("inst_refresh_text") or {})
     keys = pending.pop(str(report_id), [])
@@ -1483,8 +1524,7 @@ def _apply_text_refresh(report_id):
         st.session_state["inst_refresh_text"] = pending
     else:
         st.session_state.pop("inst_refresh_text", None)
-    for key in keys:
-        st.session_state.pop(_text_widget_key(report_id, key), None)
+    _clear_text_widget_state(report_id, keys)
 
 
 def _bind_text_state(report):
@@ -2164,7 +2204,17 @@ def _process_pending_institutional_ai_action(service, principal, report):
         LOGGER.exception("RELATORIO_IA | etapa=error | report_id=%s", report["id"])
         detail = "Ocorreu um erro inesperado."
     else:
+        # A widget's stale session value takes precedence over text_area's
+        # value argument.  Remove it now (before rerun) and once more on the
+        # next render, when fresh report content is loaded from the database.
+        _clear_text_widget_state(report["id"], refresh)
         _request_text_refresh(report["id"], refresh)
+        _log_text_sync(
+            updated,
+            normalize_content(
+                updated.get("conteudo_estruturado"), updated.get("snapshot_dados")
+            ),
+        )
         st.session_state[_AI_FLASH_KEY] = {
             "report_id": report["id"],
             "level": "success",
@@ -2323,6 +2373,7 @@ def _render_institutional_editor(
     elif editable:
         repository = InstitutionalReportsStore(store)
         _bind_text_state(report)
+        _log_text_sync(report, content)
         _render_institutional_ai_flash(report["id"])
         _render_last_institutional_ai_attempt(principal, report["id"])
         unsaved = _has_unsaved_text(report["id"], content)

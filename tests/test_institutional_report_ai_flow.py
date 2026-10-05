@@ -298,6 +298,23 @@ def test_pending_annual_action_survives_an_intermediate_rerun(tmp_path, monkeypa
     assert relatorios_ui._AI_ACTION_KEY not in app.session_state
 
 
+@pytest.mark.parametrize("annual", [False, True])
+def test_generated_content_replaces_a_stale_empty_textarea_state(
+    tmp_path, monkeypatch, annual
+):
+    _patch(monkeypatch, _fake_ai)
+    creator = _create_annual if annual else _create
+    database, _store, repository, report = creator(tmp_path)
+    app = _open(monkeypatch, database, report)
+    widget_key = f"inst_text_{report['id']}_resumo_executivo"
+    # This reproduces Streamlit's stale empty widget value from the prior run.
+    app.session_state[widget_key] = ""
+    app.button(key=f"inst_ai_all_{report['id']}").click().run()
+    saved = repository.get(report["id"])
+    assert saved["conteudo_estruturado"]["resumo_executivo"]["texto"]
+    assert app.text_area(key=widget_key).value == "GERADO resumo_executivo."
+
+
 def test_double_click_generates_once(tmp_path, monkeypatch):
     calls = []
 
