@@ -174,7 +174,6 @@ def annual_fallback_content(snapshot):
     facts = editorial_facts(snapshot)
     indicators = facts["indicadores"]
     annual = facts.get("fatos_anuais") or {}
-    evolution = facts["evolucao"]
     balance = annual.get("saldo_fluxo", 0)
     sign = "+" if balance > 0 else ""
     peak_p = annual.get("pico_producao") or {}
@@ -183,9 +182,9 @@ def annual_fallback_content(snapshot):
     permanence = facts["permanencia"]
     more_60 = annual.get("quantidade_mais_60", 0)
     return {
-        "resumo_executivo": f"No período de {facts['periodo'].lower()}, foram registradas {indicators['producao']['display']} produções e {indicators['distribuicoes']['display']} distribuições, com saldo de fluxo de {sign}{balance:.0f} registros e relação Produção / Distribuições de {indicators['producao_distribuicoes']['display']}.",
+        "resumo_executivo": f"Este relatório consolida os indicadores de produção do MPC-PB no período de {facts['periodo'].replace('Acumulado de ', '').lower()}. Foram registradas {indicators['producao']['display']} produções e {indicators['distribuicoes']['display']} distribuições, com saldo acumulado do fluxo de {sign}{balance:.0f} registros.",
         "evolucao_periodo": f"O maior volume de produção ocorreu em {MONTHS[int(peak_p.get('mes', 1)) - 1]} ({format_count(peak_p.get('producao'))} registros) e o maior volume de distribuições em {MONTHS[int(peak_d.get('mes', 1)) - 1]} ({format_count(peak_d.get('distribuicoes'))} registros). No último mês disponível, foram registradas {format_count(closing.get('distribuicoes'))} distribuições e {format_count(closing.get('producao'))} produções, com saldo de {closing.get('saldo', 0):+.0f} registros.",
-        "composicao_producao": f"A produção foi composta por {indicators['pareceres']['display']} Pareceres e {indicators['cotas']['display']} Cotas.",
+        "composicao_producao": f"A produção foi composta por {indicators['pareceres']['display']} pareceres e {indicators['cotas']['display']} cotas.",
         "permanencia": f"A mediana de permanência foi de {indicators['mediana']['display']}. Foram registrados {format_count(more_60)} eventos com permanência superior a 60 dias.",
         "producao_procurador": "Os indicadores individuais refletem o conjunto de processos movimentados no período e não constituem, isoladamente, avaliação de desempenho, devendo ser considerados juntamente com o perfil e a complexidade do acervo.",
         "comparacao_periodo_anterior": missing_comparison_text(snapshot),

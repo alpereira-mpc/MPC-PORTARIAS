@@ -16,7 +16,9 @@ MONTHS = (
     "novembro",
     "dezembro",
 )
-ANNUAL_WITHOUT_PRIOR = "Não há período anual anterior disponível para comparação."
+ANNUAL_WITHOUT_PRIOR = (
+    "Não há período anual anterior equivalente disponível para comparação."
+)
 PRIOR_WITHOUT_DATA = "Não há período anterior disponível para comparação."
 
 

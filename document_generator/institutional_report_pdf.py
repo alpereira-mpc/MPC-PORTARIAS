@@ -76,6 +76,20 @@ CHART_COLORS = {
     "Mediana de permanência": "#D62728",
     "Produção/Distribuições": "#17A2B8",
 }
+ANNUAL_CHART_COLORS = {
+    "Distribuídos": "#2F6688",
+    "Produção": "#8E1B2C",
+    "Pareceres": "#8E1B2C",
+    "Cotas": "#B27A2B",
+    "Faixas de permanência": (
+        "#6F8E83",
+        "#8797A5",
+        "#A58E6B",
+        "#C28A2C",
+        "#B85C38",
+        "#9B1724",
+    ),
+}
 MONTHS = (
     "Janeiro",
     "Fevereiro",
@@ -288,7 +302,17 @@ def _meta(report, snapshot, emitted):
         "watermark": watermark,
         "partial": bool((snapshot.get("metadados") or {}).get("periodo_parcial")),
         "annual": (snapshot.get("metadados") or {}).get("tipo") == "ANUAL",
+        "referencia": _reference_period(snapshot),
     }
+
+
+def _reference_period(snapshot):
+    metadata = snapshot.get("metadados") or {}
+    months = (snapshot.get("cobertura_historica") or {}).get("meses_disponiveis") or []
+    if metadata.get("tipo") == "ANUAL" and months:
+        year, last = int(metadata["ano"]), max(int(month) for month in months)
+        return f"01/01/{year} a {monthrange(year, last)[1]:02d}/{last:02d}/{year}"
+    return format_report_period(snapshot)
 
 
 def _consolidated_until(report, snapshot):
@@ -519,8 +543,8 @@ def _cover(meta, styles):
         return story
     story.append(Spacer(1, 46 * mm))
     technical = [
-        ["Período de referência", meta["period"]],
-        ["Dados extraídos em", meta["emitido"]],
+        ["Período de referência", meta["referencia"]],
+        ["Dados extraídos em", meta["emitido"].replace(" ", " às ", 1)],
         ["Dados consolidados até", meta["consolidado_em"]],
         ["Versão", str(meta["versao"])],
         ["Fonte", "Tramita/TCE-PB"],
@@ -588,10 +612,21 @@ def _body(report, snapshot, meta, styles):
                 monthly,
                 ["Distribuídos", "Produção"],
                 compact=len(monthly) > 4,
+                colors=ANNUAL_CHART_COLORS if meta["annual"] else None,
             ),
             [
-                ("Distribuídos", CHART_COLORS["Distribuídos"]),
-                ("Produção", CHART_COLORS["Produção"]),
+                (
+                    "Distribuídos",
+                    (ANNUAL_CHART_COLORS if meta["annual"] else CHART_COLORS)[
+                        "Distribuídos"
+                    ],
+                ),
+                (
+                    "Produção",
+                    (ANNUAL_CHART_COLORS if meta["annual"] else CHART_COLORS)[
+                        "Produção"
+                    ],
+                ),
             ],
             styles,
         )
@@ -609,10 +644,19 @@ def _body(report, snapshot, meta, styles):
                 ["Pareceres", "Cotas"],
                 stacked=True,
                 compact=len(monthly) > 4,
+                colors=ANNUAL_CHART_COLORS if meta["annual"] else None,
             ),
             [
-                ("Pareceres", CHART_COLORS["Pareceres"]),
-                ("Cotas", CHART_COLORS["Cotas"]),
+                (
+                    "Pareceres",
+                    (ANNUAL_CHART_COLORS if meta["annual"] else CHART_COLORS)[
+                        "Pareceres"
+                    ],
+                ),
+                (
+                    "Cotas",
+                    (ANNUAL_CHART_COLORS if meta["annual"] else CHART_COLORS)["Cotas"],
+                ),
             ],
             styles,
         )
@@ -632,16 +676,35 @@ def _body(report, snapshot, meta, styles):
         _chart(
             "Faixas de permanência",
             lambda: _band_bars(snapshot, annual=meta["annual"]),
-            [("Processos", CHART_COLORS["Mediana de permanência"])],
+            (
+                []
+                if meta["annual"]
+                else [("Processos", CHART_COLORS["Mediana de permanência"])]
+            ),
             styles,
         )
     )
     procuradores = _procurador_rows(snapshot)
-    story.extend(
-        _section(
-            styles, "Produção por Procurador", _text(content, "producao_procurador")
+    if meta["annual"]:
+        story.extend(
+            [
+                PageBreak(),
+                Paragraph("Produção por Procurador", styles["h1"]),
+            ]
         )
-    )
+        story.extend(
+            _flow_text(
+                _text(content, "producao_procurador"),
+                styles["body"],
+                styles["bullet"],
+            )
+        )
+    else:
+        story.extend(
+            _section(
+                styles, "Produção por Procurador", _text(content, "producao_procurador")
+            )
+        )
     table = _procurador_table(procuradores)
     if table is not None:
         story.extend([CondPageBreak(120), table, Spacer(1, 4 * mm)])
@@ -655,10 +718,24 @@ def _body(report, snapshot, meta, styles):
     story.extend(
         _chart(
             "Distribuídos e produção por Procurador",
-            lambda: _procurador_bars(procuradores, ["Distribuídos", "Produção"]),
+            lambda: _procurador_bars(
+                procuradores,
+                ["Distribuídos", "Produção"],
+                colors=ANNUAL_CHART_COLORS if meta["annual"] else None,
+            ),
             [
-                ("Distribuídos", CHART_COLORS["Distribuídos"]),
-                ("Produção", CHART_COLORS["Produção"]),
+                (
+                    "Distribuídos",
+                    (ANNUAL_CHART_COLORS if meta["annual"] else CHART_COLORS)[
+                        "Distribuídos"
+                    ],
+                ),
+                (
+                    "Produção",
+                    (ANNUAL_CHART_COLORS if meta["annual"] else CHART_COLORS)[
+                        "Produção"
+                    ],
+                ),
             ],
             styles,
         )
@@ -668,7 +745,10 @@ def _body(report, snapshot, meta, styles):
             _chart(
                 "Composição de Pareceres e Cotas por Procurador",
                 lambda: _procurador_composition(procuradores),
-                [("Pareceres", "#8E1B2C"), ("Cotas", "#B27A2B")],
+                [
+                    ("Pareceres", ANNUAL_CHART_COLORS["Pareceres"]),
+                    ("Cotas", ANNUAL_CHART_COLORS["Cotas"]),
+                ],
                 styles,
             )
         )
@@ -685,7 +765,7 @@ def _body(report, snapshot, meta, styles):
             )
         )
     story.extend(_comparison(snapshot, content, styles))
-    story.extend(_synthesis(content, styles))
+    story.extend(_synthesis(content, styles, annual=meta["annual"]))
     story.extend(_methodology(content, meta, styles))
     return story
 
@@ -729,19 +809,49 @@ def _annual_highlights(snapshot, styles):
 
 def _annual_permanence_summary(snapshot, styles):
     facts = snapshot.get("fatos_anuais") or {}
-    parts = []
-    for label, key in (("P75", "p75_permanencia"), ("P90", "p90_permanencia")):
-        if facts.get(key) is not None:
-            parts.append(f"{label}: {format_decimal(facts[key], ' dias')}")
-    for label, count, percent in (
-        (">60 dias", "quantidade_mais_60", "percentual_mais_60"),
-        (">90 dias", "quantidade_mais_90", "percentual_mais_90"),
+    entries = (
+        ("P75", format_decimal(facts.get("p75_permanencia"), " dias")),
+        ("P90", format_decimal(facts.get("p90_permanencia"), " dias")),
+        (
+            "Acima de 60 dias",
+            f"{format_count(facts.get('quantidade_mais_60'))} · {format_decimal(facts.get('percentual_mais_60'), '%')}",
+        ),
+        (
+            "Acima de 90 dias",
+            f"{format_count(facts.get('quantidade_mais_90'))} · {format_decimal(facts.get('percentual_mais_90'), '%')}",
+        ),
+    )
+    if not any(
+        facts.get(key) is not None
+        for key in (
+            "p75_permanencia",
+            "p90_permanencia",
+            "quantidade_mais_60",
+            "quantidade_mais_90",
+        )
     ):
-        if facts.get(count) is not None:
-            parts.append(
-                f"{label}: {format_count(facts[count])} ({format_decimal(facts.get(percent), '%')})"
-            )
-    return [Paragraph(" · ".join(parts), styles["note"])] if parts else []
+        return []
+    cards = [
+        [
+            Paragraph(_escape(value), styles["metric_value"]),
+            Paragraph(_escape(label), styles["metric_label"]),
+        ]
+        for label, value in entries
+    ]
+    table = Table([cards], colWidths=[CONTENT_WIDTH / 4] * 4)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), NOTE_PAPER),
+                ("BOX", (0, 0), (-1, -1), 0.35, LINE),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, LINE),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    return [table, Spacer(1, 2 * mm)]
 
 
 def _section(styles, title, text):
@@ -800,10 +910,13 @@ def _metrics(summary, *, annual=False):
                 Paragraph(_escape(label), styles["metric_label"]),
             ]
         )
+    complement = cells.pop() if annual and len(cells) == 7 else None
     while len(cells) % 3:
         cells.append("")
     rows = [cells[index : index + 3] for index in range(0, len(cells), 3)]
     column = CONTENT_WIDTH / 3
+    if complement is not None:
+        rows.append([complement, "", ""])
     table = Table(rows, colWidths=[column, column, column])
     table.setStyle(
         TableStyle(
@@ -816,6 +929,18 @@ def _metrics(summary, *, annual=False):
                 ("RIGHTPADDING", (0, 0), (-1, -1), 6),
                 ("TOPPADDING", (0, 0), (-1, -1), 7),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                *(
+                    (
+                        [
+                            ("SPAN", (0, 2), (2, 2)),
+                            ("BACKGROUND", (0, 2), (2, 2), NOTE_PAPER),
+                            ("TOPPADDING", (0, 2), (2, 2), 5),
+                            ("BOTTOMPADDING", (0, 2), (2, 2), 5),
+                        ]
+                        if complement is not None
+                        else []
+                    )
+                ),
             ]
         )
     )
@@ -916,7 +1041,7 @@ def _comparison_rows(snapshot):
     return [pack(prior_label, prior), pack(current_label, summary)]
 
 
-def _bars(rows, fields, *, stacked=False, compact=False, category="Mês"):
+def _bars(rows, fields, *, stacked=False, compact=False, category="Mês", colors=None):
     if not rows:
         return None
     series = [_numbers(rows, field) for field in fields]
@@ -927,7 +1052,10 @@ def _bars(rows, fields, *, stacked=False, compact=False, category="Mês"):
     else:
         categories = [str(row[category]) for row in rows]
     return _vertical_bars(
-        categories, series, [CHART_COLORS[field] for field in fields], stacked
+        categories,
+        series,
+        [(colors or CHART_COLORS)[field] for field in fields],
+        stacked,
     )
 
 
@@ -963,16 +1091,15 @@ def _band_bars(snapshot, *, annual=False):
     rows.sort(
         key=lambda item: order.index(item["faixa"]) if item["faixa"] in order else 99
     )
-    colors = ["#6F8E83", "#8797A5", "#A58E6B", "#C28A2C", "#B85C38", "#9B1724"]
     return _horizontal_bars(
         [str(item["faixa"]) for item in rows],
         [[float(item["quantidade"]) for item in rows]],
         [CHART_COLORS["Mediana de permanência"]],
-        bar_colors=colors if annual else None,
+        bar_colors=ANNUAL_CHART_COLORS["Faixas de permanência"] if annual else None,
     )
 
 
-def _procurador_bars(rows, fields):
+def _procurador_bars(rows, fields, *, colors=None):
     if not rows:
         return None
     series = [_numbers(rows, field) for field in fields]
@@ -981,7 +1108,7 @@ def _procurador_bars(rows, fields):
     return _horizontal_bars(
         [row["Procurador"] for row in rows],
         series,
-        [CHART_COLORS[field] for field in fields],
+        [(colors or CHART_COLORS)[field] for field in fields],
     )
 
 
@@ -1004,7 +1131,7 @@ def _procurador_composition(rows):
     return _horizontal_bars(
         [item[0] for item in usable],
         [[item[1] for item in usable], [item[2] for item in usable]],
-        ["#8E1B2C", "#B27A2B"],
+        [ANNUAL_CHART_COLORS["Pareceres"], ANNUAL_CHART_COLORS["Cotas"]],
         stacked=True,
     )
 
@@ -1157,9 +1284,10 @@ def _chart(title, builder, legend, styles):
     block = [
         Paragraph(_escape(title), styles["chart"]),
         drawing,
-        _legend(legend, styles),
-        Spacer(1, 3 * mm),
     ]
+    if legend:
+        block.append(_legend(legend, styles))
+    block.append(Spacer(1, 3 * mm))
     try:
         return [KeepTogether(block)]
     except Exception:
@@ -1300,14 +1428,22 @@ def _comparison(snapshot, content, styles):
     return story
 
 
-def _synthesis(content, styles):
+def _synthesis(content, styles, *, annual=False):
     raw = _text(content, "sintese_pontos_atencao")
     if not raw.strip():
         return []
     prose, attention = _split_attention(raw)
-    story = [CondPageBreak(90), Paragraph("Síntese do período", styles["h1"])]
+    story = [
+        CondPageBreak(90),
+        Paragraph(
+            "SÍNTESE GERENCIAL E METODOLOGIA" if annual else "Síntese do período",
+            styles["h1"],
+        ),
+    ]
     if prose and attention:
-        story.append(Paragraph("Síntese", styles["h2"]))
+        story.append(
+            Paragraph("Síntese gerencial" if annual else "Síntese", styles["h2"])
+        )
     if prose:
         story.extend(_flow_text(prose, styles["body"], styles["bullet"]))
     if attention:
