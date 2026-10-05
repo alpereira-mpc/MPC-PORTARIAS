@@ -87,6 +87,84 @@ def _duration_bands(events):
     ]
 
 
+def _annual_facts(summary, monthly, bands, events):
+    """Frozen analytical facts used only by the annual editorial and PDF views."""
+    production = float(summary.get("production") or 0)
+    distributed = float(summary.get("distributed") or 0)
+    durations = sorted(
+        turnaround_days(event)
+        for event in events
+        if event["tipo_movimentacao"] == "SAIDA"
+        and event["classificacao_producao"] in ("PARECER", "COTA")
+        and turnaround_days(event) is not None
+    )
+    counts = {item["faixa"]: item["quantidade"] for item in bands}
+
+    def percentile(level):
+        if not durations:
+            return None
+        position = (len(durations) - 1) * level
+        lower, upper = int(position), min(int(position) + 1, len(durations) - 1)
+        return durations[lower] + (durations[upper] - durations[lower]) * (
+            position - lower
+        )
+
+    rows = [item for item in monthly if isinstance(item, dict) and item.get("summary")]
+
+    def month_fact(row):
+        value = row["summary"]
+        return {
+            "mes": row.get("month"),
+            "distribuicoes": value.get("distributed"),
+            "producao": value.get("production"),
+            "saldo": (value.get("production") or 0) - (value.get("distributed") or 0),
+        }
+
+    monthly_facts = [month_fact(row) for row in rows]
+    more_60 = int(counts.get("61–90 dias", 0)) + int(counts.get("Mais de 90 dias", 0))
+    total_duration = sum(int(value) for value in counts.values())
+    return {
+        "saldo_fluxo": production - distributed,
+        "indice_fluxo": production / distributed * 100 if distributed else None,
+        "pico_producao": max(
+            monthly_facts, key=lambda row: row["producao"], default=None
+        ),
+        "pico_distribuicoes": max(
+            monthly_facts, key=lambda row: row["distribuicoes"], default=None
+        ),
+        "menor_producao": min(
+            monthly_facts, key=lambda row: row["producao"], default=None
+        ),
+        "menor_distribuicoes": min(
+            monthly_facts, key=lambda row: row["distribuicoes"], default=None
+        ),
+        "ultimo_mes": monthly_facts[-1] if monthly_facts else None,
+        "meses_producao_superior_distribuicao": sum(
+            row["saldo"] > 0 for row in monthly_facts
+        ),
+        "meses_distribuicao_superior_producao": sum(
+            row["saldo"] < 0 for row in monthly_facts
+        ),
+        "quantidade_mais_60": more_60,
+        "quantidade_mais_90": int(counts.get("Mais de 90 dias", 0)),
+        "percentual_0_7": (
+            int(counts.get("0–7 dias", 0)) / total_duration * 100
+            if total_duration
+            else None
+        ),
+        "percentual_mais_60": (
+            more_60 / total_duration * 100 if total_duration else None
+        ),
+        "percentual_mais_90": (
+            int(counts.get("Mais de 90 dias", 0)) / total_duration * 100
+            if total_duration
+            else None
+        ),
+        "p75_permanencia": percentile(0.75),
+        "p90_permanencia": percentile(0.90),
+    }
+
+
 def build_report_snapshot(store, *, tipo, ano, trimestre=None):
     """Build a deterministic snapshot solely from the canonical report aggregates."""
     reports = TramitaReportsStore(store)
@@ -119,10 +197,19 @@ def build_report_snapshot(store, *, tipo, ano, trimestre=None):
             prior = reports.period_report(
                 prior_start.isoformat(), prior_end.isoformat()
             )["summary"]
-    elif reports.months_for_year(ano - 1):
-        prior = reports.period_report(
-            date(ano - 1, 1, 1).isoformat(), date(ano, 1, 1).isoformat()
-        )["summary"]
+    elif months:
+        prior_months = set(reports.months_for_year(ano - 1))
+        comparable_months = set(months)
+        if comparable_months.issubset(prior_months):
+            last_month = max(months)
+            prior_end = date(
+                ano - 1 + (last_month == 12),
+                1 if last_month == 12 else last_month + 1,
+                1,
+            )
+            prior = reports.period_report(
+                date(ano - 1, 1, 1).isoformat(), prior_end.isoformat()
+            )["summary"]
     protocols = len({row["protocolo"] for row in period["events"] if row["protocolo"]})
     annual_partial = tipo == "ANUAL" and coverage["ultimo_mes_disponivel"] not in (
         None,
@@ -149,6 +236,10 @@ def build_report_snapshot(store, *, tipo, ano, trimestre=None):
         "comparacao_periodo_anterior": prior,
         "nota_metodologica": _methodology(),
     }
+    if tipo == "ANUAL":
+        snapshot["fatos_anuais"] = _annual_facts(
+            report["summary"], monthly, snapshot["faixas_permanencia"], period["events"]
+        )
     snapshot["metadados"]["descricao_periodo"] = format_report_period(snapshot)
     return snapshot
 

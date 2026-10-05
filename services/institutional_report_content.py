@@ -8,8 +8,10 @@ from database.store import now
 from services import ai_service
 from services.audit import registrar_evento
 from services.institutional_presentation import (
+    MONTHS,
     comparison_available,
     editorial_facts,
+    format_count,
     format_report_period,
     missing_comparison_text,
     writing_indicators,
@@ -167,6 +169,30 @@ def validate_numbers(text, snapshot):
     return sorted(set(unknown))[:12]
 
 
+def annual_fallback_content(snapshot):
+    """Short deterministic prose when the optional AI service is unavailable."""
+    facts = editorial_facts(snapshot)
+    indicators = facts["indicadores"]
+    annual = facts.get("fatos_anuais") or {}
+    evolution = facts["evolucao"]
+    balance = annual.get("saldo_fluxo", 0)
+    sign = "+" if balance > 0 else ""
+    peak_p = annual.get("pico_producao") or {}
+    peak_d = annual.get("pico_distribuicoes") or {}
+    closing = annual.get("ultimo_mes") or {}
+    permanence = facts["permanencia"]
+    more_60 = annual.get("quantidade_mais_60", 0)
+    return {
+        "resumo_executivo": f"No período de {facts['periodo'].lower()}, foram registradas {indicators['producao']['display']} produções e {indicators['distribuicoes']['display']} distribuições, com saldo de fluxo de {sign}{balance:.0f} registros e relação Produção / Distribuições de {indicators['producao_distribuicoes']['display']}.",
+        "evolucao_periodo": f"O maior volume de produção ocorreu em {MONTHS[int(peak_p.get('mes', 1)) - 1]} ({format_count(peak_p.get('producao'))} registros) e o maior volume de distribuições em {MONTHS[int(peak_d.get('mes', 1)) - 1]} ({format_count(peak_d.get('distribuicoes'))} registros). No último mês disponível, foram registradas {format_count(closing.get('distribuicoes'))} distribuições e {format_count(closing.get('producao'))} produções, com saldo de {closing.get('saldo', 0):+.0f} registros.",
+        "composicao_producao": f"A produção foi composta por {indicators['pareceres']['display']} Pareceres e {indicators['cotas']['display']} Cotas.",
+        "permanencia": f"A mediana de permanência foi de {indicators['mediana']['display']}. Foram registrados {format_count(more_60)} eventos com permanência superior a 60 dias.",
+        "producao_procurador": "Os indicadores individuais refletem o conjunto de processos movimentados no período e não constituem, isoladamente, avaliação de desempenho, devendo ser considerados juntamente com o perfil e a complexidade do acervo.",
+        "comparacao_periodo_anterior": missing_comparison_text(snapshot),
+        "sintese_pontos_atencao": f"O saldo acumulado do fluxo foi de {sign}{balance:.0f} registros. A série concentrou o maior volume de produção em {MONTHS[int(peak_p.get('mes', 1)) - 1]} e o maior volume de distribuições em {MONTHS[int(peak_d.get('mes', 1)) - 1]}.",
+    }
+
+
 class InstitutionalReportContentService:
     def __init__(self, store):
         self.store = store
@@ -205,10 +231,18 @@ class InstitutionalReportContentService:
             for key in AI_SECTIONS
             if key != "comparacao_periodo_anterior" or comparison_available(snapshot)
         ]
-        generated, model = ai_service.gerar_conteudo_relatorio_institucional(
-            build_ai_context(snapshot, data_corte=report["data_corte"]),
-            None if tuple(requested) == AI_SECTIONS else tuple(requested),
-        )
+        try:
+            generated, model = ai_service.gerar_conteudo_relatorio_institucional(
+                build_ai_context(snapshot, data_corte=report["data_corte"]),
+                None if tuple(requested) == AI_SECTIONS else tuple(requested),
+            )
+        except ai_service.GeminiErro:
+            if metadata.get("tipo") != "ANUAL":
+                raise
+            generated, model = (
+                annual_fallback_content(snapshot),
+                "fallback-deterministico",
+            )
         content = normalize_content(report["conteudo_estruturado"], snapshot)
         for section, text in generated.items():
             unknown = validate_numbers(text, snapshot)
@@ -260,10 +294,17 @@ class InstitutionalReportContentService:
             content[section] = _record(missing_comparison_text(snapshot))
             updated = self.reports.save_content(identifier, content, principal.email)
             return updated
-        generated, model = ai_service.gerar_conteudo_relatorio_institucional(
-            build_ai_context(snapshot, data_corte=report["data_corte"]),
-            section,
-        )
+        try:
+            generated, model = ai_service.gerar_conteudo_relatorio_institucional(
+                build_ai_context(snapshot, data_corte=report["data_corte"]), section
+            )
+        except ai_service.GeminiErro:
+            if (snapshot.get("metadados") or {}).get("tipo") != "ANUAL":
+                raise
+            generated, model = (
+                annual_fallback_content(snapshot),
+                "fallback-deterministico",
+            )
         text = generated[section]
         unknown = validate_numbers(text, snapshot)
         content[section] = _record(

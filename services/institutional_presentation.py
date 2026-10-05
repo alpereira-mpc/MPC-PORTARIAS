@@ -143,7 +143,7 @@ def editorial_facts(snapshot):
     composition = snapshot.get("composicao_producao") or {}
     metadata = snapshot.get("metadados") or {}
     tipo = metadata.get("tipo") or ""
-    return {
+    facts = {
         "periodo": format_report_period(snapshot),
         "tipo_relatorio": tipo,
         "periodo_parcial": bool(metadata.get("periodo_parcial")),
@@ -153,6 +153,9 @@ def editorial_facts(snapshot):
         "procuradores": _procurador_facts(snapshot),
         "comparacao": _comparison_facts(snapshot, summary),
     }
+    if tipo == "ANUAL":
+        facts["fatos_anuais"] = snapshot.get("fatos_anuais") or {}
+    return facts
 
 
 def _shown(raw, display):
