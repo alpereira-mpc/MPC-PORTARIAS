@@ -184,6 +184,20 @@ def annual_fallback_content(snapshot):
     more_60 = annual.get("quantidade_mais_60", 0)
     more_90 = annual.get("quantidade_mais_90", 0)
     period = facts["periodo"].replace("Acumulado de ", "").lower()
+    bands = [
+        item
+        for item in snapshot.get("faixas_permanencia") or []
+        if isinstance(item, dict)
+        and item.get("faixa")
+        and item.get("quantidade") is not None
+    ]
+    predominant_band = max(bands, key=lambda item: item["quantidade"], default=None)
+    band_sentence = ""
+    if predominant_band:
+        band_sentence = (
+            f" A maior concentração ocorreu na faixa de {predominant_band['faixa']}, "
+            f"com {format_count(predominant_band['quantidade'])} registros."
+        )
     procurador_fields = (
         "producao_minima",
         "producao_maxima",
@@ -211,12 +225,12 @@ def annual_fallback_content(snapshot):
         )
     return {
         "resumo_executivo": f"Este relatório consolida os indicadores de produção do MPC-PB no período de {period}. Foram registrados {indicators['producao']['display']} registros de produção e {indicators['distribuicoes']['display']} distribuições, com saldo de {sign}{balance:.0f} registros.",
-        "evolucao_periodo": f"A série mensal apresentou variações ao longo dos meses analisados. O pico de distribuições ocorreu em {MONTHS[int(peak_d.get('mes', 1)) - 1]}, com {format_count(peak_d.get('distribuicoes'))} registros, enquanto o maior volume de produção foi registrado em {MONTHS[int(peak_p.get('mes', 1)) - 1]}, com {format_count(peak_p.get('producao'))}. No último mês disponível, foram registradas {format_count(closing.get('distribuicoes'))} distribuições e {format_count(closing.get('producao'))} produções.",
+        "evolucao_periodo": f"O fluxo no período analisado apresentou variações ao longo dos meses. O pico de distribuições ocorreu em {MONTHS[int(peak_d.get('mes', 1)) - 1]}, com {format_count(peak_d.get('distribuicoes'))} registros, enquanto o maior volume de produção foi registrado em {MONTHS[int(peak_p.get('mes', 1)) - 1]}, com {format_count(peak_p.get('producao'))}. No último mês disponível, foram registradas {format_count(closing.get('distribuicoes'))} distribuições e {format_count(closing.get('producao'))} produções.",
         "composicao_producao": f"A produção foi composta por {indicators['pareceres']['display']} pareceres e {indicators['cotas']['display']} cotas.",
         "permanencia": f"A mediana de permanência foi de {indicators['mediana']['display']}. Foram registrados {format_count(more_60)} registros com permanência superior a 60 dias.",
         "producao_procurador": procurador_text,
         "comparacao_periodo_anterior": missing_comparison_text(snapshot),
-        "sintese_pontos_atencao": f"No acumulado de {period}, a produção registrou {indicators['producao']['display']} registros, frente a {indicators['distribuicoes']['display']} distribuições, resultando em saldo de {sign}{balance:.0f}. A mediana de permanência foi de {indicators['mediana']['display']}, com {format_count(more_60)} registros acima de 60 dias e {format_count(more_90)} acima de 90 dias.",
+        "sintese_pontos_atencao": f"No acumulado de {period}, a produção registrou {indicators['producao']['display']} registros, frente a {indicators['distribuicoes']['display']} distribuições, resultando em saldo de {sign}{balance:.0f}. A mediana de permanência foi de {indicators['mediana']['display']}.{band_sentence}",
     }
 
 
