@@ -411,6 +411,7 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     assert not app.exception, app.exception
     assert not any(radio.key == "inst_home_section" for radio in app.radio)
     visible = _visible(app)
+    assert "Validação:" not in visible
     assert "Relatório Trimestral de Produção" in visible
     assert "3º trimestre de 2026" in visible
     assert "545" in visible
@@ -458,6 +459,7 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     assert not app.exception, app.exception
     assert "Finalizado" in _visible(app)
     assert not app.text_area
+    assert app.button(key="inst_pdf_generate_1").label == "Gerar PDF oficial"
     _keep_orphan_widgets(app)
     app.radio(key="inst_exibicao").set_value("Visualização").run()
     app.button(key="inst_new_header_1").click().run()

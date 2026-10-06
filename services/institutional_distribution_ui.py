@@ -87,12 +87,10 @@ def _panel(store, principal, report):
             )
     metadata = official_pdf_metadata(store, report["id"])
     if not metadata:
-        st.warning(MISSING_PDF_MESSAGE)
-        if administrator and st.button(
-            "Gerar PDF oficial",
-            key=f"institutional_distribution_generate_{report['id']}",
-        ):
-            _generate_official_pdf(store, principal, report)
+        st.warning(
+            "O PDF oficial ainda não foi gerado. Gere-o em “Conteúdo e revisão” "
+            "antes de realizar a distribuição."
+        )
         _render_history(history)
         return
     st.caption(
@@ -253,21 +251,6 @@ def _open_confirmation(report, *, mode, source_id):
         "source_id": source_id,
     }
     st.rerun()
-
-
-def _generate_official_pdf(store, principal, report):
-    try:
-        from services.institutional_report_pdf import deliver_institutional_pdf
-
-        deliver_institutional_pdf(store, report, principal, official=True)
-    except Exception:
-        LOGGER.exception(
-            "Falha ao gerar o PDF oficial do relatório institucional %s",
-            report.get("id"),
-        )
-        st.error("Não foi possível gerar o PDF desta versão no momento.")
-    else:
-        st.rerun()
 
 
 def _render_download(store, report):

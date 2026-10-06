@@ -1743,7 +1743,14 @@ def _snapshot_indicator_cards(summary):
             st.metric(label, value)
 
 
-def _render_institutional_pdf_action(store, principal, report):
+def _render_institutional_pdf_action(
+    store,
+    principal,
+    report,
+    *,
+    official_generate_label="Gerar PDF",
+    official_download_label="Baixar PDF",
+):
     """Render a real one-click download when an official artifact exists."""
     official = report.get("status") in ("FINALIZADO", "ENVIADO")
     repository = InstitutionalReportsStore(store)
@@ -1760,7 +1767,7 @@ def _render_institutional_pdf_action(store, principal, report):
                 LOGGER.exception("Falha ao registrar download do PDF institucional")
 
         st.download_button(
-            "Baixar PDF",
+            official_download_label,
             artifact["conteudo"],
             artifact["nome_arquivo"],
             mime="application/pdf",
@@ -1769,7 +1776,9 @@ def _render_institutional_pdf_action(store, principal, report):
         )
         return
     if official:
-        if st.button("Gerar PDF", key=f"inst_pdf_generate_{report.get('id')}"):
+        if st.button(
+            official_generate_label, key=f"inst_pdf_generate_{report.get('id')}"
+        ):
             try:
                 from services.institutional_report_pdf import deliver_institutional_pdf
 
@@ -1814,6 +1823,19 @@ def _render_institutional_pdf_action(store, principal, report):
                 "name": payload["nome"],
             }
             st.rerun()
+
+
+def _render_institutional_official_pdf_action(store, principal, report):
+    """Keep official PDF generation in the editorial flow after finalization."""
+    st.divider()
+    st.subheader("PDF oficial")
+    _render_institutional_pdf_action(
+        store,
+        principal,
+        report,
+        official_generate_label="Gerar PDF oficial",
+        official_download_label="Baixar PDF oficial",
+    )
 
 
 def _render_institutional_document(report):
@@ -2441,6 +2463,8 @@ def _render_institutional_editor(
                     st.markdown(text)
                 else:
                     st.caption("Seção não preenchida nesta versão.")
+        if store is not None:
+            _render_institutional_official_pdf_action(store, principal, report)
         return
     elif editable:
         repository = InstitutionalReportsStore(store)
@@ -2731,7 +2755,7 @@ def _render_institutional_detail_header(report):
     summary = overview_row(report)
     st.markdown(f"## {_institutional_title(snapshot)}")
     st.caption(_institutional_period_label(snapshot))
-    states = [summary["Status"], f"Validação: {summary['Validação']}"]
+    states = [summary["Status"]]
     if summary["Distribuição"] != "—":
         states.append(f"Distribuição: {summary['Distribuição']}")
     st.caption(" · ".join(states))

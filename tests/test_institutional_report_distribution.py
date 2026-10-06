@@ -974,3 +974,18 @@ def test_draft_screen_explains_that_finalization_is_required(tmp_path, monkeypat
     assert all(key.startswith("inst_text_") for key in content_keys)
     assert content_keys.isdisjoint(distribution_keys)
     assert "Enviar aos Procuradores" not in _visible(distribution)
+
+
+def test_finalized_screen_without_pdf_directs_to_content_review(tmp_path, monkeypatch):
+    store = _store(tmp_path / "missing-pdf-ui.db")
+    _give_emails(store)
+    report = _create(store, pdf=False)
+    app = _open_distribution(monkeypatch, store.path, FakeTransport())
+
+    visible = _visible(app)
+    assert "Gere-o em “Conteúdo e revisão”" in visible
+    assert not any(
+        button.key == f"institutional_distribution_generate_{report['id']}"
+        for button in app.button
+    )
+    assert "Gerar PDF oficial" not in visible
