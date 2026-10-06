@@ -545,7 +545,12 @@ def _cover(meta, styles):
     technical = [
         ["Período de referência", meta["referencia"]],
         ["Dados extraídos em", meta["emitido"].replace(" ", " às ", 1)],
-        ["Data de emissão", meta["emitido"]],
+        [
+            "Data de emissão",
+            meta["emitido"].replace(" ", " às ", 1)
+            if not meta["annual"]
+            else meta["emitido"],
+        ],
         ["Dados consolidados até", meta["consolidado_em"]],
         ["Versão", str(meta["versao"])],
         ["Fonte", "Tramita/TCE-PB"],
@@ -826,9 +831,11 @@ def _annual_highlights(snapshot, styles):
 
 def _annual_permanence_summary(snapshot, styles, *, compact=False):
     facts = snapshot.get("fatos_anuais") or {}
+    p75 = facts.get("p75_permanencia")
+    p90 = facts.get("p90_permanencia")
     entries = (
-        ("P75", format_decimal(facts.get("p75_permanencia"), " dias")),
-        ("P90", format_decimal(facts.get("p90_permanencia"), " dias")),
+        ("P75", format_decimal(p75, " dias")),
+        ("P90", format_decimal(p90, " dias")),
         (
             "Acima de 60 dias",
             f"{format_count(facts.get('quantidade_mais_60'))} · {format_decimal(facts.get('percentual_mais_60'), '%')}",
@@ -868,7 +875,15 @@ def _annual_permanence_summary(snapshot, styles, *, compact=False):
             ]
         )
     )
-    return [table, Spacer(1, 1 * mm if compact else 2 * mm)]
+    flow = [table, Spacer(1, 1 * mm if compact else 2 * mm)]
+    if p75 is not None and p90 is not None:
+        note = (
+            "Nota: no período analisado, 75% dos registros apresentaram "
+            f"permanência de até {format_decimal(p75, ' dias')} (P75), enquanto "
+            f"90% permaneceram por até {format_decimal(p90, ' dias')} (P90)."
+        )
+        flow.extend([Paragraph(_escape(note), styles["note"]), Spacer(1, 1 * mm)])
+    return flow
 
 
 def _quarterly_body(report, snapshot, meta, styles):

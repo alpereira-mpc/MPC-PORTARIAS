@@ -5,8 +5,17 @@ from streamlit.testing.v1 import AppTest
 from document_generator.institutional_report_pdf import _flow_text
 from reportlab.lib.styles import getSampleStyleSheet
 from services import ai_service
-from services.institutional_presentation import editorial_facts, format_report_period
-from services.institutional_report_content import build_ai_context, validate_numbers
+from services.institutional_presentation import (
+    QUARTERLY_WITHOUT_PRIOR,
+    editorial_facts,
+    format_report_period,
+)
+from services.institutional_report_content import (
+    annual_fallback_content,
+    build_ai_context,
+    quarterly_fallback_content,
+    validate_numbers,
+)
 
 
 def _annual_snapshot():
@@ -182,6 +191,99 @@ def test_quarterly_comparison_uses_points_percentage_and_safe_missing_text():
     assert missing_comparison_text(absent) == QUARTERLY_WITHOUT_PRIOR
 
 
+def _quarterly_snapshot_with_editorial_facts(*, prior=True):
+    snapshot = _quarterly_snapshot()
+    snapshot["por_procurador"] = [
+        {
+            "procurador": "Sheyla",
+            "distributed": 85,
+            "production": 90,
+            "opinions": 70,
+            "quotas": 20,
+            "median_days": 7.2,
+        },
+        {
+            "procurador": "Outro",
+            "distributed": 110,
+            "production": 120,
+            "opinions": 80,
+            "quotas": 40,
+            "median_days": 11.4,
+        },
+    ]
+    snapshot["fatos_trimestrais"] = {
+        "saldo_fluxo": 49,
+        "pico_distribuicoes": {"mes": 7, "distribuicoes": 200},
+        "menor_distribuicoes": {"mes": 9, "distribuicoes": 169},
+        "pico_producao": {"mes": 8, "producao": 229},
+        "menor_producao": {"mes": 9, "producao": 155},
+        "meses_producao_superior_distribuicao": 2,
+        "faixa_predominante_permanencia": "0–7 dias",
+        "quantidade_61_90": 6,
+        "quantidade_mais_90": 2,
+    }
+    snapshot["comparacao_periodo_anterior"] = (
+        {
+            "periodo": "2º trimestre de 2026",
+            "distributed": 500,
+            "production": 520,
+            "opinions": 360,
+            "quotas": 160,
+            "production_rate": 104.0,
+            "median_days": 8.2,
+        }
+        if prior
+        else None
+    )
+    return snapshot
+
+
+def test_quarterly_fallback_uses_the_complete_editorial_contract():
+    content = quarterly_fallback_content(_quarterly_snapshot_with_editorial_facts())
+
+    assert content["resumo_executivo"] == (
+        "No 3º trimestre de 2026, o MPC-PB registrou 594 atos de produção e 545 "
+        "distribuições, resultando em saldo de +49 registros."
+    )
+    assert "maior volume de distribuições ocorreu em julho" in content["evolucao_periodo"]
+    assert "menor em setembro" in content["evolucao_periodo"]
+    assert "pico em agosto" in content["evolucao_periodo"]
+    assert "2 de 3 meses" in content["evolucao_periodo"]
+    assert "424 pareceres, correspondentes a 71,4%" in content["composicao_producao"]
+    assert "170 cotas, equivalentes a 28,6%" in content["composicao_producao"]
+    assert "mediana de permanência entre 7,2 dias e 11,4 dias" in content["producao_procurador"]
+    assert "500 para 545 (9,0%)" in content["comparacao_periodo_anterior"]
+    assert "104,0% para 109,0%, diferença de +5,0 p.p." in content[
+        "comparacao_periodo_anterior"
+    ]
+    assert "produção superou as distribuições em +49 registros" in content[
+        "sintese_pontos_atencao"
+    ]
+    assert "produção passou de 520 para 594 (14,2%)" in content[
+        "sintese_pontos_atencao"
+    ]
+
+
+def test_quarterly_fallback_omits_history_when_there_is_no_prior_quarter():
+    content = quarterly_fallback_content(
+        _quarterly_snapshot_with_editorial_facts(prior=False)
+    )
+
+    assert content["comparacao_periodo_anterior"] == QUARTERLY_WITHOUT_PRIOR
+    assert "trimestre anterior" not in content["sintese_pontos_atencao"].lower()
+    assert "produção superou as distribuições em +49 registros" in content[
+        "sintese_pontos_atencao"
+    ]
+
+
+def test_annual_fallback_remains_unchanged_by_the_quarterly_editorial_review():
+    content = annual_fallback_content(_annual_snapshot())
+
+    assert content["resumo_executivo"].startswith(
+        "Este relatório consolida os indicadores de produção do MPC-PB"
+    )
+
+
 def test_prompt_contract_forbids_transcription_and_efficiency_language():
     prompt = ai_service.PROMPT_RELATORIO_INSTITUCIONAL.lower()
     assert "não use estas expressões: taxa de produção" in prompt
@@ -196,6 +298,18 @@ def test_prompt_contract_forbids_transcription_and_efficiency_language():
     assert context["tipo_relatorio"] == "ANUAL"
     assert context["fatos_para_redacao"]["procuradores"]["quantidade"] == 2
     assert "Bradson" not in str(context["fatos_para_redacao"])
+
+
+def test_quarterly_prompt_requires_factual_short_prose_and_points_percentage():
+    prompt = ai_service.PROMPT_RELATORIO_TRIMESTRAL.lower()
+
+    assert "não faça contas" in prompt
+    assert "não derive percentuais" in prompt
+    assert "não altere sinais" in prompt
+    assert "diferença em p.p." in prompt
+    assert "não crie ranking" in prompt
+    assert "não use causalidade" in prompt
+    assert "duas a quatro frases curtas" in prompt
 
 
 def test_permanence_bands_and_rounded_displays_are_not_unknown():

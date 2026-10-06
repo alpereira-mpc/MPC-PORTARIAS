@@ -12,6 +12,7 @@ from services.institutional_presentation import (
     comparison_available,
     editorial_facts,
     format_count,
+    format_percent,
     format_report_period,
     missing_comparison_text,
     writing_indicators,
@@ -247,16 +248,20 @@ def quarterly_fallback_content(snapshot):
     monthly_positive = quarterly.get("meses_producao_superior_distribuicao")
     months = len((snapshot.get("serie_mensal") or []))
     permanence = quarterly.get("faixa_predominante_permanencia")
-    more_60 = quarterly.get("quantidade_mais_60")
     more_90 = quarterly.get("quantidade_mais_90")
     procuradores = facts["procuradores"]
     comparison = facts["comparacao"]
-    relation = quarterly.get("relacao_producao_distribuicoes")
+    trough_d = quarterly.get("menor_distribuicoes") or {}
+    trough_p = quarterly.get("menor_producao") or {}
+    composition = snapshot.get("composicao_producao") or {}
     evolution = (
         f"No trimestre, o maior volume de distribuições ocorreu em {MONTHS[int(peak_d.get('mes', 1)) - 1]}, "
-        f"com {format_count(peak_d.get('distribuicoes'))} registros, enquanto a produção atingiu "
-        f"seu pico em {MONTHS[int(peak_p.get('mes', 1)) - 1]}, com {format_count(peak_p.get('producao'))} registros."
-        if peak_d and peak_p
+        f"com {format_count(peak_d.get('distribuicoes'))} registros, e o menor em "
+        f"{MONTHS[int(trough_d.get('mes', 1)) - 1]}, com {format_count(trough_d.get('distribuicoes'))}. "
+        f"A produção atingiu seu pico em {MONTHS[int(peak_p.get('mes', 1)) - 1]}, "
+        f"com {format_count(peak_p.get('producao'))} registros, e o menor volume em "
+        f"{MONTHS[int(trough_p.get('mes', 1)) - 1]}, com {format_count(trough_p.get('producao'))}."
+        if peak_d and trough_d and peak_p and trough_p
         else "A evolução mensal está apresentada nos indicadores consolidados do período."
     )
     if monthly_positive is not None and months:
@@ -283,33 +288,53 @@ def quarterly_fallback_content(snapshot):
         production = comparison.get("producao") or {}
         relation_delta = comparison.get("producao_distribuicoes") or {}
         comparison_text = (
-            f"Na comparação com o período anterior, as distribuições passaram de {distribution.get('anterior', '—')} para {distribution.get('atual', '—')} "
-            f"(Dif. {distribution.get('delta', '—')}) e a produção de {production.get('anterior', '—')} para {production.get('atual', '—')} "
-            f"(Dif. {production.get('delta', '—')}). A relação Produção/Distribuições variou {relation_delta.get('delta', '—')}."
+            f"Em relação ao trimestre anterior, as distribuições passaram de {distribution.get('anterior', '—')} para "
+            f"{distribution.get('atual', '—')} ({distribution.get('delta_percentual', '—')}), enquanto a produção passou de "
+            f"{production.get('anterior', '—')} para {production.get('atual', '—')} "
+            f"({production.get('delta_percentual', '—')}). A relação Produção/Distribuições variou de "
+            f"{relation_delta.get('anterior', '—')} para {relation_delta.get('atual', '—')}, diferença de "
+            f"{relation_delta.get('delta', '—')}"
         )
-    long_text = ""
-    if more_60 is not None:
-        long_text = f" Foram registrados {format_count(more_60)} eventos acima de 60 dias, dos quais {format_count(more_90 or 0)} acima de 90 dias."
+    permanence_text = ""
+    if quarterly.get("quantidade_61_90") is not None:
+        permanence_text = (
+            f" Foram registrados {format_count(quarterly.get('quantidade_61_90'))} registros "
+            f"na faixa de 61–90 dias e {format_count(more_90 or 0)} acima de 90 dias."
+        )
     band_text = f" A faixa predominante foi de {permanence}." if permanence else ""
     return {
         "resumo_executivo": (
-            f"Este relatório consolida os indicadores de produção do MPC-PB no {period}. "
-            f"No período, foram registrados {indicators['producao']['display']} atos de produção e "
+            f"No {period}, o MPC-PB registrou {indicators['producao']['display']} atos de produção e "
             f"{indicators['distribuicoes']['display']} distribuições, resultando em saldo de {balance_text} registros."
         ),
         "evolucao_periodo": evolution,
         "composicao_producao": (
-            f"{indicators['pareceres']['display']} pareceres e {indicators['cotas']['display']} cotas compuseram a produção do período."
+            f"A produção foi composta por {format_count(indicators['pareceres']['raw'])} pareceres, correspondentes a "
+            f"{format_percent(composition.get('pareceres_percentual'))}, e {format_count(indicators['cotas']['raw'])} "
+            f"cotas, equivalentes a {format_percent(composition.get('cotas_percentual'))}."
         ),
         "permanencia": (
-            f"A mediana de permanência foi de {indicators['mediana']['display']}." + band_text + long_text
+            f"A mediana de permanência foi de {indicators['mediana']['display']}." + band_text + permanence_text
         ),
         "producao_procurador": procurador_text,
         "comparacao_periodo_anterior": comparison_text,
         "sintese_pontos_atencao": (
-            f"A produção ficou em {balance_text} registros em relação às distribuições, com relação Produção/Distribuições de "
-            f"{format_count(relation) if relation is None else f'{float(relation):.1f}'.replace('.', ',') + '%'} ."
-        ).replace("% .", "%.") + band_text + long_text,
+            f"No trimestre, a produção superou as distribuições em {balance_text} registros."
+        )
+        + (
+            f" Em relação ao trimestre anterior, a produção passou de {comparison.get('producao', {}).get('anterior')} "
+            f"para {comparison.get('producao', {}).get('atual')} ({comparison.get('producao', {}).get('delta_percentual')}), "
+            f"e as distribuições de {comparison.get('distribuicoes', {}).get('anterior')} para "
+            f"{comparison.get('distribuicoes', {}).get('atual')} ({comparison.get('distribuicoes', {}).get('delta_percentual')}). "
+            f"A relação Produção/Distribuições variou de "
+            f"{comparison.get('producao_distribuicoes', {}).get('anterior')} para "
+            f"{comparison.get('producao_distribuicoes', {}).get('atual')} "
+            f"({str(comparison.get('producao_distribuicoes', {}).get('delta', '')).rstrip('.')})."
+            if comparison.get("disponivel")
+            else ""
+        )
+        + f" A mediana de permanência foi de {indicators['mediana']['display']}."
+        + band_text,
     }
 
 

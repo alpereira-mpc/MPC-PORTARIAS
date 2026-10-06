@@ -16,6 +16,7 @@ from database.store import Store
 from document_generator.institutional_report_pdf import (
     ANNUAL_WITHOUT_PRIOR,
     CHART_COLORS,
+    format_decimal,
     LOGO,
     generate_institutional_report_pdf,
     institutional_pdf_filename,
@@ -210,6 +211,22 @@ def test_partial_annual_pdf_states_coverage_and_skips_empty_comparison(reference
     assert "Pareceres" in text
     assert "opiniões" not in text.lower()
     assert "opinions" not in text.lower()
+
+
+def test_annual_permanence_note_uses_frozen_percentiles(reference):
+    _store, _quarterly, annual = reference
+    facts = annual["fatos_anuais"]
+    text, _pages = _pdf_text(
+        generate_institutional_report_pdf(_report(annual), emitido_em=EMITTED)
+    )
+    expected = (
+        "Nota: no período analisado, 75% dos registros apresentaram permanência "
+        f"de até {format_decimal(facts['p75_permanencia'], ' dias')} (P75), "
+        f"enquanto 90% permaneceram por até "
+        f"{format_decimal(facts['p90_permanencia'], ' dias')} (P90)."
+    )
+
+    assert expected in " ".join(text.split())
 
 
 def test_draft_is_marked_and_review_is_not_a_final_document(reference):
