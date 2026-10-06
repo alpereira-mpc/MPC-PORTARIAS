@@ -46,6 +46,7 @@ from services.date_format import format_date_br, format_datetime_br
 from services.institutional_presentation import (
     ANNUAL_WITHOUT_PRIOR,
     PRIOR_WITHOUT_DATA,
+    QUARTERLY_WITHOUT_PRIOR,
     format_report_period,
 )
 from services.institutional_report_content import normalize_content
@@ -90,6 +91,9 @@ ANNUAL_CHART_COLORS = {
         "#9B1724",
     ),
 }
+# The quarterly report adopts the approved annual visual semantics without
+# sharing a mutable mapping or changing the annual artifact.
+QUARTERLY_CHART_COLORS = dict(ANNUAL_CHART_COLORS)
 MONTHS = (
     "Janeiro",
     "Fevereiro",
@@ -309,6 +313,14 @@ def _meta(report, snapshot, emitted):
 def _reference_period(snapshot):
     metadata = snapshot.get("metadados") or {}
     months = (snapshot.get("cobertura_historica") or {}).get("meses_disponiveis") or []
+    if metadata.get("tipo") == "TRIMESTRAL":
+        try:
+            start = date.fromisoformat(str(metadata.get("data_inicio"))[:10])
+            end_exclusive = date.fromisoformat(str(metadata.get("data_fim"))[:10])
+            end = end_exclusive.fromordinal(end_exclusive.toordinal() - 1)
+            return f"{format_date_br(start)} a {format_date_br(end)}"
+        except (TypeError, ValueError):
+            return format_report_period(snapshot)
     if metadata.get("tipo") == "ANUAL" and months:
         year, last = int(metadata["ano"]), max(int(month) for month in months)
         return f"01/01/{year} a {monthrange(year, last)[1]:02d}/{last:02d}/{year}"
@@ -529,22 +541,11 @@ def _cover(meta, styles):
             Paragraph(_escape(meta["period"]), styles["period"]),
         ]
     )
-    if not meta["annual"]:
-        story.extend(
-            [
-                Spacer(1, 62 * mm),
-                Paragraph(_escape(f"Versão {meta['versao']}"), styles["meta"]),
-                Paragraph(_escape(f"Data de corte: {meta['corte']}"), styles["meta"]),
-                Paragraph(
-                    _escape(f"Data de emissão: {meta['emitido']}"), styles["meta"]
-                ),
-            ]
-        )
-        return story
     story.append(Spacer(1, 46 * mm))
     technical = [
         ["Período de referência", meta["referencia"]],
         ["Dados extraídos em", meta["emitido"].replace(" ", " às ", 1)],
+        ["Data de emissão", meta["emitido"]],
         ["Dados consolidados até", meta["consolidado_em"]],
         ["Versão", str(meta["versao"])],
         ["Fonte", "Tramita/TCE-PB"],
@@ -582,6 +583,8 @@ def _logo(width):
 
 
 def _body(report, snapshot, meta, styles):
+    if not meta["annual"]:
+        return _quarterly_body(report, snapshot, meta, styles)
     content = normalize_content(report.get("conteudo_estruturado"), snapshot)
     story = []
     story.extend(
@@ -868,6 +871,132 @@ def _annual_permanence_summary(snapshot, styles, *, compact=False):
     return [table, Spacer(1, 1 * mm if compact else 2 * mm)]
 
 
+def _quarterly_body(report, snapshot, meta, styles):
+    """Five-page quarterly composition. It only reads the frozen snapshot."""
+    content = normalize_content(report.get("conteudo_estruturado"), snapshot)
+    facts = snapshot.get("fatos_trimestrais") or {}
+    summary = snapshot.get("indicadores_gerais") or {}
+    monthly = _monthly_rows(snapshot)
+    colors = QUARTERLY_CHART_COLORS
+    story = []
+    story.extend(_section(styles, "Resumo executivo", _text(content, "resumo_executivo")))
+    story.extend(_quarterly_highlights(snapshot, styles))
+    metrics = _metrics(summary, quarterly=True, facts=facts)
+    if metrics:
+        story.extend([Paragraph("Indicadores do período", styles["h1"]), metrics])
+    story.extend(_section(styles, "Evolução do período", _text(content, "evolucao_periodo")))
+    story.extend(
+        _chart(
+            "Distribuições e produção por mês",
+            lambda: _bars(monthly, ["Distribuídos", "Produção"], colors=colors, height=122),
+            [("Distribuições", colors["Distribuídos"]), ("Produção", colors["Produção"])],
+            styles,
+            spacing=1 * mm,
+        )
+    )
+    story.append(PageBreak())
+    story.extend(_section(styles, "Composição da produção", _text(content, "composicao_producao")))
+    story.extend(
+        _chart(
+            "Pareceres e cotas por mês",
+            lambda: _bars(monthly, ["Pareceres", "Cotas"], stacked=True, colors=colors, height=118),
+            [("Pareceres", colors["Pareceres"]), ("Cotas", colors["Cotas"])],
+            styles,
+            spacing=1 * mm,
+        )
+    )
+    story.extend(_section(styles, "Permanência", _text(content, "permanencia")))
+    story.extend(_quarterly_permanence_summary(facts, styles))
+    story.extend(
+        _chart(
+            "Mediana de permanência por mês",
+            lambda: _median_line(monthly, height=100),
+            [("Mediana de permanência", CHART_COLORS["Mediana de permanência"])],
+            styles,
+            spacing=1 * mm,
+        )
+    )
+    story.extend(
+        _chart(
+            "Faixas de permanência",
+            lambda: _band_bars(snapshot, annual=True, height=135),
+            [],
+            styles,
+            spacing=1 * mm,
+        )
+    )
+    procuradores = _procurador_rows(snapshot)
+    story.append(PageBreak())
+    story.append(Spacer(1, 10 * mm))
+    story.extend(_section(styles, "Produção por Procurador", _text(content, "producao_procurador")))
+    table = _procurador_table(procuradores)
+    if table is not None:
+        story.extend([table, Spacer(1, 2 * mm)])
+    story.append(
+        Paragraph(
+            "Os indicadores individuais refletem o conjunto de processos movimentados no período e não constituem, isoladamente, avaliação de desempenho, devendo ser considerados juntamente com o perfil e a complexidade do acervo.",
+            styles["note"],
+        )
+    )
+    story.extend(
+        _chart(
+            "Distribuições e produção por Procurador",
+            lambda: _procurador_bars(procuradores, ["Distribuídos", "Produção"], colors=colors, height=165),
+            [("Distribuições", colors["Distribuídos"]), ("Produção", colors["Produção"])],
+            styles,
+            spacing=1 * mm,
+        )
+    )
+    story.extend(
+        _chart(
+            "Composição percentual de Pareceres e Cotas por Procurador",
+            lambda: _procurador_composition(procuradores, colors=colors, height=165),
+            [("Pareceres", colors["Pareceres"]), ("Cotas", colors["Cotas"])],
+            styles,
+            spacing=1 * mm,
+        )
+    )
+    story.append(PageBreak())
+    story.extend(_quarterly_comparison(snapshot, content, styles))
+    story.extend(_synthesis(content, styles, annual=True))
+    story.extend(_methodology(content, meta, styles, cohort_note=True))
+    return story
+
+
+def _quarterly_highlights(snapshot, styles):
+    facts = snapshot.get("fatos_trimestrais") or {}
+    bullets = []
+    balance = facts.get("saldo_fluxo")
+    if balance is not None:
+        bullets.append(f"O saldo do fluxo foi de {float(balance):+.0f} registros.")
+    peak = facts.get("pico_producao") or {}
+    if peak.get("mes") is not None:
+        bullets.append(f"O maior volume de produção ocorreu em {MONTHS[int(peak['mes']) - 1].lower()}, com {format_count(peak.get('producao'))} registros.")
+    band = facts.get("faixa_predominante_permanencia")
+    if band:
+        bullets.append(f"A faixa predominante de permanência foi de {band}.")
+    if facts.get("quantidade_mais_60") is not None:
+        bullets.append(f"{format_count(facts['quantidade_mais_60'])} registros permaneceram acima de 60 dias; {format_count(facts.get('quantidade_mais_90') or 0)} ultrapassaram 90 dias.")
+    if not bullets:
+        return []
+    return [Paragraph("Destaques do período", styles["h1"]), *[Paragraph("• " + _escape(item), styles["bullet"]) for item in bullets[:5]]]
+
+
+def _quarterly_permanence_summary(facts, styles):
+    entries = (
+        ("P75", format_decimal(facts.get("p75_permanencia"), " dias")),
+        ("P90", format_decimal(facts.get("p90_permanencia"), " dias")),
+        ("Acima de 60 dias", f"{format_count(facts.get('quantidade_mais_60'))} · {format_decimal(facts.get('percentual_mais_60'), '%')}"),
+        ("Acima de 90 dias", f"{format_count(facts.get('quantidade_mais_90'))} · {format_decimal(facts.get('percentual_mais_90'), '%')}"),
+    )
+    if not any(value != "—" and value != "— · —" for _label, value in entries):
+        return []
+    cells = [[Paragraph(_escape(value), styles["metric_value"]), Paragraph(_escape(label), styles["metric_label"])] for label, value in entries]
+    table = Table([cells], colWidths=[CONTENT_WIDTH / 4] * 4)
+    table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), NOTE_PAPER), ("BOX", (0, 0), (-1, -1), 0.35, LINE), ("INNERGRID", (0, 0), (-1, -1), 0.25, LINE), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+    return [table, Spacer(1, 1 * mm)]
+
+
 def _section(styles, title, text):
     blocks = _flow_text(text, styles["body"], styles["bullet"])
     if not blocks:
@@ -879,7 +1008,7 @@ def _text(content, key):
     return (content.get(key) or {}).get("texto") or ""
 
 
-def _metrics(summary, *, annual=False):
+def _metrics(summary, *, annual=False, quarterly=False, facts=None):
     fields = (
         ("distributed", "Distribuídos", "count"),
         ("production", "Produção", "count"),
@@ -888,7 +1017,7 @@ def _metrics(summary, *, annual=False):
         ("production_rate", "Produção/Distribuições", "percent"),
         ("median_days", "Mediana de permanência", "days"),
     )
-    if annual:
+    if annual or quarterly:
         fields = (
             ("production", "Produção", "count"),
             ("distributed", "Distribuições", "count"),
@@ -900,8 +1029,11 @@ def _metrics(summary, *, annual=False):
         )
         summary = {
             **summary,
-            "flow_balance": (summary.get("production") or 0)
-            - (summary.get("distributed") or 0),
+            "flow_balance": (
+                (facts or {}).get("saldo_fluxo")
+                if (facts or {}).get("saldo_fluxo") is not None
+                else (summary.get("production") or 0) - (summary.get("distributed") or 0)
+            ),
         }
     present = [item for item in fields if item[0] in summary]
     if not present:
@@ -924,7 +1056,7 @@ def _metrics(summary, *, annual=False):
                 Paragraph(_escape(label), styles["metric_label"]),
             ]
         )
-    complement = cells.pop() if annual and len(cells) == 7 else None
+    complement = cells.pop() if (annual or quarterly) and len(cells) == 7 else None
     while len(cells) % 3:
         cells.append("")
     rows = [cells[index : index + 3] for index in range(0, len(cells), 3)]
@@ -1036,8 +1168,8 @@ def _comparison_rows(snapshot):
         return None
     if metadata.get("tipo") == "TRIMESTRAL":
         quarter = int(metadata.get("trimestre") or 0)
-        prior_label = f"{quarter - 1 if quarter > 1 else 4}º trimestre"
-        current_label = f"{quarter}º trimestre"
+        prior_label = prior.get("periodo") or f"{quarter - 1 if quarter > 1 else 4}º trimestre"
+        current_label = f"{quarter}º trimestre de {metadata.get('ano')}"
     else:
         year = int(metadata.get("ano") or 0)
         prior_label = str(year - 1)
@@ -1126,7 +1258,7 @@ def _band_bars(snapshot, *, annual=False, height=None):
     )
 
 
-def _procurador_bars(rows, fields, *, colors=None):
+def _procurador_bars(rows, fields, *, colors=None, height=None):
     if not rows:
         return None
     series = [_numbers(rows, field) for field in fields]
@@ -1136,11 +1268,12 @@ def _procurador_bars(rows, fields, *, colors=None):
         [row["Procurador"] for row in rows],
         series,
         [(colors or CHART_COLORS)[field] for field in fields],
+        height=height,
     )
 
 
-def _procurador_composition(rows):
-    """Annual-only 100% bars: profile, not a duplicate of absolute totals."""
+def _procurador_composition(rows, *, colors=ANNUAL_CHART_COLORS, height=None):
+    """100% bars: profile, not a duplicate of absolute totals."""
     usable = []
     for row in rows:
         opinions, quotas = row.get("Pareceres"), row.get("Cotas")
@@ -1158,8 +1291,9 @@ def _procurador_composition(rows):
     return _horizontal_bars(
         [item[0] for item in usable],
         [[item[1] for item in usable], [item[2] for item in usable]],
-        [ANNUAL_CHART_COLORS["Pareceres"], ANNUAL_CHART_COLORS["Cotas"]],
+        [colors["Pareceres"], colors["Cotas"]],
         stacked=True,
+        height=height,
     )
 
 
@@ -1457,6 +1591,53 @@ def _comparison(snapshot, content, styles):
     return story
 
 
+def _quarterly_comparison(snapshot, content, styles):
+    prior = snapshot.get("comparacao_periodo_anterior")
+    summary = snapshot.get("indicadores_gerais") or {}
+    prose = _flow_text(_text(content, "comparacao_periodo_anterior"), styles["body"], styles["bullet"])
+    if not isinstance(prior, dict) or not all(key in prior for key in ("distributed", "production")):
+        return [
+            Paragraph("Comparação com trimestre anterior", styles["h1"]),
+            *(prose or [Paragraph(QUARTERLY_WITHOUT_PRIOR, styles["body"])]),
+        ]
+
+    def row(label, key, *, percentage_points=False):
+        current, earlier = summary.get(key), prior.get(key)
+        if current is None or earlier is None:
+            return None
+        delta = float(current) - float(earlier)
+        current_text = format_decimal(current, "%") if percentage_points else format_count(current)
+        earlier_text = format_decimal(earlier, "%") if percentage_points else format_count(earlier)
+        if percentage_points:
+            delta_text = f"{delta:+.1f}".replace(".", ",") + " p.p."
+        else:
+            percent = delta / float(earlier) * 100 if earlier else None
+            delta_text = f"{delta:+.0f}" + (f" · {format_decimal(percent, '%')}" if percent is not None else "")
+        return [
+            Paragraph(_escape(label), styles["td_name"]),
+            Paragraph(_escape(f"Atual: {current_text}"), styles["td_num"]),
+            Paragraph(_escape(f"Anterior: {earlier_text}"), styles["td_num"]),
+            Paragraph(_escape(f"Dif. {delta_text}"), styles["td_num"]),
+        ]
+
+    rows = [
+        item for item in (
+            row("Distribuições", "distributed"),
+            row("Produção", "production"),
+            row("Pareceres", "opinions"),
+            row("Cotas", "quotas"),
+            row("Relação Produção/Distribuições", "production_rate", percentage_points=True),
+        ) if item is not None
+    ]
+    table = Table(rows, colWidths=[CONTENT_WIDTH * .34, CONTENT_WIDTH * .22, CONTENT_WIDTH * .22, CONTENT_WIDTH * .22])
+    table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), PAPER), ("BOX", (0, 0), (-1, -1), .4, LINE), ("INNERGRID", (0, 0), (-1, -1), .25, LINE), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    chart_rows = _comparison_rows(snapshot)
+    story = [Paragraph("Comparação com trimestre anterior", styles["h1"]), table, Spacer(1, 2 * mm), *prose]
+    if chart_rows:
+        story.extend(_chart("Distribuições e produção: período atual e anterior", lambda: _bars(chart_rows, ["Distribuídos", "Produção"], category="Período", colors=QUARTERLY_CHART_COLORS, height=130), [("Distribuições", QUARTERLY_CHART_COLORS["Distribuídos"]), ("Produção", QUARTERLY_CHART_COLORS["Produção"])], styles, spacing=1 * mm))
+    return story
+
+
 def _synthesis(content, styles, *, annual=False):
     raw = _text(content, "sintese_pontos_atencao")
     if not raw.strip():
@@ -1489,13 +1670,13 @@ def _split_attention(text):
     return prose, text[match.end() :].strip()
 
 
-def _methodology(content, meta, styles):
+def _methodology(content, meta, styles, *, cohort_note=False):
     note = _readable_note(_text(content, "nota_metodologica"))
     flow = []
     if note:
         flow.append(Paragraph("Nota metodológica", styles["note_title"]))
         flow.extend(_flow_text(note, styles["note"], styles["note"]))
-    if meta["annual"]:
+    if meta["annual"] or cohort_note:
         flow.append(
             Paragraph(
                 "As distribuições e produções contabilizadas no período representam eventos ocorridos no intervalo de referência e não necessariamente correspondem à mesma coorte de processos.",

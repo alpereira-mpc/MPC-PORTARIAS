@@ -166,6 +166,22 @@ def test_quarterly_facts_keep_three_months_without_asking_for_a_dump():
     assert facts["comparacao"]["disponivel"] is True
 
 
+def test_quarterly_comparison_uses_points_percentage_and_safe_missing_text():
+    from services.institutional_presentation import (
+        QUARTERLY_WITHOUT_PRIOR,
+        _quarterly_delta,
+        missing_comparison_text,
+    )
+
+    delta = _quarterly_delta(101.9, 105.1, percentage_points=True)
+    assert delta["delta"] == "-3,2 p.p."
+    assert delta["atual"] == "101,9%"
+    assert delta["anterior"] == "105,1%"
+    absent = _quarterly_snapshot()
+    absent["comparacao_periodo_anterior"] = None
+    assert missing_comparison_text(absent) == QUARTERLY_WITHOUT_PRIOR
+
+
 def test_prompt_contract_forbids_transcription_and_efficiency_language():
     prompt = ai_service.PROMPT_RELATORIO_INSTITUCIONAL.lower()
     assert "não use estas expressões: taxa de produção" in prompt

@@ -20,6 +20,9 @@ ANNUAL_WITHOUT_PRIOR = (
     "Não há período anual anterior equivalente disponível para comparação."
 )
 PRIOR_WITHOUT_DATA = "Não há período anterior disponível para comparação."
+QUARTERLY_WITHOUT_PRIOR = (
+    "Não há trimestre imediatamente anterior equivalente disponível para comparação."
+)
 
 
 def format_count(value):
@@ -70,6 +73,8 @@ def missing_comparison_text(snapshot):
     """Deterministic sentence when the frozen snapshot has no previous period."""
     if ((snapshot or {}).get("metadados") or {}).get("tipo") == "ANUAL":
         return ANNUAL_WITHOUT_PRIOR
+    if ((snapshot or {}).get("metadados") or {}).get("tipo") == "TRIMESTRAL":
+        return QUARTERLY_WITHOUT_PRIOR
     return PRIOR_WITHOUT_DATA
 
 
@@ -157,6 +162,8 @@ def editorial_facts(snapshot):
     }
     if tipo == "ANUAL":
         facts["fatos_anuais"] = snapshot.get("fatos_anuais") or {}
+    elif tipo == "TRIMESTRAL":
+        facts["fatos_trimestrais"] = snapshot.get("fatos_trimestrais") or {}
     return facts
 
 
@@ -395,6 +402,35 @@ def _comparison_facts(snapshot, summary):
     if not comparison_available(snapshot):
         return {"disponivel": False, "texto": missing_comparison_text(snapshot)}
     prior = snapshot.get("comparacao_periodo_anterior") or {}
+    quarterly = ((snapshot.get("metadados") or {}).get("tipo") == "TRIMESTRAL")
+    if quarterly:
+        return {
+            "disponivel": True,
+            "periodo_anterior": prior.get("periodo"),
+            "instrucao": (
+                "Use apenas os valores já calculados. Informe valor anterior, atual e "
+                "diferença; para a relação Produção/Distribuições, use pontos percentuais. "
+                "Não use as palavras maior ou menor sem apresentar os três valores."
+            ),
+            "distribuicoes": _quarterly_delta(
+                summary.get("distributed"), prior.get("distributed")
+            ),
+            "producao": _quarterly_delta(
+                summary.get("production"), prior.get("production")
+            ),
+            "pareceres": _quarterly_delta(
+                summary.get("opinions"), prior.get("opinions")
+            ),
+            "cotas": _quarterly_delta(summary.get("quotas"), prior.get("quotas")),
+            "producao_distribuicoes": _quarterly_delta(
+                summary.get("production_rate"),
+                prior.get("production_rate"),
+                percentage_points=True,
+            ),
+            "mediana": _quarterly_delta(
+                summary.get("median_days"), prior.get("median_days"), days=True
+            ),
+        }
     return {
         "disponivel": True,
         "instrucao": (
@@ -418,6 +454,25 @@ def _comparison_facts(snapshot, summary):
             summary.get("median_days"), prior.get("median_days"), format_days
         ),
     }
+
+
+def _quarterly_delta(current, prior, *, percentage_points=False, days=False):
+    if current is None or prior is None:
+        return None
+    difference = float(current) - float(prior)
+    result = {
+        "atual": format_percent(current) if percentage_points else (format_days(current) if days else format_count(current)),
+        "anterior": format_percent(prior) if percentage_points else (format_days(prior) if days else format_count(prior)),
+        "delta_absoluto": difference,
+        "delta": (
+            f"{difference:+.1f}".replace(".", ",") + " p.p."
+            if percentage_points
+            else (f"{difference:+.1f}".replace(".", ",") + " dias" if days else f"{difference:+.0f}")
+        ),
+    }
+    if not percentage_points and float(prior) != 0:
+        result["delta_percentual"] = format_percent(difference / float(prior) * 100)
+    return result
 
 
 def _delta(current, prior, formatter):

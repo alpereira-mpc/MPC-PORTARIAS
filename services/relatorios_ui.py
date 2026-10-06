@@ -46,6 +46,7 @@ from services.ui_theme import (
     empty_state,
     filter_mark,
     html_text,
+    institutional_card_mark,
     kpi_mark,
     render_html,
     section_label,
@@ -2817,6 +2818,7 @@ def _render_institutional_created_reports(store, principal, repository, latest_r
         if summary["Distribuição"] != "—":
             details.append(f"Distribuição: {summary['Distribuição']}")
         with st.container(border=True):
+            institutional_card_mark()
             st.markdown(f"**{period}**")
             snapshot = report.get("snapshot_dados") or {}
             coverage = (snapshot.get("cobertura_historica") or {}).get(
@@ -2905,6 +2907,7 @@ def _render_institutional_creation(store, principal, repository, reports, read, 
     for item in suggestions:
         token = _period_token(item["tipo"], item["ano"], item["trimestre"])
         with st.container(border=True):
+            institutional_card_mark()
             st.markdown(f"**{item['titulo']}**")
             st.caption(item["cobertura"].capitalize())
             if getattr(principal, "administrator", False) and st.button(

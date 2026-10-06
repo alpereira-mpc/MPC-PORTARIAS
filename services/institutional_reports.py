@@ -165,6 +165,135 @@ def _annual_facts(summary, monthly, bands, events):
     }
 
 
+def _quarterly_facts(summary, monthly, bands, events, procuradores):
+    """Frozen facts for the quarterly report; calculations never depend on AI."""
+    production = float(summary.get("production") or 0)
+    distributed = float(summary.get("distributed") or 0)
+    durations = sorted(
+        turnaround_days(event)
+        for event in events
+        if event["tipo_movimentacao"] == "SAIDA"
+        and event["classificacao_producao"] in ("PARECER", "COTA")
+        and turnaround_days(event) is not None
+    )
+    counts = {item["faixa"]: int(item["quantidade"]) for item in bands}
+    order = (
+        "0–7 dias",
+        "8–15 dias",
+        "16–30 dias",
+        "31–60 dias",
+        "61–90 dias",
+        "Mais de 90 dias",
+    )
+
+    def percentile(level):
+        if not durations:
+            return None
+        position = (len(durations) - 1) * level
+        lower, upper = int(position), min(int(position) + 1, len(durations) - 1)
+        return durations[lower] + (durations[upper] - durations[lower]) * (
+            position - lower
+        )
+
+    rows = [item for item in monthly if isinstance(item, dict) and item.get("summary")]
+    monthly_facts = [
+        {
+            "mes": row.get("month"),
+            "distribuicoes": row["summary"].get("distributed"),
+            "producao": row["summary"].get("production"),
+            "saldo": (row["summary"].get("production") or 0)
+            - (row["summary"].get("distributed") or 0),
+        }
+        for row in rows
+    ]
+    total_duration = sum(counts.get(label, 0) for label in order)
+    more_90 = counts.get("Mais de 90 dias", 0)
+    more_60 = counts.get("61–90 dias", 0) + more_90
+    main_band = max(order, key=lambda label: counts.get(label, 0), default=None)
+
+    def interval(field, *, share=False):
+        values = []
+        for row in procuradores or []:
+            value = row.get(field)
+            if share:
+                total = float(row.get("production") or 0)
+                value = float(row.get("opinions") or 0) / total * 100 if total else None
+            if value is not None:
+                values.append(float(value))
+        return {"minimo": min(values), "maximo": max(values)} if values else None
+
+    return {
+        "total_distribuicoes": distributed,
+        "total_producao": production,
+        "total_pareceres": summary.get("opinions"),
+        "total_cotas": summary.get("quotas"),
+        "saldo_fluxo": production - distributed,
+        "relacao_producao_distribuicoes": summary.get("production_rate"),
+        "pico_distribuicoes": max(monthly_facts, key=lambda row: row["distribuicoes"] or 0, default=None),
+        "menor_distribuicoes": min(monthly_facts, key=lambda row: row["distribuicoes"] or 0, default=None),
+        "pico_producao": max(monthly_facts, key=lambda row: row["producao"] or 0, default=None),
+        "menor_producao": min(monthly_facts, key=lambda row: row["producao"] or 0, default=None),
+        "saldo_por_mes": monthly_facts,
+        "meses_producao_superior_distribuicao": sum(row["saldo"] > 0 for row in monthly_facts),
+        "meses_distribuicao_superior_producao": sum(row["saldo"] < 0 for row in monthly_facts),
+        "mediana_permanencia": summary.get("median_days"),
+        "faixa_predominante_permanencia": main_band,
+        "quantidade_0_7": counts.get("0–7 dias", 0),
+        "quantidade_8_15": counts.get("8–15 dias", 0),
+        "quantidade_16_30": counts.get("16–30 dias", 0),
+        "quantidade_31_60": counts.get("31–60 dias", 0),
+        "quantidade_61_90": counts.get("61–90 dias", 0),
+        "quantidade_mais_90": more_90,
+        "quantidade_mais_60": more_60,
+        "percentual_mais_60": more_60 / total_duration * 100 if total_duration else None,
+        "percentual_mais_90": more_90 / total_duration * 100 if total_duration else None,
+        "p75_permanencia": percentile(0.75),
+        "p90_permanencia": percentile(0.90),
+        "participacao_pareceres": summary.get("opinions") / production * 100 if production else None,
+        "participacao_cotas": summary.get("quotas") / production * 100 if production else None,
+        "intervalo_distribuicoes_procuradores": interval("distributed"),
+        "intervalo_producao_procuradores": interval("production"),
+        "intervalo_participacao_pareceres": interval("opinions", share=True),
+        "intervalo_mediana_procuradores": interval("median_days"),
+    }
+
+
+def _quarterly_comparison_facts(summary, prior):
+    """Freeze comparable quarterly deltas, including percentage-point changes."""
+    if not isinstance(prior, dict):
+        return {"periodo_anterior_identificado": None, "disponivel": False}
+
+    def delta(key, *, percentage_points=False):
+        current, previous = summary.get(key), prior.get(key)
+        if current is None or previous is None:
+            return None
+        absolute = float(current) - float(previous)
+        return {
+            "anterior": previous,
+            "atual": current,
+            "delta_absoluto": absolute,
+            "delta_percentual": (
+                None
+                if percentage_points or not float(previous)
+                else absolute / float(previous) * 100
+            ),
+            "delta_pontos_percentuais": absolute if percentage_points else None,
+        }
+
+    return {
+        "periodo_anterior_identificado": prior.get("periodo"),
+        "disponivel": True,
+        "distribuicoes": delta("distributed"),
+        "producao": delta("production"),
+        "pareceres": delta("opinions"),
+        "cotas": delta("quotas"),
+        "relacao_producao_distribuicoes": delta(
+            "production_rate", percentage_points=True
+        ),
+        "mediana_permanencia": delta("median_days"),
+    }
+
+
 def build_report_snapshot(store, *, tipo, ano, trimestre=None):
     """Build a deterministic snapshot solely from the canonical report aggregates."""
     reports = TramitaReportsStore(store)
@@ -190,13 +319,19 @@ def build_report_snapshot(store, *, tipo, ano, trimestre=None):
             for month in reports.months_for_year(prior_year)
             if (prior_quarter - 1) * 3 < month <= prior_quarter * 3
         ]
-        if prior_months:
+        if set(prior_months) == set(range((prior_quarter - 1) * 3 + 1, prior_quarter * 3 + 1)):
             prior_start, prior_end = _period_bounds(
                 "TRIMESTRAL", prior_year, prior_quarter
             )
             prior = reports.period_report(
                 prior_start.isoformat(), prior_end.isoformat()
             )["summary"]
+            prior = {
+                **prior,
+                "periodo": f"{prior_quarter}º trimestre de {prior_year}",
+                "ano": prior_year,
+                "trimestre": prior_quarter,
+            }
     elif months:
         prior_months = set(reports.months_for_year(ano - 1))
         comparable_months = set(months)
@@ -239,6 +374,17 @@ def build_report_snapshot(store, *, tipo, ano, trimestre=None):
     if tipo == "ANUAL":
         snapshot["fatos_anuais"] = _annual_facts(
             report["summary"], monthly, snapshot["faixas_permanencia"], period["events"]
+        )
+    elif tipo == "TRIMESTRAL":
+        snapshot["fatos_trimestrais"] = _quarterly_facts(
+            report["summary"],
+            monthly,
+            snapshot["faixas_permanencia"],
+            period["events"],
+            report["by_procurador"],
+        )
+        snapshot["fatos_trimestrais"]["comparacao"] = _quarterly_comparison_facts(
+            report["summary"], prior
         )
     snapshot["metadados"]["descricao_periodo"] = format_report_period(snapshot)
     return snapshot

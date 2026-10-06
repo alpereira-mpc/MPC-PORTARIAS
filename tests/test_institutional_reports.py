@@ -125,6 +125,40 @@ def test_institutional_reports_are_versioned_snapshots_from_canonical_history(tm
     assert _create(repository, annual)["periodo_parcial"]
 
 
+def test_quarterly_snapshot_freezes_facts_and_uses_the_immediate_prior_period(tmp_path):
+    store = Store(tmp_path / "quarterly-facts.db")
+    import_reference_reports(
+        store, Path(__file__).resolve().parents[1] / "referencias", "admin@test"
+    )
+    first = build_report_snapshot(store, tipo="TRIMESTRAL", ano=2026, trimestre=1)
+    second = build_report_snapshot(store, tipo="TRIMESTRAL", ano=2026, trimestre=2)
+    third = build_report_snapshot(store, tipo="TRIMESTRAL", ano=2026, trimestre=3)
+    fourth = build_report_snapshot(store, tipo="TRIMESTRAL", ano=2026, trimestre=4)
+
+    assert first["comparacao_periodo_anterior"] is None
+    assert second["comparacao_periodo_anterior"]["periodo"] == "1º trimestre de 2026"
+    assert third["comparacao_periodo_anterior"]["periodo"] == "2º trimestre de 2026"
+    assert fourth["comparacao_periodo_anterior"]["periodo"] == "3º trimestre de 2026"
+    facts = third["fatos_trimestrais"]
+    assert facts["total_producao"] == third["indicadores_gerais"]["production"]
+    assert facts["total_distribuicoes"] == third["indicadores_gerais"]["distributed"]
+    assert facts["saldo_fluxo"] == pytest.approx(
+        facts["total_producao"] - facts["total_distribuicoes"]
+    )
+    assert facts["p75_permanencia"] is not None
+    assert facts["p90_permanencia"] is not None
+    assert facts["quantidade_mais_60"] == (
+        facts["quantidade_61_90"] + facts["quantidade_mais_90"]
+    )
+    assert facts["percentual_mais_90"] <= facts["percentual_mais_60"]
+    comparison = facts["comparacao"]
+    assert comparison["periodo_anterior_identificado"] == "2º trimestre de 2026"
+    assert comparison["relacao_producao_distribuicoes"]["delta_pontos_percentuais"] == pytest.approx(
+        third["indicadores_gerais"]["production_rate"]
+        - third["comparacao_periodo_anterior"]["production_rate"]
+    )
+
+
 def test_institutional_report_schema_validates_period_type_and_version(tmp_path):
     store = Store(tmp_path / "schema.db")
     repository = InstitutionalReportsStore(store)

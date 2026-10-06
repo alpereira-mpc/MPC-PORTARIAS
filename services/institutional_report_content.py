@@ -234,6 +234,85 @@ def annual_fallback_content(snapshot):
     }
 
 
+def quarterly_fallback_content(snapshot):
+    """Editorially complete prose when the optional AI is unavailable."""
+    facts = editorial_facts(snapshot)
+    indicators = facts["indicadores"]
+    quarterly = facts.get("fatos_trimestrais") or {}
+    period = facts["periodo"]
+    balance = quarterly.get("saldo_fluxo")
+    balance_text = f"{float(balance):+.0f}" if balance is not None else "—"
+    peak_d = quarterly.get("pico_distribuicoes") or {}
+    peak_p = quarterly.get("pico_producao") or {}
+    monthly_positive = quarterly.get("meses_producao_superior_distribuicao")
+    months = len((snapshot.get("serie_mensal") or []))
+    permanence = quarterly.get("faixa_predominante_permanencia")
+    more_60 = quarterly.get("quantidade_mais_60")
+    more_90 = quarterly.get("quantidade_mais_90")
+    procuradores = facts["procuradores"]
+    comparison = facts["comparacao"]
+    relation = quarterly.get("relacao_producao_distribuicoes")
+    evolution = (
+        f"No trimestre, o maior volume de distribuições ocorreu em {MONTHS[int(peak_d.get('mes', 1)) - 1]}, "
+        f"com {format_count(peak_d.get('distribuicoes'))} registros, enquanto a produção atingiu "
+        f"seu pico em {MONTHS[int(peak_p.get('mes', 1)) - 1]}, com {format_count(peak_p.get('producao'))} registros."
+        if peak_d and peak_p
+        else "A evolução mensal está apresentada nos indicadores consolidados do período."
+    )
+    if monthly_positive is not None and months:
+        evolution += (
+            f" A produção superou as distribuições em {monthly_positive} de {months} meses do período."
+        )
+    fields = (
+        "producao_minima", "producao_maxima", "distribuicoes_minimas",
+        "distribuicoes_maximas", "participacao_pareceres_minima",
+        "participacao_pareceres_maxima", "mediana_minima", "mediana_maxima",
+    )
+    if all(procuradores.get(field) is not None for field in fields):
+        procurador_text = (
+            f"A produção individual variou entre {procuradores['producao_minima']} e {procuradores['producao_maxima']} registros, "
+            f"enquanto as distribuições oscilaram entre {procuradores['distribuicoes_minimas']} e {procuradores['distribuicoes_maximas']}. "
+            f"A participação de pareceres variou entre {procuradores['participacao_pareceres_minima']} e {procuradores['participacao_pareceres_maxima']}, "
+            f"e a mediana de permanência entre {procuradores['mediana_minima']} e {procuradores['mediana_maxima']}."
+        )
+    else:
+        procurador_text = "Não há dados individuais suficientes para análise no período."
+    comparison_text = missing_comparison_text(snapshot)
+    if comparison.get("disponivel"):
+        distribution = comparison.get("distribuicoes") or {}
+        production = comparison.get("producao") or {}
+        relation_delta = comparison.get("producao_distribuicoes") or {}
+        comparison_text = (
+            f"Na comparação com o período anterior, as distribuições passaram de {distribution.get('anterior', '—')} para {distribution.get('atual', '—')} "
+            f"(Dif. {distribution.get('delta', '—')}) e a produção de {production.get('anterior', '—')} para {production.get('atual', '—')} "
+            f"(Dif. {production.get('delta', '—')}). A relação Produção/Distribuições variou {relation_delta.get('delta', '—')}."
+        )
+    long_text = ""
+    if more_60 is not None:
+        long_text = f" Foram registrados {format_count(more_60)} eventos acima de 60 dias, dos quais {format_count(more_90 or 0)} acima de 90 dias."
+    band_text = f" A faixa predominante foi de {permanence}." if permanence else ""
+    return {
+        "resumo_executivo": (
+            f"Este relatório consolida os indicadores de produção do MPC-PB no {period}. "
+            f"No período, foram registrados {indicators['producao']['display']} atos de produção e "
+            f"{indicators['distribuicoes']['display']} distribuições, resultando em saldo de {balance_text} registros."
+        ),
+        "evolucao_periodo": evolution,
+        "composicao_producao": (
+            f"{indicators['pareceres']['display']} pareceres e {indicators['cotas']['display']} cotas compuseram a produção do período."
+        ),
+        "permanencia": (
+            f"A mediana de permanência foi de {indicators['mediana']['display']}." + band_text + long_text
+        ),
+        "producao_procurador": procurador_text,
+        "comparacao_periodo_anterior": comparison_text,
+        "sintese_pontos_atencao": (
+            f"A produção ficou em {balance_text} registros em relação às distribuições, com relação Produção/Distribuições de "
+            f"{format_count(relation) if relation is None else f'{float(relation):.1f}'.replace('.', ',') + '%'} ."
+        ).replace("% .", "%.") + band_text + long_text,
+    }
+
+
 class InstitutionalReportContentService:
     def __init__(self, store):
         self.store = store
@@ -278,12 +357,8 @@ class InstitutionalReportContentService:
                 None if tuple(requested) == AI_SECTIONS else tuple(requested),
             )
         except ai_service.GeminiErro:
-            if metadata.get("tipo") != "ANUAL":
-                raise
-            generated, model = (
-                annual_fallback_content(snapshot),
-                "fallback-deterministico",
-            )
+            fallback = annual_fallback_content if metadata.get("tipo") == "ANUAL" else quarterly_fallback_content
+            generated, model = (fallback(snapshot), "fallback-deterministico")
         content = normalize_content(report["conteudo_estruturado"], snapshot)
         for section, text in generated.items():
             unknown = validate_numbers(text, snapshot)
@@ -340,12 +415,12 @@ class InstitutionalReportContentService:
                 build_ai_context(snapshot, data_corte=report["data_corte"]), section
             )
         except ai_service.GeminiErro:
-            if (snapshot.get("metadados") or {}).get("tipo") != "ANUAL":
-                raise
-            generated, model = (
-                annual_fallback_content(snapshot),
-                "fallback-deterministico",
+            fallback = (
+                annual_fallback_content
+                if (snapshot.get("metadados") or {}).get("tipo") == "ANUAL"
+                else quarterly_fallback_content
             )
+            generated, model = (fallback(snapshot), "fallback-deterministico")
         text = generated[section]
         unknown = validate_numbers(text, snapshot)
         content[section] = _record(
