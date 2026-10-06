@@ -2812,6 +2812,9 @@ def _render_period_suggestions(
 
 def _open_institutional_report(report, *, editor=False):
     """Reuse the established report selection state from a compact index."""
+    # The home navigation remains the single source of truth once the detail
+    # is closed. The detail itself deliberately does not render that control.
+    st.session_state["inst_home_section"] = "Relatórios criados"
     st.session_state["inst_tipo"] = (
         "Relatório Trimestral"
         if report.get("tipo") == "TRIMESTRAL"
@@ -2845,30 +2848,28 @@ def _render_institutional_created_reports(store, principal, repository, latest_r
         details = [
             "Trimestral" if report.get("tipo") == "TRIMESTRAL" else "Anual",
             summary["Status"],
-            f"Validação: {summary['Validação']}",
         ]
         if summary["Distribuição"] != "—":
             details.append(f"Distribuição: {summary['Distribuição']}")
         with st.container(border=True):
             institutional_card_mark()
             st.markdown(f"**{period}**")
-            snapshot = report.get("snapshot_dados") or {}
-            coverage = (snapshot.get("cobertura_historica") or {}).get(
-                "meses_disponiveis"
-            )
-            if coverage:
-                st.caption(_institutional_month_span(coverage, report.get("ano")))
             st.caption(" · ".join(details))
             actions = st.columns(3 if getattr(principal, "administrator", False) else 2)
-            if actions[0].button("Abrir", key=f"inst_open_created_{report['id']}"):
-                _open_institutional_report(report)
-                st.rerun()
+            actions[0].button(
+                "Abrir",
+                key=f"inst_open_created_{report['id']}",
+                type="primary",
+                on_click=lambda report=report: _open_institutional_report(report),
+            )
             if report.get("pdf_sha256"):
                 with actions[1]:
                     # The existing action keeps PDF bytes lazy and audits downloads.
                     _render_institutional_pdf_action(store, principal, report)
             if getattr(principal, "administrator", False) and actions[2].button(
-                "Excluir", key=f"inst_admin_delete_ask_{report['id']}"
+                "Excluir",
+                key=f"inst_admin_delete_ask_{report['id']}",
+                type="secondary",
             ):
                 st.session_state["inst_admin_delete_pending"] = {
                     "tipo": report["tipo"],
@@ -3049,6 +3050,7 @@ def _institutional_workspace(store, principal):
         return
     pending = st.session_state.pop("institutional_governance_open", None)
     if isinstance(pending, dict):
+        st.session_state["inst_home_section"] = "Relatórios criados"
         st.session_state["inst_tipo"] = (
             "Relatório Trimestral"
             if pending.get("tipo") == "TRIMESTRAL"
@@ -3067,13 +3069,6 @@ def _institutional_workspace(store, principal):
         latest_rows = repository.list_latest_versions()
     except Exception:
         LOGGER.exception("Falha ao resumir os relatórios institucionais")
-    section = st.radio(
-        "Navegação de relatórios",
-        ("Relatórios criados", "Criar novo"),
-        horizontal=True,
-        key="inst_home_section",
-        label_visibility="collapsed",
-    )
     selected_period = st.session_state.get("inst_selected_period")
     if selected_period:
         back, title = st.columns((1, 5))
@@ -3096,7 +3091,15 @@ def _institutional_workspace(store, principal):
             selected_period["ano"],
             selected_period.get("trimestre"),
         )
-    elif section == "Relatórios criados":
+        return
+    section = st.radio(
+        "Navegação de relatórios",
+        ("Relatórios criados", "Criar novo"),
+        horizontal=True,
+        key="inst_home_section",
+        label_visibility="collapsed",
+    )
+    if section == "Relatórios criados":
         _render_administrative_delete_confirmation(store, principal)
         _render_institutional_created_reports(store, principal, repository, latest_rows)
     else:

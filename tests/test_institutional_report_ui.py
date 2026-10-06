@@ -402,10 +402,14 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     assert not app.exception, app.exception
     visible = _visible(app)
     assert app.radio(key="inst_home_section").value == "Relatórios criados"
+    assert "#### Relatórios criados" in visible
     assert "3º trimestre de 2026" in visible
+    assert visible.count("3º trimestre de 2026") == 1
+    assert "Validação:" not in visible
     assert any(button.key == "inst_open_created_1" for button in app.button)
     app.button(key="inst_open_created_1").click().run()
     assert not app.exception, app.exception
+    assert not any(radio.key == "inst_home_section" for radio in app.radio)
     visible = _visible(app)
     assert "Relatório Trimestral de Produção" in visible
     assert "3º trimestre de 2026" in visible
@@ -462,7 +466,14 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     assert builds["n"] == 1
 
     app.button(key="inst_back_to_created").click().run()
+    assert app.radio(key="inst_home_section").value == "Relatórios criados"
+    assert "#### Relatórios criados" in _visible(app)
     app.radio(key="inst_home_section").set_value("Criar novo").run()
+    assert app.radio(key="inst_home_section").value == "Criar novo"
+    assert "#### Criar novo relatório" in _visible(app)
+    app.run()
+    assert app.radio(key="inst_home_section").value == "Criar novo"
+    assert "#### Criar novo relatório" in _visible(app)
     creation_keys = {button.key for button in app.button}
     assert "inst_create_TRIMESTRAL_2026_1" in creation_keys
     assert "inst_create_TRIMESTRAL_2026_2" in creation_keys
@@ -473,6 +484,7 @@ def test_quarterly_and_annual_institutional_flows(tmp_path, monkeypatch):
     assert not any(radio.key == "inst_trimestre" for radio in app.radio)
     app.button(key="inst_create_ANUAL_2026_0").click().run()
     assert not app.exception, app.exception
+    assert not any(radio.key == "inst_home_section" for radio in app.radio)
     app.radio(key="inst_exibicao").set_value("Visualização").run()
     assert not app.exception, app.exception
     visible = _visible(app)
