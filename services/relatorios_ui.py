@@ -21,11 +21,13 @@ from services.date_format import format_date_br, format_datetime_br
 from services.institutional_reports import (
     EMPTY_STRUCTURED_CONTENT,
     build_report_snapshot,
+    create_institutional_report,
     delete_institutional_report_period,
     delete_editable_report_version,
     deletion_eligibility,
     report_workflow_state,
     can_finalize,
+    finalize_institutional_report,
 )
 from services.institutional_report_content import (
     AI_SECTIONS,
@@ -2069,10 +2071,8 @@ def _create_institutional_version(
         "conteudo_estruturado": EMPTY_STRUCTURED_CONTENT,
         "actor": principal.email,
     }
-    report = (
-        repository.create_new_version(**params)
-        if new_version
-        else repository.create(**params)
+    report = create_institutional_report(
+        store, principal, new_version=new_version, **params
     )
     registrar_evento(
         store,
@@ -2614,7 +2614,7 @@ def _render_institutional_editor(
             if fresh_ready["requer_confirmacao"] and not attention_confirmed:
                 st.warning(fresh_ready["rotulo"])
                 return
-            finalized = repository.finalize(report["id"], principal.email)
+            finalized = finalize_institutional_report(store, report["id"], principal)
             registrar_evento(
                 store,
                 evento="RELATORIO_INSTITUCIONAL_FINALIZADO",

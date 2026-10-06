@@ -271,44 +271,27 @@ def _generate_official_pdf(store, principal, report):
 
 
 def _render_download(store, report):
-    signature = f"{report.get('id')}:{report.get('versao')}"
-    ready = st.session_state.get("institutional_distribution_pdf")
-    if ready and ready.get("signature") != signature:
-        st.session_state.pop("institutional_distribution_pdf", None)
-        ready = None
-    if ready and ready.get("signature") == signature:
-        st.download_button(
-            "Baixar PDF",
-            ready["data"],
-            ready["name"],
-            mime="application/pdf",
-            key=f"institutional_distribution_download_{report['id']}",
-        )
-        return
-    if st.button(
-        "Baixar PDF",
-        key=f"institutional_distribution_prepare_{report['id']}",
-    ):
-        try:
-            from database.institutional_reports import InstitutionalReportsStore
+    try:
+        from database.institutional_reports import InstitutionalReportsStore
 
-            artifact = InstitutionalReportsStore(store).pdf_artifact(report["id"])
-        except Exception:
-            LOGGER.exception(
-                "Falha ao preparar o download do relatório institucional %s",
-                report.get("id"),
-            )
-            st.error(SEND_ERROR)
-            return
-        if not artifact or not artifact.get("conteudo"):
-            st.error(MISSING_PDF_MESSAGE)
-            return
-        st.session_state["institutional_distribution_pdf"] = {
-            "signature": signature,
-            "data": bytes(artifact["conteudo"]),
-            "name": artifact["nome_arquivo"],
-        }
-        st.rerun()
+        artifact = InstitutionalReportsStore(store).pdf_artifact(report["id"])
+    except Exception:
+        LOGGER.exception(
+            "Falha ao disponibilizar o download do relatório institucional %s",
+            report.get("id"),
+        )
+        st.error(SEND_ERROR)
+        return
+    if not artifact or not artifact.get("conteudo"):
+        st.error(MISSING_PDF_MESSAGE)
+        return
+    st.download_button(
+        "Baixar PDF",
+        bytes(artifact["conteudo"]),
+        artifact["nome_arquivo"],
+        mime="application/pdf",
+        key=f"institutional_distribution_download_{report['id']}",
+    )
 
 
 def _render_history(history):

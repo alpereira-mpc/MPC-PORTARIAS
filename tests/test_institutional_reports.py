@@ -1,5 +1,6 @@
 import inspect
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,8 @@ from services.institutional_reports import (
     EMPTY_STRUCTURED_CONTENT,
     build_report_snapshot,
     can_finalize,
+    create_institutional_report,
+    finalize_institutional_report,
 )
 from services.institutional_report_content import (
     InstitutionalReportContentService,
@@ -271,6 +274,90 @@ def _admin():
     return Principal(
         1, "Admin", "admin@test", "ADMINISTRADOR", True, False, False, False, True, ()
     )
+
+
+def _reader():
+    return Principal(
+        2, "Leitor", "leitor@test", "CONSULTA", True, False, False, False, False, ()
+    )
+
+
+def test_public_creation_and_finalization_require_administrator(tmp_path):
+    store = Store(tmp_path / "authorized-workflow.db")
+    snapshot = _content_snapshot()
+    metadata = snapshot["metadados"]
+    params = {
+        "tipo": metadata["tipo"],
+        "ano": metadata["ano"],
+        "trimestre": metadata["trimestre"],
+        "data_inicio": metadata["data_inicio"],
+        "data_fim": metadata["data_fim"],
+        "periodo_parcial": metadata["periodo_parcial"],
+        "descricao_periodo": metadata["descricao_periodo"],
+        "snapshot_dados": snapshot,
+        "conteudo_estruturado": EMPTY_STRUCTURED_CONTENT,
+        "actor": "admin@test",
+    }
+
+    with pytest.raises(PermissionError):
+        create_institutional_report(store, _reader(), **params)
+
+    created = create_institutional_report(store, _admin(), **params)
+    with pytest.raises(PermissionError):
+        finalize_institutional_report(store, created["id"], _reader())
+
+    finalized = finalize_institutional_report(store, created["id"], _admin())
+    assert finalized["status"] == "FINALIZADO"
+
+
+def test_concurrent_new_versions_keep_one_editable_successor(tmp_path):
+    store = Store(tmp_path / "concurrent-versions.db")
+    snapshot = _content_snapshot()
+    metadata = snapshot["metadados"]
+    repository = InstitutionalReportsStore(store)
+    first = repository.create(
+        tipo=metadata["tipo"],
+        ano=metadata["ano"],
+        trimestre=metadata["trimestre"],
+        data_inicio=metadata["data_inicio"],
+        data_fim=metadata["data_fim"],
+        periodo_parcial=metadata["periodo_parcial"],
+        descricao_periodo=metadata["descricao_periodo"],
+        snapshot_dados=snapshot,
+        conteudo_estruturado=EMPTY_STRUCTURED_CONTENT,
+        actor="admin@test",
+    )
+    repository.finalize(first["id"], "admin@test")
+
+    def create_successor():
+        return InstitutionalReportsStore(store).create_new_version(
+            tipo=metadata["tipo"],
+            ano=metadata["ano"],
+            trimestre=metadata["trimestre"],
+            data_inicio=metadata["data_inicio"],
+            data_fim=metadata["data_fim"],
+            periodo_parcial=metadata["periodo_parcial"],
+            descricao_periodo=metadata["descricao_periodo"],
+            snapshot_dados=snapshot,
+            conteudo_estruturado=EMPTY_STRUCTURED_CONTENT,
+            actor="admin@test",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(create_successor) for _ in range(2)]
+    results = []
+    errors = []
+    for future in futures:
+        try:
+            results.append(future.result())
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    assert [item["versao"] for item in results] == [2]
+    assert len(errors) == 1
+    versions = repository.list_for_period("TRIMESTRAL", 2026, 3)
+    assert [item["versao"] for item in versions] == [2, 1]
+    assert [item["status"] for item in versions].count("RASCUNHO") == 1
 
 
 def test_content_generation_manual_edits_and_finalized_read_only(tmp_path, monkeypatch):

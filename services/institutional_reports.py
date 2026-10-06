@@ -396,11 +396,37 @@ def can_finalize(snapshot):
     return not coverage["meses_ausentes"] and not coverage["lacunas_no_ano"]
 
 
-def _require_administrator(principal):
+def require_institutional_administrator(principal):
     if not getattr(principal, "administrator", False):
         raise PermissionError(
-            "Apenas administradores podem excluir uma versão em elaboração."
+            "Apenas administradores podem executar esta ação em relatórios institucionais."
         )
+
+
+def _require_administrator(principal):
+    """Compatibility alias for existing institutional-report service calls."""
+    require_institutional_administrator(principal)
+
+
+def create_institutional_report(store, principal, *, new_version=False, **params):
+    """Authorized public entry point for creating one report version."""
+    from database.institutional_reports import InstitutionalReportsStore
+
+    require_institutional_administrator(principal)
+    repository = InstitutionalReportsStore(store)
+    if new_version:
+        return repository.create_new_version(**params)
+    return repository.create(**params)
+
+
+def finalize_institutional_report(store, identifier, principal):
+    """Authorized public entry point for freezing an editable report version."""
+    from database.institutional_reports import InstitutionalReportsStore
+
+    require_institutional_administrator(principal)
+    return InstitutionalReportsStore(store).finalize(
+        identifier, getattr(principal, "email", "") or ""
+    )
 
 
 def report_workflow_state(versions, selected_id=None):

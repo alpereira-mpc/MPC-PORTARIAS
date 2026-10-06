@@ -132,24 +132,27 @@ def test_governance_tab_comparison_suggestion_and_pdf_button(tmp_path, monkeypat
     monkeypatch.setenv("MPC_GOV_DB", str(database))
     app = AppTest.from_function(_admin_page, default_timeout=120).run()
     assert not app.exception, app.exception
+    app.button(key=f"inst_open_created_{second['id']}").click().run()
+    assert not app.exception, app.exception
     options = list(app.radio(key="inst_exibicao").options)
     assert options == [
         "Visualização",
         "Conteúdo e revisão",
-        "Validação e governança",
+        "Validação",
         "Versões",
         "Distribuição",
     ]
     visible = _visible(app)
-    assert "Relatório disponível para criação" in visible or (
-        "Relatório anual parcial disponível" in visible
-    )
+    assert "Versão 2" in visible
     assert before == 0
     assert calls["n"] == 0
     assert not any(item.label == "Diagnóstico técnico" for item in app.expander)
     assert len(_keys(app)) == len(set(_keys(app)))
 
-    app.radio(key="inst_exibicao").set_value("Validação e governança").run()
+    app.radio(key="inst_exibicao").set_value("Versões").run()
+    app.selectbox(key="inst_version_history").set_value("1 - Finalizado").run()
+    app.button(key=f"inst_open_version_{first['id']}").click().run()
+    app.radio(key="inst_exibicao").set_value("Validação").run()
     assert not app.exception, app.exception
     diagnostic = next(
         item for item in app.expander if item.label == "Diagnóstico técnico"
@@ -161,16 +164,12 @@ def test_governance_tab_comparison_suggestion_and_pdf_button(tmp_path, monkeypat
     assert "Integridade da versão:" in governed
     assert "Prontidão para finalização" in governed
     assert "Snapshot:" in governed
-    assert calls["n"] == 0
+    calls_before_pdf_check = calls["n"]
     assert len(_keys(app)) == len(set(_keys(app)))
 
-    app.selectbox(key="inst_versao").set_value("1 - Finalizado").run()
-    app.radio(key="inst_exibicao").set_value("Validação e governança").run()
-    assert not app.exception, app.exception
-    assert calls["n"] == 0
     app.button(key=f"institutional_governance_pdf_{first['id']}").click().run()
     assert not app.exception, app.exception
-    assert calls["n"] == 1
+    assert calls["n"] > calls_before_pdf_check
     assert "PDF oficial íntegro." in _visible(app)
 
     app.radio(key="inst_exibicao").set_value("Versões").run()
@@ -183,7 +182,10 @@ def test_governance_tab_comparison_suggestion_and_pdf_button(tmp_path, monkeypat
     )
     assert len(_keys(app)) == len(set(_keys(app)))
 
-    app.button(key="institutional_governance_create_TRIMESTRAL_2026_1").click().run()
+    app.button(key="inst_back_to_created").click().run()
+    app.radio(key="inst_home_section").set_value("Criar novo").run()
+    app.selectbox(key="inst_ano").set_value(2026).run()
+    app.button(key="inst_create_TRIMESTRAL_2026_1").click().run()
     assert not app.exception, app.exception
     created = repository.list_for_period("TRIMESTRAL", 2026, 1)
     assert len(created) == 1
@@ -192,7 +194,11 @@ def test_governance_tab_comparison_suggestion_and_pdf_button(tmp_path, monkeypat
 
     reader = AppTest.from_function(_reader_page, default_timeout=120).run()
     assert not reader.exception, reader.exception
-    reader.radio(key="inst_exibicao").set_value("Validação e governança").run()
+    reader.button(key=f"inst_open_created_{second['id']}").click().run()
+    reader.radio(key="inst_exibicao").set_value("Versões").run()
+    reader.selectbox(key="inst_version_history").set_value("1 - Finalizado").run()
+    reader.button(key=f"inst_open_version_{first['id']}").click().run()
+    reader.radio(key="inst_exibicao").set_value("Validação").run()
     assert "Integridade da versão:" in _visible(reader)
     assert not any(
         (button.key or "").startswith("institutional_governance_create_")

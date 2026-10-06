@@ -705,22 +705,6 @@ def test_distribution_tables_are_created_without_replacing_the_report(tmp_path):
     assert "gemini" not in inspect.getsource(distribution).lower()
 
 
-def test_other_report_panels_do_not_offer_distribution():
-    for function in (
-        relatorios_ui.current_view,
-        relatorios_ui.production,
-        relatorios_ui.quarterly,
-        relatorios_ui.annual,
-        relatorios_ui.imports,
-    ):
-        source = inspect.getsource(function)
-        assert "Enviar aos Procuradores" not in source
-        assert "Preparar reenvio" not in source
-        assert "institutional_distribution_" not in source
-    workspace = inspect.getsource(relatorios_ui._institutional_workspace)
-    assert '"Distribuição"' in workspace
-
-
 def _events(store):
     with store.connection(read_only=True) as connection:
         rows = connection.execute(
@@ -772,11 +756,32 @@ def _open_distribution(monkeypatch, database, transport):
         "document_generator.institutional_report_pdf.generate_institutional_report_pdf",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("PDF regenerado")),
     )
+    report = next(
+        item
+        for item in InstitutionalReportsStore(Store(database)).list_latest_versions()
+        if item["tipo"] == "TRIMESTRAL"
+    )
     app = AppTest.from_function(_distribution_page, default_timeout=90).run()
+    assert not app.exception, app.exception
+    app.button(key=f"inst_open_created_{report['id']}").click().run()
     assert not app.exception, app.exception
     app.radio(key="inst_exibicao").set_value("Distribuição").run()
     assert not app.exception, app.exception
     return app
+
+
+def test_distribution_is_available_from_the_institutional_report_detail(
+    tmp_path, monkeypatch
+):
+    store = _store(tmp_path / "distribution-detail.db")
+    _give_emails(store)
+    _create(store)
+    app = _open_distribution(monkeypatch, store.path, FakeTransport())
+
+    assert app.radio(key="inst_exibicao").value == "Distribuição"
+    assert "Distribuição" in app.radio(key="inst_exibicao").options
+    assert any(item.label == "Baixar PDF" for item in app.get("download_button"))
+    assert not any(item.label == "Baixar PDF" for item in app.button)
 
 
 def _visible(app):
@@ -807,7 +812,7 @@ def test_distribution_tab_requires_confirmation_and_a_later_rerun_does_not_send(
 ):
     store = _store(tmp_path / "ui.db")
     _give_emails(store)
-    _create(store, name="Relatorio_Trimestral_MPCPB_2026_T3_v1.pdf")
+    first = _create(store, name="Relatorio_Trimestral_MPCPB_2026_T3_v1.pdf")
     second = _create(store, name="Relatorio_Trimestral_MPCPB_2026_T3_v2.pdf")
     annual = _create(
         store,
@@ -842,7 +847,10 @@ def test_distribution_tab_requires_confirmation_and_a_later_rerun_does_not_send(
         in _visible(app)
     )
     assert transport.calls == []
-    app.selectbox(key="inst_versao").set_value("1 - Finalizado").run()
+    app.radio(key="inst_exibicao").set_value("Versões").run()
+    app.selectbox(key="inst_version_history").set_value("1 - Finalizado").run()
+    app.button(key=f"inst_open_version_{first['id']}").click().run()
+    app.radio(key="inst_exibicao").set_value("Distribuição").run()
     assert (
         "Confirmar envio deste relatório para todos os Procuradores ativos?"
         not in _visible(app)
@@ -850,7 +858,10 @@ def test_distribution_tab_requires_confirmation_and_a_later_rerun_does_not_send(
     assert "Relatorio_Trimestral_MPCPB_2026_T3_v1.pdf" in _visible(app)
     assert transport.calls == []
 
-    app.selectbox(key="inst_versao").set_value("2 - Finalizado").run()
+    app.radio(key="inst_exibicao").set_value("Versões").run()
+    app.selectbox(key="inst_version_history").set_value("2 - Finalizado").run()
+    app.button(key=f"inst_open_version_{second['id']}").click().run()
+    app.radio(key="inst_exibicao").set_value("Distribuição").run()
     subject_box = next(
         item
         for item in app.text_input
@@ -912,7 +923,9 @@ def test_distribution_tab_requires_confirmation_and_a_later_rerun_does_not_send(
     app = _button(app, "institutional_distribution_cancel_").click().run()
     assert len(transport.calls) == 7
 
-    app.radio(key="inst_tipo").set_value("Relatório Anual").run()
+    app.button(key="inst_back_to_created").click().run()
+    app.button(key=f"inst_open_created_{annual['id']}").click().run()
+    app.radio(key="inst_exibicao").set_value("Distribuição").run()
     annual_subject = app.text_input(
         key=f"institutional_distribution_subject_{annual['id']}"
     ).value

@@ -9,6 +9,7 @@ from document_generator.institutional_report_pdf import (
     institutional_pdf_filename,
 )
 from services.audit import registrar_evento
+from services.institutional_reports import require_institutional_administrator
 
 
 LOGGER = logging.getLogger(__name__)
@@ -75,10 +76,16 @@ def deliver_institutional_pdf(store, report, principal, *, official):
 
 def regenerate_official_pdf(store, report, principal):
     """Build a new official file and replace the stored one only after success."""
+    require_institutional_administrator(principal)
     if report.get("status") not in OFFICIAL_STATUSES:
         raise ValueError("PDF oficial exige relatório finalizado.")
     _require_frozen_version(report)
     repository = InstitutionalReportsStore(store)
+    if repository.list_distributions(report["id"]):
+        raise ValueError(
+            "Este PDF já foi distribuído e não pode ser regenerado. "
+            "Para alterar o relatório, crie uma nova versão."
+        )
     saved = _persist(repository, report, principal, institutional_pdf_filename(report))
     _audit(
         store,

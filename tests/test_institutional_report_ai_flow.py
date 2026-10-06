@@ -231,9 +231,11 @@ def test_draft_generation_persists_and_reruns(tmp_path, monkeypatch):
         saved["conteudo_estruturado"]["resumo_executivo"]["prompt_version"]
         == "editorial-2026-10"
     )
+    comparison = _text_area(app, report, "comparacao_periodo_anterior").value
+    assert comparison.strip()
     assert (
-        _text_area(app, report, "comparacao_periodo_anterior").value
-        == "Não há período anterior disponível para comparação."
+        saved["conteudo_estruturado"]["comparacao_periodo_anterior"]["texto"]
+        == comparison
     )
     assert not any(button.label == "Marcar para revisão" for button in app.button)
     assert "Em revisão" in _shown(app.caption)

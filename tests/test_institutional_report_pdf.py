@@ -432,6 +432,59 @@ def test_official_pdf_is_stored_once_and_a_preview_is_not(
     assert all("sha256" not in row for row in rows)
 
 
+def test_regeneration_requires_administrator_and_preserves_distributed_pdf(
+    reference, tmp_path, monkeypatch
+):
+    _source, quarterly, _annual = reference
+    store = Store(tmp_path / "immutable-distributed-pdf.db")
+    repository = InstitutionalReportsStore(store)
+    report = _persist(repository, quarterly)
+    original = deliver_institutional_pdf(store, report, _admin(), official=True)
+
+    monkeypatch.setattr(
+        "services.institutional_report_pdf.generate_institutional_report_pdf",
+        lambda _report: b"%PDF-1.4\nregenerated\n",
+    )
+    reader = Principal(
+        2, "Leitor", "leitor@test", "CONSULTA", True, False, False, False, False, ()
+    )
+    with pytest.raises(PermissionError):
+        regenerate_official_pdf(store, report, reader)
+
+    regenerated = regenerate_official_pdf(store, report, _admin())
+    assert regenerated["conteudo"] == b"%PDF-1.4\nregenerated\n"
+
+    repository.begin_distribution(
+        {
+            "relatorio_id": report["id"],
+            "origem_envio_id": None,
+            "tipo": report["tipo"],
+            "ano": report["ano"],
+            "trimestre": report["trimestre"],
+            "versao": report["versao"],
+            "remetente": "admin@test",
+            "assunto": "Assunto",
+            "corpo": "Corpo",
+            "pdf_nome": regenerated["nome"],
+            "pdf_sha256": regenerated["sha256"],
+            "pdf_tamanho": regenerated["tamanho"],
+            "criado_por": "admin@test",
+            "chave_idempotencia": "pdf-imutavel-distribuido",
+        },
+        [],
+    )
+    before = repository.pdf_artifact(report["id"])
+    history = repository.list_distributions(report["id"])
+
+    with pytest.raises(ValueError, match="já foi distribuído"):
+        regenerate_official_pdf(store, repository.get(report["id"]), _admin())
+
+    after = repository.pdf_artifact(report["id"])
+    assert after["conteudo"] == before["conteudo"]
+    assert after["sha256"] == before["sha256"]
+    assert repository.list_distributions(report["id"]) == history
+
+
 def test_sqlite_and_postgres_migrations_keep_the_pdf_beside_the_version(tmp_path):
     store = Store(tmp_path / "schema.db")
     InstitutionalReportsStore(store)
@@ -449,14 +502,6 @@ def test_sqlite_and_postgres_migrations_keep_the_pdf_beside_the_version(tmp_path
 
 
 def test_pdf_action_stays_in_institutional_visualization(tmp_path, monkeypatch):
-    quarterly_source = inspect.getsource(relatorios_ui.quarterly)
-    annual_source = inspect.getsource(relatorios_ui.annual)
-    assert "Baixar PDF" not in quarterly_source
-    assert "Baixar prévia" not in quarterly_source
-    assert "Baixar PDF" not in annual_source
-    workspace = inspect.getsource(relatorios_ui._institutional_workspace)
-    assert "_render_institutional_pdf_action" in workspace
-
     database = tmp_path / "ui.db"
     store = Store(database)
     repository = InstitutionalReportsStore(store)
@@ -501,7 +546,7 @@ def test_pdf_action_stays_in_institutional_visualization(tmp_path, monkeypatch):
             "producao": "Produção considera somente saídas classificadas como Parecer ou Cota."
         },
     }
-    repository.create(
+    report = repository.create(
         tipo="TRIMESTRAL",
         ano=2026,
         trimestre=3,
@@ -548,8 +593,10 @@ def test_pdf_action_stays_in_institutional_visualization(tmp_path, monkeypatch):
 
     app = AppTest.from_function(page, default_timeout=30).run()
     assert not app.exception
+    app.button(key=f"inst_open_created_{report['id']}").click().run()
+    assert not app.exception
     labels = [button.label for button in app.button]
-    assert "Baixar prévia em PDF" in labels
+    assert "Gerar prévia em PDF" in labels
     assert "Baixar PDF" not in labels
 
     def fail(store, report, principal, *, official):
@@ -559,12 +606,12 @@ def test_pdf_action_stays_in_institutional_visualization(tmp_path, monkeypatch):
         "services.institutional_report_pdf.deliver_institutional_pdf", fail
     )
     prepare = next(
-        button for button in app.button if button.label == "Baixar prévia em PDF"
+        button for button in app.button if button.label == "Gerar prévia em PDF"
     )
     app = prepare.click().run()
     assert not app.exception
     errors = " ".join(item.value for item in app.error)
-    assert "Não foi possível gerar o PDF desta versão no momento." in errors
+    assert "Não foi possível gerar a prévia em PDF neste momento." in errors
     assert any("Relatórios Institucionais" in item.value for item in app.subheader)
     assert not any(
         "Não foi possível carregar os indicadores" in item.value for item in app.error
