@@ -1172,6 +1172,29 @@ gap:.55rem;
 .mpc-record-head{{flex-direction:column;gap:.35rem;}}
 .mpc-record-title{{flex:none;}}
 .mpc-record-badges{{justify-content:flex-start;}}
+/* Streamlit's sidebar content is the scroll container. Keep the footer in
+   normal flow so the dynamic iOS viewport can scroll past Safari's toolbar. */
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"]:has(.st-key-portal_theme_footer){{
+height:100dvh;
+max-height:100dvh;
+overflow-y:auto;
+overflow-x:hidden;
+-webkit-overflow-scrolling:touch;
+}}
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]:has(.st-key-portal_theme_footer){{
+display:block;
+flex:none;
+padding-bottom:calc(env(safe-area-inset-bottom, 0px) + 110px);
+}}
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]:has(.st-key-portal_theme_footer) > div,
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]:has(.st-key-portal_theme_footer) > div > [data-testid="stVerticalBlock"]{{
+display:block;
+flex:none;
+}}
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"]:has(> [data-testid="stVerticalBlock"].st-key-portal_theme_footer){{
+margin-top:0;
+flex-shrink:initial;
+}}
 section[data-testid="stMain"] .st-key-tarefas_kpis [data-testid="stHorizontalBlock"]{{
 grid-template-columns:repeat(2,minmax(0,1fr));
 gap:.6rem;
