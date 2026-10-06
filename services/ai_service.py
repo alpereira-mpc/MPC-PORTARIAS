@@ -124,14 +124,14 @@ PROMPT_RELATORIO_INSTITUCIONAL = (
 PROMPT_RELATORIO_TRIMESTRAL = (
     "\nINSTRUÇÕES EXCLUSIVAS PARA O RELATÓRIO TRIMESTRAL:\n"
     "Use somente fatos determinísticos já presentes em fatos_para_redacao; não faça contas, não derive percentuais e não altere sinais. "
-    "No resumo_executivo, escreva no máximo duas frases curtas: período, produção, distribuições e saldo matemático. Não use fórmulas burocráticas como 'este relatório apresenta'. "
+    "No resumo_executivo, escreva no máximo duas frases curtas: período, produção, distribuições e saldo. Prefira 'No período, foram registrados [produção] atos de produção e [distribuições] distribuições, resultando em saldo de [saldo] registros.' Não use 'saldo matemático' nem casas decimais para contagens. "
     "Em evolucao_periodo, informe maior e menor distribuição e maior e menor produção quando esses fatos existirem. Use a contagem de meses em que a produção superou as distribuições somente se o fato congelado a trouxer. "
     "Em composicao_producao, informe pareceres e cotas em minúsculas, cada qual com seu percentual congelado. "
     "Em permanencia, mantenha texto curto: mediana, faixa predominante, registros de 61–90 dias e acima de 90 dias, quando existirem. "
     "Em producao_procurador, informe apenas intervalos de produção, distribuições, participação de pareceres e mediana de permanência; não crie ranking nem interprete os intervalos como desempenho. "
-    "Em comparacao_periodo_anterior, destaque no máximo distribuições, produção e a relação Produção/Distribuições. Para a relação, apresente anterior, atual e diferença em p.p.; nunca use percentual relativo nesse caso. "
-    "Em sintese_pontos_atencao, use de duas a quatro frases curtas para consolidar saldo, comparação disponível e permanência sem repetir mecanicamente os KPIs. Se não houver trimestre anterior, omita a referência histórica. "
-    "Use linguagem factual, neutra e institucional. Não use causalidade, juízo de valor, bom, ruim, positivo, negativo, equilíbrio, satisfatório, relevante ou dinâmica própria. "
+    "Em comparacao_periodo_anterior, destaque no máximo distribuições, produção e a relação entre produção e distribuições. Para a relação, apresente anterior, atual e diferença em p.p.; nunca use percentual relativo nesse caso. "
+    "Em sintese_pontos_atencao, use de duas a quatro frases curtas para consolidar o saldo entre produção e distribuições, a comparação disponível, a mediana e a faixa predominante de permanência, sem repetir mecanicamente os KPIs. Se não houver trimestre anterior, omita a referência histórica. "
+    "Use linguagem factual, neutra e institucional. Não use causalidade, juízo de valor, bom, ruim, saldo positivo, expansão nos volumes de trabalho, positivo, negativo, equilíbrio, satisfatório, relevante ou dinâmica própria. "
     "No texto corrido, escreva produção, distribuições, pareceres e cotas em minúsculas, salvo no início da frase."
 )
 PROMPT_EXTRACAO_PETICAO = (

@@ -3,6 +3,7 @@
 import re
 from database.store import now, schema_key_of, unwrap_store
 from services.oficios import GABINETES
+from services.themes import DEFAULT_THEME
 
 PROFILES = ("ADMINISTRADOR", "USUARIO")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -131,7 +132,7 @@ class AccessStore:
                 "pode_peticoes_concluir INTEGER NOT NULL DEFAULT 0 CHECK(pode_peticoes_concluir IN (0,1)),"
                 "pode_admin INTEGER NOT NULL DEFAULT 0 CHECK(pode_admin IN (0,1)),"
                 "protegido INTEGER NOT NULL DEFAULT 0 CHECK(protegido IN (0,1)),"
-                "tema TEXT NOT NULL DEFAULT 'vermelho',"
+                f"tema TEXT NOT NULL DEFAULT '{DEFAULT_THEME}',"
                 "criado_em TEXT NOT NULL,"
                 "atualizado_em TEXT NOT NULL)"
             )
@@ -179,7 +180,7 @@ class AccessStore:
                 )
             if "tema" not in columns:
                 c.execute(
-                    "ALTER TABLE usuarios_acesso ADD COLUMN tema TEXT NOT NULL DEFAULT 'vermelho'"
+                    f"ALTER TABLE usuarios_acesso ADD COLUMN tema TEXT NOT NULL DEFAULT '{DEFAULT_THEME}'"
                 )
             c.execute(
                 "UPDATE usuarios_acesso SET pode_memorandos=1, pode_relatorios=1, "
@@ -400,9 +401,9 @@ class AccessStore:
                     "INSERT INTO usuarios_acesso(nome,email,perfil,ativo,pode_portarias,"
                     "pode_agenda,pode_oficios,pode_memorandos,pode_relatorios,pode_representacoes,"
                     "pode_ouvidoria,pode_representacoes_registrar_protocolo,pode_representacoes_enviar_comunicacao,"
-                    "pode_comunicacoes_configurar_destinatarios,pode_comunicacoes_enviar_teste,pode_admin,protegido,criado_em,atualizado_em) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (nome, email, perfil, ativo, *flags, protegido, stamp, stamp),
+                    "pode_comunicacoes_configurar_destinatarios,pode_comunicacoes_enviar_teste,pode_admin,protegido,tema,criado_em,atualizado_em) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (nome, email, perfil, ativo, *flags, protegido, DEFAULT_THEME, stamp, stamp),
                 )
                 identifier = inserted.lastrowid
                 action = "acesso_criar_usuario"

@@ -162,6 +162,7 @@ def test_quarterly_pdf_uses_the_frozen_snapshot_and_persisted_text(reference):
     first = PdfReader(BytesIO(payload)).pages[0].extract_text() or ""
     assert "TRIMESTRAL" in first
     assert "Data de emissão" in first
+    assert first.count("Versão") == 1
     assert payload.startswith(b"%PDF")
     assert len(payload) > 2000
     assert 4 <= pages <= 12
@@ -227,6 +228,24 @@ def test_annual_permanence_note_uses_frozen_percentiles(reference):
     )
 
     assert expected in " ".join(text.split())
+
+
+def test_cover_hides_the_version_row_and_last_page_lists_human_validators(reference):
+    _store, quarterly, annual = reference
+    for snapshot in (annual, quarterly):
+        payload = generate_institutional_report_pdf(
+            _report(snapshot), emitido_em=EMITTED
+        )
+        reader = PdfReader(BytesIO(payload))
+        cover = reader.pages[0].extract_text() or ""
+        last_page = reader.pages[-1].extract_text() or ""
+
+        assert cover.count("Versão") == 1
+        assert "Validação humana" in last_page
+        assert "André Luiz de Almeida Pereira" in last_page
+        assert "Chefe de Gabinete do MPC-PB" in last_page
+        assert "Niltamir Galdino Guedes" in last_page
+        assert "Chefe de Cartório do MPC-PB" in last_page
 
 
 def test_draft_is_marked_and_review_is_not_a_final_document(reference):

@@ -291,7 +291,7 @@ def quarterly_fallback_content(snapshot):
             f"Em relação ao trimestre anterior, as distribuições passaram de {distribution.get('anterior', '—')} para "
             f"{distribution.get('atual', '—')} ({distribution.get('delta_percentual', '—')}), enquanto a produção passou de "
             f"{production.get('anterior', '—')} para {production.get('atual', '—')} "
-            f"({production.get('delta_percentual', '—')}). A relação Produção/Distribuições variou de "
+            f"({production.get('delta_percentual', '—')}). A relação entre produção e distribuições variou de "
             f"{relation_delta.get('anterior', '—')} para {relation_delta.get('atual', '—')}, diferença de "
             f"{relation_delta.get('delta', '—')}"
         )
@@ -319,14 +319,14 @@ def quarterly_fallback_content(snapshot):
         "producao_procurador": procurador_text,
         "comparacao_periodo_anterior": comparison_text,
         "sintese_pontos_atencao": (
-            f"No trimestre, a produção superou as distribuições em {balance_text} registros."
+            f"No trimestre, o saldo entre produção e distribuições foi de {balance_text} registros."
         )
         + (
             f" Em relação ao trimestre anterior, a produção passou de {comparison.get('producao', {}).get('anterior')} "
             f"para {comparison.get('producao', {}).get('atual')} ({comparison.get('producao', {}).get('delta_percentual')}), "
             f"e as distribuições de {comparison.get('distribuicoes', {}).get('anterior')} para "
             f"{comparison.get('distribuicoes', {}).get('atual')} ({comparison.get('distribuicoes', {}).get('delta_percentual')}). "
-            f"A relação Produção/Distribuições variou de "
+            f"A relação entre produção e distribuições variou de "
             f"{comparison.get('producao_distribuicoes', {}).get('anterior')} para "
             f"{comparison.get('producao_distribuicoes', {}).get('atual')} "
             f"({str(comparison.get('producao_distribuicoes', {}).get('delta', '')).rstrip('.')})."

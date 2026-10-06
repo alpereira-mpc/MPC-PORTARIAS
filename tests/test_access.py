@@ -698,7 +698,7 @@ def test_protegido_sqlite_migration_is_idempotent(tmp_path):
         columns = {r[1] for r in c.execute("PRAGMA table_info(usuarios_acesso)")}
     assert "protegido" in columns
     assert "tema" in columns
-    assert first.get_theme(user["id"]) == "vermelho"
+    assert first.get_theme(user["id"]) == "dourado"
     access_mod._READY.clear()
     AccessStore(store)
     access_mod._READY.clear()

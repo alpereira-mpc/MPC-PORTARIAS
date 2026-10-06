@@ -2,6 +2,7 @@
 
 _TEXT_PRIMARY = "#202832"
 _TEXT_MUTED = "#7A838E"
+DEFAULT_THEME = "dourado"
 
 _BASE_THEMES = {
     "vermelho": {
@@ -146,7 +147,7 @@ THEME_LABELS = {
 
 
 def valid_theme(value):
-    return value if value in THEMES else "vermelho"
+    return value if value in THEMES else DEFAULT_THEME
 
 
 def theme_tokens(value):

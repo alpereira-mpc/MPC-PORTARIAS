@@ -256,7 +256,7 @@ def test_quarterly_fallback_uses_the_complete_editorial_contract():
     assert "104,0% para 109,0%, diferença de +5,0 p.p." in content[
         "comparacao_periodo_anterior"
     ]
-    assert "produção superou as distribuições em +49 registros" in content[
+    assert "saldo entre produção e distribuições foi de +49 registros" in content[
         "sintese_pontos_atencao"
     ]
     assert "produção passou de 520 para 594 (14,2%)" in content[
@@ -271,7 +271,7 @@ def test_quarterly_fallback_omits_history_when_there_is_no_prior_quarter():
 
     assert content["comparacao_periodo_anterior"] == QUARTERLY_WITHOUT_PRIOR
     assert "trimestre anterior" not in content["sintese_pontos_atencao"].lower()
-    assert "produção superou as distribuições em +49 registros" in content[
+    assert "saldo entre produção e distribuições foi de +49 registros" in content[
         "sintese_pontos_atencao"
     ]
 
@@ -310,6 +310,10 @@ def test_quarterly_prompt_requires_factual_short_prose_and_points_percentage():
     assert "não crie ranking" in prompt
     assert "não use causalidade" in prompt
     assert "duas a quatro frases curtas" in prompt
+    assert "saldo matemático" in prompt
+    assert "não use 'saldo matemático'" in prompt
+    assert "saldo positivo" in prompt
+    assert "expansão nos volumes de trabalho" in prompt
 
 
 def test_permanence_bands_and_rounded_displays_are_not_unknown():

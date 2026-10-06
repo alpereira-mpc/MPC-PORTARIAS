@@ -34,7 +34,7 @@ from services.institutional_report_content import (
     normalize_content,
     validate_numbers,
 )
-from services.themes import theme_tokens
+from services.themes import DEFAULT_THEME, theme_tokens
 from services.tramita_reports import (
     file_hash,
     import_reference_reports,
@@ -127,7 +127,7 @@ def _format_decimal_br(value, suffix=""):
     return f"{float(value):.1f}".replace(".", ",") + suffix
 
 
-def style_report_table(rows, theme_name="vermelho"):
+def style_report_table(rows, theme_name=DEFAULT_THEME):
     """Apply the active theme to report data without changing its values."""
     palette = theme_tokens(theme_name)
     frame = pd.DataFrame(rows)
@@ -180,7 +180,7 @@ def style_report_table(rows, theme_name="vermelho"):
 
 
 def _report_table(target, rows):
-    selected_theme = st.session_state.get("_portal_theme", {}).get("name", "vermelho")
+    selected_theme = st.session_state.get("_portal_theme", {}).get("name", DEFAULT_THEME)
     target.dataframe(
         style_report_table(rows, selected_theme),
         hide_index=True,

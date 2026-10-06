@@ -30,6 +30,7 @@ from reportlab.platypus import (
     BaseDocTemplate,
     CondPageBreak,
     Frame,
+    Flowable,
     HRFlowable,
     Image,
     KeepTogether,
@@ -94,6 +95,36 @@ ANNUAL_CHART_COLORS = {
 # The quarterly report adopts the approved annual visual semantics without
 # sharing a mutable mapping or changing the annual artifact.
 QUARTERLY_CHART_COLORS = dict(ANNUAL_CHART_COLORS)
+HUMAN_VALIDATORS = (
+    ("André Luiz de Almeida Pereira", "Chefe de Gabinete do MPC-PB"),
+    ("Niltamir Galdino Guedes", "Chefe de Cartório do MPC-PB"),
+)
+
+
+class _BottomAnchoredFlow(Flowable):
+    """Renders a compact flow at the bottom of the remaining document frame."""
+
+    def __init__(self, flow, bottom_padding):
+        super().__init__()
+        self.flow = flow
+        self.bottom_padding = bottom_padding
+        self._heights = []
+        self._content_height = 0
+
+    def wrap(self, available_width, available_height):
+        self._heights = [
+            item.wrap(available_width, available_height)[1] for item in self.flow
+        ]
+        self._content_height = sum(self._heights)
+        return available_width, available_height
+
+    def draw(self):
+        vertical = self.bottom_padding + self._content_height
+        for item, height in zip(self.flow, self._heights):
+            vertical -= height
+            item.drawOn(self.canv, 0, vertical)
+
+
 MONTHS = (
     "Janeiro",
     "Fevereiro",
@@ -552,7 +583,6 @@ def _cover(meta, styles):
             else meta["emitido"],
         ],
         ["Dados consolidados até", meta["consolidado_em"]],
-        ["Versão", str(meta["versao"])],
         ["Fonte", "Tramita/TCE-PB"],
     ]
     block = Table(technical, colWidths=[54 * mm, CONTENT_WIDTH - 54 * mm])
@@ -1719,7 +1749,38 @@ def _methodology(content, meta, styles, *, cohort_note=False):
             ]
         )
     )
-    return [CondPageBreak(110), box]
+    return [
+        CondPageBreak(110),
+        box,
+        _BottomAnchoredFlow(_human_validation(styles), 3 * mm),
+    ]
+
+
+def _human_validation(styles):
+    title_style = ParagraphStyle(
+        "pdf_validation_title", parent=styles["note_title"], spaceAfter=0
+    )
+    name_style = ParagraphStyle(
+        "pdf_validation_name", parent=styles["note_title"], spaceAfter=0
+    )
+    role_style = ParagraphStyle(
+        "pdf_validation_role", parent=styles["note"], spaceAfter=0
+    )
+    flow = [
+        Paragraph("Validação humana", title_style),
+        Spacer(1, 1.2 * mm),
+    ]
+    for index, (name, role) in enumerate(HUMAN_VALIDATORS):
+        flow.extend(
+            [
+                Paragraph(_escape(name), name_style),
+                Spacer(1, 0.35 * mm),
+                Paragraph(_escape(role), role_style),
+            ]
+        )
+        if index < len(HUMAN_VALIDATORS) - 1:
+            flow.append(Spacer(1, 2 * mm))
+    return flow
 
 
 def _readable_note(text):

@@ -10,7 +10,7 @@ import re
 
 import streamlit as st
 
-from services.themes import theme_tokens, valid_theme
+from services.themes import DEFAULT_THEME, theme_tokens, valid_theme
 
 # --- Tokens (aligned with .streamlit/config.toml) ---
 _RED = theme_tokens("vermelho")
@@ -112,7 +112,7 @@ _PRIORITY_TONES = {
 }
 
 
-def _css(theme_name="vermelho"):
+def _css(theme_name=DEFAULT_THEME):
     theme_name = valid_theme(theme_name)
     palette = theme_tokens(theme_name)
     BRAND_RED = palette["primary"]
@@ -1538,7 +1538,7 @@ color:var(--mpc-brand-dark) !important;
     )
 
 
-def apply_theme(theme_name="vermelho"):
+def apply_theme(theme_name=DEFAULT_THEME):
     """Inject the portal stylesheet. Call once from the portal shell per run."""
     st.markdown("<style>" + _css(theme_name) + "</style>", unsafe_allow_html=True)
 
@@ -1687,7 +1687,7 @@ def guidance_note(text):
     render_html(f'<div class="mpc-guidance"><p>{html_text(text)}</p></div>')
 
 
-def style_striped_table(rows, theme_name="vermelho"):
+def style_striped_table(rows, theme_name=DEFAULT_THEME):
     """Alternate dataframe rows with the active table palette. Header stays untouched."""
     import pandas as pd
 

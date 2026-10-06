@@ -8,7 +8,7 @@ from services.access import require_permission
 from services.audit import aplicar_exclusao_usuario, aplicar_usuario
 from services.oficios import GABINETES
 from services.branding import module_title
-from services.themes import theme_tokens, valid_theme
+from services.themes import DEFAULT_THEME, theme_tokens, valid_theme
 from services.ui_theme import DANGER, SUCCESS, form_mark, render_html, section_label
 
 LOGGER = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ def user_rows(users):
     ]
 
 
-def style_user_table(rows, theme_name="vermelho"):
+def style_user_table(rows, theme_name=DEFAULT_THEME):
     import pandas as pd
 
     frame = pd.DataFrame(rows, columns=list(_USER_COLUMNS))
@@ -97,7 +97,7 @@ def style_user_table(rows, theme_name="vermelho"):
     return styler
 
 
-def style_function_table(rows, theme_name="vermelho"):
+def style_function_table(rows, theme_name=DEFAULT_THEME):
     """Stripe institutional-function rows with the active table palette."""
     from services.ui_theme import style_striped_table
 

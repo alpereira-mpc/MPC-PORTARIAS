@@ -23,7 +23,7 @@ from services.ui_theme import (
     institutional_card_mark,
     render_html,
 )
-from services.themes import THEME_LABELS, valid_theme
+from services.themes import DEFAULT_THEME, THEME_LABELS, valid_theme
 from services.versioning import APP_VERSION
 from services.performance import phase, profile_rerun
 
@@ -251,8 +251,8 @@ def _active_theme(identity):
         saved = AccessStore(_application_store()).get_theme_by_email(email)
     except Exception:
         LOGGER.exception("Falha ao carregar preferência visual")
-        st.session_state["_portal_theme"] = {"email": email, "name": "vermelho"}
-        return "vermelho"
+        st.session_state["_portal_theme"] = {"email": email, "name": DEFAULT_THEME}
+        return DEFAULT_THEME
     name = valid_theme(saved)
     st.session_state["_portal_theme"] = {"email": email, "name": name}
     return name
@@ -260,7 +260,7 @@ def _active_theme(identity):
 
 def _change_theme(store, user_id, email, widget_key):
     chosen = valid_theme(st.session_state[widget_key])
-    current = _session_get("_portal_theme", {"name": "vermelho"})["name"]
+    current = _session_get("_portal_theme", {"name": DEFAULT_THEME})["name"]
     if chosen == current:
         return
     try:

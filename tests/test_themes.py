@@ -7,7 +7,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from database.access import AccessStore
-from services.themes import THEME_LABELS, THEMES, valid_theme
+from services.themes import DEFAULT_THEME, THEME_LABELS, THEMES, valid_theme
 from services.ui_theme import _css
 from tests.access_testing import enable_login, seed_access
 
@@ -83,6 +83,21 @@ def test_valid_persisted_theme_is_used_when_widget_is_invalid(store, monkeypatch
     assert state["_portal_theme"] == {"email": "tema@test.local", "name": "azul"}
 
 
+def test_missing_persisted_theme_uses_gold_fallback(store, monkeypatch):
+    import portal
+
+    state = {}
+    monkeypatch.setattr(portal.st, "session_state", state)
+    monkeypatch.setattr(portal, "_application_store", lambda: store)
+    monkeypatch.setattr(AccessStore, "get_theme_by_email", lambda *_: None)
+
+    assert portal._active_theme({"email": "tema@test.local"}) == DEFAULT_THEME
+    assert state["_portal_theme"] == {
+        "email": "tema@test.local",
+        "name": DEFAULT_THEME,
+    }
+
+
 def test_valid_cache_wins_over_widget_without_reading_persistence(monkeypatch):
     import portal
 
@@ -146,13 +161,13 @@ def test_theme_labels_are_official_and_legacy_keys_keep_their_palettes():
     assert "format_func=THEME_LABELS.get" in source
 
 
-def test_red_palette_is_the_fallback():
-    red = _css("vermelho")
-    assert "--mpc-brand:#9B1724" in red
-    assert "--mpc-sidebar:#D48792" in red
-    assert _css(None) == red
-    assert _css("desconhecido") == red
-    assert valid_theme("") == "vermelho"
+def test_gold_palette_is_the_fallback():
+    gold = _css("dourado")
+    assert "--mpc-brand:#765414" in gold
+    assert "--mpc-sidebar:#D5BF8C" in gold
+    assert _css(None) == gold
+    assert _css("desconhecido") == gold
+    assert valid_theme("") == DEFAULT_THEME
 
 
 def test_anonymous_portal_uses_gold_without_storing_user_preference(monkeypatch):
@@ -265,12 +280,12 @@ def test_other_palettes_share_css_and_keep_status_colors(name):
     assert "--mpc-danger:#B02A2A" in css
 
 
-def test_user_themes_are_independent_and_survive_reopening(store):
+def test_new_users_default_to_gold_and_saved_themes_survive_reopening(store):
     access = AccessStore(store)
     first = access.get_by_email("admin@test.local")["id"]
     second = seed_access(store, email="outro@test.local", perfil="USUARIO")
-    assert access.get_theme(first) == "vermelho"
-    assert access.get_theme(second) == "vermelho"
+    assert access.get_theme(first) == DEFAULT_THEME
+    assert access.get_theme(second) == DEFAULT_THEME
     access.set_theme(first, "azul")
     access.set_theme(second, "verde")
     with pytest.raises(ValueError, match="Tema inválido"):
@@ -291,7 +306,7 @@ def test_portal_theme_survives_navigation(store, monkeypatch, name):
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
     selector = next(item for item in app.sidebar.selectbox if item.label == "Tema")
-    if name != "vermelho":
+    if name != DEFAULT_THEME:
         selector.set_value(name).run()
     for module in (
         "Início",
@@ -310,6 +325,13 @@ def test_portal_theme_survives_navigation(store, monkeypatch, name):
         selector = next(item for item in app.sidebar.selectbox if item.label == "Tema")
         assert selector.value == name
     assert AccessStore(store).get_theme_by_email("admin@test.local") == name
+    reopened = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    assert not reopened.exception
+    assert reopened.session_state["_portal_theme"]["name"] == name
+    reopened_selector = next(
+        item for item in reopened.sidebar.selectbox if item.label == "Tema"
+    )
+    assert reopened_selector.value == name
 
 
 def test_saved_theme_loads_before_portal_render(store, monkeypatch):
@@ -324,7 +346,20 @@ def test_saved_theme_loads_before_portal_render(store, monkeypatch):
     assert selector.value == "azul"
 
 
-def test_invalid_or_unreadable_preference_falls_back_to_red(store, monkeypatch):
+def test_existing_saved_theme_is_not_overwritten(store, monkeypatch):
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    access = AccessStore(store)
+    access.set_theme(access.get_by_email("admin@test.local")["id"], "vermelho")
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+
+    assert not app.exception
+    assert app.session_state["_portal_theme"]["name"] == "vermelho"
+    assert AccessStore(store).get_theme_by_email("admin@test.local") == "vermelho"
+
+
+def test_null_invalid_or_unreadable_preference_falls_back_to_gold(store, monkeypatch):
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     with store.connection() as connection:
@@ -334,7 +369,7 @@ def test_invalid_or_unreadable_preference_falls_back_to_red(store, monkeypatch):
         )
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
-    assert app.session_state["_portal_theme"]["name"] == "vermelho"
+    assert app.session_state["_portal_theme"]["name"] == DEFAULT_THEME
 
     def unavailable(*args):
         raise OSError("Falha temporária")
@@ -342,7 +377,7 @@ def test_invalid_or_unreadable_preference_falls_back_to_red(store, monkeypatch):
     monkeypatch.setattr(AccessStore, "get_theme_by_email", unavailable)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
-    assert app.session_state["_portal_theme"]["name"] == "vermelho"
+    assert app.session_state["_portal_theme"]["name"] == DEFAULT_THEME
 
 
 def test_failed_save_keeps_previous_theme(store, monkeypatch):
@@ -357,5 +392,5 @@ def test_failed_save_keeps_previous_theme(store, monkeypatch):
     selector = next(item for item in app.sidebar.selectbox if item.label == "Tema")
     selector.set_value("azul").run()
     assert not app.exception
-    assert app.session_state["_portal_theme"]["name"] == "vermelho"
-    assert AccessStore(store).get_theme_by_email("admin@test.local") == "vermelho"
+    assert app.session_state["_portal_theme"]["name"] == DEFAULT_THEME
+    assert AccessStore(store).get_theme_by_email("admin@test.local") == DEFAULT_THEME
