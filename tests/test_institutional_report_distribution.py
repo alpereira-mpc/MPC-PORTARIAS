@@ -828,10 +828,9 @@ def test_distribution_tab_requires_confirmation_and_a_later_rerun_does_not_send(
     assert "Relatorio_Trimestral_MPCPB_2026_T3_v2.pdf" in visible
     assert "mpc@tce.pb.gov.br" in visible
     assert "Histórico de distribuição" in visible
-    assert (
-        app.text_input(key=f"institutional_distribution_subject_{second['id']}").value
-        == default_subject(second)
-    )
+    assert app.text_input(
+        key=f"institutional_distribution_subject_{second['id']}"
+    ).value == default_subject(second)
     assert app.text_area(
         key=f"institutional_distribution_body_{second['id']}"
     ).value.startswith("Prezadas(os) Procuradoras(es),")
@@ -847,7 +846,7 @@ def test_distribution_tab_requires_confirmation_and_a_later_rerun_does_not_send(
         in _visible(app)
     )
     assert transport.calls == []
-    app.radio(key="inst_exibicao").set_value("Versões").run()
+    app.radio(key="inst_exibicao").set_value("Visualização").run()
     app.selectbox(key="inst_version_history").set_value("1 - Finalizado").run()
     app.button(key=f"inst_open_version_{first['id']}").click().run()
     app.radio(key="inst_exibicao").set_value("Distribuição").run()
@@ -858,7 +857,7 @@ def test_distribution_tab_requires_confirmation_and_a_later_rerun_does_not_send(
     assert "Relatorio_Trimestral_MPCPB_2026_T3_v1.pdf" in _visible(app)
     assert transport.calls == []
 
-    app.radio(key="inst_exibicao").set_value("Versões").run()
+    app.radio(key="inst_exibicao").set_value("Visualização").run()
     app.selectbox(key="inst_version_history").set_value("2 - Finalizado").run()
     app.button(key=f"inst_open_version_{second['id']}").click().run()
     app.radio(key="inst_exibicao").set_value("Distribuição").run()
