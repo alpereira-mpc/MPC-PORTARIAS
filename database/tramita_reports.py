@@ -30,9 +30,11 @@ class TramitaReportsStore:
             else "INTEGER PRIMARY KEY"
         )
         with self.store.connection() as c:
+            if self.store.backend == "sqlite":
+                self._migrate_sqlite_hash_constraint(c)
             c.execute("BEGIN IMMEDIATE")
             c.execute(
-                f"CREATE TABLE IF NOT EXISTS tramita_importacoes (id {identity}, tipo TEXT NOT NULL CHECK(tipo IN ('ENTRADAS','SAIDAS','ESTOQUE')), competencia TEXT, data_snapshot TEXT, nome_arquivo TEXT NOT NULL, hash_arquivo TEXT NOT NULL UNIQUE, quantidade_registros INTEGER NOT NULL, quantidade_inserida INTEGER NOT NULL DEFAULT 0, quantidade_duplicada INTEGER NOT NULL DEFAULT 0, origem_historica TEXT NOT NULL DEFAULT 'LEGADO', importado_em TEXT NOT NULL, importado_por TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'CONCLUIDA')"
+                f"CREATE TABLE IF NOT EXISTS tramita_importacoes (id {identity}, tipo TEXT NOT NULL CHECK(tipo IN ('ENTRADAS','SAIDAS','ESTOQUE')), competencia TEXT, data_snapshot TEXT, nome_arquivo TEXT NOT NULL, hash_arquivo TEXT NOT NULL, quantidade_registros INTEGER NOT NULL, quantidade_inserida INTEGER NOT NULL DEFAULT 0, quantidade_duplicada INTEGER NOT NULL DEFAULT 0, origem_historica TEXT NOT NULL DEFAULT 'LEGADO', importado_em TEXT NOT NULL, importado_por TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'CONCLUIDA')"
             )
             c.execute(
                 f"CREATE TABLE IF NOT EXISTS tramita_movimentacoes (id {identity}, importacao_id INTEGER NOT NULL REFERENCES tramita_importacoes(id), competencia TEXT NOT NULL, tipo_movimentacao TEXT NOT NULL CHECK(tipo_movimentacao IN ('ENTRADA','SAIDA')), protocolo TEXT NOT NULL, tipo TEXT NOT NULL DEFAULT '', subcategoria TEXT NOT NULL DEFAULT '', origem TEXT NOT NULL DEFAULT '', data_realizacao TEXT, procurador TEXT NOT NULL DEFAULT '', procurador_original TEXT NOT NULL DEFAULT '', motivo_distribuicao TEXT NOT NULL DEFAULT '', data_devolucao TEXT, motivo_devolucao TEXT NOT NULL DEFAULT '', data_evento TEXT, classificacao_producao TEXT NOT NULL DEFAULT '', chave_evento TEXT NOT NULL DEFAULT '')"
@@ -51,6 +53,11 @@ class TramitaReportsStore:
                 "CREATE INDEX IF NOT EXISTS tramita_importacoes_origem_historica_idx ON tramita_importacoes(origem_historica)"
             )
             c.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS tramita_importacoes_estoque_snapshot_unico "
+                "ON tramita_importacoes(data_snapshot) "
+                "WHERE tipo='ESTOQUE' AND data_snapshot IS NOT NULL"
+            )
+            c.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS tramita_movimentacoes_chave_unica ON tramita_movimentacoes(chave_evento) WHERE chave_evento<>''"
             )
             c.execute(
@@ -61,6 +68,112 @@ class TramitaReportsStore:
             )
             c.execute(
                 "CREATE INDEX IF NOT EXISTS tramita_estoque_procurador_idx ON tramita_estoque(data_snapshot,procurador)"
+            )
+
+    def _migrate_sqlite_hash_constraint(self, connection):
+        """Remove the legacy global hash constraint without changing child rows.
+
+        SQLite represents the original column-level ``UNIQUE`` as an automatic
+        index, which cannot be dropped in place.  Rebuilding only the parent
+        table preserves the primary keys referenced by stock and movement rows.
+        """
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tramita_importacoes'"
+        ).fetchone()
+        if not table:
+            return
+        unique_hash = False
+        for index in connection.execute("PRAGMA index_list(tramita_importacoes)"):
+            if not index[2]:
+                continue
+            name = str(index[1]).replace('"', '""')
+            columns = [
+                row[2] for row in connection.execute(f'PRAGMA index_info("{name}")')
+            ]
+            if columns == ["hash_arquivo"]:
+                unique_hash = True
+                break
+        if not unique_hash:
+            return
+        duplicates = connection.execute(
+            "SELECT data_snapshot,COUNT(*) FROM tramita_importacoes "
+            "WHERE tipo='ESTOQUE' AND data_snapshot IS NOT NULL "
+            "GROUP BY data_snapshot HAVING COUNT(*)>1"
+        ).fetchall()
+        if duplicates:
+            dates = ", ".join(str(row[0]) for row in duplicates)
+            raise RuntimeError(
+                "Migração do estoque interrompida: há mais de uma fotografia "
+                f"para a(s) data(s) {dates}."
+            )
+
+        # A legacy SQLite table needs a parent-table rebuild.  Preserve a
+        # verified, restorable copy before any DDL; Store.backup uses SQLite's
+        # online backup API instead of copying a potentially open database file.
+        self.store.automatic_backup("antes_migracao_estoque_snapshot")
+        old_count = connection.execute(
+            "SELECT COUNT(*) FROM tramita_importacoes"
+        ).fetchone()[0]
+        existing_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(tramita_importacoes)")
+        }
+        inserted_count = (
+            "quantidade_inserida" if "quantidade_inserida" in existing_columns else "0"
+        )
+        duplicate_count = (
+            "quantidade_duplicada"
+            if "quantidade_duplicada" in existing_columns
+            else "0"
+        )
+        historical_origin = (
+            "origem_historica" if "origem_historica" in existing_columns else "'LEGADO'"
+        )
+        connection.execute("PRAGMA foreign_keys=OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "CREATE TABLE tramita_importacoes_nova ("
+                "id INTEGER PRIMARY KEY,"
+                "tipo TEXT NOT NULL CHECK(tipo IN ('ENTRADAS','SAIDAS','ESTOQUE')),"
+                "competencia TEXT,data_snapshot TEXT,nome_arquivo TEXT NOT NULL,"
+                "hash_arquivo TEXT NOT NULL,quantidade_registros INTEGER NOT NULL,"
+                "quantidade_inserida INTEGER NOT NULL DEFAULT 0,"
+                "quantidade_duplicada INTEGER NOT NULL DEFAULT 0,"
+                "origem_historica TEXT NOT NULL DEFAULT 'LEGADO',"
+                "importado_em TEXT NOT NULL,importado_por TEXT NOT NULL DEFAULT '',"
+                "status TEXT NOT NULL DEFAULT 'CONCLUIDA')"
+            )
+            connection.execute(
+                "INSERT INTO tramita_importacoes_nova "
+                "SELECT id,tipo,competencia,data_snapshot,nome_arquivo,hash_arquivo,"
+                f"quantidade_registros,{inserted_count},{duplicate_count},"
+                f"{historical_origin},importado_em,importado_por,status "
+                "FROM tramita_importacoes"
+            )
+            new_count = connection.execute(
+                "SELECT COUNT(*) FROM tramita_importacoes_nova"
+            ).fetchone()[0]
+            orphan = connection.execute(
+                "SELECT 1 FROM ("
+                "SELECT importacao_id FROM tramita_movimentacoes "
+                "UNION ALL SELECT importacao_id FROM tramita_estoque"
+                ") filhos LEFT JOIN tramita_importacoes_nova pai "
+                "ON pai.id=filhos.importacao_id WHERE pai.id IS NULL LIMIT 1"
+            ).fetchone()
+            if new_count != old_count or orphan:
+                raise RuntimeError("Validação da migração de importações falhou.")
+            connection.execute("DROP TABLE tramita_importacoes")
+            connection.execute(
+                "ALTER TABLE tramita_importacoes_nova RENAME TO tramita_importacoes"
+            )
+            connection.execute("COMMIT")
+        finally:
+            connection.execute("PRAGMA foreign_keys=ON")
+        violations = connection.execute("PRAGMA foreign_key_check").fetchone()
+        if violations:
+            raise RuntimeError(
+                "A migração deixou uma referência de importação inválida."
             )
 
     def _ensure_columns(self, connection):
@@ -146,15 +259,37 @@ class TramitaReportsStore:
                 (event_date, classification, key, row["id"]),
             )
 
-    def imported_hash(self, file_hash):
+    def imported_hash(self, file_hash, kind=None):
+        where, values = ["hash_arquivo=?"], [file_hash]
+        if kind is not None:
+            where.append("tipo=?")
+            values.append(kind)
         with self.store.connection(read_only=True) as c:
             return (
                 c.execute(
-                    "SELECT id FROM tramita_importacoes WHERE hash_arquivo=?",
-                    (file_hash,),
+                    "SELECT id FROM tramita_importacoes WHERE " + " AND ".join(where),
+                    values,
                 ).fetchone()
                 is not None
             )
+
+    def stock_snapshot_state(self, snapshot_date, file_hash):
+        """Describe the operational stock snapshot for one reference date."""
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT id,hash_arquivo,quantidade_registros FROM tramita_importacoes "
+                "WHERE tipo='ESTOQUE' AND data_snapshot=?",
+                (snapshot_date,),
+            ).fetchone()
+        if not row:
+            return {"status": "new"}
+        current = dict(row)
+        return {
+            "status": "current" if current["hash_arquivo"] == file_hash else "replace",
+            "import_id": current["id"],
+            "hash_arquivo": current["hash_arquivo"],
+            "quantidade_registros": current["quantidade_registros"],
+        }
 
     def import_rows(
         self,
@@ -168,59 +303,113 @@ class TramitaReportsStore:
         rows=(),
     ):
         rows = list(rows)
-        if self.imported_hash(file_hash):
+        if kind != "ESTOQUE" and self.imported_hash(file_hash, kind):
             raise ValueError("Este arquivo já foi importado anteriormente.")
         from database.store import now
 
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
-            if c.execute(
-                "SELECT 1 FROM tramita_importacoes WHERE hash_arquivo=?", (file_hash,)
-            ).fetchone():
+            if (
+                kind != "ESTOQUE"
+                and c.execute(
+                    "SELECT 1 FROM tramita_importacoes WHERE hash_arquivo=? AND tipo=?",
+                    (file_hash, kind),
+                ).fetchone()
+            ):
                 raise ValueError("Este arquivo já foi importado anteriormente.")
             prepared, duplicates = self._prepared_events(c, kind, rows)
-            inserted = c.execute(
-                "INSERT INTO tramita_importacoes(tipo,competencia,data_snapshot,nome_arquivo,hash_arquivo,quantidade_registros,quantidade_inserida,quantidade_duplicada,importado_em,importado_por) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (
-                    kind,
-                    competence,
-                    snapshot_date,
-                    file_name,
-                    file_hash,
-                    len(rows),
-                    len(prepared),
-                    duplicates,
-                    now(),
-                    actor or "",
-                ),
-            )
-            import_id = inserted.lastrowid
             if kind in ("ENTRADAS", "SAIDAS"):
+                inserted = c.execute(
+                    "INSERT INTO tramita_importacoes(tipo,competencia,data_snapshot,nome_arquivo,hash_arquivo,quantidade_registros,quantidade_inserida,quantidade_duplicada,importado_em,importado_por) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        kind,
+                        competence,
+                        snapshot_date,
+                        file_name,
+                        file_hash,
+                        len(rows),
+                        len(prepared),
+                        duplicates,
+                        now(),
+                        actor or "",
+                    ),
+                )
+                import_id = inserted.lastrowid
                 self._insert_events(c, import_id, prepared)
             else:
-                c.executemany(
-                    "INSERT INTO tramita_estoque(importacao_id,data_snapshot,protocolo,tipo,digital,subcategoria,jurisdicionado,fase,procurador,dias_com_procurador,assistente,dias_com_assistente,dias_no_mpc,prescricao) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    [
+                existing = c.execute(
+                    "SELECT id,hash_arquivo FROM tramita_importacoes "
+                    "WHERE tipo='ESTOQUE' AND data_snapshot=?",
+                    (snapshot_date,),
+                ).fetchone()
+                if existing and existing[1] == file_hash:
+                    return existing[0]
+                if existing:
+                    import_id = existing[0]
+                    c.execute(
+                        "DELETE FROM tramita_estoque WHERE importacao_id=?",
+                        (import_id,),
+                    )
+                    c.execute(
+                        "UPDATE tramita_importacoes SET competencia=?,nome_arquivo=?,"
+                        "hash_arquivo=?,quantidade_registros=?,quantidade_inserida=?,"
+                        "quantidade_duplicada=?,importado_em=?,importado_por=? WHERE id=?",
                         (
+                            competence,
+                            file_name,
+                            file_hash,
+                            len(rows),
+                            len(prepared),
+                            duplicates,
+                            now(),
+                            actor or "",
                             import_id,
+                        ),
+                    )
+                else:
+                    inserted = c.execute(
+                        "INSERT INTO tramita_importacoes(tipo,competencia,data_snapshot,nome_arquivo,hash_arquivo,quantidade_registros,quantidade_inserida,quantidade_duplicada,importado_em,importado_por) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            kind,
+                            competence,
                             snapshot_date,
-                            row["protocolo"],
-                            row["tipo"],
-                            row["digital"],
-                            row["subcategoria"],
-                            row["jurisdicionado"],
-                            row["fase"],
-                            row["procurador"],
-                            row["dias_com_procurador"],
-                            row["assistente"],
-                            row["dias_com_assistente"],
-                            row["dias_no_mpc"],
-                            row["prescricao"],
-                        )
-                        for row in rows
-                    ],
-                )
+                            file_name,
+                            file_hash,
+                            len(rows),
+                            len(prepared),
+                            duplicates,
+                            now(),
+                            actor or "",
+                        ),
+                    )
+                    import_id = inserted.lastrowid
+                self._insert_stock_rows(c, import_id, snapshot_date, rows)
         return import_id
+
+    @staticmethod
+    def _insert_stock_rows(connection, import_id, snapshot_date, rows):
+        connection.executemany(
+            "INSERT INTO tramita_estoque(importacao_id,data_snapshot,protocolo,tipo,digital,subcategoria,jurisdicionado,fase,procurador,dias_com_procurador,assistente,dias_com_assistente,dias_no_mpc,prescricao) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    import_id,
+                    snapshot_date,
+                    row["protocolo"],
+                    row["tipo"],
+                    row["digital"],
+                    row["subcategoria"],
+                    row["jurisdicionado"],
+                    row["fase"],
+                    row["procurador"],
+                    row["dias_com_procurador"],
+                    row["assistente"],
+                    row["dias_com_assistente"],
+                    row["dias_no_mpc"],
+                    row["prescricao"],
+                )
+                for row in rows
+            ],
+        )
 
     def import_historical_rows(
         self, *, kind, file_name, file_hash, actor, source_competence, rows
@@ -235,8 +424,9 @@ class TramitaReportsStore:
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             existing = c.execute(
-                "SELECT id FROM tramita_importacoes WHERE hash_arquivo=?",
-                (file_hash,),
+                "SELECT id FROM tramita_importacoes WHERE hash_arquivo=? "
+                "AND tipo=? AND origem_historica='REFERENCIA_TRAMITA_2026'",
+                (file_hash, kind),
             ).fetchone()
             from database.store import now
 

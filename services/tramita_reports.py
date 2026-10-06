@@ -98,6 +98,39 @@ def official_procurador(value):
     return _NAMES.get(normalized(value))
 
 
+def missing_procurador(value):
+    """Recognize empty spreadsheet values without turning them into people."""
+    return normalized(value) in {"", "nan", "none", "null"}
+
+
+def stock_import_summary(rows):
+    """Summarize a stock photograph without assigning blank owners.
+
+    The Tramita stock export has no separate destination field.  In this
+    operational export, a blank Procurador(a) denotes a process already sent
+    by the MPC and awaiting receipt by its destination.  It remains in the
+    institutional stock, but is not part of an individual cabinet's stock.
+    This classification is intentionally derived: historical snapshots keep
+    their original rows and no schema change is required.
+    """
+    rows = list(rows)
+
+    in_transit = [row for row in rows if missing_procurador(row.get("procurador"))]
+    procuradores = {
+        official_procurador(row.get("procurador"))
+        for row in rows
+        if official_procurador(row.get("procurador"))
+    }
+    assigned = [row for row in rows if official_procurador(row.get("procurador"))]
+    return {
+        "processos": len(rows),
+        "procuradores": len(procuradores),
+        "atribuidos": len(assigned),
+        "em_tramitacao": len(in_transit),
+        "processos_em_tramitacao": in_transit,
+    }
+
+
 def _text(value):
     return "" if value is None else str(value).strip()
 
@@ -198,7 +231,7 @@ def parse_stock(content):
         if not PROTOCOL_PATTERN.fullmatch(protocol):
             continue
         procurador = official_procurador(values["procurador"])
-        if not procurador:
+        if not procurador and not missing_procurador(values["procurador"]):
             unknown.add(values["procurador"])
         rows.append(
             {
@@ -208,7 +241,12 @@ def parse_stock(content):
                 "subcategoria": values["subcategoria"],
                 "jurisdicionado": values["jurisdicionado"],
                 "fase": values.get("fase", ""),
-                "procurador": procurador or values["procurador"],
+                "procurador": procurador
+                or (
+                    ""
+                    if missing_procurador(values["procurador"])
+                    else values["procurador"]
+                ),
                 "dias_com_procurador": _number(values["dias_com_procurador"]),
                 "assistente": values.get("assistente", ""),
                 "dias_com_assistente": _number(values.get("dias_com_assistente")),

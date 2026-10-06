@@ -17,6 +17,7 @@ from services.tramita_reports import (
     official_procurador,
     parse_movements,
     parse_stock,
+    stock_import_summary,
     turnaround_days,
 )
 from services.access import Principal, has_permission
@@ -26,6 +27,23 @@ def movement_file(*rows):
     return (
         "\t".join(MOVEMENT_HEADERS) + "\n" + "\n".join("\t".join(row) for row in rows)
     ).encode("cp1252")
+
+
+def stock_row(protocol, procurador="Manoel Antônio dos Santos Neto"):
+    return {
+        "protocolo": protocol,
+        "tipo": "Processo",
+        "digital": "",
+        "subcategoria": "Representação",
+        "jurisdicionado": "Município de Teste",
+        "fase": "Instrução",
+        "procurador": procurador,
+        "dias_com_procurador": 10,
+        "assistente": "",
+        "dias_com_assistente": None,
+        "dias_no_mpc": 10,
+        "prescricao": "",
+    }
 
 
 def test_tsv_movements_use_cp1252_and_ignore_grouping_rows():
@@ -219,6 +237,35 @@ def test_stock_header_aliases_and_clear_missing_columns_error(monkeypatch):
         parse_stock(b"\xd0\xcf\x11\xe0invalid")
 
 
+def test_stock_summary_keeps_blank_procuradores_in_transit():
+    names = [
+        "Elvira Samara Pereira de Oliveira",
+        "Isabella Barbosa Marinho Falcão",
+        "Bradson Tibério Luna Camelo",
+        "Marcílio Toscano Franca Filho",
+        "Manoel Antônio dos Santos Neto",
+        "Luciano Andrade Farias",
+        "Sheyla Barreto Braga de Queiroz",
+    ]
+    rows = [
+        {"protocolo": f"{index:05d}/26", "procurador": name}
+        for index, name in enumerate(names * 17 + names[:4], start=1)
+    ]
+    rows.extend(
+        {"protocolo": f"{index:05d}/26", "procurador": value}
+        for index, value in enumerate(("", "  ", None, float("nan"), ""), start=124)
+    )
+
+    summary = stock_import_summary(rows)
+
+    assert summary["processos"] == 128
+    assert summary["procuradores"] == 7
+    assert summary["atribuidos"] == 123
+    assert summary["em_tramitacao"] == 5
+    assert summary["atribuidos"] + summary["em_tramitacao"] == summary["processos"]
+    assert len(summary["processos_em_tramitacao"]) == 5
+
+
 def test_same_protocol_can_be_entry_and_exit_and_hash_blocks_repeat(tmp_path):
     store = Store(tmp_path / "tramita.db")
     reports = TramitaReportsStore(store)
@@ -265,6 +312,166 @@ def test_same_protocol_can_be_entry_and_exit_and_hash_blocks_repeat(tmp_path):
             actor="admin",
             rows=[row],
         )
+
+
+def test_stock_snapshot_replaces_only_its_date_and_allows_hash_on_another_date(
+    tmp_path,
+):
+    reports = TramitaReportsStore(Store(tmp_path / "tramita.db"))
+    first = [stock_row("00001/26"), stock_row("00002/26", "")]
+    replacement = [
+        stock_row("00010/26"),
+        stock_row("00011/26"),
+        stock_row("00012/26", ""),
+    ]
+    reports.import_rows(
+        kind="ESTOQUE",
+        file_name="a.xls",
+        file_hash="aaa",
+        actor="admin",
+        snapshot_date="2026-10-06",
+        rows=first,
+    )
+    reports.import_rows(
+        kind="ESTOQUE",
+        file_name="outro-dia.xls",
+        file_hash="aaa",
+        actor="admin",
+        snapshot_date="2026-10-05",
+        rows=[stock_row("00099/26")],
+    )
+    original_id = reports.stock_snapshot_state("2026-10-06", "aaa")["import_id"]
+    reports.import_rows(
+        kind="ESTOQUE",
+        file_name="b.xls",
+        file_hash="bbb",
+        actor="admin",
+        snapshot_date="2026-10-06",
+        rows=replacement,
+    )
+
+    state = reports.stock_snapshot_state("2026-10-06", "bbb")
+    assert state["status"] == "current" and state["import_id"] == original_id
+    assert {row["protocolo"] for row in reports.stock_visual_data("2026-10-06")} == {
+        "00010/26",
+        "00011/26",
+        "00012/26",
+    }
+    assert len(reports.stock_visual_data("2026-10-05")) == 1
+    summary = stock_import_summary(replacement)
+    assert summary["processos"] == 3
+    assert summary["atribuidos"] == 2
+    assert summary["em_tramitacao"] == 1
+
+
+def test_stock_snapshot_is_idempotent_and_rolls_back_failed_replacement(
+    tmp_path, monkeypatch
+):
+    reports = TramitaReportsStore(Store(tmp_path / "tramita.db"))
+    original = [stock_row("00001/26"), stock_row("00002/26")]
+    reports.import_rows(
+        kind="ESTOQUE",
+        file_name="a.xls",
+        file_hash="aaa",
+        actor="admin",
+        snapshot_date="2026-10-06",
+        rows=original,
+    )
+    import_id = reports.import_rows(
+        kind="ESTOQUE",
+        file_name="a.xls",
+        file_hash="aaa",
+        actor="admin",
+        snapshot_date="2026-10-06",
+        rows=[stock_row("ignorado/26")],
+    )
+    assert import_id == reports.stock_snapshot_state("2026-10-06", "aaa")["import_id"]
+    assert len(reports.stock_visual_data("2026-10-06")) == 2
+
+    def fail_insert(*_args):
+        raise RuntimeError("falha simulada")
+
+    monkeypatch.setattr(reports, "_insert_stock_rows", fail_insert)
+    with pytest.raises(RuntimeError, match="falha simulada"):
+        reports.import_rows(
+            kind="ESTOQUE",
+            file_name="b.xls",
+            file_hash="bbb",
+            actor="admin",
+            snapshot_date="2026-10-06",
+            rows=[stock_row("00003/26")],
+        )
+    assert reports.stock_snapshot_state("2026-10-06", "aaa")["status"] == "current"
+    assert {row["protocolo"] for row in reports.stock_visual_data("2026-10-06")} == {
+        "00001/26",
+        "00002/26",
+    }
+
+
+def test_sqlite_hash_migration_preserves_existing_import_and_allows_reused_hash(
+    tmp_path,
+):
+    store = Store(tmp_path / "tramita-legacy-hash.db")
+    with store.connection() as connection:
+        connection.execute("DROP TABLE tramita_movimentacoes")
+        connection.execute("DROP TABLE tramita_estoque")
+        connection.execute("DROP TABLE tramita_importacoes")
+        connection.execute(
+            "CREATE TABLE tramita_importacoes ("
+            "id INTEGER PRIMARY KEY,tipo TEXT NOT NULL,competencia TEXT,data_snapshot TEXT,"
+            "nome_arquivo TEXT NOT NULL,hash_arquivo TEXT NOT NULL UNIQUE,"
+            "quantidade_registros INTEGER NOT NULL,quantidade_inserida INTEGER NOT NULL DEFAULT 0,"
+            "quantidade_duplicada INTEGER NOT NULL DEFAULT 0,origem_historica TEXT NOT NULL DEFAULT 'LEGADO',"
+            "importado_em TEXT NOT NULL,importado_por TEXT NOT NULL DEFAULT '',"
+            "status TEXT NOT NULL DEFAULT 'CONCLUIDA')"
+        )
+        connection.execute(
+            "CREATE TABLE tramita_movimentacoes (id INTEGER PRIMARY KEY,"
+            "importacao_id INTEGER NOT NULL REFERENCES tramita_importacoes(id),"
+            "competencia TEXT NOT NULL,tipo_movimentacao TEXT NOT NULL,protocolo TEXT NOT NULL,"
+            "tipo TEXT NOT NULL DEFAULT '',subcategoria TEXT NOT NULL DEFAULT '',origem TEXT NOT NULL DEFAULT '',"
+            "data_realizacao TEXT,procurador TEXT NOT NULL DEFAULT '',procurador_original TEXT NOT NULL DEFAULT '',"
+            "motivo_distribuicao TEXT NOT NULL DEFAULT '',data_devolucao TEXT,"
+            "motivo_devolucao TEXT NOT NULL DEFAULT '',data_evento TEXT,"
+            "classificacao_producao TEXT NOT NULL DEFAULT '',chave_evento TEXT NOT NULL DEFAULT '')"
+        )
+        connection.execute(
+            "CREATE TABLE tramita_estoque (id INTEGER PRIMARY KEY,"
+            "importacao_id INTEGER NOT NULL REFERENCES tramita_importacoes(id),data_snapshot TEXT NOT NULL,"
+            "protocolo TEXT NOT NULL,tipo TEXT NOT NULL DEFAULT '',digital TEXT NOT NULL DEFAULT '',"
+            "subcategoria TEXT NOT NULL DEFAULT '',jurisdicionado TEXT NOT NULL DEFAULT '',"
+            "fase TEXT NOT NULL DEFAULT '',procurador TEXT NOT NULL DEFAULT '',dias_com_procurador REAL,"
+            "assistente TEXT NOT NULL DEFAULT '',dias_com_assistente REAL,dias_no_mpc REAL,"
+            "prescricao TEXT NOT NULL DEFAULT '')"
+        )
+        connection.execute(
+            "INSERT INTO tramita_importacoes VALUES(17,'ESTOQUE',NULL,'2026-10-06','a.xls',"
+            "'hash-preservado',1,1,0,'LEGADO','2026-10-06T10:00:00Z','admin','CONCLUIDA')"
+        )
+        connection.execute(
+            "INSERT INTO tramita_estoque(importacao_id,data_snapshot,protocolo) VALUES(17,'2026-10-06','00001/26')"
+        )
+    store.__dict__.pop("_tramita_schema_ready", None)
+    reports = TramitaReportsStore(store)
+
+    with store.connection(read_only=True) as connection:
+        preserved = connection.execute(
+            "SELECT id,hash_arquivo,data_snapshot FROM tramita_importacoes WHERE id=17"
+        ).fetchone()
+        assert tuple(preserved) == (17, "hash-preservado", "2026-10-06")
+        assert connection.execute("PRAGMA foreign_key_check").fetchone() is None
+    reports.import_rows(
+        kind="ESTOQUE",
+        file_name="mesmo.xls",
+        file_hash="hash-preservado",
+        actor="admin",
+        snapshot_date="2026-10-07",
+        rows=[stock_row("00002/26")],
+    )
+    assert (
+        reports.stock_snapshot_state("2026-10-07", "hash-preservado")["status"]
+        == "current"
+    )
 
 
 def test_historical_schema_upgrade_is_idempotent_for_existing_sqlite_database(tmp_path):

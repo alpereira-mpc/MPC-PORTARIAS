@@ -157,7 +157,7 @@ def test_tramita_history_migration_repairs_existing_postgresql_schema(pg_store):
         assert "origem_historica" in import_columns
         assert c.execute(
             "SELECT array_agg(version ORDER BY version) FROM schema_migrations"
-        ).fetchone()[0] == [1, 2]
+        ).fetchone()[0] == [1, 2, 3, 4, 5]
 
     row = {
         "protocolo": "01004/26",

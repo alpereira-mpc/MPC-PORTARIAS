@@ -41,6 +41,7 @@ from services.tramita_reports import (
     import_reference_reports,
     parse_movements,
     parse_stock,
+    stock_import_summary,
     turnaround_days,
 )
 from services.ui_theme import (
@@ -3667,7 +3668,7 @@ def imports(store, principal):
         repeated = [
             uploaded.name
             for _, uploaded, _, _ in previews
-            if reports.imported_hash(file_hash(uploaded.getvalue()))
+            if reports.imported_hash(file_hash(uploaded.getvalue()), kind)
         ]
         if repeated:
             st.error(
@@ -3716,36 +3717,66 @@ def imports(store, principal):
         except ValueError as exc:
             st.error(str(exc))
             return
+        stock_summary = stock_import_summary(rows)
         st.write(
-            f"Processos identificados: {len(rows)} · Procuradores identificados: {len({row['procurador'] for row in rows})}"
+            f"Processos identificados: {stock_summary['processos']} · "
+            f"Procuradores identificados: {stock_summary['procuradores']} · "
+            f"Em tramitação: {stock_summary['em_tramitacao']}"
         )
+        if stock_summary["em_tramitacao"]:
+            st.caption(
+                "Processos já devolvidos pelo MPC e ainda não recebidos pelo setor "
+                "destinatário. Permanecem no estoque institucional até o recebimento."
+            )
         if unknown:
             st.error("Procurador não reconhecido: " + ", ".join(unknown))
-        repeated = reports.imported_hash(file_hash(uploaded.getvalue()))
-        if repeated:
-            st.error("Este arquivo já foi importado anteriormente.")
+        uploaded_hash = file_hash(uploaded.getvalue())
+        snapshot_state = reports.stock_snapshot_state(
+            snapshot.isoformat(), uploaded_hash
+        )
+        if snapshot_state["status"] == "replace":
+            st.warning(
+                "Já existe uma fotografia do estoque para esta data. Ao confirmar, "
+                "ela será substituída pelos dados deste arquivo."
+            )
+        elif snapshot_state["status"] == "current":
+            st.info("A fotografia desta data já corresponde a este arquivo.")
+        button_label = (
+            "Atualizar fotografia do estoque"
+            if snapshot_state["status"] == "replace"
+            else "Confirmar importação do estoque"
+        )
         if st.button(
-            "Confirmar importação do estoque", disabled=bool(unknown) or repeated
+            button_label,
+            disabled=bool(unknown) or snapshot_state["status"] == "current",
         ):
             reports.import_rows(
                 kind="ESTOQUE",
                 file_name=uploaded.name,
-                file_hash=file_hash(uploaded.getvalue()),
+                file_hash=uploaded_hash,
                 actor=principal.email,
                 snapshot_date=snapshot.isoformat(),
                 rows=rows,
             )
             registrar_evento(
                 store,
-                evento="TRAMITA_ESTOQUE_IMPORTADO",
+                evento=(
+                    "TRAMITA_ESTOQUE_ATUALIZADO"
+                    if snapshot_state["status"] == "replace"
+                    else "TRAMITA_ESTOQUE_IMPORTADO"
+                ),
                 modulo="relatorios",
-                acao="IMPORTAR",
+                acao=(
+                    "ATUALIZAR" if snapshot_state["status"] == "replace" else "IMPORTAR"
+                ),
                 principal=principal,
                 detalhes={
                     "data_snapshot": snapshot.isoformat(),
                     "arquivo": uploaded.name,
                     "quantidade": len(rows),
-                    "hash": file_hash(uploaded.getvalue()),
+                    "hash": uploaded_hash,
+                    "hash_anterior": snapshot_state.get("hash_arquivo"),
+                    "quantidade_anterior": snapshot_state.get("quantidade_registros"),
                 },
             )
             st.session_state.pop("_reports_read_cache", None)
