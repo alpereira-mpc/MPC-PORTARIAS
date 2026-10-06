@@ -91,6 +91,27 @@ def test_ssl_and_pooler_and_no_credentials_in_errors(monkeypatch, caplog):
     close_pools()
 
 
+def test_ssl_disable_is_limited_to_the_exact_disposable_test_url(monkeypatch):
+    disposable = (
+        "postgresql://tester:secret@127.0.0.1:5433/mpc_disposable_tests?sslmode=disable"
+    )
+    monkeypatch.setenv("MPC_TEST_POSTGRES_URL", disposable)
+
+    assert PostgresBackend(disposable)._options["sslmode"] == "disable"
+    assert (
+        PostgresBackend(
+            "postgresql://tester:secret@127.0.0.1:5433/another_database?sslmode=disable"
+        )._options["sslmode"]
+        == "require"
+    )
+    assert (
+        PostgresBackend(disposable.replace("127.0.0.1", "localhost"))._options[
+            "sslmode"
+        ]
+        == "require"
+    )
+
+
 def test_parameter_and_row_compatibility():
     assert (
         parameters("SELECT '?', \"?\" FROM tab WHERE v=?")

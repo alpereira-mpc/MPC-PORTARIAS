@@ -11,6 +11,7 @@ import base64
 import gzip
 import hashlib
 import json
+import os
 import re
 import time
 import uuid
@@ -382,12 +383,27 @@ class PostgresBackend:
                 "DATABASE_URL inválida. Confira os Secrets."
             ) from None
         mode = self._options.get("sslmode", "require")
-        self._options["sslmode"] = (
-            mode if mode in ("require", "verify-ca", "verify-full") else "require"
-        )
+        if self._is_disposable_test_connection(url) and mode == "disable":
+            self._options["sslmode"] = "disable"
+        else:
+            self._options["sslmode"] = (
+                mode if mode in ("require", "verify-ca", "verify-full") else "require"
+            )
         self._options["connect_timeout"] = 10
         self.schema = schema
         self._active = ContextVar("mpc_postgres_connection", default=None)
+
+    @staticmethod
+    def _is_disposable_test_connection(url):
+        """Allow plaintext only for the exact loopback test URL from the environment."""
+        test_url = os.environ.get("MPC_TEST_POSTGRES_URL")
+        if not test_url or url != test_url:
+            return False
+        options = conninfo_to_dict(test_url)
+        return (
+            options.get("host") in ("127.0.0.1", "localhost")
+            and options.get("dbname") == "mpc_disposable_tests"
+        )
 
     @contextmanager
     def connection(self, *, read_only=False, isolation=None, statement_timeout=None):
@@ -607,10 +623,11 @@ class PostgresBackend:
                 prepare=False,
             )
             c.raw.execute(HISTORY_INDEX_SQL)
-            occupied = any(
-                c.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
-                for table in (*TABLES, "backup_snapshots")
-            )
+            # Add-on tables are created only after this bootstrap completes.
+            # ``configuracoes`` belongs to the base schema and is populated by
+            # every initialized application database, so it is the safe seed
+            # marker here.
+            occupied = c.execute("SELECT 1 FROM configuracoes LIMIT 1").fetchone()
             if not occupied:
                 seed = json.loads(
                     (root / "database/seed.json").read_text(encoding="utf-8")

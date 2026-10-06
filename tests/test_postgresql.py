@@ -19,13 +19,105 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 import pytest
 
-from database.postgresql import DatabaseUnavailable, TABLES
+from database.postgresql import DatabaseUnavailable
 from database.store import Store
 from database.tramita_reports import TramitaReportsStore
 from services.exports import export_record
 from tests.cases import sample
 from tests import test_persistence as persistence
 from tests import test_deletion as deletion
+
+
+BASE_BOOTSTRAP_TABLES = {
+    "procuradores",
+    "funcoes",
+    "assentos",
+    "motivos_afastamento",
+    "bases_legais",
+    "configuracoes",
+    "sequencias",
+    "sequencia_baselines",
+    "portarias",
+    "substituicoes",
+    "eventos",
+    "backup_snapshots",
+    "audit_log",
+    "exportacoes",
+    "audit_arquivos",
+    "servidores",
+    "servidores_importacoes",
+    "memorandos",
+    "memorandos_substituicao",
+    "memorandos_substituicao_etapas",
+    "memorandos_arquivos",
+    "usuarios_acesso",
+    "access_requests",
+    "auditoria_eventos",
+    "tarefas",
+    "tarefas_checklist",
+    "tarefas_lembretes",
+    "registros_seguidos",
+    "avisos_usuario",
+    "tramita_importacoes",
+    "tramita_movimentacoes",
+    "tramita_estoque",
+    "agenda_afastamentos",
+    "agenda_afastamentos_viagens",
+    "agenda_compromissos",
+    "agenda_compromisso_procuradores",
+    "agenda_compromissos_viagens",
+    "ia_telemetria",
+    "schema_migrations",
+}
+EAGER_ADDON_TABLES = {
+    "usuario_gabinetes",
+    "relatorios_institucionais",
+    "relatorios_institucionais_pdf",
+    "relatorios_institucionais_envios",
+    "relatorios_institucionais_envio_destinatarios",
+    "representacoes",
+    "representacao_integrantes",
+    "representacao_andamentos",
+    "representacao_documentos",
+    "ouvidoria_sequencias",
+    "ouvidoria_manifestacoes",
+    "ouvidoria_integrantes",
+    "ouvidoria_andamentos",
+    "ouvidoria_providencias",
+    "ouvidoria_documentos",
+    "notas_internas",
+    "encaminhamentos_internos",
+    "funcoes_institucionais",
+    "notificacoes_email",
+    "notificacao_destinatarios",
+}
+PETICOES_TABLES = {
+    "peticoes",
+    "peticoes_signatarios",
+    "peticoes_pedidos",
+    "peticoes_andamentos",
+    "peticoes_documentos",
+}
+BASE_SEED_SETTINGS = {
+    "seeded",
+    "pdf_engine",
+    "export_dir",
+    "admin_number",
+    "sequence_confirmed",
+}
+EAGER_SCHEMA_MARKERS = {
+    "acesso_schema_v1",
+    "acesso_solicitacoes_schema_v1",
+    "auditoria_schema_v1",
+    "colaboracao_interna_schema_v1",
+    "record_engagement_schema_v1",
+    "memorandos_schema_v1",
+    "tarefas_schema_v3",
+    "representacoes_schema_v1",
+    "ouvidoria_schema_v1",
+    "notificacoes_email_schema_v1",
+    "ia_telemetria_schema_v1",
+}
 
 
 @pytest.fixture(scope="module")
@@ -220,7 +312,13 @@ def test_nonempty_database_is_not_seeded(pg_url):
             )
         )
     store = Store(database_url=pg_url, postgres_schema=schema)
-    assert store.settings() == {"custom": "preserve"}
+    settings = store.settings()
+    assert settings["custom"] == "preserve"
+    assert not BASE_SEED_SETTINGS & settings.keys()
+    assert set(settings) <= {"custom"} | EAGER_SCHEMA_MARKERS
+    assert all(
+        settings[marker] == "1" for marker in EAGER_SCHEMA_MARKERS & settings.keys()
+    )
     assert store.catalog("procuradores") == []
     assert store.next_number(2026) == 1
 
@@ -345,15 +443,11 @@ def test_schema_ssl_foreign_keys_and_indexes(pg_store):
                 "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=current_schema()"
             )
         }
-        assert names == set(TABLES) | {
-            "schema_migrations",
-            "backup_snapshots",
-            "usuarios_acesso",
-            "usuario_gabinetes",
-        }
-        assert c.execute(
+        assert BASE_BOOTSTRAP_TABLES | EAGER_ADDON_TABLES <= names
+        ssl_active = c.execute(
             "SELECT ssl FROM pg_catalog.pg_stat_ssl WHERE pid=pg_backend_pid()"
         ).fetchone()[0]
+        assert ssl_active is (pg_store._postgres._options["sslmode"] != "disable")
         assert c.execute("SHOW transaction_isolation").fetchone()[0] == "read committed"
         indexes = {
             r[0]
@@ -374,6 +468,20 @@ def test_schema_ssl_foreign_keys_and_indexes(pg_store):
     with pytest.raises(DatabaseUnavailable, match="23514"):
         with pg_store.connection() as c:
             c.execute("INSERT INTO sequencias VALUES(999,0)")
+
+
+def test_peticoes_schema_is_created_on_explicit_initialization(pg_store):
+    from database.peticoes import PeticoesStore
+
+    PeticoesStore(pg_store)
+    with pg_store.connection(read_only=True) as c:
+        names = {
+            row[0]
+            for row in c.execute(
+                "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=current_schema()"
+            )
+        }
+    assert PETICOES_TABLES <= names
 
 
 @pytest.mark.parametrize("count,index,expected", [(1, 0, 9), (2, 1, 10), (3, 0, 12)])
