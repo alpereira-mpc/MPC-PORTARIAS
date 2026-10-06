@@ -3725,8 +3725,10 @@ def imports(store, principal):
         )
         if stock_summary["em_tramitacao"]:
             st.caption(
-                "Processos já devolvidos pelo MPC e ainda não recebidos pelo setor "
-                "destinatário. Permanecem no estoque institucional até o recebimento."
+                "Processos sem Procurador identificado na fotografia, podendo estar "
+                "aguardando distribuição no MPC ou em trânsito após devolução. "
+                "Permanecem contabilizados no estoque institucional enquanto estiverem "
+                "nessa condição."
             )
         if unknown:
             st.error("Procurador não reconhecido: " + ", ".join(unknown))
