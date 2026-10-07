@@ -380,7 +380,13 @@ def _chart_values(rows, fields):
     return values
 
 
-def _line_chart(target, rows, fields, y_title, key):
+def _chart_data_expander(target, values):
+    """Keep chart data available without replacing the visualisation."""
+    with target.expander("Ver dados do gráfico", expanded=False):
+        target.dataframe(values, hide_index=True, width="stretch", height=180)
+
+
+def _line_chart(target, rows, fields, y_title, key, *, show_data=False):
     values = _chart_values(rows, fields)
     if not values:
         return
@@ -425,6 +431,8 @@ def _line_chart(target, rows, fields, y_title, key):
         width="stretch",
         key=key,
     )
+    if show_data:
+        _chart_data_expander(target, values)
 
 
 def _temporal_charts(monthly, key_prefix, compact_period=False):
@@ -442,6 +450,7 @@ def _temporal_charts(monthly, key_prefix, compact_period=False):
                 "Mês",
                 ["Distribuídos", "Produção"],
                 key_prefix + "_fluxo",
+                show_data=True,
             ),
         )
         _render_chart(
@@ -453,6 +462,7 @@ def _temporal_charts(monthly, key_prefix, compact_period=False):
                 ["Pareceres", "Cotas"],
                 key_prefix + "_tipos",
                 stacked=True,
+                show_data=True,
             ),
         )
     else:
@@ -464,6 +474,7 @@ def _temporal_charts(monthly, key_prefix, compact_period=False):
                 ["Distribuídos", "Produção"],
                 "Quantidade",
                 key_prefix + "_fluxo",
+                show_data=True,
             ),
         )
         _render_chart(
@@ -474,6 +485,7 @@ def _temporal_charts(monthly, key_prefix, compact_period=False):
                 ["Pareceres", "Cotas"],
                 "Quantidade",
                 key_prefix + "_tipos",
+                show_data=True,
             ),
         )
     st.subheader("Permanência e relação entre fluxos")
@@ -658,7 +670,9 @@ def _category_values(rows, category_field, fields):
     return values
 
 
-def _category_bar_chart(target, rows, category_field, fields, key, stacked=False):
+def _category_bar_chart(
+    target, rows, category_field, fields, key, stacked=False, *, show_data=False
+):
     values = _category_values(rows, category_field, fields)
     if not values:
         return
@@ -698,6 +712,8 @@ def _category_bar_chart(target, rows, category_field, fields, key, stacked=False
         width="stretch",
         key=key,
     )
+    if show_data:
+        _chart_data_expander(target, values)
 
 
 HISTORICAL_DURATION_BANDS = (
