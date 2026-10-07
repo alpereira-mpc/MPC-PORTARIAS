@@ -6,7 +6,7 @@ import streamlit as st
 
 from database.estagiarios import GABINETES, EstagiariosStore, LOTACOES, limite_padrao
 from services.audit import registrar_evento
-from services.ui_theme import section_label
+from services.ui_theme import badge, card_container, record_html, render_html, section_label
 
 
 def _remaining(limit, today=None):
@@ -39,7 +39,10 @@ def _form_people(service, key):
 
 
 def _add_form(service, store, principal):
-    with st.expander("Cadastrar vínculo", expanded=False):
+    with st.expander(
+        "Cadastrar vínculo",
+        expanded=bool(st.session_state.get("estagiario_create_expanded", False)),
+    ):
         with st.form("estagiario_create"):
             person = _form_people(service, "estagiario_create_person")
             lotacao = st.selectbox("Lotação", LOTACOES)
@@ -51,6 +54,7 @@ def _add_form(service, store, principal):
             try:
                 identifier = service.create(person, lotacao, start, limit, actor_email=principal.email, administrator=principal.administrator)
                 _audit(store, principal, "ESTAGIARIO_VINCULO_CRIADO", "CADASTRAR", identifier, {"pessoa_id": person, "lotacao": lotacao})
+                st.session_state["estagiario_create_expanded"] = False
                 st.success("Vínculo cadastrado."); st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
@@ -58,7 +62,7 @@ def _add_form(service, store, principal):
 
 def _active_controls(service, store, principal, row):
     key = str(row["id"])
-    with st.expander("Gerenciar vínculo", expanded=False):
+    with st.popover("Ações", use_container_width=False):
         with st.form("estagiario_edit_" + key):
             selected = LOTACOES.index(row["lotacao"]) if row["lotacao"] in LOTACOES else 0
             lotacao = st.selectbox("Lotação", LOTACOES, index=selected, key="estagiario_edit_lotacao_" + key)
@@ -96,50 +100,125 @@ def _active_controls(service, store, principal, row):
                 st.error(str(exc))
 
 
+def _compact_styles():
+    render_html(
+        """
+        <style>
+        [class*="st-key-estagiarios_panel"] [data-testid="stMetric"] {
+            padding:.35rem .55rem !important; min-height:0 !important;
+        }
+        [class*="st-key-estagiarios_panel"] [data-testid="stMetricLabel"] {
+            font-size:.72rem !important; line-height:1.1 !important;
+        }
+        [class*="st-key-estagiarios_panel"] [data-testid="stMetricValue"] {
+            font-size:1.4rem !important; line-height:1.15 !important;
+        }
+        [class*="st-key-estagiarios_cabinet_"] {
+            padding:.35rem .55rem .45rem !important;
+        }
+        [class*="st-key-estagiarios_cabinet_"] [data-testid="stVerticalBlock"] {
+            gap:.25rem !important;
+        }
+        [class*="st-key-estagiarios_person_"] {
+            padding:.1rem 0 !important;
+            border-bottom:1px solid var(--mpc-border) !important;
+        }
+        [class*="st-key-estagiarios_person_"]:last-child { border-bottom:0 !important; }
+        [class*="st-key-estagiarios_person_"] .mpc-record { padding:.05rem 0 !important; }
+        [class*="st-key-estagiarios_person_"] .mpc-record-title { font-size:.92rem !important; }
+        [class*="st-key-estagiarios_person_"] .mpc-record-secondary,
+        [class*="st-key-estagiarios_person_"] .mpc-record-meta { margin:.1rem 0 0 !important; font-size:.76rem !important; }
+        [class*="st-key-estagiarios_cabinet_"] .stPopover button,
+        [class*="st-key-estagiarios_cabinet_"] button[kind="secondary"] { min-height:1.8rem !important; padding:.1rem .45rem !important; font-size:.76rem !important; }
+        @media (max-width:700px) {
+          [class*="st-key-estagiarios_row_"] > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"] {
+            flex-direction:column !important;
+          }
+        }
+        </style>
+        """
+    )
+
+
+def _person_row(service, store, principal, row):
+    limit = date.fromisoformat(row["data_limite"])
+    days = (limit - date.today()).days
+    tone = "warning" if days <= 60 else "neutral"
+    columns = st.columns([9, 2])
+    with columns[0]:
+        render_html(
+            record_html(
+                row["nome"],
+                badges_html=badge(_remaining(limit), tone),
+                meta=(
+                    f"Início {date.fromisoformat(row['data_inicio']).strftime('%d/%m/%Y')}"
+                    f" · Limite {limit.strftime('%d/%m/%Y')}"
+                ),
+                accent="neutral",
+            )
+        )
+    with columns[1]:
+        _active_controls(service, store, principal, row)
+
+
+def _vacancy(lotacao, position):
+    left, right = st.columns([8, 3])
+    left.caption("Vaga disponível")
+    if right.button("Cadastrar", key=f"estagiario_vacancy_{lotacao}_{position}"):
+        st.session_state["estagiario_create_expanded"] = True
+        st.rerun()
+
+
 def render(store, principal):
     if not principal.administrator:
         raise ValueError("Apenas administradores podem acessar Estagiários.")
     service = EstagiariosStore(store)
     st.subheader("Estagiários")
-    summary = service.summary()
-    for col, label, value in zip(st.columns(4), ("Posições", "Ocupadas", "Disponíveis", "Encerramentos próximos"), (summary["total"], summary["ocupadas"], summary["disponiveis"], summary["encerramentos_proximos"])):
-        col.metric(label, value)
-    st.caption("Apenas vínculos com término em até 60 dias são considerados próximos.")
-    _add_form(service, store, principal)
-    rows = service.list()
-    active = [row for row in rows if row["ativo"] and row["lotacao"] in LOTACOES]
-    legacy = service.legacy_proge_active()
-    if legacy:
-        st.warning("Há vínculo(s) ativo(s) legado(s) em PROGE. Reatribua cada um a um dos sete gabinetes confirmados; nenhuma reatribuição foi presumida.")
-        for row in legacy:
-            with st.container(border=True):
-                st.markdown("**PROGE - ajuste administrativo pendente**")
-                st.caption(row["nome"] + " · vínculo ativo legado")
-                _active_controls(service, store, principal, row)
-    section_label("Lotação atual")
-    by_lotacao = {lotacao: [row for row in active if row["lotacao"] == lotacao] for lotacao in LOTACOES}
-    for first in range(0, len(LOTACOES), 2):
-        columns = st.columns(2)
-        for column, lotacao in zip(columns, LOTACOES[first:first + 2]):
-            with column:
+    with st.container(key="estagiarios_panel"):
+        _compact_styles()
+        summary = service.summary()
+        for col, label, value in zip(st.columns(4), ("Posições", "Ocupadas", "Disponíveis", "Encerramentos próximos"), (summary["total"], summary["ocupadas"], summary["disponiveis"], summary["encerramentos_proximos"])):
+            col.metric(label, value)
+        st.caption("Encerramentos próximos: vínculos com término em até 60 dias.")
+        _add_form(service, store, principal)
+        rows = service.list()
+        active = [row for row in rows if row["ativo"] and row["lotacao"] in LOTACOES]
+        legacy = service.legacy_proge_active()
+        if legacy:
+            st.warning("Há vínculo(s) ativo(s) legado(s) em PROGE. Reatribua cada um a um dos sete gabinetes confirmados; nenhuma reatribuição foi presumida.")
+            for row in legacy:
                 with st.container(border=True):
-                    st.markdown("**" + lotacao + "**")
-                    st.caption(GABINETES[lotacao])
-                    for row in by_lotacao[lotacao]:
-                        limit = date.fromisoformat(row["data_limite"])
-                        st.write(row["nome"])
-                        st.caption(f"Início: {date.fromisoformat(row['data_inicio']).strftime('%d/%m/%Y')} · Limite: {limit.strftime('%d/%m/%Y')}")
-                        st.caption(_remaining(limit))
-                        _active_controls(service, store, principal, row)
-                    for _ in range(2 - len(by_lotacao[lotacao])):
-                        st.caption("+ Vaga disponível")
-                    history = [row for row in rows if row["lotacao"] == lotacao and not row["ativo"]]
-                    with st.expander("Histórico"):
-                        if not history:
-                            st.caption("Sem vínculos encerrados.")
-                        for item in history:
-                            end = date.fromisoformat(item["data_encerramento"]).strftime("%d/%m/%Y") if item["data_encerramento"] else "—"
-                            st.caption(f"{item['nome']} — {date.fromisoformat(item['data_inicio']).strftime('%d/%m/%Y')} a {end}")
+                    st.markdown("**PROGE - ajuste administrativo pendente**")
+                    st.caption(row["nome"] + " · vínculo ativo legado")
+                    _active_controls(service, store, principal, row)
+        section_label("Composição atual")
+        by_lotacao = {lotacao: [row for row in active if row["lotacao"] == lotacao] for lotacao in LOTACOES}
+        for first in range(0, len(LOTACOES), 2):
+            with st.container(key=f"estagiarios_row_{first}"):
+                columns = st.columns(2)
+                for column, lotacao in zip(columns, LOTACOES[first:first + 2]):
+                    with column:
+                        occupied = by_lotacao[lotacao]
+                        with card_container(first, f"estagiarios_cabinet_{lotacao}"):
+                            render_html(
+                                record_html(
+                                    lotacao,
+                                    secondary=GABINETES[lotacao],
+                                    badges_html=badge(f"{len(occupied)}/2", "brand"),
+                                    accent="brand",
+                                )
+                            )
+                            for row in occupied:
+                                with st.container(key=f"estagiarios_person_{row['id']}"):
+                                    _person_row(service, store, principal, row)
+                            for position in range(len(occupied) + 1, 3):
+                                _vacancy(lotacao, position)
+                            history = [row for row in rows if row["lotacao"] == lotacao and not row["ativo"]]
+                            if history:
+                                with st.popover("Ver histórico", use_container_width=False):
+                                    for item in history:
+                                        end = date.fromisoformat(item["data_encerramento"]).strftime("%d/%m/%Y") if item["data_encerramento"] else "—"
+                                        st.caption(f"{item['nome']} · {date.fromisoformat(item['data_inicio']).strftime('%d/%m/%Y')} a {end}")
     st.divider()
     section_label("Composição atual")
     from document_generator.estagiarios_pdf import generate_estagiarios_pdf
