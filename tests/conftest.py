@@ -25,9 +25,11 @@ def isolate_database_secrets(monkeypatch):
     agenda._READY.clear()
     import database.memorandos as memorandos
     import database.audit as audit
+    import database.estagiarios as estagiarios
 
     memorandos._READY.clear()
     audit._READY.clear()
+    estagiarios._READY.clear()
     import database.access_requests as access_requests
 
     access_requests._READY.clear()

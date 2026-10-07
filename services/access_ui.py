@@ -16,6 +16,7 @@ ADMIN_SECTIONS = (
     "Usuários",
     "Solicitações",
     "Funções Institucionais",
+    "Estagiários",
     "Acessos e Auditoria",
     "Sistema",
 )
@@ -423,6 +424,11 @@ def render(store, principal):
         return
     if area == "Funções Institucionais":
         institutional_functions(store, principal)
+        return
+    if area == "Estagiários":
+        from services.estagiarios_ui import render as render_estagiarios
+
+        render_estagiarios(store, principal)
         return
     if area == "Acessos e Auditoria":
         from services.audit_ui import render as render_audit

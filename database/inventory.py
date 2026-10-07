@@ -34,6 +34,8 @@ MEMORANDOS_TABLES = (
     "memorandos_arquivos",
 )
 
+ESTAGIARIOS_TABLES = ("estagiarios_lotacoes",)
+
 AGENDA_TABLES = ("agenda_compromissos", "agenda_compromisso_procuradores")
 
 OFICIOS_TABLES = (
@@ -80,6 +82,7 @@ APPLICATION_TABLES = (
     PORTARIAS_TABLES
     + ACCESS_TABLES
     + MEMORANDOS_TABLES
+    + ESTAGIARIOS_TABLES
     + AGENDA_TABLES
     + OFICIOS_TABLES
     + REPRESENTACOES_TABLES
@@ -95,6 +98,7 @@ ESSENTIAL_TABLES = (
     PORTARIAS_TABLES
     + ACCESS_TABLES
     + MEMORANDOS_TABLES
+    + ESTAGIARIOS_TABLES
     + AGENDA_TABLES
     + OFICIOS_TABLES
     + REPRESENTACOES_TABLES
@@ -109,6 +113,7 @@ SCHEMA_MARKERS = (
     "acesso_schema_v1",
     "acesso_solicitacoes_schema_v1",
     "memorandos_schema_v1",
+    "estagiarios_schema_v1",
     "auditoria_schema_v1",
     "oficios_schema_v1",
     "oficios_schema_v2",

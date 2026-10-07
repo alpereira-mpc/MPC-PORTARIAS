@@ -44,6 +44,7 @@ TABLES = (
     "access_requests",
     "servidores",
     "servidores_importacoes",
+    "estagiarios_lotacoes",
     "memorandos",
     "memorandos_substituicao",
     "memorandos_substituicao_etapas",
