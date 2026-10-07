@@ -1,4 +1,4 @@
-from database.postgresql import Connection, Cursor
+from database.postgresql import Connection, Cursor, IDENTITY_TABLES
 
 
 class _RawCursor:
@@ -31,6 +31,17 @@ def test_peticoes_insert_returns_its_postgresql_identity():
     raw = _RawConnection()
     cursor = Connection(raw).execute(
         "INSERT INTO peticoes(numero_tramita) VALUES(?)", ("116439/26",)
+    )
+    assert "RETURNING id" in raw.statement
+    assert cursor.lastrowid == 41
+
+
+def test_estagiarios_insert_uses_the_shared_postgresql_identity_contract():
+    """Repositories receive lastrowid; the adapter owns INSERT ... RETURNING."""
+    assert "estagiarios_lotacoes" in IDENTITY_TABLES
+    raw = _RawConnection()
+    cursor = Connection(raw).execute(
+        "INSERT INTO estagiarios_lotacoes(pessoa_id) VALUES(?)", (17,)
     )
     assert "RETURNING id" in raw.statement
     assert cursor.lastrowid == 41

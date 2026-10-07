@@ -92,6 +92,7 @@ IDENTITY_TABLES = {
     "access_requests",
     "servidores",
     "servidores_importacoes",
+    "estagiarios_lotacoes",
     "memorandos_substituicao_etapas",
     "auditoria_eventos",
     "tarefas",

@@ -5,7 +5,19 @@ from datetime import date
 from database.store import now, schema_key_of, unwrap_store
 
 MARKER = "estagiarios_schema_v1"
-LOTACOES = ("MTTF", "ESPO", "BLTC", "PROGE", "SBBQ", "IBMF", "MASN", "LAF")
+# Siglas próprias deste cadastro. Os nomes foram confirmados nos catálogos de
+# Ofícios/Tramita; MTTF e BLTC são a grafia administrativa desta tela.
+GABINETES = {
+    "MTTF": "Marcílio Toscano Franca Filho",
+    "ESPO": "Elvira Samara Pereira de Oliveira",
+    "BLTC": "Bradson Tibério Luna Camelo",
+    "SBBQ": "Sheyla Barreto Braga de Queiroz",
+    "IBMF": "Isabella Barbosa Marinho Falcão",
+    "MASN": "Manoel Antônio dos Santos Neto",
+    "LAF": "Luciano Andrade Farias",
+}
+LOTACOES = tuple(GABINETES)
+LEGACY_LOTACOES = ("PROGE",)
 _READY = set()
 
 
@@ -39,12 +51,39 @@ class EstagiariosStore:
                 "data_encerramento TEXT, ativo INTEGER NOT NULL DEFAULT 1 CHECK(ativo IN (0,1)), "
                 "criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '', "
                 "atualizado_em TEXT NOT NULL, atualizado_por TEXT NOT NULL DEFAULT '', "
-                "CHECK(lotacao IN ('MTTF','ESPO','BLTC','PROGE','SBBQ','IBMF','MASN','LAF')), "
+                "CHECK(lotacao IN ('MTTF','ESPO','BLTC','SBBQ','IBMF','MASN','LAF')), "
                 "CHECK(data_limite >= data_inicio), "
                 "CHECK(data_encerramento IS NULL OR data_encerramento >= data_inicio))"
             )
             c.execute("CREATE INDEX IF NOT EXISTS estagiarios_lotacoes_ativos_idx ON estagiarios_lotacoes(lotacao,ativo)")
             c.execute("CREATE INDEX IF NOT EXISTS estagiarios_lotacoes_pessoa_idx ON estagiarios_lotacoes(pessoa_id,ativo)")
+            # Earlier installations accepted PROGE. Preserve those historic rows
+            # for correction, but protect the revised seven-cabinet rule at the
+            # database boundary as well as in the service layer.
+            if self.store.backend == "postgresql":
+                c.execute(
+                    "CREATE OR REPLACE FUNCTION estagiarios_rejeitar_proge() "
+                    "RETURNS trigger AS $$ BEGIN "
+                    "IF NEW.lotacao='PROGE' AND (TG_OP='INSERT' OR NEW.lotacao IS DISTINCT FROM OLD.lotacao) "
+                    "THEN RAISE EXCEPTION 'PROGE não é uma lotação válida para estagiários'; END IF; "
+                    "RETURN NEW; END; $$ LANGUAGE plpgsql"
+                )
+                c.execute("DROP TRIGGER IF EXISTS estagiarios_rejeitar_proge ON estagiarios_lotacoes")
+                c.execute(
+                    "CREATE TRIGGER estagiarios_rejeitar_proge BEFORE INSERT OR UPDATE OF lotacao "
+                    "ON estagiarios_lotacoes FOR EACH ROW EXECUTE FUNCTION estagiarios_rejeitar_proge()"
+                )
+            else:
+                c.execute(
+                    "CREATE TRIGGER IF NOT EXISTS estagiarios_rejeitar_proge_insert "
+                    "BEFORE INSERT ON estagiarios_lotacoes WHEN NEW.lotacao='PROGE' "
+                    "BEGIN SELECT RAISE(ABORT,'PROGE não é uma lotação válida para estagiários'); END"
+                )
+                c.execute(
+                    "CREATE TRIGGER IF NOT EXISTS estagiarios_rejeitar_proge_update "
+                    "BEFORE UPDATE OF lotacao ON estagiarios_lotacoes WHEN NEW.lotacao='PROGE' "
+                    "BEGIN SELECT RAISE(ABORT,'PROGE não é uma lotação válida para estagiários'); END"
+                )
             c.execute("INSERT INTO configuracoes VALUES(?,?) ON CONFLICT DO NOTHING", (MARKER, "1"))
         _READY.add(key)
 
@@ -86,9 +125,24 @@ class EstagiariosStore:
 
     def summary(self, today=None):
         today = today or date.today()
-        active = self.list(include_inactive=False)
+        active = [row for row in self.list(include_inactive=False) if row["lotacao"] in LOTACOES]
         ending = sum(1 for row in active if (date.fromisoformat(row["data_limite"]) - today).days <= 60)
         return {"total": len(LOTACOES) * 2, "ocupadas": len(active), "disponiveis": len(LOTACOES) * 2 - len(active), "encerramentos_proximos": ending}
+
+    def current_composition(self):
+        """Current, valid placements grouped by the seven internship cabinets."""
+        active = self.list(include_inactive=False)
+        return {
+            code: [row for row in active if row["lotacao"] == code]
+            for code in LOTACOES
+        }
+
+    def legacy_proge_active(self):
+        """Legacy rows must be corrected manually; they never fill a current seat."""
+        return [
+            row for row in self.list(include_inactive=False)
+            if row["lotacao"] in LEGACY_LOTACOES
+        ]
 
     def _assert_active_constraints(self, c, pessoa_id, lotacao, *, exclude_id=None):
         suffix = " AND id<>?" if exclude_id is not None else ""
@@ -118,13 +172,11 @@ class EstagiariosStore:
             if not c.execute("SELECT 1 FROM servidores WHERE id=? AND ativo=1 AND upper(cargo) LIKE ?", (pessoa_id, "%ESTAG%")).fetchone():
                 raise ValueError("Selecione uma pessoa ativa classificada como estagiária na Base de Servidores.")
             self._assert_active_constraints(c, pessoa_id, lotacao)
-            row = c.execute(
-                "INSERT INTO estagiarios_lotacoes(pessoa_id,lotacao,data_inicio,data_limite,ativo,criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,1,?,?,?,?) RETURNING id"
-                if self.store.backend == "postgresql" else
+            inserted = c.execute(
                 "INSERT INTO estagiarios_lotacoes(pessoa_id,lotacao,data_inicio,data_limite,ativo,criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,1,?,?,?,?)",
                 (pessoa_id, lotacao, inicio.isoformat(), limite.isoformat(), stamp, actor_email, stamp, actor_email),
             )
-            return row[0] if self.store.backend == "postgresql" else row.lastrowid
+            return inserted.lastrowid
 
     def update(self, identifier, lotacao, inicio, limite, *, actor_email="", administrator=False):
         self._require_admin(administrator)

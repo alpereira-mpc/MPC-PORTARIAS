@@ -4,7 +4,7 @@ from datetime import date
 
 import streamlit as st
 
-from database.estagiarios import EstagiariosStore, LOTACOES, limite_padrao
+from database.estagiarios import GABINETES, EstagiariosStore, LOTACOES, limite_padrao
 from services.audit import registrar_evento
 from services.ui_theme import section_label
 
@@ -60,7 +60,8 @@ def _active_controls(service, store, principal, row):
     key = str(row["id"])
     with st.expander("Gerenciar vínculo", expanded=False):
         with st.form("estagiario_edit_" + key):
-            lotacao = st.selectbox("Lotação", LOTACOES, index=LOTACOES.index(row["lotacao"]), key="estagiario_edit_lotacao_" + key)
+            selected = LOTACOES.index(row["lotacao"]) if row["lotacao"] in LOTACOES else 0
+            lotacao = st.selectbox("Lotação", LOTACOES, index=selected, key="estagiario_edit_lotacao_" + key)
             start = st.date_input("Data de início", value=date.fromisoformat(row["data_inicio"]), format="DD/MM/YYYY", key="estagiario_edit_start_" + key)
             limit = st.date_input("Data limite", value=date.fromisoformat(row["data_limite"]), format="DD/MM/YYYY", key="estagiario_edit_limit_" + key)
             edited = st.form_submit_button("Salvar dados administrativos")
@@ -106,7 +107,15 @@ def render(store, principal):
     st.caption("Apenas vínculos com término em até 60 dias são considerados próximos.")
     _add_form(service, store, principal)
     rows = service.list()
-    active = [row for row in rows if row["ativo"]]
+    active = [row for row in rows if row["ativo"] and row["lotacao"] in LOTACOES]
+    legacy = service.legacy_proge_active()
+    if legacy:
+        st.warning("Há vínculo(s) ativo(s) legado(s) em PROGE. Reatribua cada um a um dos sete gabinetes confirmados; nenhuma reatribuição foi presumida.")
+        for row in legacy:
+            with st.container(border=True):
+                st.markdown("**PROGE - ajuste administrativo pendente**")
+                st.caption(row["nome"] + " · vínculo ativo legado")
+                _active_controls(service, store, principal, row)
     section_label("Lotação atual")
     by_lotacao = {lotacao: [row for row in active if row["lotacao"] == lotacao] for lotacao in LOTACOES}
     for first in range(0, len(LOTACOES), 2):
@@ -115,6 +124,7 @@ def render(store, principal):
             with column:
                 with st.container(border=True):
                     st.markdown("**" + lotacao + "**")
+                    st.caption(GABINETES[lotacao])
                     for row in by_lotacao[lotacao]:
                         limit = date.fromisoformat(row["data_limite"])
                         st.write(row["nome"])
@@ -130,3 +140,15 @@ def render(store, principal):
                         for item in history:
                             end = date.fromisoformat(item["data_encerramento"]).strftime("%d/%m/%Y") if item["data_encerramento"] else "—"
                             st.caption(f"{item['nome']} — {date.fromisoformat(item['data_inicio']).strftime('%d/%m/%Y')} a {end}")
+    st.divider()
+    section_label("Composição atual")
+    from document_generator.estagiarios_pdf import generate_estagiarios_pdf
+
+    pdf = generate_estagiarios_pdf(service.current_composition())
+    st.download_button(
+        "Baixar composição atual em PDF",
+        pdf,
+        file_name="Estagiarios_MPC_PB.pdf",
+        mime="application/pdf",
+        key="estagiarios_download_pdf",
+    )
