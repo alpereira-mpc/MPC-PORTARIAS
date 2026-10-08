@@ -964,6 +964,22 @@ def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monke
     assert "rep_prep_" in compact
 
 
+def test_representation_summary_removes_only_code_delimiters():
+    from services.representacoes_ui import _summary_markdown
+
+    text = (
+        "**Valor:** `R$ 1.296.265,90` (12,5%).\n\n"
+        "```\nProcesso TC 12345/2026 — Maria da Silva\n```\n\n"
+        "- **Pedido:** providência."
+    )
+
+    assert _summary_markdown(text) == (
+        "**Valor:** R$ 1.296.265,90 (12,5%).\n\n"
+        "\nProcesso TC 12345/2026 — Maria da Silva\n\n\n"
+        "- **Pedido:** providência."
+    )
+
+
 def test_representation_summary_can_be_hidden_without_regeneration(store, monkeypatch):
     from database.representacoes import RepresentacoesStore
     from services.representacoes import pdf_oficial, resumo_ia

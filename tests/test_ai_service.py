@@ -181,6 +181,27 @@ def test_sends_pdf_prompt_and_model_without_putting_the_key_in_the_url(
     assert "1 0 obj" not in caplog.text
 
 
+def test_representation_summary_prompt_forbids_code_markup(monkeypatch):
+    prompts = []
+
+    def fake_consult(document, prompt, label, *, operacao):
+        prompts.append((prompt, label, operacao))
+        return _summary(), GEMINI_MODEL
+
+    monkeypatch.setattr(ai_service, "_consultar", fake_consult)
+    resumo = resumir_documento_pdf(PDF, operacao="representacao_resumo")
+
+    assert resumo == "Objeto: exemplo."
+    assert prompts == [
+        (
+            ai_service.PROMPT_RESUMO_REPRESENTACAO,
+            "laboratório de IA",
+            "representacao_resumo",
+        )
+    ]
+    assert "Não use crases, código inline nem blocos de código." in prompts[0][0]
+
+
 def test_timeout(monkeypatch):
     _key(monkeypatch)
     monkeypatch.setattr(

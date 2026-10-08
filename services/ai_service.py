@@ -194,6 +194,11 @@ PROMPT_RESUMO = (
     "Se determinada informação não estiver presente, "
     "informe que não foi identificada no documento."
 )
+PROMPT_RESUMO_REPRESENTACAO = (
+    PROMPT_RESUMO
+    + "\n\nPara este resumo, use Markdown textual apenas para títulos, listas e negrito. "
+    "Não use crases, código inline nem blocos de código."
+)
 PROMPT_EXTRACAO_OFICIO = (
     "Você extrai dados administrativos de um Ofício recebido em PDF.\n"
     "Leia o documento integralmente.\n"
@@ -463,8 +468,13 @@ def gemini_disponivel():
 def resumir_documento_pdf(pdf_bytes, *, operacao="laboratorio_resumo"):
     """Send one PDF and the fixed prompt to Gemini. Nothing is stored."""
     document = _validar_pdf(pdf_bytes)
+    prompt = (
+        PROMPT_RESUMO_REPRESENTACAO
+        if operacao == "representacao_resumo"
+        else PROMPT_RESUMO
+    )
     raw, modelo = _consultar(
-        document, PROMPT_RESUMO, "laboratório de IA", operacao=operacao
+        document, prompt, "laboratório de IA", operacao=operacao
     )
     return _TextoModelo(_texto_resposta(raw), modelo)
 
