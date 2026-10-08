@@ -1,0 +1,29 @@
+.git/
+.github/
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Runtime and generated local data must never become image layers.
+data/
+exports/
+output/
+tmp/
+*.log
+
+# Local credentials and developer environment files.
+.env
+.env.*
+.streamlit/secrets.toml
+gmail_oauth_client.json
+gmail_token.json
+**/token.json
+*.pem
+*.key
+*.p12
+
+# Material not needed by the production container.
+tests/
+docs/
+requirements-dev.txt
