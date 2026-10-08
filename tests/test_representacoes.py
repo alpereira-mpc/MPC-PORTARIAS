@@ -950,6 +950,128 @@ def test_detail_back_returns_to_filtered_list_from_all_sections(store):
         assert not app.exception
 
 
+def test_representation_navigation_callbacks_restore_list_and_clear_temporary_state(
+    monkeypatch,
+):
+    import services.representacoes_ui as ui
+
+    state = {
+        "representacoes_view": 1,
+        "representacoes_progress": 1,
+        "representacoes_file": 1,
+        "representacoes_edit": 1,
+        "representacoes_confirm_delete": 1,
+        "representacoes_exclude_progress": "andamento-1",
+        "representacoes_download": "documento-1",
+        "rep_prg_form_2desc": "valor antigo",
+        "_representacoes_list_filters": {
+            "rep_f_q": "licitação",
+            "rep_f_sit": "EM_TRAMITACAO",
+        },
+    }
+    monkeypatch.setattr(ui.st, "session_state", state)
+
+    ui._open_representation(2)
+
+    assert state["representacoes_view"] == 2
+    assert state["rep_detail_section_2"] == "Visão geral"
+    assert "representacoes_progress" not in state
+    assert "representacoes_file" not in state
+    assert "representacoes_edit" not in state
+    assert "representacoes_confirm_delete" not in state
+    assert "representacoes_exclude_progress" not in state
+    assert "representacoes_download" not in state
+
+    ui._set_ui_state("representacoes_progress", 2, "rep_prg_form_2")
+    assert state["representacoes_progress"] == 2
+    assert "rep_prg_form_2desc" not in state
+
+    state["rep_doc_form_2desc"] = "documento antigo"
+    ui._queue_widget_cleanup("rep_doc_form_2")
+    assert state["rep_doc_form_2desc"] == "documento antigo"
+    ui._consume_widget_cleanup()
+    assert "rep_doc_form_2desc" not in state
+
+    ui._return_to_listing()
+    assert "representacoes_view" not in state
+    assert "representacoes_progress" not in state
+    assert state["rep_f_q"] == "licitação"
+    assert state["rep_f_sit"] == "EM_TRAMITACAO"
+
+
+def test_representation_internal_actions_use_fragment_reruns_and_callbacks():
+    import inspect
+
+    from services.notification_ui import render_protocol_notice
+    from services.record_engagement_ui import render_origin_tools
+    from services.representacoes_ui import (
+        _detail_compact,
+        _done,
+        _document_form,
+        _progress_form,
+        _protocol_form,
+        render,
+    )
+
+    assert 'st.rerun(scope="fragment")' in inspect.getsource(_done)
+    detail = inspect.getsource(_detail_compact)
+    assert "st.rerun()" not in detail
+    assert 'st.rerun(scope="fragment")' in detail
+    assert "on_click=_return_to_listing" in detail
+    assert detail.count('rerun_scope="fragment"') == 2
+    for form in (_progress_form, _document_form, _protocol_form):
+        source = inspect.getsource(form)
+        assert "on_click=_clear_ui_state" in source
+        assert "st.rerun()" not in source
+    home = inspect.getsource(render)
+    assert "on_click=_set_ui_state" in home
+    assert "st.rerun()" not in home
+    notice = inspect.getsource(render_protocol_notice)
+    engagement = inspect.getsource(render_origin_tools)
+    assert 'rerun_scope="app"' in notice
+    assert "st.rerun(scope=rerun_scope)" in notice
+    assert 'rerun_scope="app"' in engagement
+    assert "st.rerun(scope=rerun_scope)" in engagement
+
+
+def test_representation_management_and_cancelled_form_state_do_not_leak(store):
+    import services.representacoes_ui as ui
+
+    principal = _principal(store, email="estado-rep@test.local")
+    first = _protocolled_with_pdf(store, principal, number="TC 077701/26")
+    second = _protocolled_with_pdf(store, principal, number="TC 077702/26")
+    set_status(store, first, "JULGADA", principal)
+    _UI_HOLD.clear()
+    _UI_HOLD.update(ui=ui, store=store, principal=principal)
+
+    def page():
+        from tests.test_representacoes import _UI_HOLD
+
+        _UI_HOLD["ui"].render(_UI_HOLD["store"], _UI_HOLD["principal"])
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key=f"rep_open_{first}").click().run()
+    app.radio(key=f"rep_detail_section_{first}").set_value("Gestão").run()
+    assert app.selectbox(key=f"rep_dt_sit_{first}").value == "JULGADA"
+    app.button(key="rep_dt_back").click().run()
+
+    app.button(key=f"rep_open_{second}").click().run()
+    app.radio(key=f"rep_detail_section_{second}").set_value("Gestão").run()
+    assert app.selectbox(key=f"rep_dt_sit_{second}").value == "EM_TRAMITACAO"
+    assert f"rep_dt_sit_{first}" not in {item.key for item in app.selectbox}
+    app.button(key="rep_dt_back").click().run()
+
+    app.button(key=f"rep_prg_{second}").click().run()
+    description_key = f"rep_prg_form_{second}desc"
+    app.text_area(key=description_key).set_value("Não deve reaparecer.").run()
+    app.button(key=f"rep_prg_form_{second}cancel").click().run()
+    assert "representacoes_progress" not in app.session_state
+    assert description_key not in app.session_state
+    app.button(key=f"rep_prg_{second}").click().run()
+    assert app.text_area(key=description_key).value == ""
+    assert not app.exception
+
+
 def test_home_shows_temporal_notice_and_both_registration_routes(store):
     import services.representacoes_ui as ui
 
@@ -1319,7 +1441,7 @@ def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monke
 
     screen = inspect.getsource(_render_official_document)
     compact = inspect.getsource(_detail_compact)
-    assert screen.index("if summary_column.button") < screen.index(
+    assert screen.index("update_requested = summary_column.button") < screen.index(
         "atualizar_resumo_representacao("
     )
     assert "resumir_documento_pdf" not in screen

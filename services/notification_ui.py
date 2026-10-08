@@ -28,7 +28,7 @@ def _when(value):
     return day + " às " + clock
 
 
-def render_protocol_notice(store, principal, record):
+def render_protocol_notice(store, principal, record, *, rerun_scope="app"):
     from services.notifications import (
         build_preview,
         confirm_send,
@@ -66,7 +66,7 @@ def render_protocol_notice(store, principal, record):
         if summary["status"] != "SENT":
             ensure_draft(store, record, principal)
         st.session_state[_PREVIEW] = record["id"]
-        st.rerun()
+        st.rerun(scope=rerun_scope)
     if not open_preview:
         return
     preview = build_preview(store, record, principal)
@@ -100,7 +100,7 @@ def render_protocol_notice(store, principal, record):
         st.info("Comunicação referente ao protocolo já enviada.")
     if st.button("Fechar prévia", key="rep_mail_close_" + str(record["id"])):
         st.session_state.pop(_PREVIEW, None)
-        st.rerun()
+        st.rerun(scope=rerun_scope)
     can_send = (
         preview["status"] in (None, "DRAFT", "FAILED")
         and not preview["blockers"]
@@ -118,7 +118,7 @@ def render_protocol_notice(store, principal, record):
             return
         st.session_state.pop(_PREVIEW, None)
         st.session_state["representacoes_message"] = "Comunicação enviada."
-        st.rerun()
+        st.rerun(scope=rerun_scope)
 
 
 def render_admin_recipients(store, principal):

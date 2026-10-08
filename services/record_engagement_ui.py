@@ -68,7 +68,9 @@ def _create_task(module, identifier, title):
     )
 
 
-def _reminder_editor(repo, store, principal, module, identifier, prefix):
+def _reminder_editor(
+    repo, store, principal, module, identifier, prefix, *, rerun_scope="app"
+):
     with st.expander("Criar lembrete", expanded=False):
         has_time = st.checkbox("Informar horário", key=prefix + "_has_time")
         with st.form(prefix + "_reminder_form"):
@@ -97,10 +99,12 @@ def _reminder_editor(repo, store, principal, module, identifier, prefix):
             from services.alerts import invalidate_alert_summary
 
             invalidate_alert_summary()
-            st.rerun()
+            st.rerun(scope=rerun_scope)
 
 
-def _reminders(repo, store, principal, module, identifier, prefix):
+def _reminders(
+    repo, store, principal, module, identifier, prefix, *, rerun_scope="app"
+):
     rows = repo.list_origin_reminders(principal.id, module, identifier)
     pending = [row for row in rows if row["status"] == "PENDENTE"]
     if not pending:
@@ -119,11 +123,11 @@ def _reminders(repo, store, principal, module, identifier, prefix):
                 row["id"], principal.id, datetime.now(INSTITUTIONAL_TZ)
             )
             _audit(store, principal, "LEMBRETE_REAGENDADO", "ALTERAR", module, identifier)
-            st.rerun()
+            st.rerun(scope=rerun_scope)
         if cols[2].button("Concluir", key=f"{prefix}_done_{row['id']}"):
             repo.conclude(row["id"], principal.id)
             _audit(store, principal, "LEMBRETE_CONCLUIDO", "CONCLUIR", module, identifier)
-            st.rerun()
+            st.rerun(scope=rerun_scope)
         with st.expander("Escolher nova data", expanded=False):
             new_date = st.date_input(
                 "Nova data",
@@ -139,7 +143,7 @@ def _reminders(repo, store, principal, module, identifier, prefix):
                     datetime.combine(new_date, local.time(), INSTITUTIONAL_TZ).isoformat(),
                 )
                 _audit(store, principal, "LEMBRETE_REAGENDADO", "ALTERAR", module, identifier)
-                st.rerun()
+                st.rerun(scope=rerun_scope)
 
 
 def _create_ai_task_from_origin(pdf_supplier, origin, context):
@@ -168,7 +172,17 @@ def _create_ai_task_from_origin(pdf_supplier, origin, context):
     request_portal_navigation("Tarefas")
 
 
-def render_origin_tools(store, principal, module, identifier, title, *, pdf_supplier=None, ai_context=None):
+def render_origin_tools(
+    store,
+    principal,
+    module,
+    identifier,
+    title,
+    *,
+    pdf_supplier=None,
+    ai_context=None,
+    rerun_scope="app",
+):
     """Render only from an already-open record detail."""
     prefix = f"eng_{module}_{identifier}"
     repo = RecordEngagementStore(store)
@@ -190,7 +204,7 @@ def render_origin_tools(store, principal, module, identifier, title, *, pdf_supp
             repo.follow(principal.id, module, identifier)
             event, action = "REGISTRO_SEGUIDO", "VINCULAR"
         _audit(store, principal, event, action, module, identifier)
-        st.rerun()
+        st.rerun(scope=rerun_scope)
     if pdf_supplier and has_permission(principal, "tarefas"):
         if columns[2].button("✨ Criar tarefa com IA", key=prefix + "_task_ai"):
             _create_ai_task_from_origin(
@@ -198,8 +212,24 @@ def render_origin_tools(store, principal, module, identifier, title, *, pdf_supp
                 {"origem_modulo": module, "origem_id": str(identifier)},
                 ai_context or {"tipo": ORIGIN_LABELS.get(module, module), "identificacao": title},
             )
-    _reminder_editor(repo, store, principal, module, identifier, prefix)
-    _reminders(repo, store, principal, module, identifier, prefix)
+    _reminder_editor(
+        repo,
+        store,
+        principal,
+        module,
+        identifier,
+        prefix,
+        rerun_scope=rerun_scope,
+    )
+    _reminders(
+        repo,
+        store,
+        principal,
+        module,
+        identifier,
+        prefix,
+        rerun_scope=rerun_scope,
+    )
 
     related = TarefasStore(store).list_related(module, identifier, principal.id)
     section_label("Tarefas relacionadas")

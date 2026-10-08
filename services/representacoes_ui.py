@@ -198,11 +198,67 @@ def _toolbar(prefix, items):
 
 def _done(message):
     st.session_state["representacoes_message"] = message
-    st.rerun()
+    st.rerun(scope="fragment")
 
 
-def _set_ui_state(key, value):
+def _clear_widget_state(*prefixes):
+    for key in tuple(st.session_state):
+        if any(key.startswith(prefix) for prefix in prefixes):
+            st.session_state.pop(key, None)
+
+
+def _queue_widget_cleanup(*prefixes):
+    pending = list(st.session_state.get("_representacoes_widget_cleanup") or ())
+    st.session_state["_representacoes_widget_cleanup"] = [
+        *pending,
+        *(prefix for prefix in prefixes if prefix not in pending),
+    ]
+
+
+def _consume_widget_cleanup():
+    prefixes = st.session_state.pop("_representacoes_widget_cleanup", ())
+    _clear_widget_state(*prefixes)
+
+
+def _set_ui_state(key, value, *reset_prefixes):
+    _clear_widget_state(*reset_prefixes)
     st.session_state[key] = value
+
+
+def _clear_ui_state(key, *reset_prefixes):
+    st.session_state.pop(key, None)
+    _clear_widget_state(*reset_prefixes)
+
+
+def _open_representation(identifier):
+    for key in (
+        "representacoes_protocol",
+        "representacoes_progress",
+        "representacoes_file",
+        "representacoes_edit",
+        "representacoes_confirm_delete",
+        "representacoes_exclude_progress",
+        "representacoes_download",
+    ):
+        st.session_state.pop(key, None)
+    st.session_state["rep_detail_section_" + str(identifier)] = "Visão geral"
+    st.session_state["representacoes_view"] = identifier
+
+
+def _return_to_listing():
+    st.session_state.pop("representacoes_view", None)
+    for key in (
+        "representacoes_protocol",
+        "representacoes_progress",
+        "representacoes_file",
+        "representacoes_edit",
+        "representacoes_confirm_delete",
+        "representacoes_exclude_progress",
+        "representacoes_download",
+    ):
+        st.session_state.pop(key, None)
+    for key, value in st.session_state.get("_representacoes_list_filters", {}).items():
+        st.session_state[key] = value
 
 
 def _clear_forms():
@@ -210,6 +266,7 @@ def _clear_forms():
         "representacoes_edit",
         "representacoes_view",
         "representacoes_protocol",
+        "representacoes_direct",
         "representacoes_progress",
         "representacoes_file",
         "representacoes_confirm_delete",
@@ -484,26 +541,38 @@ def _card(record, index, procuradores_map, assessores_map):
         a.button(
             "Abrir",
             key="rep_open_" + str(record["id"]),
-            on_click=_set_ui_state,
-            args=("representacoes_view", record["id"]),
+            on_click=_open_representation,
+            args=(record["id"],),
         )
         b.button(
             "Andamento",
             key="rep_prg_" + str(record["id"]),
             on_click=_set_ui_state,
-            args=("representacoes_progress", record["id"]),
+            args=(
+                "representacoes_progress",
+                record["id"],
+                "rep_prg_form_" + str(record["id"]),
+            ),
         )
         c.button(
             "Anexar",
             key="rep_doc_" + str(record["id"]),
             on_click=_set_ui_state,
-            args=("representacoes_file", record["id"]),
+            args=(
+                "representacoes_file",
+                record["id"],
+                "rep_doc_form_" + str(record["id"]),
+            ),
         )
         d.button(
             "Editar",
             key="rep_ed_" + str(record["id"]),
             on_click=_set_ui_state,
-            args=("representacoes_edit", record["id"]),
+            args=(
+                "representacoes_edit",
+                record["id"],
+                "rep_form_" + str(record["id"]),
+            ),
         )
 
 
@@ -530,10 +599,14 @@ def _progress_form(store, principal, identifier):
             st.error(str(exc))
         else:
             st.session_state.pop("representacoes_progress", None)
+            _queue_widget_cleanup(prefix)
             _done("Andamento registrado.")
-    if st.button("Cancelar", key=prefix + "cancel"):
-        st.session_state.pop("representacoes_progress", None)
-        st.rerun()
+    st.button(
+        "Cancelar",
+        key=prefix + "cancel",
+        on_click=_clear_ui_state,
+        args=("representacoes_progress", prefix),
+    )
 
 
 def _document_form(store, principal, identifier):
@@ -573,10 +646,14 @@ def _document_form(store, principal, identifier):
             st.error(str(exc))
         else:
             st.session_state.pop("representacoes_file", None)
+            _queue_widget_cleanup(prefix)
             _done("Documento anexado.")
-    if st.button("Cancelar", key=prefix + "cancel"):
-        st.session_state.pop("representacoes_file", None)
-        st.rerun()
+    st.button(
+        "Cancelar",
+        key=prefix + "cancel",
+        on_click=_clear_ui_state,
+        args=("representacoes_file", prefix),
+    )
 
 
 def _protocol_fields(prefix):
@@ -641,10 +718,14 @@ def _protocol_form(store, principal, identifier):
             st.error(str(exc))
         else:
             st.session_state.pop("representacoes_protocol", None)
+            _queue_widget_cleanup(prefix)
             _done("Representação protocolada.")
-    if st.button("Cancelar", key=prefix + "cancel"):
-        st.session_state.pop("representacoes_protocol", None)
-        st.rerun()
+    st.button(
+        "Cancelar",
+        key=prefix + "cancel",
+        on_click=_clear_ui_state,
+        args=("representacoes_protocol", prefix),
+    )
 
 
 def _direct_protocol_form(store, principal):
@@ -654,9 +735,12 @@ def _direct_protocol_form(store, principal):
     )
     base = _form(store, prefix="rep_direct_base_")
     if base is None:
-        if st.button("Cancelar", key="rep_direct_cancel"):
-            st.session_state.pop("representacoes_direct", None)
-            st.rerun()
+        st.button(
+            "Cancelar",
+            key="rep_direct_cancel",
+            on_click=_clear_ui_state,
+            args=("representacoes_direct", "rep_direct_base_", "rep_direct_prot_"),
+        )
         return
     section_label("Dados do protocolo")
     protocol, upload = _protocol_fields("rep_direct_prot_")
@@ -669,11 +753,15 @@ def _direct_protocol_form(store, principal):
             st.error(str(exc))
         else:
             st.session_state.pop("representacoes_direct", None)
+            _queue_widget_cleanup("rep_direct_base_", "rep_direct_prot_")
             st.session_state["representacoes_view"] = saved["id"]
             _done("Representação protocolada.")
-    if st.button("Cancelar", key="rep_direct_cancel"):
-        st.session_state.pop("representacoes_direct", None)
-        st.rerun()
+    st.button(
+        "Cancelar",
+        key="rep_direct_cancel",
+        on_click=_clear_ui_state,
+        args=("representacoes_direct", "rep_direct_base_", "rep_direct_prot_"),
+    )
 
 
 def _detail(store, principal, record):
@@ -736,15 +824,21 @@ def _render_progress_item(store, principal, record, item, pending):
                 else:
                     st.session_state.pop("representacoes_exclude_progress", None)
                     _done("Andamento excluído.")
-        if cancel.button("Cancelar", key=f"rep_exc_no_{item['id']}"):
-            st.session_state.pop("representacoes_exclude_progress", None)
-            st.rerun()
+        cancel.button(
+            "Cancelar",
+            key=f"rep_exc_no_{item['id']}",
+            on_click=_clear_ui_state,
+            args=("representacoes_exclude_progress", f"rep_exc_motivo_{item['id']}"),
+        )
         return
     text, action = st.columns([5, 1.5])
     text.markdown(line)
-    if action.button("Excluir andamento", key=f"rep_exc_{item['id']}"):
-        st.session_state["representacoes_exclude_progress"] = item["id"]
-        st.rerun()
+    action.button(
+        "Excluir andamento",
+        key=f"rep_exc_{item['id']}",
+        on_click=_set_ui_state,
+        args=("representacoes_exclude_progress", item["id"]),
+    )
 
 
 def _official_sha256(store, official):
@@ -803,20 +897,23 @@ def _render_official_document(store, principal, record):
     summary_label = "↻ Atualizar resumo" if has_summary else "✨ Gerar resumo com IA"
     update_requested = False
     if has_summary and hidden:
-        if summary_column.button(
-            "Exibir último resumo", key="rep_visao_resumo_show_" + str(record["id"])
-        ):
-            st.session_state.pop(hidden_key, None)
-            st.rerun()
+        summary_column.button(
+            "Exibir último resumo",
+            key="rep_visao_resumo_show_" + str(record["id"]),
+            on_click=_clear_ui_state,
+            args=(hidden_key,),
+        )
     else:
         update_requested = summary_column.button(
             summary_label, key="rep_visao_resumo_" + str(record["id"])
         )
-        if has_summary and hide_column.button(
-            "Ocultar resumo", key="rep_visao_resumo_hide_" + str(record["id"])
-        ):
-            st.session_state[hidden_key] = True
-            st.rerun()
+        if has_summary:
+            hide_column.button(
+                "Ocultar resumo",
+                key="rep_visao_resumo_hide_" + str(record["id"]),
+                on_click=_set_ui_state,
+                args=(hidden_key, True),
+            )
     if update_requested:
         from services.ai_service import GeminiErro, GeminiNaoConfigurada
 
@@ -929,7 +1026,7 @@ def _detail_compact(store, principal, record):
             try:
                 from services.notification_ui import render_protocol_notice
 
-                render_protocol_notice(store, principal, record)
+                render_protocol_notice(store, principal, record, rerun_scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
             except Exception:
@@ -938,9 +1035,16 @@ def _detail_compact(store, principal, record):
         else:
             st.caption("Este projeto ainda não foi protocolado no TRAMITA.")
     elif section == "Andamentos":
-        if st.button("Novo andamento", key="rep_dt_prg"):
-            st.session_state["representacoes_progress"] = record["id"]
-            st.rerun()
+        st.button(
+            "Novo andamento",
+            key="rep_dt_prg",
+            on_click=_set_ui_state,
+            args=(
+                "representacoes_progress",
+                record["id"],
+                "rep_prg_form_" + str(record["id"]),
+            ),
+        )
         timeline = progress(store, record["id"])
         if not timeline:
             empty_state("Nenhum andamento registrado.")
@@ -955,9 +1059,16 @@ def _detail_compact(store, principal, record):
                 f"Exibidos {len(timeline) if show_all else 20} de {len(timeline)} andamentos."
             )
     elif section == "Documentos":
-        if st.button("Anexar documento", key="rep_dt_doc"):
-            st.session_state["representacoes_file"] = record["id"]
-            st.rerun()
+        st.button(
+            "Anexar documento",
+            key="rep_dt_doc",
+            on_click=_set_ui_state,
+            args=(
+                "representacoes_file",
+                record["id"],
+                "rep_doc_form_" + str(record["id"]),
+            ),
+        )
         files = documents(store, record["id"])
         if not files:
             empty_state("Nenhum documento anexado.")
@@ -990,7 +1101,7 @@ def _detail_compact(store, principal, record):
                     principal=principal,
                 )
                 st.session_state["representacoes_download"] = item["id"]
-                st.rerun()
+                st.rerun(scope="fragment")
     elif section == "Organização":
         from services.internal_collaboration_ui import render_internal_collaboration
         from services.record_engagement_ui import render_origin_tools
@@ -1016,6 +1127,7 @@ def _detail_compact(store, principal, record):
                 "origem": record.get("origem") or "",
                 "identificacao": record.get("titulo") or "",
             },
+            rerun_scope="fragment",
         )
     else:
         flow = _toolbar(
@@ -1032,10 +1144,12 @@ def _detail_compact(store, principal, record):
         )
         if flow == "rep_dt_prot":
             st.session_state["representacoes_protocol"] = record["id"]
-            st.rerun()
+            _clear_widget_state("rep_prot_" + str(record["id"]))
+            st.rerun(scope="fragment")
         if flow == "rep_dt_ed":
             st.session_state["representacoes_edit"] = record["id"]
-            st.rerun()
+            _clear_widget_state("rep_form_" + str(record["id"]))
+            st.rerun(scope="fragment")
         if protocolled:
             fase_keys = list(FASES)
             chosen = st.selectbox(
@@ -1047,13 +1161,31 @@ def _detail_compact(store, principal, record):
                     else 0
                 ),
                 format_func=FASES.get,
-                key="rep_dt_fase",
+                key="rep_dt_fase_" + str(record["id"]),
             )
             situacao = st.selectbox(
                 "Situação institucional",
                 ["EM_TRAMITACAO", "JULGADA", "ENCERRADA", "SUSPENSA", "CANCELADA"],
+                index=(
+                    [
+                        "EM_TRAMITACAO",
+                        "JULGADA",
+                        "ENCERRADA",
+                        "SUSPENSA",
+                        "CANCELADA",
+                    ].index(record["situacao"])
+                    if record.get("situacao")
+                    in {
+                        "EM_TRAMITACAO",
+                        "JULGADA",
+                        "ENCERRADA",
+                        "SUSPENSA",
+                        "CANCELADA",
+                    }
+                    else 0
+                ),
                 format_func=SITUACOES.get,
-                key="rep_dt_sit",
+                key="rep_dt_sit_" + str(record["id"]),
             )
             if st.button("Salvar fase", key="rep_dt_fase_ok"):
                 set_phase(store, record["id"], chosen, principal)
@@ -1066,7 +1198,7 @@ def _detail_compact(store, principal, record):
             st.caption(reason)
         elif st.button("Excluir definitivamente", key="rep_del"):
             st.session_state["representacoes_confirm_delete"] = record["id"]
-            st.rerun()
+            st.rerun(scope="fragment")
         if st.session_state.get("representacoes_confirm_delete") == record["id"]:
             st.warning(
                 "Tem certeza de que deseja excluir definitivamente este Projeto de Representação?"
@@ -1075,13 +1207,11 @@ def _detail_compact(store, principal, record):
                 delete(store, record["id"], principal)
                 _clear_forms()
                 _done("Projeto de Representação excluído.")
-    if st.button("Voltar", key="rep_dt_back"):
-        st.session_state.pop("representacoes_view", None)
-        for key, value in st.session_state.pop(
-            "_representacoes_list_filters", {}
-        ).items():
-            st.session_state[key] = value
-        st.rerun()
+    st.button(
+        "Voltar",
+        key="rep_dt_back",
+        on_click=_return_to_listing,
+    )
 
 
 def _detail_body(store, principal, record):
@@ -1226,6 +1356,7 @@ def _detail_body(store, principal, record):
             "origem": record.get("origem") or "",
             "identificacao": record.get("titulo") or "",
         },
+        rerun_scope="fragment",
     )
     protocolled = is_protocolled(record)
     flow = _toolbar(
@@ -1346,6 +1477,7 @@ def _detail_body(store, principal, record):
 
 
 def render(store, principal):
+    _consume_widget_cleanup()
     require_permission(principal, "representacoes")
     st.title(module_title("representacoes", "REPRESENTAÇÕES"))
     st.caption(
@@ -1371,21 +1503,25 @@ def render(store, principal):
         unsafe_allow_html=True,
     )
     with st.container(key="rep_home_actions", horizontal=True):
-        if st.button(
+        st.button(
             "+ Novo projeto de Representação",
             type="primary",
             key="rep_new",
-        ):
-            st.session_state["representacoes_edit"] = {}
-            st.rerun()
-        if has_permission(
-            principal, "representacoes_registrar_protocolo"
-        ) and st.button(
-            "Registrar Representação Protocolada",
-            key="rep_direct_new",
-        ):
-            st.session_state["representacoes_direct"] = True
-            st.rerun()
+            on_click=_set_ui_state,
+            args=("representacoes_edit", {}, "rep_form_new"),
+        )
+        if has_permission(principal, "representacoes_registrar_protocolo"):
+            st.button(
+                "Registrar Representação Protocolada",
+                key="rep_direct_new",
+                on_click=_set_ui_state,
+                args=(
+                    "representacoes_direct",
+                    True,
+                    "rep_direct_base_",
+                    "rep_direct_prot_",
+                ),
+            )
     view_id = st.session_state.get("representacoes_view")
     edit_id = st.session_state.get("representacoes_edit")
     if st.session_state.get("representacoes_protocol"):
@@ -1425,11 +1561,20 @@ def render(store, principal):
             else:
                 st.session_state["representacoes_edit"] = None
                 st.session_state.pop("representacoes_edit", None)
+                _queue_widget_cleanup(
+                    "rep_form_" + str(current["id"] if current else "new")
+                )
                 st.session_state["representacoes_view"] = saved["id"]
                 _done(kind_saved_message(saved))
-        if st.button("Cancelar", key="rep_cancel"):
-            st.session_state.pop("representacoes_edit", None)
-            st.rerun()
+        st.button(
+            "Cancelar",
+            key="rep_cancel",
+            on_click=_clear_ui_state,
+            args=(
+                "representacoes_edit",
+                "rep_form_" + str(current["id"] if current else "new"),
+            ),
+        )
         return
     if view_id:
         record = get(store, view_id)
