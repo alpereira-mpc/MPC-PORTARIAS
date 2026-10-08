@@ -44,6 +44,7 @@ from services.representacoes import (
     resumo_desatualizado,
     resumo_ia,
     grouped_members,
+    formatar_resumo_markdown,
     is_protocolled,
     kind_label,
     kind_saved_message,
@@ -712,11 +713,6 @@ def _official_download_payload(store, principal, record, official):
     return download(store, official["id"])
 
 
-def _summary_markdown(text):
-    """Keep useful Markdown while preventing AI code formatting in this summary."""
-    return str(text or "").replace("`", "")
-
-
 def _render_official_document(store, principal, record):
     """Shortcut for the protocol PDF already stored with the representation."""
     official = pdf_oficial(store, record["id"])
@@ -803,7 +799,7 @@ def _render_official_document(store, principal, record):
         st.caption(AVISO_PDF_ALTERADO)
     if not hidden:
         st.markdown("### Resumo da representação — gerado por IA")
-        st.markdown(_summary_markdown(saved["texto"]))
+        st.markdown(formatar_resumo_markdown(saved["texto"]))
         st.caption(AVISO_RESUMO_IA)
 
 

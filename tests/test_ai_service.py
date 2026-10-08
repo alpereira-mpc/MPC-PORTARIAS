@@ -199,7 +199,8 @@ def test_representation_summary_prompt_forbids_code_markup(monkeypatch):
             "representacao_resumo",
         )
     ]
-    assert "Não use crases, código inline nem blocos de código." in prompts[0][0]
+    assert "Não use cabeçalhos com #" in prompts[0][0]
+    assert "R$ 1.296.265,90" in prompts[0][0]
 
 
 def test_timeout(monkeypatch):

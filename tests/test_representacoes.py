@@ -953,6 +953,7 @@ def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monke
     assert "✨ Gerar resumo com IA" in screen
     assert "↻ Atualizar resumo" in screen
     assert "### Resumo da representação — gerado por IA" in screen
+    assert "formatar_resumo_markdown(saved" in screen
     assert "AVISO_RESUMO_IA" in screen
     assert "AVISO_PDF_ALTERADO" in screen
     assert "documento protocolado" in AVISO_RESUMO_IA
@@ -964,20 +965,45 @@ def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monke
     assert "rep_prep_" in compact
 
 
-def test_representation_summary_removes_only_code_delimiters():
-    from services.representacoes_ui import _summary_markdown
+def test_representation_summary_normalizes_markdown_without_changing_values():
+    from services.representacoes import formatar_resumo_markdown
 
     text = (
-        "**Valor:** `R$ 1.296.265,90` (12,5%).\n\n"
-        "```\nProcesso TC 12345/2026 — Maria da Silva\n```\n\n"
-        "- **Pedido:** providência."
+        "# MINISTÉRIO PÚBLICO DE CONTAS\n\n"
+        "## Síntese\n\n"
+        "**Valor:** `R$ 1.296.265,90` (12,5%).\n"
+        "- **Cautelar:** R$ 516.344,64.\n"
+        "- **Processo:** TC 12345/2026 — Maria da Silva."
     )
 
-    assert _summary_markdown(text) == (
-        "**Valor:** R$ 1.296.265,90 (12,5%).\n\n"
-        "\nProcesso TC 12345/2026 — Maria da Silva\n\n\n"
-        "- **Pedido:** providência."
+    formatted = formatar_resumo_markdown(text)
+
+    assert formatted == (
+        "**MINISTÉRIO PÚBLICO DE CONTAS**\n\n"
+        "**Síntese**\n\n"
+        "**Valor:** R\\$ 1.296.265,90 (12,5%).\n"
+        "- **Cautelar:** R\\$ 516.344,64.\n"
+        "- **Processo:** TC 12345/2026 — Maria da Silva."
     )
+    assert "`" not in formatted
+    assert "#" not in formatted
+
+
+def test_summary_update_stores_normalized_markdown(store, monkeypatch):
+    import services.ai_service as ai_service
+    from services.representacoes import atualizar_resumo_representacao, resumo_ia
+
+    principal = _principal(store, email="resumo-formatado@test.local")
+    identifier = _protocolled_with_pdf(store, principal, number="TC 12345/2026")
+    raw = "## Síntese\n\n- **Valor:** R$ 516.344,64."
+    monkeypatch.setattr(
+        ai_service, "resumir_documento_pdf", lambda *_args, **_kwargs: raw
+    )
+
+    saved = atualizar_resumo_representacao(store, identifier, principal)
+
+    assert saved["texto"] == "**Síntese**\n\n- **Valor:** R\\$ 516.344,64."
+    assert resumo_ia(store, identifier)["texto"] == saved["texto"]
 
 
 def test_representation_summary_can_be_hidden_without_regeneration(store, monkeypatch):

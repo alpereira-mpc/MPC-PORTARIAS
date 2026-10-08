@@ -519,6 +519,20 @@ def resumo_desatualizado(resumo, sha256):
     return stored != sha256
 
 
+def formatar_resumo_markdown(texto):
+    """Keep summary Markdown safe for Streamlit's math and code extensions."""
+
+    def subtitle(match):
+        title = match.group(1).strip().strip("#").strip()
+        if title.startswith("**") and title.endswith("**"):
+            return title
+        return f"**{title}**"
+
+    text = str(texto or "").replace("`", "")
+    text = re.sub(r"(?m)^[ \t]*#{1,6}[ \t]+(.+?)[ \t]*$", subtitle, text)
+    return re.sub(r"(?<!\\)\$", r"\\$", text)
+
+
 def atualizar_resumo_representacao(store, identifier, principal):
     """Summarize the official PDF on demand and replace the stored text only on success."""
     from database.store import now
@@ -531,8 +545,9 @@ def atualizar_resumo_representacao(store, identifier, principal):
         raise ValueError("Não há PDF oficial protocolado para esta representação.")
     file = download(store, official["id"])
     digest = hashlib.sha256(file["conteudo"]).hexdigest()
-    texto = resumir_documento_pdf(file["conteudo"], operacao="representacao_resumo")
-    modelo = getattr(texto, "modelo", None) or GEMINI_MODEL
+    resposta = resumir_documento_pdf(file["conteudo"], operacao="representacao_resumo")
+    modelo = getattr(resposta, "modelo", None) or GEMINI_MODEL
+    texto = formatar_resumo_markdown(resposta)
     return open_store(store).save_resumo_ia(
         identifier,
         texto,

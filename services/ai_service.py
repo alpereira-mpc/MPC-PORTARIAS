@@ -196,8 +196,10 @@ PROMPT_RESUMO = (
 )
 PROMPT_RESUMO_REPRESENTACAO = (
     PROMPT_RESUMO
-    + "\n\nPara este resumo, use Markdown textual apenas para títulos, listas e negrito. "
-    "Não use crases, código inline nem blocos de código."
+    + "\n\nPara este resumo, use Markdown mínimo e visualmente discreto: listas e "
+    "negrito para rótulos curtos. Não use cabeçalhos com #, títulos institucionais, "
+    "crases, código inline, blocos de código nem delimitadores matemáticos. Escreva "
+    "valores monetários como texto normal, por exemplo R$ 1.296.265,90."
 )
 PROMPT_EXTRACAO_OFICIO = (
     "Você extrai dados administrativos de um Ofício recebido em PDF.\n"
