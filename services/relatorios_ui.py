@@ -7,7 +7,6 @@ import hashlib
 from uuid import uuid4
 from calendar import monthrange
 from datetime import date, datetime
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -38,7 +37,6 @@ from services.institutional_report_content import (
 from services.themes import DEFAULT_THEME, theme_tokens
 from services.tramita_reports import (
     file_hash,
-    import_reference_reports,
     parse_movements,
     parse_stock,
     stock_import_summary,
@@ -3543,40 +3541,6 @@ def imports(store, principal):
     if not has_permission(principal, "admin"):
         raise ValueError("Apenas administradores podem importar dados do Tramita.")
     reports = TramitaReportsStore(store)
-    st.subheader("Importar Histórico Inicial")
-    st.caption(
-        "Reconcilia os 18 relatórios de janeiro a setembro de 2026. O hash é auditável; "
-        "a proteção contra duplicidade é a identidade de cada evento. Depois, a aplicação consulta somente a base local."
-    )
-    source_dir = Path(__file__).resolve().parents[1] / "referencias"
-    if source_dir.exists():
-        if st.button("Reconciliar histórico de janeiro a setembro de 2026"):
-            results = import_reference_reports(store, source_dir, principal.email)
-            imported = sum(item["inserted"] for item in results)
-            duplicates = sum(item["duplicates"] for item in results)
-            skipped = sum(item["already_imported"] for item in results)
-            registrar_evento(
-                store,
-                evento="TRAMITA_HISTORICO_RECONCILIADO",
-                modulo="relatorios",
-                acao="IMPORTAR",
-                principal=principal,
-                detalhes={
-                    "arquivos": len(results),
-                    "inseridos": imported,
-                    "duplicados": duplicates,
-                    "ja_importados": skipped,
-                },
-            )
-            st.session_state.pop("_reports_read_cache", None)
-            st.success(
-                f"Histórico reconciliado: {imported} eventos inseridos e {duplicates} já existentes."
-            )
-            st.rerun()
-    else:
-        st.info(
-            "A fonte de migração não está disponível neste ambiente. O histórico já importado continua funcionando normalmente."
-        )
     st.subheader("Cobertura histórica")
     available_years = reports.historical_years()
     coverage_years = sorted({2026, *available_years}, reverse=True)

@@ -3,12 +3,15 @@ from io import BytesIO
 
 import pytest
 from pypdf import PdfReader
+from streamlit.testing.v1 import AppTest
 
 from database.estagiarios import EstagiariosStore, LOTACOES, limite_padrao
 from database.memorandos import MemorandosStore
 from document_generator.estagiarios_pdf import generate_estagiarios_pdf
 from services.access import Principal
 from services.estagiarios_ui import _can_manage, _open_create_form, _sync_edit_limit
+
+_UI_HOLD = {}
 
 
 class _InsertCursor:
@@ -214,6 +217,70 @@ def test_edit_limit_widget_is_updated_when_start_changes(monkeypatch):
 
     assert state["estagiario_edit_limit_1"] == limite_padrao(date(2024, 2, 29))
     assert state["estagiario_edit_limit_1"] == date(2026, 2, 28)
+
+
+def test_actions_keep_admin_fields_together_and_remove_replacement(store, monkeypatch):
+    import services.estagiarios_ui as ui
+
+    # AppTest does not execute fragment-scoped reruns; persistence is verified below.
+    monkeypatch.setattr(ui.st, "rerun", lambda **_kwargs: None)
+
+    people = _people(store)
+    service = EstagiariosStore(store)
+    identifier = service.create(
+        people["Ana Estágio"], "ESPO", date(2026, 3, 10), administrator=True
+    )
+    _UI_HOLD.clear()
+    _UI_HOLD.update(
+        ui=ui, service=service, store=store,
+        principal=_principal(pode_admin=True, email="admin@test.local"),
+        identifier=identifier,
+    )
+
+    def page():
+        import streamlit as st
+        from tests.test_estagiarios import _UI_HOLD
+
+        @st.fragment
+        def controls():
+            current = next(
+                row for row in _UI_HOLD["service"].list()
+                if row["id"] == _UI_HOLD["identifier"]
+            )
+            _UI_HOLD["ui"]._active_controls(
+                _UI_HOLD["service"], _UI_HOLD["store"],
+                _UI_HOLD["principal"], current,
+            )
+
+        controls()
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert not app.exception
+    assert [item.label for item in app.date_input] == [
+        "Data de início", "Data limite", "Data de encerramento"
+    ]
+    assert app.date_input(key=f"estagiario_edit_limit_{identifier}").proto.disabled
+    assert not any("substitu" in item.label.lower() for item in app.button)
+    assert not any("substituto" in item.label.lower() for item in app.date_input)
+    app.date_input(key=f"estagiario_edit_start_{identifier}").set_value(
+        date(2024, 2, 29)
+    ).run()
+    assert app.date_input(key=f"estagiario_edit_limit_{identifier}").value == date(
+        2026, 2, 28
+    )
+    app.selectbox(key=f"estagiario_edit_lotacao_{identifier}").set_value("LAF").run()
+    app.button(key=f"estagiario_edit_save_{identifier}").click().run()
+    saved = next(row for row in service.list() if row["id"] == identifier)
+    assert saved["lotacao"] == "LAF"
+    assert saved["data_inicio"] == "2024-02-29"
+    assert saved["data_limite"] == "2026-02-28"
+    app.date_input(key=f"estagiario_close_date_{identifier}").set_value(
+        date(2025, 1, 10)
+    ).run()
+    next(item for item in app.button if item.label == "Encerrar vínculo").click().run()
+    closed = next(row for row in service.list() if row["id"] == identifier)
+    assert closed["ativo"] == 0
+    assert closed["data_encerramento"] == "2025-01-10"
 
 
 def test_internship_actions_keep_reruns_inside_the_portal_fragment(monkeypatch):

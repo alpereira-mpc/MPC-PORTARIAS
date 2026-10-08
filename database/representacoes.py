@@ -1,5 +1,6 @@
 """Additive Representações schema. Listing never selects document bytes."""
 
+import re
 import uuid
 
 from database.store import now, schema_key_of, unwrap_store
@@ -9,7 +10,8 @@ _READY = set()
 COLUMNS = (
     "id,titulo,objeto,origem,data_abertura,representado,tema,prioridade,"
     "situacao,fase_processual,numero_processo,data_protocolo,relator,"
-    "possui_medida_cautelar,observacoes,criado_em,criado_por,atualizado_em,atualizado_por"
+    "possui_medida_cautelar,observacoes,registro_origem,criado_em,criado_por,"
+    "atualizado_em,atualizado_por"
 )
 MEMBER_COLUMNS = "id,representacao_id,membro_tipo,membro_id,papel,criado_em"
 PROGRESS_COLUMNS = "id,representacao_id,data,tipo,descricao,criado_em,criado_por"
@@ -30,6 +32,11 @@ DOCUMENT_META = (
     "id,representacao_id,andamento_id,tipo_documento,descricao,data_documento,"
     "nome_arquivo,mime_type,tamanho,criado_em,criado_por"
 )
+
+
+def _process_key(number):
+    key = re.sub(r"[^A-Z0-9]", "", str(number or "").upper())
+    return key[2:] if key.startswith("TC") else key
 
 
 class RepresentacoesStore:
@@ -67,6 +74,8 @@ class RepresentacoesStore:
                 "relator TEXT,"
                 "possui_medida_cautelar INTEGER NOT NULL DEFAULT 0 CHECK(possui_medida_cautelar IN (0,1)),"
                 "observacoes TEXT NOT NULL DEFAULT '',"
+                "registro_origem TEXT NOT NULL DEFAULT 'PROJETO' "
+                "CHECK(registro_origem IN ('PROJETO','DIRETO')),"
                 "criado_em TEXT NOT NULL,"
                 "criado_por TEXT NOT NULL,"
                 "atualizado_em TEXT NOT NULL,"
@@ -157,6 +166,11 @@ class RepresentacoesStore:
                     "ALTER TABLE representacoes ADD COLUMN possui_medida_cautelar "
                     "INTEGER NOT NULL DEFAULT 0"
                 )
+            if "registro_origem" not in existing:
+                c.execute(
+                    "ALTER TABLE representacoes ADD COLUMN registro_origem "
+                    "TEXT NOT NULL DEFAULT 'PROJETO'"
+                )
             self._ensure_progress_exclusion(c)
             self._ensure_resumo_ia(c)
             c.execute(
@@ -165,36 +179,47 @@ class RepresentacoesStore:
             )
         _READY.add(key)
 
+    def _insert_record(self, c, record, actor, stamp, protocol=None):
+        protocol = protocol or {}
+        inserted = c.execute(
+            "INSERT INTO representacoes(titulo,objeto,origem,data_abertura,"
+            "representado,tema,prioridade,situacao,fase_processual,numero_processo,"
+            "data_protocolo,relator,possui_medida_cautelar,observacoes,registro_origem,"
+            "criado_em,criado_por,atualizado_em,atualizado_por) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                record["titulo"],
+                record.get("objeto") or "",
+                record["origem"],
+                record["data_abertura"],
+                record.get("representado") or "",
+                record.get("tema") or "",
+                record["prioridade"],
+                "PROTOCOLADA" if protocol else record["situacao"],
+                (
+                    (protocol.get("fase_processual") or "INSTRUCAO")
+                    if protocol
+                    else record.get("fase_processual")
+                ),
+                protocol.get("numero_processo"),
+                protocol.get("data_protocolo"),
+                protocol.get("relator"),
+                1 if protocol.get("possui_medida_cautelar") else 0,
+                record.get("observacoes") or "",
+                record.get("registro_origem") or "PROJETO",
+                stamp,
+                actor,
+                stamp,
+                actor,
+            ),
+        )
+        return inserted.lastrowid
+
     def create(self, record, members, actor):
         stamp = now()
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
-            inserted = c.execute(
-                "INSERT INTO representacoes(titulo,objeto,origem,data_abertura,"
-                "representado,tema,prioridade,situacao,fase_processual,numero_processo,"
-                "data_protocolo,relator,observacoes,criado_em,criado_por,atualizado_em,"
-                "atualizado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    record["titulo"],
-                    record.get("objeto") or "",
-                    record["origem"],
-                    record["data_abertura"],
-                    record.get("representado") or "",
-                    record.get("tema") or "",
-                    record["prioridade"],
-                    record["situacao"],
-                    record.get("fase_processual"),
-                    None,
-                    None,
-                    None,
-                    record.get("observacoes") or "",
-                    stamp,
-                    actor,
-                    stamp,
-                    actor,
-                ),
-            )
-            identifier = inserted.lastrowid
+            identifier = self._insert_record(c, record, actor, stamp)
             self._replace_members(c, identifier, members, stamp)
             self._add_progress(
                 c,
@@ -206,6 +231,64 @@ class RepresentacoesStore:
                 actor,
             )
         return self.get(identifier)
+
+    def create_protocolled(self, record, members, payload, actor, upload):
+        stamp = now()
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            self._ensure_unique_process(c, payload["numero_processo"])
+            identifier = self._insert_record(c, record, actor, stamp, payload)
+            self._replace_members(c, identifier, members, stamp)
+            self._add_protocol_artifacts(c, identifier, payload, actor, stamp, upload)
+        return self.get(identifier)
+
+    @staticmethod
+    def _ensure_unique_process(c, number, exclude=None):
+        wanted = _process_key(number)
+        if any(
+            row[0] != exclude and _process_key(row[1]) == wanted
+            for row in c.execute(
+                "SELECT id,numero_processo FROM representacoes "
+                "WHERE numero_processo IS NOT NULL"
+            )
+        ):
+            raise ValueError("Este número de processo já está cadastrado.")
+
+    def _add_protocol_artifacts(self, c, identifier, payload, actor, stamp, upload):
+        self._add_progress(
+            c,
+            identifier,
+            payload["data_protocolo"],
+            "PROTOCOLADA",
+            "Representação protocolada. Processo "
+            + payload["numero_processo"]
+            + ". Relator: "
+            + payload["relator"]
+            + ".",
+            stamp,
+            actor,
+        )
+        if upload:
+            name, mime, content = upload
+            c.execute(
+                "INSERT INTO representacao_documentos(id,representacao_id,andamento_id,"
+                "tipo_documento,descricao,data_documento,nome_arquivo,mime_type,tamanho,"
+                "arquivo,criado_em,criado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    uuid.uuid4().hex,
+                    identifier,
+                    None,
+                    "REPRESENTACAO_FINAL",
+                    payload.get("observacao") or "PDF final da Representação",
+                    payload["data_protocolo"],
+                    name,
+                    mime,
+                    len(content),
+                    content,
+                    stamp,
+                    actor,
+                ),
+            )
 
     def update(self, identifier, record, members, actor):
         current = self.get(identifier)
@@ -261,6 +344,7 @@ class RepresentacoesStore:
                 raise ValueError("Representação não encontrada.")
             if row["numero_processo"]:
                 raise ValueError("Esta representação já possui protocolo.")
+            self._ensure_unique_process(c, payload["numero_processo"], identifier)
             c.execute(
                 "UPDATE representacoes SET numero_processo=?,data_protocolo=?,relator=?,"
                 "possui_medida_cautelar=?,situacao=?,fase_processual=?,atualizado_em=?,"
@@ -277,40 +361,7 @@ class RepresentacoesStore:
                     identifier,
                 ),
             )
-            self._add_progress(
-                c,
-                identifier,
-                payload["data_protocolo"],
-                "PROTOCOLADA",
-                "Representação protocolada. Processo "
-                + payload["numero_processo"]
-                + ". Relator: "
-                + payload["relator"]
-                + ".",
-                stamp,
-                actor,
-            )
-            if upload:
-                name, mime, content = upload
-                c.execute(
-                    "INSERT INTO representacao_documentos(id,representacao_id,andamento_id,"
-                    "tipo_documento,descricao,data_documento,nome_arquivo,mime_type,tamanho,"
-                    "arquivo,criado_em,criado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        uuid.uuid4().hex,
-                        identifier,
-                        None,
-                        "REPRESENTACAO_FINAL",
-                        payload.get("observacao") or "PDF final da Representação",
-                        payload["data_protocolo"],
-                        name,
-                        mime,
-                        len(content),
-                        content,
-                        stamp,
-                        actor,
-                    ),
-                )
+            self._add_protocol_artifacts(c, identifier, payload, actor, stamp, upload)
         return self.get(identifier)
 
     def add_progress(self, identifier, data, tipo, descricao, actor):
@@ -553,9 +604,7 @@ class RepresentacoesStore:
                 "SELECT "
                 "SUM(CASE WHEN situacao IN ('IDEIA','PESQUISA','ELABORACAO','MINUTA_REVISAO','APROVADA') THEN 1 ELSE 0 END),"
                 "SUM(CASE WHEN situacao='AGUARDANDO_PROTOCOLO' THEN 1 ELSE 0 END),"
-                "SUM(CASE WHEN situacao='EM_TRAMITACAO' THEN 1 ELSE 0 END),"
-                "SUM(CASE WHEN fase_processual='MPC' THEN 1 ELSE 0 END),"
-                "SUM(CASE WHEN fase_processual='PAUTA' THEN 1 ELSE 0 END),"
+                "SUM(CASE WHEN situacao IN ('PROTOCOLADA','EM_TRAMITACAO') THEN 1 ELSE 0 END),"
                 "SUM(CASE WHEN situacao='JULGADA' THEN 1 ELSE 0 END) "
                 "FROM representacoes"
             ).fetchone()
@@ -563,8 +612,6 @@ class RepresentacoesStore:
             "preparacao",
             "aguardando_protocolo",
             "tramitacao",
-            "mpc",
-            "pauta",
             "julgadas",
         )
         return dict(zip(keys, [int(value or 0) for value in row]))

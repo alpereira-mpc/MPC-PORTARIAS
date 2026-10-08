@@ -35,11 +35,14 @@ from services.representacoes import (
     get,
     kind_label,
     list_records,
+    overview,
     progress,
     reconcile_signatories,
     register_protocol,
+    register_direct_protocol,
     relator_label,
     set_phase,
+    set_status,
     signatory_options,
     setor_elegivel,
     update,
@@ -260,6 +263,218 @@ def test_create_edit_team_protocol_phase_and_delete_rules(store):
             (record["id"],),
         ).fetchone()[0]
     assert leftover >= 1
+
+
+def test_direct_protocol_is_atomic_and_uses_the_existing_followup_flow(store):
+    principal = _principal(store, email="direct-rep@test.local")
+    base, responsible, *_ = _payload(store)
+    protocol = {
+        "numero_processo": "TC 030001/26",
+        "data_protocolo": "2026-09-20",
+        "relator": RELATORES[0],
+        "fase_processual": "INSTRUCAO",
+        "possui_medida_cautelar": True,
+    }
+    before = overview(store)
+    with pytest.raises(ValueError, match="PDF final"):
+        register_direct_protocol(store, base, protocol, principal, None)
+    assert list_records(store, {"numero_processo": "030001"}) == []
+
+    content = _pdf()
+    saved = register_direct_protocol(
+        store, base, protocol, principal, ("representacao.pdf", content)
+    )
+    assert saved["registro_origem"] == "DIRETO"
+    assert saved["situacao"] == "PROTOCOLADA"
+    assert saved["fase_processual"] == "INSTRUCAO"
+    assert saved["possui_medida_cautelar"] is True
+    assert saved["numero_processo"] == protocol["numero_processo"]
+    assert any(member["membro_id"] == responsible for member in saved["integrantes"])
+    assert [item["tipo"] for item in progress(store, saved["id"])] == ["PROTOCOLADA"]
+    assert overview(store) == {**before, "tramitacao": before["tramitacao"] + 1}
+    assert list_records(store, {"numero_processo": "030001"})[0]["id"] == saved["id"]
+    official = next(
+        item
+        for item in documents(store, saved["id"])
+        if item["tipo_documento"] == "REPRESENTACAO_FINAL"
+    )
+    assert download(store, official["id"])["conteudo"] == content
+    with store.connection(read_only=True) as c:
+        assert (
+            c.execute(
+                "SELECT COUNT(*) FROM auditoria_eventos "
+                "WHERE evento=? AND entidade_id=?",
+                ("REPRESENTACAO_PROTOCOLADA", str(saved["id"])),
+            ).fetchone()[0]
+            == 1
+        )
+    moved = add_progress(
+        store,
+        saved["id"],
+        {"data": "2026-09-21", "tipo": "LIVRE", "descricao": "Em análise"},
+        principal,
+    )
+    assert moved[0]["tipo"] == "LIVRE"
+    assert get(store, saved["id"])["situacao"] == "EM_TRAMITACAO"
+    assert overview(store)["tramitacao"] == before["tramitacao"] + 1
+
+
+def test_overview_counts_active_protocols_once_regardless_of_phase(store):
+    principal = _principal(store, email="kpis-rep@test.local")
+    base, *_ = _payload(store)
+    preparation = create(store, {**base, "titulo": "Em preparação"}, principal)
+    waiting = create(store, {**base, "titulo": "Aguardando protocolo"}, principal)
+    set_status(store, waiting["id"], "AGUARDANDO_PROTOCOLO", principal)
+
+    active_ids = []
+    for index, phase in enumerate(("MPC", "PAUTA", "MPC", "PAUTA"), start=1):
+        project = create(store, {**base, "titulo": f"Protocolo {index}"}, principal)
+        saved = register_protocol(
+            store,
+            project["id"],
+            {"numero_processo": f"TC {index:06d}/26", "relator": RELATORES[0]},
+            principal,
+        )
+        if index > 2:
+            add_progress(
+                store,
+                saved["id"],
+                {"tipo": "LIVRE", "descricao": "Andamento registrado"}, principal,
+            )
+        set_phase(store, saved["id"], phase, principal)
+        active_ids.append(saved["id"])
+
+    judged_project = create(store, {**base, "titulo": "Julgada"}, principal)
+    judged = register_protocol(
+        store, judged_project["id"],
+        {"numero_processo": "TC 000005/26", "relator": RELATORES[0]}, principal,
+    )
+    set_phase(store, judged["id"], "PAUTA", principal)
+    set_status(store, judged["id"], "JULGADA", principal)
+    closed_project = create(store, {**base, "titulo": "Encerrada"}, principal)
+    closed = register_protocol(
+        store, closed_project["id"],
+        {"numero_processo": "TC 000006/26", "relator": RELATORES[0]}, principal,
+    )
+    set_phase(store, closed["id"], "MPC", principal)
+    set_status(store, closed["id"], "ENCERRADA", principal)
+
+    assert overview(store) == {
+        "preparacao": 1,
+        "aguardando_protocolo": 1,
+        "tramitacao": 4,
+        "julgadas": 1,
+    }
+    assert get(store, preparation["id"])["situacao"] == "IDEIA"
+    assert [get(store, identifier)["situacao"] for identifier in active_ids] == [
+        "PROTOCOLADA", "PROTOCOLADA", "EM_TRAMITACAO", "EM_TRAMITACAO"
+    ]
+    assert get(store, judged["id"])["fase_processual"] == "PAUTA"
+    assert get(store, closed["id"])["fase_processual"] == "MPC"
+    assert {item["id"] for item in list_records(store, {"fase_processual": "MPC"})} >= {
+        active_ids[0], active_ids[2], closed["id"]
+    }
+    assert {
+        item["id"] for item in list_records(store, {"fase_processual": "PAUTA"})
+    } >= {
+        active_ids[1], active_ids[3], judged["id"]
+    }
+
+
+def test_home_kpis_show_only_four_situation_cards():
+    def page():
+        from services.representacoes_ui import _kpis
+
+        _kpis(
+            {"preparacao": 1, "aguardando_protocolo": 2, "tramitacao": 3, "julgadas": 4}
+        )
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert [(item.label, int(item.value)) for item in app.metric] == [
+        ("Em preparação", 1),
+        ("Aguardando protocolo", 2),
+        ("Em tramitação", 3),
+        ("Julgadas", 4),
+    ]
+    assert not app.exception
+
+
+def test_protocol_number_cannot_be_duplicated_across_registration_paths(store):
+    principal = _principal(store, email="dupe-rep@test.local")
+    base, *_ = _payload(store)
+    protocol = {"numero_processo": "TC 003/26", "relator": RELATORES[0]}
+    direct = register_direct_protocol(
+        store, base, protocol, principal, ("representacao.pdf", _pdf())
+    )
+    with pytest.raises(ValueError, match="já está cadastrado"):
+        register_direct_protocol(
+            store,
+            base,
+            {**protocol, "numero_processo": "003-26"},
+            principal,
+            ("representacao.pdf", _pdf()),
+        )
+    assert len(list_records(store, {})) == 1
+    project = create(store, {**base, "titulo": "Outro projeto"}, principal)
+    with pytest.raises(ValueError, match="já está cadastrado"):
+        register_protocol(
+            store, project["id"], protocol, principal, ("representacao.pdf", _pdf())
+        )
+    assert get(store, project["id"])["numero_processo"] is None
+    assert get(store, direct["id"])["numero_processo"] == "TC 003/26"
+
+
+def test_direct_protocol_requires_both_module_and_protocol_permission(store):
+    base, *_ = _payload(store)
+    protocol = {"numero_processo": "TC 004/26", "relator": RELATORES[0]}
+    for flags in ({"representacoes": False}, {"registrar_protocolo": False}):
+        principal = _principal(
+            store,
+            email=f"denied-{len(flags)}-{flags.get('representacoes')}@test.local",
+            **flags,
+        )
+        with pytest.raises(ValueError, match="Acesso não autorizado"):
+            register_direct_protocol(
+                store, base, protocol, principal, ("representacao.pdf", _pdf())
+            )
+    assert list_records(store, {}) == []
+
+
+def test_direct_protocol_rolls_back_when_document_write_fails(store, monkeypatch):
+    from database.notifications import NotificationsStore
+
+    principal = _principal(store, email="rollback-rep@test.local")
+    base, *_ = _payload(store)
+
+    def fail(*_args):
+        raise RuntimeError("Falha simulada ao gravar PDF")
+
+    monkeypatch.setattr(RepresentacoesStore, "_add_protocol_artifacts", fail)
+    with pytest.raises(RuntimeError, match="Falha simulada"):
+        register_direct_protocol(
+            store,
+            base,
+            {"numero_processo": "TC 005/26", "relator": RELATORES[0]},
+            principal,
+            ("representacao.pdf", _pdf()),
+        )
+    assert list_records(store, {}) == []
+    with store.connection(read_only=True) as c:
+        assert (
+            c.execute("SELECT COUNT(*) FROM representacao_integrantes").fetchone()[0]
+            == 0
+        )
+        assert (
+            c.execute("SELECT COUNT(*) FROM representacao_andamentos").fetchone()[0]
+            == 0
+        )
+        assert (
+            c.execute("SELECT COUNT(*) FROM representacao_documentos").fetchone()[0]
+            == 0
+        )
+    NotificationsStore(store)
+    with store.connection(read_only=True) as c:
+        assert c.execute("SELECT COUNT(*) FROM notificacoes_email").fetchone()[0] == 0
 
 
 def test_first_registered_progress_moves_only_protocolled_record_to_tramitacao(store):
@@ -553,13 +768,14 @@ def test_card_badges_unpack_label_and_tone(store):
 
 def test_relatores_and_medida_cautelar(store):
     import inspect
-    from services.representacoes_ui import _protocol_form
+    from services.representacoes_ui import _protocol_fields, _protocol_form
 
-    source = inspect.getsource(_protocol_form)
+    source = inspect.getsource(_protocol_fields)
     assert 'st.text_input("Relator' not in source
     assert "selectbox" in source
     assert "RELATORES" in source
     assert "Possui pedido de medida cautelar?" in source
+    assert "_protocol_fields(prefix)" in inspect.getsource(_protocol_form)
     assert set(RELATORES_TITULARES) | set(RELATORES_SUBSTITUTOS) == set(RELATORES)
     assert set(RELATORES_SUBSTITUTOS) <= set(RELATORES)
     assert " — Conselheiro Substituto" in relator_label(RELATORES_SUBSTITUTOS[0])
@@ -692,6 +908,78 @@ def test_detail_uses_conditional_sections_and_keeps_protocol_summary():
     assert source.count("progress(store, record[") == 1
     assert source.count("documents(store, record[") == 1
     assert "_detail_compact(store, principal, record)" in inspect.getsource(_detail)
+
+
+def test_detail_back_returns_to_filtered_list_from_all_sections(store):
+    import services.representacoes_ui as ui
+
+    principal = _principal(store, email="voltar-rep@test.local")
+    payload, *_ = _payload(store)
+    record = create(store, payload, principal)
+    identifier = record["id"]
+    _UI_HOLD.clear()
+    _UI_HOLD.update(ui=ui, store=store, principal=principal)
+
+    def page():
+        from tests.test_representacoes import _UI_HOLD
+
+        _UI_HOLD["ui"].render(_UI_HOLD["store"], _UI_HOLD["principal"])
+
+    for section in (
+        "Visão geral",
+        "Andamentos",
+        "Documentos",
+        "Organização",
+        "Gestão",
+    ):
+        app = AppTest.from_function(page, default_timeout=30).run()
+        app.text_input(key="rep_f_q").set_value("licitação").run()
+        app.text_input(key="rep_f_rep").set_value("Município X").run()
+        app.selectbox(key="rep_f_sit").set_value(record["situacao"]).run()
+        app.button(key=f"rep_open_{identifier}").click().run()
+        assert app.session_state["representacoes_view"] == identifier
+        app.radio(key=f"rep_detail_section_{identifier}").set_value(section).run()
+        assert not app.exception
+        assert sum(button.key == "rep_dt_back" for button in app.button) == 1
+        assert app.button[-1].key == "rep_dt_back"
+        app.button(key="rep_dt_back").click().run()
+        assert "representacoes_view" not in app.session_state
+        assert app.text_input(key="rep_f_q").value == "licitação"
+        assert app.text_input(key="rep_f_rep").value == "Município X"
+        assert app.selectbox(key="rep_f_sit").value == record["situacao"]
+        assert not app.exception
+
+
+def test_home_shows_temporal_notice_and_both_registration_routes(store):
+    import services.representacoes_ui as ui
+
+    principal = _principal(store, email="home-direct@test.local")
+    _UI_HOLD.clear()
+    _UI_HOLD.update(ui=ui, store=store, principal=principal)
+
+    def page():
+        from tests.test_representacoes import _UI_HOLD
+
+        _UI_HOLD["ui"].render(_UI_HOLD["store"], _UI_HOLD["principal"])
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert any(
+        "Este módulo acompanha as Representações protocoladas no TRAMITA a partir de janeiro de 2026."
+        in item.value
+        for item in app.caption
+    )
+    assert app.button(key="rep_new")
+    assert app.button(key="rep_direct_new")
+    app.button(key="rep_direct_new").click().run()
+    assert app.session_state["representacoes_direct"] is True
+    assert app.button(key="rep_direct_save")
+    assert not app.exception
+    app.button(key="rep_direct_cancel").click().run()
+    assert "representacoes_direct" not in app.session_state
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key="rep_new").click().run()
+    assert app.button(key="rep_save")
+    assert not app.exception
 
 
 def test_exclude_progress_keeps_the_row_and_hides_it(store, monkeypatch):
@@ -1324,9 +1612,11 @@ def test_existing_representation_gains_summary_columns(tmp_path):
         "resumo_ia_modelo",
         "resumo_ia_sha256",
         "resumo_ia_documento_id",
+        "registro_origem",
     } <= names
     assert row["titulo"] == "Título legado"
     assert row["resumo_ia"] is None
+    assert row["registro_origem"] == "PROJETO"
 
 
 def test_andamento_exclusion_is_offered_in_the_timeline():

@@ -7,7 +7,7 @@ import streamlit as st
 from database.estagiarios import GABINETES, EstagiariosStore, LOTACOES, limite_padrao
 from services.access import has_permission
 from services.audit import registrar_evento
-from services.ui_theme import badge, card_container, record_html, render_html, section_label
+from services.ui_theme import badge, record_html, render_html, section_label
 
 
 def _can_manage(principal):
@@ -101,25 +101,23 @@ def _active_controls(service, store, principal, row):
             st.session_state[start_key] = date.fromisoformat(row["data_inicio"])
         if limit_key not in st.session_state:
             _sync_edit_limit(start_key, limit_key)
-        start = st.date_input(
-            "Data de início",
-            format="DD/MM/YYYY",
-            key=start_key,
-            on_change=_sync_edit_limit,
-            args=(start_key, limit_key),
-        )
-        start = st.session_state[start_key]
-        limit = st.session_state[limit_key]
-        with st.form("estagiario_edit_" + key):
+        with st.container(border=True, key="estagiario_edit_group_" + key):
             selected = LOTACOES.index(row["lotacao"]) if row["lotacao"] in LOTACOES else 0
             lotacao = st.selectbox("Lotação", LOTACOES, index=selected, key="estagiario_edit_lotacao_" + key)
+            start = st.date_input(
+                "Data de início",
+                format="DD/MM/YYYY",
+                key=start_key,
+                on_change=_sync_edit_limit,
+                args=(start_key, limit_key),
+            )
             limit = st.date_input(
                 "Data limite",
                 format="DD/MM/YYYY",
                 key=limit_key,
                 disabled=True,
             )
-            edited = st.form_submit_button("Salvar dados administrativos")
+            edited = st.button("Salvar dados administrativos", key="estagiario_edit_save_" + key)
         if edited:
             try:
                 service.update(
@@ -149,42 +147,6 @@ def _active_controls(service, store, principal, row):
                 st.success("Vínculo encerrado; o histórico foi preservado."); st.rerun(scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
-        replace_start_key = "estagiario_replace_start_" + key
-        replace_limit_key = "estagiario_replace_limit_" + key
-        if replace_start_key not in st.session_state:
-            st.session_state[replace_start_key] = date.today()
-        if replace_limit_key not in st.session_state:
-            _sync_edit_limit(replace_start_key, replace_limit_key)
-        start = st.date_input(
-            "Início do substituto",
-            format="DD/MM/YYYY",
-            key=replace_start_key,
-            on_change=_sync_edit_limit,
-            args=(replace_start_key, replace_limit_key),
-        )
-        limit = st.date_input(
-            "Limite do substituto",
-            format="DD/MM/YYYY",
-            key=replace_limit_key,
-            disabled=True,
-        )
-        with st.form("estagiario_replace_" + key):
-            person = _form_people(service, "estagiario_replace_person_" + key)
-            replace = st.form_submit_button("Substituir estagiário", disabled=person is None)
-        if replace:
-            try:
-                new_id = service.replace(
-                    row["id"],
-                    person,
-                    start,
-                    limit,
-                    actor_email=principal.email,
-                    administrator=_can_manage(principal),
-                )
-                _audit(store, principal, "ESTAGIARIO_SUBSTITUIDO", "SUBSTITUIR", new_id, {"anterior_id": row["id"], "pessoa_id": person, "lotacao": row["lotacao"]})
-                st.success("Substituição registrada; o vínculo anterior foi encerrado."); st.rerun(scope="fragment")
-            except ValueError as exc:
-                st.error(str(exc))
 
 
 def _compact_styles():
@@ -201,13 +163,11 @@ def _compact_styles():
             font-size:1.4rem !important; line-height:1.15 !important;
         }
         [class*="st-key-estagiarios_cabinet_"] {
-            padding:.35rem .55rem .45rem !important;
-        }
-        [class*="st-key-estagiarios_cabinet_"] [data-testid="stVerticalBlock"] {
-            gap:.25rem !important;
+            height:auto !important; min-height:0 !important;
+            gap:.35rem !important;
         }
         [class*="st-key-estagiarios_person_"] {
-            padding:.1rem 0 !important;
+            padding:.45rem 0 !important;
             border-bottom:1px solid var(--mpc-border) !important;
         }
         [class*="st-key-estagiarios_person_"]:last-child { border-bottom:0 !important; }
@@ -215,17 +175,56 @@ def _compact_styles():
         [class*="st-key-estagiarios_person_"] .mpc-record-title { font-size:.92rem !important; }
         [class*="st-key-estagiarios_person_"] .mpc-record-secondary,
         [class*="st-key-estagiarios_person_"] .mpc-record-meta { margin:.1rem 0 0 !important; font-size:.76rem !important; }
+        [class*="st-key-estagiarios_person_"] .mpc-record-title,
+        [class*="st-key-estagiarios_person_"] .mpc-record-meta { overflow-wrap:anywhere; }
+        [class*="st-key-estagiarios_person_"] [data-testid="stHorizontalBlock"] > [data-testid="stElementContainer"]:first-child {
+            width:auto !important; min-width:0 !important; flex:1 1 0 !important;
+        }
+        [class*="st-key-estagiarios_person_"] [data-testid="stHorizontalBlock"] > [data-testid="stElementContainer"]:last-child {
+            flex:0 0 auto !important;
+        }
+        [class*="st-key-estagiarios_vacancy_"] {
+            gap:.25rem !important;
+        }
         [class*="st-key-estagiarios_cabinet_"] .stPopover button,
         [class*="st-key-estagiarios_cabinet_"] button[kind="secondary"] { min-height:1.8rem !important; padding:.1rem .45rem !important; font-size:.76rem !important; }
+        @media (min-width:769px) {
+          [class*="st-key-estagiarios_vacancy_"] {
+            display:grid !important;
+            grid-template-columns:minmax(0,1fr) auto !important;
+            align-items:center !important;
+          }
+        }
         @media (max-width:768px) {
+          [class*="st-key-estagiarios_row_"] [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]) {
+            display:grid !important;
+            grid-template-columns:minmax(0,1fr) !important;
+            gap:.65rem !important;
+          }
+          [class*="st-key-estagiarios_row_"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+            width:100% !important;
+            min-width:0 !important;
+            align-self:start !important;
+          }
+          [class*="st-key-estagiarios_person_"] [data-testid="stHorizontalBlock"] {
+            flex-direction:column !important;
+            align-items:flex-start !important;
+            gap:.35rem !important;
+          }
+          [class*="st-key-estagiarios_person_"] [data-testid="stHorizontalBlock"] > [data-testid="stElementContainer"]:first-child {
+            width:100% !important;
+          }
+          [class*="st-key-estagiarios_person_"] .mpc-record-meta { font-size:.82rem !important; }
           [class*="st-key-estagiarios_cabinet_"] .stPopover button,
           [class*="st-key-estagiarios_cabinet_"] button[kind="secondary"] {
             min-height:44px !important;
             padding:.35rem .55rem !important;
             font-size:.82rem !important;
           }
-          [class*="st-key-estagiarios_row_"] > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"] {
-            flex-direction:column !important;
+        }
+        @media (max-width:360px) {
+          [data-testid="stPopoverBody"]:has([class*="st-key-estagiario_edit_start_"]) {
+            translate:max(0px, calc(346px - 100vw)) 0 !important;
           }
         }
         </style>
@@ -237,8 +236,7 @@ def _person_row(service, store, principal, row):
     limit = date.fromisoformat(row["data_limite"])
     days = (limit - date.today()).days
     tone = "warning" if days <= 60 else "neutral"
-    columns = st.columns([9, 2])
-    with columns[0]:
+    with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
         render_html(
             record_html(
                 row["nome"],
@@ -250,7 +248,6 @@ def _person_row(service, store, principal, row):
                 accent="neutral",
             )
         )
-    with columns[1]:
         _active_controls(service, store, principal, row)
 
 
@@ -259,13 +256,13 @@ def _open_create_form():
 
 
 def _vacancy(lotacao, position):
-    left, right = st.columns([8, 3])
-    left.caption("Vaga disponível")
-    right.button(
-        "Cadastrar",
-        key=f"estagiario_vacancy_{lotacao}_{position}",
-        on_click=_open_create_form,
-    )
+    with st.container(key=f"estagiarios_vacancy_{lotacao}_{position}"):
+        st.caption("Vaga disponível")
+        st.button(
+            "Cadastrar",
+            key=f"estagiario_vacancy_{lotacao}_{position}",
+            on_click=_open_create_form,
+        )
 
 
 def render(store, principal):
@@ -299,7 +296,7 @@ def render(store, principal):
                 for column, lotacao in zip(columns, LOTACOES[first:first + 2]):
                     with column:
                         occupied = by_lotacao[lotacao]
-                        with card_container(first, f"estagiarios_cabinet_{lotacao}"):
+                        with st.container(border=True, key=f"estagiarios_cabinet_{lotacao}"):
                             render_html(
                                 record_html(
                                     lotacao,

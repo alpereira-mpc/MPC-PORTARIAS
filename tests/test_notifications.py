@@ -17,7 +17,14 @@ from services.notifications import (
     notice_summary,
     save_recipient,
 )
-from services.representacoes import RELATORES, create, get, list_records, register_protocol
+from services.representacoes import (
+    RELATORES,
+    create,
+    get,
+    list_records,
+    register_protocol,
+    register_direct_protocol,
+)
 from tests.test_representacoes import _payload, _principal
 
 
@@ -316,6 +323,28 @@ def test_protocol_message_attaches_the_original_official_pdf(store):
         "tipo": "application/pdf",
         "tamanho": len(content),
     }
+
+
+def test_direct_protocol_uses_the_same_confirmed_notice_with_pdf(store):
+    from tests.test_representacoes import _pdf
+
+    principal = _principal(store, email="direct-notice@test.local")
+    base, *_ = _payload(store)
+    content = _pdf()
+    record = register_direct_protocol(
+        store,
+        base,
+        {"numero_processo": "TC 066/26", "relator": RELATORES[0]},
+        principal,
+        ("direct.pdf", content),
+    )
+    assert NotificationsStore(store).get_by_key(idempotency_key(record["id"])) is None
+    _people(store, count=1)
+    transport = FakeTransport()
+    sent = confirm_send(store, record, principal, transport)
+    assert sent["status"] == "SENT"
+    assert transport.calls[0]["attachment"]["content"] == content
+    assert transport.calls[0]["attachment"]["mime_type"] == "application/pdf"
 
 
 def test_gmail_payload_keeps_pdf_attachment_bytes_and_mime():

@@ -58,6 +58,7 @@ from services.representacoes import (
     reconcile_signatories,
     signatory_options,
     register_protocol,
+    register_direct_protocol,
     relator_label,
     set_phase,
     set_status,
@@ -80,6 +81,18 @@ from services.ui_theme import (
 
 
 _FILTER_ALL = "__todas__"
+_LIST_FILTER_KEYS = (
+    "rep_f_sit",
+    "rep_f_fase",
+    "rep_f_year",
+    "rep_f_q",
+    "rep_f_rep",
+    "rep_f_tema",
+    "rep_f_rel",
+    "rep_f_proc",
+    "rep_f_procud",
+    "rep_f_ass",
+)
 
 
 class _BadgeItem(tuple):
@@ -215,8 +228,8 @@ def _people_options(store):
     )
 
 
-def _form(store, current=None):
-    prefix = "rep_form_" + str((current or {}).get("id") or "new")
+def _form(store, current=None, *, prefix=None):
+    prefix = prefix or "rep_form_" + str((current or {}).get("id") or "new")
     current = current or {}
     people, servers = _people_options(store)
     if not people:
@@ -347,15 +360,22 @@ def _kpis(counts):
         ("Em preparação", counts["preparacao"], "muted"),
         ("Aguardando protocolo", counts["aguardando_protocolo"], "warning"),
         ("Em tramitação", counts["tramitacao"], "brand"),
-        ("Em fase MPC", counts["mpc"], "info"),
-        ("Em pauta", counts["pauta"], "warning"),
         ("Julgadas", counts["julgadas"], "success"),
     )
-    columns = st.columns(len(items))
-    for column, (title, value, tone) in zip(columns, items):
-        with column:
-            kpi_mark(tone)
-            st.metric(title, value)
+    st.markdown(
+        "<style>@media(max-width:768px){"
+        ".st-key-rep_kpis [data-testid='stHorizontalBlock']{flex-direction:column}"
+        ".st-key-rep_kpis [data-testid='stHorizontalBlock']>div{"
+        "width:100%!important;flex:1 1 auto!important}"
+        "}</style>",
+        unsafe_allow_html=True,
+    )
+    with st.container(key="rep_kpis"):
+        columns = st.columns(len(items))
+        for column, (title, value, tone) in zip(columns, items):
+            with column:
+                kpi_mark(tone)
+                st.metric(title, value)
 
 
 def _filters():
@@ -559,16 +579,7 @@ def _document_form(store, principal, identifier):
         st.rerun()
 
 
-def _protocol_form(store, principal, identifier):
-    if not has_permission(principal, "representacoes_registrar_protocolo"):
-        st.error("Acesso não autorizado para registrar protocolo.")
-        return
-    section_label("Registrar protocolo")
-    st.caption(
-        "Informe os dados atribuídos pelo TRAMITA. Este projeto passa a ser tratado como Representação. "
-        "Este sistema não realiza distribuição de Relator."
-    )
-    prefix = "rep_prot_" + str(identifier)
+def _protocol_fields(prefix):
     number = st.text_input("Número do processo *", key=prefix + "num")
     day = st.date_input(
         "Data do protocolo", date.today(), format="DD/MM/YYYY", key=prefix + "data"
@@ -602,25 +613,30 @@ def _protocol_form(store, principal, identifier):
     uploaded = st.file_uploader(
         "PDF final da Representação", type=["pdf"], key=prefix + "pdf"
     )
+    return {
+        "numero_processo": number,
+        "data_protocolo": day.isoformat(),
+        "relator": None if relator == _FILTER_ALL else relator,
+        "fase_processual": fase,
+        "observacoes": observacoes,
+        "possui_medida_cautelar": cautelar,
+    }, ((uploaded.name, uploaded.getvalue()) if uploaded is not None else None)
+
+
+def _protocol_form(store, principal, identifier):
+    if not has_permission(principal, "representacoes_registrar_protocolo"):
+        st.error("Acesso não autorizado para registrar protocolo.")
+        return
+    section_label("Registrar protocolo")
+    st.caption(
+        "Informe os dados atribuídos pelo TRAMITA. Este projeto passa a ser tratado como Representação. "
+        "Este sistema não realiza distribuição de Relator."
+    )
+    prefix = "rep_prot_" + str(identifier)
+    values, upload = _protocol_fields(prefix)
     if st.button("Confirmar protocolo", type="primary", key=prefix + "ok"):
-        upload = None
-        if uploaded is not None:
-            upload = (uploaded.name, uploaded.getvalue())
         try:
-            register_protocol(
-                store,
-                identifier,
-                {
-                    "numero_processo": number,
-                    "data_protocolo": day.isoformat(),
-                    "relator": None if relator == _FILTER_ALL else relator,
-                    "fase_processual": fase,
-                    "observacoes": observacoes,
-                    "possui_medida_cautelar": cautelar,
-                },
-                principal,
-                upload,
-            )
+            register_protocol(store, identifier, values, principal, upload)
         except ValueError as exc:
             st.error(str(exc))
         else:
@@ -628,6 +644,35 @@ def _protocol_form(store, principal, identifier):
             _done("Representação protocolada.")
     if st.button("Cancelar", key=prefix + "cancel"):
         st.session_state.pop("representacoes_protocol", None)
+        st.rerun()
+
+
+def _direct_protocol_form(store, principal):
+    section_label("Registrar Representação Protocolada")
+    st.caption(
+        "Cadastre a Representação já protocolada no TRAMITA e anexe o PDF final."
+    )
+    base = _form(store, prefix="rep_direct_base_")
+    if base is None:
+        if st.button("Cancelar", key="rep_direct_cancel"):
+            st.session_state.pop("representacoes_direct", None)
+            st.rerun()
+        return
+    section_label("Dados do protocolo")
+    protocol, upload = _protocol_fields("rep_direct_prot_")
+    if st.button(
+        "Salvar Representação protocolada", type="primary", key="rep_direct_save"
+    ):
+        try:
+            saved = register_direct_protocol(store, base, protocol, principal, upload)
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.session_state.pop("representacoes_direct", None)
+            st.session_state["representacoes_view"] = saved["id"]
+            _done("Representação protocolada.")
+    if st.button("Cancelar", key="rep_direct_cancel"):
+        st.session_state.pop("representacoes_direct", None)
         st.rerun()
 
 
@@ -875,11 +920,12 @@ def _detail_compact(store, principal, record):
                 ),
             )
             _render_official_document(store, principal, record)
-            with st.expander("Dados do projeto original"):
-                st.caption(
-                    "Dados preservados do projeto que originou esta Representação."
-                )
-                st.write(record.get("objeto") or "—")
+            if record.get("registro_origem") != "DIRETO":
+                with st.expander("Dados do projeto original"):
+                    st.caption(
+                        "Dados preservados do projeto que originou esta Representação."
+                    )
+                    st.write(record.get("objeto") or "—")
             try:
                 from services.notification_ui import render_protocol_notice
 
@@ -1015,9 +1061,6 @@ def _detail_compact(store, principal, record):
             if st.button("Atualizar situação", key="rep_dt_sit_ok"):
                 set_status(store, record["id"], situacao, principal)
                 _done("Situação atualizada.")
-        if st.button("Voltar", key="rep_dt_back"):
-            st.session_state.pop("representacoes_view", None)
-            st.rerun()
         reason = delete_blocked_reason(record)
         if reason:
             st.caption(reason)
@@ -1032,6 +1075,13 @@ def _detail_compact(store, principal, record):
                 delete(store, record["id"], principal)
                 _clear_forms()
                 _done("Projeto de Representação excluído.")
+    if st.button("Voltar", key="rep_dt_back"):
+        st.session_state.pop("representacoes_view", None)
+        for key, value in st.session_state.pop(
+            "_representacoes_list_filters", {}
+        ).items():
+            st.session_state[key] = value
+        st.rerun()
 
 
 def _detail_body(store, principal, record):
@@ -1301,17 +1351,51 @@ def render(store, principal):
     st.caption(
         "Acompanhamento interno dos projetos de Representação e das Representações protocoladas no TRAMITA."
     )
+    st.caption(
+        "Este módulo acompanha as Representações protocoladas no TRAMITA a partir de janeiro de 2026."
+    )
     if message := st.session_state.pop("representacoes_message", None):
         st.success(message)
     counts = overview(store)
     _kpis(counts)
-    if st.button("+ Novo projeto de Representação", type="primary", key="rep_new"):
-        st.session_state["representacoes_edit"] = {}
-        st.rerun()
+    st.markdown(
+        "<style>"
+        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']{justify-content:flex-start;gap:.6rem}"
+        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{flex:0 1 auto;min-width:0}"
+        "@media(max-width:768px){"
+        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']{flex-direction:column}"
+        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{width:100%!important;flex:1 1 auto!important}"
+        ".st-key-rep_home_actions button{min-height:44px}"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    with st.container(key="rep_home_actions"):
+        project_col, direct_col = st.columns(2)
+        if project_col.button(
+            "+ Novo projeto de Representação",
+            type="primary",
+            key="rep_new",
+            use_container_width=True,
+        ):
+            st.session_state["representacoes_edit"] = {}
+            st.rerun()
+        if has_permission(
+            principal, "representacoes_registrar_protocolo"
+        ) and direct_col.button(
+            "Registrar Representação Protocolada",
+            key="rep_direct_new",
+            use_container_width=True,
+        ):
+            st.session_state["representacoes_direct"] = True
+            st.rerun()
     view_id = st.session_state.get("representacoes_view")
     edit_id = st.session_state.get("representacoes_edit")
     if st.session_state.get("representacoes_protocol"):
         _protocol_form(store, principal, st.session_state["representacoes_protocol"])
+        return
+    if st.session_state.get("representacoes_direct"):
+        _direct_protocol_form(store, principal)
         return
     if st.session_state.get("representacoes_progress"):
         _progress_form(store, principal, st.session_state["representacoes_progress"])
@@ -1363,6 +1447,11 @@ def render(store, principal):
     )
     st.session_state["_rep_people"] = (people, servers)
     filters = _filters()
+    st.session_state["_representacoes_list_filters"] = {
+        key: st.session_state[key]
+        for key in _LIST_FILTER_KEYS
+        if key in st.session_state
+    }
     rows = list_records(store, filters)
     if not rows:
         empty_state("Nenhum projeto de Representação encontrado.")

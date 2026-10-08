@@ -628,15 +628,7 @@ def add_document(store, identifier, values, name, content, principal):
     return saved
 
 
-def register_protocol(store, identifier, values, principal, upload=None):
-    from services.access import require_permission
-
-    require_permission(principal, "representacoes_registrar_protocolo")
-    current = get(store, identifier)
-    if current is None:
-        raise ValueError("Representação não encontrada.")
-    if current.get("numero_processo"):
-        raise ValueError("Esta representação já possui protocolo.")
+def _protocol_payload(values, upload, *, require_pdf=False):
     number = (values.get("numero_processo") or "").strip()
     relator = (values.get("relator") or "").strip()
     if not number:
@@ -649,22 +641,61 @@ def register_protocol(store, identifier, values, principal, upload=None):
         raise ValueError("Fase processual inválida.")
     cautelar = bool(values.get("possui_medida_cautelar"))
     file_tuple = None
+    if require_pdf and not upload:
+        raise ValueError("Anexe o PDF final da Representação.")
     if upload:
         name, content = upload
         safe, mime = validate_upload(name, content)
         if mime != "application/pdf":
             raise ValueError("O documento final da Representação deve ser PDF.")
         file_tuple = (safe, mime, content)
+    return {
+        "numero_processo": number,
+        "data_protocolo": day,
+        "relator": relator,
+        "fase_processual": fase,
+        "observacao": (values.get("observacoes") or "").strip(),
+        "possui_medida_cautelar": cautelar,
+    }, file_tuple
+
+
+def register_direct_protocol(store, base_values, protocol_values, principal, upload):
+    from services.access import require_permission
+
+    require_permission(principal, "representacoes")
+    require_permission(principal, "representacoes_registrar_protocolo")
+    record = _payload(base_values, creating=True)
+    record["registro_origem"] = "DIRETO"
+    members = _members(base_values)
+    _validate_people(store, members)
+    protocol, file_tuple = _protocol_payload(protocol_values, upload, require_pdf=True)
+    created = open_store(store).create_protocolled(
+        record, members, protocol, actor_of(principal), file_tuple
+    )
+    _audit(
+        store,
+        principal,
+        "REPRESENTACAO_PROTOCOLADA",
+        "FINALIZAR",
+        created,
+        {"registro_origem": "DIRETO", "numero_processo": protocol["numero_processo"]},
+    )
+    return created
+
+
+def register_protocol(store, identifier, values, principal, upload=None):
+    from services.access import require_permission
+
+    require_permission(principal, "representacoes_registrar_protocolo")
+    current = get(store, identifier)
+    if current is None:
+        raise ValueError("Representação não encontrada.")
+    if current.get("numero_processo"):
+        raise ValueError("Esta representação já possui protocolo.")
+    protocol, file_tuple = _protocol_payload(values, upload)
     protocolled = open_store(store).register_protocol(
         identifier,
-        {
-            "numero_processo": number,
-            "data_protocolo": day,
-            "relator": relator,
-            "fase_processual": fase,
-            "observacao": (values.get("observacoes") or "").strip(),
-            "possui_medida_cautelar": cautelar,
-        },
+        protocol,
         actor_of(principal),
         file_tuple,
     )
@@ -681,7 +712,7 @@ def register_protocol(store, identifier, values, principal, upload=None):
                 + " → "
                 + label(SITUACOES, protocolled.get("situacao"))
             ],
-            "numero_processo": number,
+            "numero_processo": protocol["numero_processo"],
         },
     )
     return protocolled
