@@ -7,7 +7,22 @@ import streamlit as st
 from database.estagiarios import GABINETES, EstagiariosStore, LOTACOES, limite_padrao
 from services.access import has_permission
 from services.audit import registrar_evento
+from services.themes import DEFAULT_THEME, theme_tokens
 from services.ui_theme import badge, record_html, render_html, section_label
+
+
+_PDF_THEME_KEYS = (
+    "card_institutional_bg",
+    "card_institutional_border",
+)
+
+
+def _active_pdf_theme_colors():
+    """Return only the current session theme colors used by the PDF."""
+    selected = (st.session_state.get("_portal_theme") or {}).get("name")
+    active = theme_tokens(selected)
+    fallback = theme_tokens(DEFAULT_THEME)
+    return {key: active.get(key) or fallback[key] for key in _PDF_THEME_KEYS}
 
 
 def _can_manage(principal):
@@ -29,17 +44,32 @@ def _remaining(limit, today=None):
 
 
 def _audit(store, principal, event, action, identifier, details):
-    registrar_evento(store, evento=event, modulo="admin", acao=action, principal=principal,
-                    entidade_tipo="estagiario_lotacao", entidade_id=identifier, detalhes=details)
+    registrar_evento(
+        store,
+        evento=event,
+        modulo="admin",
+        acao=action,
+        principal=principal,
+        entidade_tipo="estagiario_lotacao",
+        entidade_id=identifier,
+        detalhes=details,
+    )
 
 
 def _form_people(service, key):
     people = service.eligible_people()
     if not people:
-        st.info("Não há pessoas ativas classificadas explicitamente como estagiárias na Base de Servidores.")
+        st.info(
+            "Não há pessoas ativas classificadas explicitamente como estagiárias na Base de Servidores."
+        )
         return None
     by_id = {row["id"]: row for row in people}
-    identifier = st.selectbox("Estagiário", list(by_id), format_func=lambda i: f"{by_id[i]['nome']} — {by_id[i]['matricula_original'] or 'sem matrícula'}", key=key)
+    identifier = st.selectbox(
+        "Estagiário",
+        list(by_id),
+        format_func=lambda i: f"{by_id[i]['nome']} — {by_id[i]['matricula_original'] or 'sem matrícula'}",
+        key=key,
+    )
     return identifier
 
 
@@ -74,7 +104,9 @@ def _add_form(service, store, principal):
         with st.form("estagiario_create"):
             person = _form_people(service, "estagiario_create_person")
             lotacao = st.selectbox("Lotação", LOTACOES)
-            submitted = st.form_submit_button("Cadastrar vínculo", type="primary", disabled=person is None)
+            submitted = st.form_submit_button(
+                "Cadastrar vínculo", type="primary", disabled=person is None
+            )
         if submitted:
             try:
                 identifier = service.create(
@@ -85,9 +117,17 @@ def _add_form(service, store, principal):
                     actor_email=principal.email,
                     administrator=_can_manage(principal),
                 )
-                _audit(store, principal, "ESTAGIARIO_VINCULO_CRIADO", "CADASTRAR", identifier, {"pessoa_id": person, "lotacao": lotacao})
+                _audit(
+                    store,
+                    principal,
+                    "ESTAGIARIO_VINCULO_CRIADO",
+                    "CADASTRAR",
+                    identifier,
+                    {"pessoa_id": person, "lotacao": lotacao},
+                )
                 st.session_state["estagiario_create_expanded"] = False
-                st.success("Vínculo cadastrado."); st.rerun(scope="fragment")
+                st.success("Vínculo cadastrado.")
+                st.rerun(scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
 
@@ -102,8 +142,15 @@ def _active_controls(service, store, principal, row):
         if limit_key not in st.session_state:
             _sync_edit_limit(start_key, limit_key)
         with st.container(border=True, key="estagiario_edit_group_" + key):
-            selected = LOTACOES.index(row["lotacao"]) if row["lotacao"] in LOTACOES else 0
-            lotacao = st.selectbox("Lotação", LOTACOES, index=selected, key="estagiario_edit_lotacao_" + key)
+            selected = (
+                LOTACOES.index(row["lotacao"]) if row["lotacao"] in LOTACOES else 0
+            )
+            lotacao = st.selectbox(
+                "Lotação",
+                LOTACOES,
+                index=selected,
+                key="estagiario_edit_lotacao_" + key,
+            )
             start = st.date_input(
                 "Data de início",
                 format="DD/MM/YYYY",
@@ -117,7 +164,9 @@ def _active_controls(service, store, principal, row):
                 key=limit_key,
                 disabled=True,
             )
-            edited = st.button("Salvar dados administrativos", key="estagiario_edit_save_" + key)
+            edited = st.button(
+                "Salvar dados administrativos", key="estagiario_edit_save_" + key
+            )
         if edited:
             try:
                 service.update(
@@ -128,12 +177,25 @@ def _active_controls(service, store, principal, row):
                     actor_email=principal.email,
                     administrator=_can_manage(principal),
                 )
-                _audit(store, principal, "ESTAGIARIO_VINCULO_EDITADO", "EDITAR", row["id"], {"lotacao": lotacao})
-                st.success("Vínculo atualizado."); st.rerun(scope="fragment")
+                _audit(
+                    store,
+                    principal,
+                    "ESTAGIARIO_VINCULO_EDITADO",
+                    "EDITAR",
+                    row["id"],
+                    {"lotacao": lotacao},
+                )
+                st.success("Vínculo atualizado.")
+                st.rerun(scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
         with st.form("estagiario_close_" + key):
-            end = st.date_input("Data de encerramento", value=date.today(), format="DD/MM/YYYY", key="estagiario_close_date_" + key)
+            end = st.date_input(
+                "Data de encerramento",
+                value=date.today(),
+                format="DD/MM/YYYY",
+                key="estagiario_close_date_" + key,
+            )
             close = st.form_submit_button("Encerrar vínculo")
         if close:
             try:
@@ -143,8 +205,16 @@ def _active_controls(service, store, principal, row):
                     actor_email=principal.email,
                     administrator=_can_manage(principal),
                 )
-                _audit(store, principal, "ESTAGIARIO_VINCULO_ENCERRADO", "ENCERRAR", row["id"], {"encerramento": end.isoformat()})
-                st.success("Vínculo encerrado; o histórico foi preservado."); st.rerun(scope="fragment")
+                _audit(
+                    store,
+                    principal,
+                    "ESTAGIARIO_VINCULO_ENCERRADO",
+                    "ENCERRAR",
+                    row["id"],
+                    {"encerramento": end.isoformat()},
+                )
+                st.success("Vínculo encerrado; o histórico foi preservado.")
+                st.rerun(scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
 
@@ -241,7 +311,9 @@ def _person_row(service, store, principal, row):
     limit = date.fromisoformat(row["data_limite"])
     days = (limit - date.today()).days
     tone = "warning" if days <= 60 else "neutral"
-    with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
+    with st.container(
+        horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"
+    ):
         render_html(
             record_html(
                 row["nome"],
@@ -279,7 +351,16 @@ def render(store, principal):
     with st.container(key="estagiarios_panel"):
         _compact_styles()
         summary = service.summary()
-        for col, label, value in zip(st.columns(4), ("Posições", "Ocupadas", "Disponíveis", "Encerramentos próximos"), (summary["total"], summary["ocupadas"], summary["disponiveis"], summary["encerramentos_proximos"])):
+        for col, label, value in zip(
+            st.columns(4),
+            ("Posições", "Ocupadas", "Disponíveis", "Encerramentos próximos"),
+            (
+                summary["total"],
+                summary["ocupadas"],
+                summary["disponiveis"],
+                summary["encerramentos_proximos"],
+            ),
+        ):
             col.metric(label, value)
         st.caption("Encerramentos próximos: vínculos com término em até 60 dias.")
         _add_form(service, store, principal)
@@ -287,21 +368,28 @@ def render(store, principal):
         active = [row for row in rows if row["ativo"] and row["lotacao"] in LOTACOES]
         legacy = service.legacy_proge_active()
         if legacy:
-            st.warning("Há vínculo(s) ativo(s) legado(s) em PROGE. Reatribua cada um a um dos sete gabinetes confirmados; nenhuma reatribuição foi presumida.")
+            st.warning(
+                "Há vínculo(s) ativo(s) legado(s) em PROGE. Reatribua cada um a um dos sete gabinetes confirmados; nenhuma reatribuição foi presumida."
+            )
             for row in legacy:
                 with st.container(border=True):
                     st.markdown("**PROGE - ajuste administrativo pendente**")
                     st.caption(row["nome"] + " · vínculo ativo legado")
                     _active_controls(service, store, principal, row)
         section_label("Composição atual")
-        by_lotacao = {lotacao: [row for row in active if row["lotacao"] == lotacao] for lotacao in LOTACOES}
+        by_lotacao = {
+            lotacao: [row for row in active if row["lotacao"] == lotacao]
+            for lotacao in LOTACOES
+        }
         for first in range(0, len(LOTACOES), 2):
             with st.container(key=f"estagiarios_row_{first}"):
                 columns = st.columns(2)
-                for column, lotacao in zip(columns, LOTACOES[first:first + 2]):
+                for column, lotacao in zip(columns, LOTACOES[first : first + 2]):
                     with column:
                         occupied = by_lotacao[lotacao]
-                        with st.container(border=True, key=f"estagiarios_cabinet_{lotacao}"):
+                        with st.container(
+                            border=True, key=f"estagiarios_cabinet_{lotacao}"
+                        ):
                             render_html(
                                 record_html(
                                     lotacao,
@@ -311,21 +399,40 @@ def render(store, principal):
                                 )
                             )
                             for row in occupied:
-                                with st.container(key=f"estagiarios_person_{row['id']}"):
+                                with st.container(
+                                    key=f"estagiarios_person_{row['id']}"
+                                ):
                                     _person_row(service, store, principal, row)
                             for position in range(len(occupied) + 1, 3):
                                 _vacancy(lotacao, position)
-                            history = [row for row in rows if row["lotacao"] == lotacao and not row["ativo"]]
+                            history = [
+                                row
+                                for row in rows
+                                if row["lotacao"] == lotacao and not row["ativo"]
+                            ]
                             if history:
-                                with st.popover("Ver histórico", use_container_width=False):
+                                with st.popover(
+                                    "Ver histórico", use_container_width=False
+                                ):
                                     for item in history:
-                                        end = date.fromisoformat(item["data_encerramento"]).strftime("%d/%m/%Y") if item["data_encerramento"] else "—"
-                                        st.caption(f"{item['nome']} · {date.fromisoformat(item['data_inicio']).strftime('%d/%m/%Y')} a {end}")
+                                        end = (
+                                            date.fromisoformat(
+                                                item["data_encerramento"]
+                                            ).strftime("%d/%m/%Y")
+                                            if item["data_encerramento"]
+                                            else "—"
+                                        )
+                                        st.caption(
+                                            f"{item['nome']} · {date.fromisoformat(item['data_inicio']).strftime('%d/%m/%Y')} a {end}"
+                                        )
     st.divider()
     section_label("Exportação")
     from document_generator.estagiarios_pdf import generate_estagiarios_pdf
 
-    pdf = generate_estagiarios_pdf(service.current_composition())
+    pdf = generate_estagiarios_pdf(
+        service.current_composition(),
+        theme_colors=_active_pdf_theme_colors(),
+    )
     st.download_button(
         "Baixar composição atual em PDF",
         pdf,

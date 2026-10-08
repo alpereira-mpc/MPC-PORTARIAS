@@ -1361,7 +1361,7 @@ def render(store, principal):
     st.markdown(
         "<style>"
         ".st-key-rep_home_actions [data-testid='stHorizontalBlock']{justify-content:flex-start;gap:.6rem}"
-        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{flex:0 1 auto;min-width:0}"
+        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{flex:0 1 auto;min-width:0;width:auto!important}"
         "@media(max-width:768px){"
         ".st-key-rep_home_actions [data-testid='stHorizontalBlock']{flex-direction:column}"
         ".st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{width:100%!important;flex:1 1 auto!important}"
@@ -1370,22 +1370,19 @@ def render(store, principal):
         "</style>",
         unsafe_allow_html=True,
     )
-    with st.container(key="rep_home_actions"):
-        project_col, direct_col = st.columns(2)
-        if project_col.button(
+    with st.container(key="rep_home_actions", horizontal=True):
+        if st.button(
             "+ Novo projeto de Representação",
             type="primary",
             key="rep_new",
-            use_container_width=True,
         ):
             st.session_state["representacoes_edit"] = {}
             st.rerun()
         if has_permission(
             principal, "representacoes_registrar_protocolo"
-        ) and direct_col.button(
+        ) and st.button(
             "Registrar Representação Protocolada",
             key="rep_direct_new",
-            use_container_width=True,
         ):
             st.session_state["representacoes_direct"] = True
             st.rerun()

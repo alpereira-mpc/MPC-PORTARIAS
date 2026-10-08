@@ -33,7 +33,16 @@ def _logo():
     return Image(path, width=LOGO_WIDTH, height=height, hAlign="LEFT", mask="auto")
 
 
-def build_report_header(title, *, filters=None, subtitle=None, width):
+def build_report_header(
+    title,
+    *,
+    filters=None,
+    subtitle=None,
+    width,
+    institution_color="#222222",
+    title_color="#333333",
+    detail_color="#333333",
+):
     """Flowables for the first-page institutional header of a PDF report."""
     logo = _logo()
     base = getSampleStyleSheet()
@@ -43,7 +52,7 @@ def build_report_header(title, *, filters=None, subtitle=None, width):
         fontName="Helvetica-Bold",
         fontSize=11,
         leading=13,
-        textColor=colors.HexColor("#222222"),
+        textColor=colors.HexColor(institution_color),
         spaceAfter=1,
     )
     heading = ParagraphStyle(
@@ -52,7 +61,7 @@ def build_report_header(title, *, filters=None, subtitle=None, width):
         fontName="Helvetica-Bold",
         fontSize=10.5,
         leading=13,
-        textColor=colors.HexColor("#333333"),
+        textColor=colors.HexColor(title_color),
         spaceBefore=1,
         spaceAfter=0,
     )
@@ -62,7 +71,7 @@ def build_report_header(title, *, filters=None, subtitle=None, width):
         fontName="Helvetica",
         fontSize=8.5,
         leading=11,
-        textColor=colors.HexColor("#333333"),
+        textColor=colors.HexColor(detail_color),
     )
     text = [
         Paragraph(escape(INSTITUTION_NAME), institution),

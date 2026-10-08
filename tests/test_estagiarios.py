@@ -7,9 +7,18 @@ from streamlit.testing.v1 import AppTest
 
 from database.estagiarios import EstagiariosStore, LOTACOES, limite_padrao
 from database.memorandos import MemorandosStore
-from document_generator.estagiarios_pdf import generate_estagiarios_pdf
+from document_generator.estagiarios_pdf import (
+    _resolved_theme_colors,
+    generate_estagiarios_pdf,
+)
 from services.access import Principal
-from services.estagiarios_ui import _can_manage, _open_create_form, _sync_edit_limit
+from services.estagiarios_ui import (
+    _active_pdf_theme_colors,
+    _can_manage,
+    _open_create_form,
+    _sync_edit_limit,
+)
+from services.themes import DEFAULT_THEME, THEME_LABELS, theme_tokens
 
 _UI_HOLD = {}
 
@@ -61,12 +70,35 @@ def _people(store):
     base = MemorandosStore(store)
     base.import_servers(
         [
-            {"nome": "Ana Estágio", "matricula": "101", "cargo": "Estagiária", "setor": "PROGE"},
-            {"nome": "Bruno Estágio", "matricula": "102", "cargo": "Estagiário", "setor": "PROGE"},
-            {"nome": "Carla Estágio", "matricula": "103", "cargo": "Estagiária", "setor": "PROGE"},
-            {"nome": "Davi Analista", "matricula": "104", "cargo": "Analista", "setor": "PROGE"},
+            {
+                "nome": "Ana Estágio",
+                "matricula": "101",
+                "cargo": "Estagiária",
+                "setor": "PROGE",
+            },
+            {
+                "nome": "Bruno Estágio",
+                "matricula": "102",
+                "cargo": "Estagiário",
+                "setor": "PROGE",
+            },
+            {
+                "nome": "Carla Estágio",
+                "matricula": "103",
+                "cargo": "Estagiária",
+                "setor": "PROGE",
+            },
+            {
+                "nome": "Davi Analista",
+                "matricula": "104",
+                "cargo": "Analista",
+                "setor": "PROGE",
+            },
         ],
-        actor_email="admin@test", filename="base.xlsx", content_hash="servers", administrator=True,
+        actor_email="admin@test",
+        filename="base.xlsx",
+        content_hash="servers",
+        administrator=True,
     )
     return {row["nome"]: row["id"] for row in base.all_servers()}
 
@@ -166,7 +198,9 @@ def test_two_year_limit_close_and_replace_preserve_history(store):
     identifier = service.create(people["Ana Estágio"], "LAF", start, administrator=True)
     row = service.list(include_inactive=False)[0]
     assert row["data_limite"] == "2028-02-28"
-    replacement = service.replace(identifier, people["Bruno Estágio"], date(2026, 6, 1), administrator=True)
+    replacement = service.replace(
+        identifier, people["Bruno Estágio"], date(2026, 6, 1), administrator=True
+    )
     rows = service.list()
     old = next(item for item in rows if item["id"] == identifier)
     new = next(item for item in rows if item["id"] == replacement)
@@ -232,7 +266,9 @@ def test_actions_keep_admin_fields_together_and_remove_replacement(store, monkey
     )
     _UI_HOLD.clear()
     _UI_HOLD.update(
-        ui=ui, service=service, store=store,
+        ui=ui,
+        service=service,
+        store=store,
         principal=_principal(pode_admin=True, email="admin@test.local"),
         identifier=identifier,
     )
@@ -244,12 +280,15 @@ def test_actions_keep_admin_fields_together_and_remove_replacement(store, monkey
         @st.fragment
         def controls():
             current = next(
-                row for row in _UI_HOLD["service"].list()
+                row
+                for row in _UI_HOLD["service"].list()
                 if row["id"] == _UI_HOLD["identifier"]
             )
             _UI_HOLD["ui"]._active_controls(
-                _UI_HOLD["service"], _UI_HOLD["store"],
-                _UI_HOLD["principal"], current,
+                _UI_HOLD["service"],
+                _UI_HOLD["store"],
+                _UI_HOLD["principal"],
+                current,
             )
 
         controls()
@@ -257,7 +296,9 @@ def test_actions_keep_admin_fields_together_and_remove_replacement(store, monkey
     app = AppTest.from_function(page, default_timeout=30).run()
     assert not app.exception
     assert [item.label for item in app.date_input] == [
-        "Data de início", "Data limite", "Data de encerramento"
+        "Data de início",
+        "Data limite",
+        "Data de encerramento",
     ]
     assert app.date_input(key=f"estagiario_edit_limit_{identifier}").proto.disabled
     assert not any("substitu" in item.label.lower() for item in app.button)
@@ -311,16 +352,126 @@ def test_create_uses_cursor_identity_contract_for_postgresql():
 def test_current_composition_and_pdf_contain_only_active_valid_placements(store):
     people = _people(store)
     service = EstagiariosStore(store)
-    active_id = service.create(people["Ana Estágio"], "ESPO", date(2026, 3, 10), administrator=True)
-    closed_id = service.create(people["Bruno Estágio"], "LAF", date(2026, 3, 10), administrator=True)
+    active_id = service.create(
+        people["Ana Estágio"], "ESPO", date(2026, 3, 10), administrator=True
+    )
+    closed_id = service.create(
+        people["Bruno Estágio"], "LAF", date(2026, 3, 10), administrator=True
+    )
     service.close(closed_id, date(2026, 4, 1), administrator=True)
     composition = service.current_composition()
     assert composition["ESPO"][0]["id"] == active_id
     assert not composition["LAF"]
     content = generate_estagiarios_pdf(composition)
-    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages)
+    text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages
+    )
     assert content.startswith(b"%PDF-")
     assert "Elvira Samara Pereira de Oliveira" in text
     assert "Ana Estágio" in text
     assert "Bruno Estágio" not in text
     assert "PROGE" not in text
+
+
+def test_pdf_theme_colors_follow_the_current_session_and_only_expose_needed_tokens(
+    monkeypatch,
+):
+    state = {"_portal_theme": {"name": "dourado"}}
+    monkeypatch.setattr("services.estagiarios_ui.st.session_state", state)
+
+    gold = _active_pdf_theme_colors()
+    state["_portal_theme"]["name"] = "azul"
+    blue = _active_pdf_theme_colors()
+
+    expected_keys = {
+        "card_institutional_bg",
+        "card_institutional_border",
+    }
+    assert set(gold) == expected_keys
+    assert set(blue) == expected_keys
+    assert gold == {key: theme_tokens("dourado")[key] for key in expected_keys}
+    assert blue == {key: theme_tokens("azul")[key] for key in expected_keys}
+    assert gold != blue
+
+
+@pytest.mark.parametrize("theme_name", tuple(THEME_LABELS))
+def test_pdf_resolves_central_theme_palette_and_keeps_missing_token_fallback(
+    theme_name,
+):
+    keys = {
+        "card_institutional_bg",
+        "card_institutional_border",
+    }
+    central = theme_tokens(theme_name)
+    supplied = {key: central[key] for key in keys}
+
+    assert _resolved_theme_colors(supplied) == supplied
+
+    partial = _resolved_theme_colors(
+        {"card_institutional_bg": central["card_institutional_bg"]}
+    )
+    fallback = theme_tokens(DEFAULT_THEME)
+    assert partial["card_institutional_bg"] == central["card_institutional_bg"]
+    assert partial["card_institutional_border"] == fallback["card_institutional_border"]
+    assert generate_estagiarios_pdf({}, theme_colors=partial).startswith(b"%PDF-")
+
+
+@pytest.mark.parametrize("theme_name", ("dourado", "azul"))
+def test_pdf_keeps_institutional_and_cabinet_text_black_with_themed_cards(
+    monkeypatch,
+    theme_name,
+):
+    import document_generator.estagiarios_pdf as pdf_module
+
+    captured = {}
+    original_header = pdf_module.build_report_header
+    original_style = pdf_module.ParagraphStyle
+    original_table_style = pdf_module.TableStyle
+
+    def capture_header(*args, **kwargs):
+        captured["header_colors"] = (
+            kwargs["institution_color"],
+            kwargs["title_color"],
+            kwargs["detail_color"],
+        )
+        return original_header(*args, **kwargs)
+
+    def capture_paragraph_style(name, *args, **kwargs):
+        style = original_style(name, *args, **kwargs)
+        if name == "EstagiariosCabinet":
+            captured["cabinet_color"] = style.textColor
+        return style
+
+    def capture_table_style(commands, *args, **kwargs):
+        if "card_commands" not in captured:
+            captured["card_commands"] = {
+                command[0]: command[-1]
+                for command in commands
+                if command[0] in {"BACKGROUND", "BOX"}
+            }
+        return original_table_style(commands, *args, **kwargs)
+
+    monkeypatch.setattr(pdf_module, "build_report_header", capture_header)
+    monkeypatch.setattr(pdf_module, "ParagraphStyle", capture_paragraph_style)
+    monkeypatch.setattr(pdf_module, "TableStyle", capture_table_style)
+
+    central = theme_tokens(theme_name)
+    selected = {
+        key: central[key]
+        for key in ("card_institutional_bg", "card_institutional_border")
+    }
+    content = pdf_module.generate_estagiarios_pdf({}, theme_colors=selected)
+
+    assert content.startswith(b"%PDF-")
+    assert captured["header_colors"] == ("#000000", "#000000", "#000000")
+    assert (
+        captured["cabinet_color"].red,
+        captured["cabinet_color"].green,
+        captured["cabinet_color"].blue,
+    ) == (0, 0, 0)
+    assert captured["card_commands"]["BACKGROUND"] == pdf_module.colors.HexColor(
+        central["card_institutional_bg"]
+    )
+    assert captured["card_commands"]["BOX"] == pdf_module.colors.HexColor(
+        central["card_institutional_border"]
+    )
