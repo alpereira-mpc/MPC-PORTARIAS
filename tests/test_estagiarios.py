@@ -8,7 +8,7 @@ from database.estagiarios import EstagiariosStore, LOTACOES, limite_padrao
 from database.memorandos import MemorandosStore
 from document_generator.estagiarios_pdf import generate_estagiarios_pdf
 from services.access import Principal
-from services.estagiarios_ui import _can_manage
+from services.estagiarios_ui import _can_manage, _sync_edit_limit
 
 
 class _InsertCursor:
@@ -201,6 +201,19 @@ def test_limit_is_always_calculated_from_start_and_keeps_early_closure(store):
     closed = service.list()[0]
     assert closed["data_encerramento"] == "2025-01-10"
     assert closed["data_limite"] == "2026-02-28"
+
+
+def test_edit_limit_widget_is_updated_when_start_changes(monkeypatch):
+    state = {
+        "estagiario_edit_start_1": date(2024, 2, 29),
+        "estagiario_edit_limit_1": date(2028, 3, 9),
+    }
+    monkeypatch.setattr("services.estagiarios_ui.st.session_state", state)
+
+    _sync_edit_limit("estagiario_edit_start_1", "estagiario_edit_limit_1")
+
+    assert state["estagiario_edit_limit_1"] == limite_padrao(date(2024, 2, 29))
+    assert state["estagiario_edit_limit_1"] == date(2026, 2, 28)
 
 
 def test_create_uses_cursor_identity_contract_for_postgresql():

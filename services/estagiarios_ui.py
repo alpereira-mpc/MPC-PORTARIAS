@@ -43,6 +43,10 @@ def _form_people(service, key):
     return identifier
 
 
+def _sync_edit_limit(start_key, limit_key):
+    st.session_state[limit_key] = limite_padrao(st.session_state[start_key])
+
+
 def _add_form(service, store, principal):
     with st.expander(
         "Cadastrar vínculo",
@@ -80,15 +84,26 @@ def _add_form(service, store, principal):
 def _active_controls(service, store, principal, row):
     key = str(row["id"])
     with st.popover("Ações", use_container_width=False):
+        start_key = "estagiario_edit_start_" + key
+        limit_key = "estagiario_edit_limit_" + key
+        if start_key not in st.session_state:
+            st.session_state[start_key] = date.fromisoformat(row["data_inicio"])
+        if limit_key not in st.session_state:
+            _sync_edit_limit(start_key, limit_key)
+        start = st.date_input(
+            "Data de início",
+            format="DD/MM/YYYY",
+            key=start_key,
+            on_change=_sync_edit_limit,
+            args=(start_key, limit_key),
+        )
         with st.form("estagiario_edit_" + key):
             selected = LOTACOES.index(row["lotacao"]) if row["lotacao"] in LOTACOES else 0
             lotacao = st.selectbox("Lotação", LOTACOES, index=selected, key="estagiario_edit_lotacao_" + key)
-            start = st.date_input("Data de início", value=date.fromisoformat(row["data_inicio"]), format="DD/MM/YYYY", key="estagiario_edit_start_" + key)
             limit = st.date_input(
                 "Data limite",
-                value=limite_padrao(start),
                 format="DD/MM/YYYY",
-                key="estagiario_edit_limit_" + key,
+                key=limit_key,
                 disabled=True,
             )
             edited = st.form_submit_button("Salvar dados administrativos")
