@@ -166,6 +166,11 @@ def _compact_styles():
             height:auto !important; min-height:0 !important;
             gap:.35rem !important;
         }
+        section[data-testid="stMain"] [data-testid="stVerticalBlock"][class*="st-key-estagiarios_cabinet_"] {
+            background:var(--mpc-card-institutional-bg) !important;
+            border-color:var(--mpc-card-institutional-border) !important;
+            border-radius:var(--mpc-radius);
+        }
         [class*="st-key-estagiarios_person_"] {
             padding:.45rem 0 !important;
             border-bottom:1px solid var(--mpc-border) !important;
