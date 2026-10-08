@@ -1104,6 +1104,65 @@ def test_home_shows_temporal_notice_and_both_registration_routes(store):
     assert not app.exception
 
 
+def test_representation_forms_keep_fields_actions_and_compact_layout(store, monkeypatch):
+    import inspect
+    import services.representacoes_ui as ui
+
+    monkeypatch.setattr(ui.st, "rerun", lambda **_kwargs: None)
+    principal = _principal(store, email="form-layout@test.local")
+    _UI_HOLD.clear()
+    _UI_HOLD.update(ui=ui, store=store, principal=principal)
+
+    def page():
+        from tests.test_representacoes import _UI_HOLD
+
+        _UI_HOLD["ui"].render(_UI_HOLD["store"], _UI_HOLD["principal"])
+
+    source = inspect.getsource(ui._form)
+    protocol = inspect.getsource(ui._protocol_fields)
+    direct = inspect.getsource(ui._direct_protocol_form)
+    assert 'section_label("INFORMAÇÕES GERAIS")' in source
+    assert 'section_label("EQUIPE E GESTÃO")' in source
+    assert "st.columns([1.85, 1])" in source
+    assert "signatarios_col, assessores_col = st.columns(2)" in source
+    assert 'section_label("DADOS DO PROTOCOLO")' in direct
+    assert "number_col, day_col = st.columns([1.6, 1])" in protocol
+    assert 'horizontal_alignment="right"' in direct
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key="rep_new").click().run()
+    assert app.text_input(key="rep_form_newtitulo")
+    assert app.text_area(key="rep_form_newobjeto")
+    assert app.selectbox(key="rep_form_neworigem")
+    assert app.date_input(key="rep_form_newabertura")
+    assert app.text_input(key="rep_form_newrepresentado")
+    assert app.text_input(key="rep_form_newtema")
+    assert app.selectbox(key="rep_form_newresp")
+    assert app.selectbox(key="rep_form_newprioridade")
+    assert app.multiselect(key="rep_form_newsign")
+    assert app.multiselect(key="rep_form_newass")
+    assert app.text_area(key="rep_form_newobs")
+    app.text_input(key="rep_form_newtitulo").set_value("Projeto compacto").run()
+    app.button(key="rep_save").click().run()
+    assert any(
+        row["titulo"] == "Projeto compacto" for row in list_records(store)
+    )
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key="rep_direct_new").click().run()
+    assert app.text_input(key="rep_direct_base_titulo")
+    assert app.selectbox(key="rep_direct_base_resp")
+    assert app.text_input(key="rep_direct_prot_num")
+    assert app.date_input(key="rep_direct_prot_data")
+    assert app.selectbox(key="rep_direct_prot_rel")
+    assert app.selectbox(key="rep_direct_prot_fase")
+    assert app.radio(key="rep_direct_prot_cautelar")
+    assert app.file_uploader(key="rep_direct_prot_pdf")
+    app.button(key="rep_direct_cancel").click().run()
+    assert "representacoes_direct" not in app.session_state
+    assert not app.exception
+
+
 def test_exclude_progress_keeps_the_row_and_hides_it(store, monkeypatch):
     import json
 

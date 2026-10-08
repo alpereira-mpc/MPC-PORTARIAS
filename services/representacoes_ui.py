@@ -285,6 +285,26 @@ def _people_options(store):
     )
 
 
+def _form_layout():
+    st.markdown(
+        "<style>"
+        "@media(max-width:768px){"
+        "div[class*='st-key-rep_form_general'] [data-testid='stHorizontalBlock'],"
+        "div[class*='st-key-rep_form_team'] [data-testid='stHorizontalBlock'],"
+        "div[class*='st-key-rep_protocol_fields'] [data-testid='stHorizontalBlock'],"
+        "div[class*='st-key-rep_form_actions'] [data-testid='stHorizontalBlock']"
+        "{flex-direction:column!important;align-items:stretch!important}"
+        "div[class*='st-key-rep_form_general'] [data-testid='stHorizontalBlock']>div,"
+        "div[class*='st-key-rep_form_team'] [data-testid='stHorizontalBlock']>div,"
+        "div[class*='st-key-rep_protocol_fields'] [data-testid='stHorizontalBlock']>div,"
+        "div[class*='st-key-rep_form_actions'] [data-testid='stHorizontalBlock']>div"
+        "{width:100%!important;flex:1 1 auto!important;min-width:0!important}"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+
 def _form(store, current=None, *, prefix=None):
     prefix = prefix or "rep_form_" + str((current or {}).get("id") or "new")
     current = current or {}
@@ -293,52 +313,43 @@ def _form(store, current=None, *, prefix=None):
         st.warning("Cadastre um Procurador ativo na base institucional.")
         return
     form_mark()
+    _form_layout()
+    section_label("INFORMAÇÕES GERAIS")
     title = st.text_input(
         "Título *", value=current.get("titulo") or "", key=prefix + "titulo"
     )
     objeto = st.text_area(
         "Objeto/resumo", value=current.get("objeto") or "", key=prefix + "objeto"
     )
-    left, right = st.columns(2)
-    origem_keys = list(ORIGENS)
-    origem = left.selectbox(
-        "Origem",
-        origem_keys,
-        index=origem_keys.index(current.get("origem") or "DE_OFICIO"),
-        format_func=ORIGENS.get,
-        key=prefix + "origem",
-    )
-    opening = right.date_input(
-        "Data de abertura",
-        (
-            date.fromisoformat(current["data_abertura"])
-            if current.get("data_abertura")
-            else date.today()
-        ),
-        format="DD/MM/YYYY",
-        key=prefix + "abertura",
-    )
-    representado = st.text_input(
-        "Representado",
-        value=current.get("representado") or "",
-        key=prefix + "representado",
-    )
-    tema = st.text_input(
-        "Tema/área", value=current.get("tema") or "", key=prefix + "tema"
-    )
-    prioridade_keys = list(PRIORIDADES)
-    prioridade = st.selectbox(
-        "Prioridade",
-        prioridade_keys,
-        index=prioridade_keys.index(current.get("prioridade") or "NORMAL"),
-        format_func=PRIORIDADES.get,
-        key=prefix + "prioridade",
-    )
-    observacoes = st.text_area(
-        "Observações internas",
-        value=current.get("observacoes") or "",
-        key=prefix + "obs",
-    )
+    with st.container(key="rep_form_general"):
+        left, right = st.columns(2)
+        origem_keys = list(ORIGENS)
+        origem = left.selectbox(
+            "Origem",
+            origem_keys,
+            index=origem_keys.index(current.get("origem") or "DE_OFICIO"),
+            format_func=ORIGENS.get,
+            key=prefix + "origem",
+        )
+        opening = right.date_input(
+            "Data de abertura",
+            (
+                date.fromisoformat(current["data_abertura"])
+                if current.get("data_abertura")
+                else date.today()
+            ),
+            format="DD/MM/YYYY",
+            key=prefix + "abertura",
+        )
+        representado_col, tema_col = st.columns([1.85, 1])
+        representado = representado_col.text_input(
+            "Representado",
+            value=current.get("representado") or "",
+            key=prefix + "representado",
+        )
+        tema = tema_col.text_input(
+            "Tema/área", value=current.get("tema") or "", key=prefix + "tema"
+        )
     existing = current.get("integrantes") or []
     responsible = next(
         (
@@ -354,48 +365,66 @@ def _form(store, current=None, *, prefix=None):
         if item["papel"] == "PROCURADOR_SIGNATARIO"
     ]
     helpers = [item["membro_id"] for item in existing if item["papel"] == "ASSESSOR"]
-    section_label("Equipe")
-    procurador = st.selectbox(
-        "Procurador responsável *",
-        list(people),
-        index=list(people).index(responsible) if responsible in people else 0,
-        format_func=people.get,
-        key=prefix + "resp",
-    )
-    sign_key = prefix + "sign"
-    allowed_signatories = signatory_options(people, procurador)
-    if sign_key in st.session_state:
-        st.session_state[sign_key] = reconcile_signatories(
-            st.session_state[sign_key], allowed_signatories
+    section_label("EQUIPE E GESTÃO")
+    with st.container(key="rep_form_team"):
+        responsavel_col, prioridade_col = st.columns([1.85, 1])
+        procurador = responsavel_col.selectbox(
+            "Procurador responsável *",
+            list(people),
+            index=list(people).index(responsible) if responsible in people else 0,
+            format_func=people.get,
+            key=prefix + "resp",
         )
-        default_signatories = st.session_state[sign_key]
-    else:
-        default_signatories = reconcile_signatories(signatories, allowed_signatories)
-    signatarios = st.multiselect(
-        "Procuradores signatários",
-        allowed_signatories,
-        default=default_signatories,
-        format_func=people.get,
-        key=sign_key,
-    )
-    assessor_ids = st.multiselect(
-        "Assessores",
-        list(servers),
-        default=[item for item in helpers if item in servers],
-        format_func=servers.get,
-        key=prefix + "ass",
-    )
-    if current:
-        situacao_keys = list(SITUACOES)
-        situacao = st.selectbox(
-            "Situação",
-            situacao_keys,
-            index=situacao_keys.index(current.get("situacao") or "IDEIA"),
-            format_func=SITUACOES.get,
-            key=prefix + "sit",
+        prioridade_keys = list(PRIORIDADES)
+        prioridade = prioridade_col.selectbox(
+            "Prioridade",
+            prioridade_keys,
+            index=prioridade_keys.index(current.get("prioridade") or "NORMAL"),
+            format_func=PRIORIDADES.get,
+            key=prefix + "prioridade",
         )
-    else:
-        situacao = "IDEIA"
+        sign_key = prefix + "sign"
+        allowed_signatories = signatory_options(people, procurador)
+        if sign_key in st.session_state:
+            st.session_state[sign_key] = reconcile_signatories(
+                st.session_state[sign_key], allowed_signatories
+            )
+            default_signatories = st.session_state[sign_key]
+        else:
+            default_signatories = reconcile_signatories(
+                signatories, allowed_signatories
+            )
+        signatarios_col, assessores_col = st.columns(2)
+        signatarios = signatarios_col.multiselect(
+            "Procuradores signatários",
+            allowed_signatories,
+            default=default_signatories,
+            format_func=people.get,
+            key=sign_key,
+        )
+        assessor_ids = assessores_col.multiselect(
+            "Assessores",
+            list(servers),
+            default=[item for item in helpers if item in servers],
+            format_func=servers.get,
+            key=prefix + "ass",
+        )
+        if current:
+            situacao_keys = list(SITUACOES)
+            situacao = st.selectbox(
+                "Situação",
+                situacao_keys,
+                index=situacao_keys.index(current.get("situacao") or "IDEIA"),
+                format_func=SITUACOES.get,
+                key=prefix + "sit",
+            )
+        else:
+            situacao = "IDEIA"
+    observacoes = st.text_area(
+        "Observações internas",
+        value=current.get("observacoes") or "",
+        key=prefix + "obs",
+    )
     return {
         "titulo": title,
         "objeto": objeto,
@@ -657,39 +686,45 @@ def _document_form(store, principal, identifier):
 
 
 def _protocol_fields(prefix):
-    number = st.text_input("Número do processo *", key=prefix + "num")
-    day = st.date_input(
-        "Data do protocolo", date.today(), format="DD/MM/YYYY", key=prefix + "data"
-    )
-    relator = st.selectbox(
-        "Relator *",
-        [_FILTER_ALL, *RELATORES],
-        format_func=lambda name: (
-            "Selecione o Relator atribuído no TRAMITA"
-            if name == _FILTER_ALL
-            else relator_label(name)
-        ),
-        placeholder="Selecione o Relator atribuído no TRAMITA",
-        key=prefix + "rel",
-    )
-    fase = st.selectbox(
-        "Fase processual inicial",
-        list(FASES),
-        format_func=FASES.get,
-        key=prefix + "fase",
-    )
-    cautelar = st.radio(
-        "Possui pedido de medida cautelar?",
-        (False, True),
-        index=0,
-        format_func=lambda value: "Sim" if value else "Não",
-        horizontal=True,
-        key=prefix + "cautelar",
-    )
+    with st.container(key="rep_protocol_fields"):
+        number_col, day_col = st.columns([1.6, 1])
+        number = number_col.text_input("Número do processo *", key=prefix + "num")
+        day = day_col.date_input(
+            "Data do protocolo",
+            date.today(),
+            format="DD/MM/YYYY",
+            key=prefix + "data",
+        )
+        relator_col, fase_col = st.columns(2)
+        relator = relator_col.selectbox(
+            "Relator *",
+            [_FILTER_ALL, *RELATORES],
+            format_func=lambda name: (
+                "Selecione o Relator atribuído no TRAMITA"
+                if name == _FILTER_ALL
+                else relator_label(name)
+            ),
+            placeholder="Selecione o Relator atribuído no TRAMITA",
+            key=prefix + "rel",
+        )
+        fase = fase_col.selectbox(
+            "Fase processual inicial",
+            list(FASES),
+            format_func=FASES.get,
+            key=prefix + "fase",
+        )
+        cautelar = st.radio(
+            "Possui pedido de medida cautelar?",
+            (False, True),
+            index=0,
+            format_func=lambda value: "Sim" if value else "Não",
+            horizontal=True,
+            key=prefix + "cautelar",
+        )
+        uploaded = st.file_uploader(
+            "PDF final da Representação", type=["pdf"], key=prefix + "pdf"
+        )
     observacoes = st.text_area("Observações", key=prefix + "obs")
-    uploaded = st.file_uploader(
-        "PDF final da Representação", type=["pdf"], key=prefix + "pdf"
-    )
     return {
         "numero_processo": number,
         "data_protocolo": day.isoformat(),
@@ -729,7 +764,7 @@ def _protocol_form(store, principal, identifier):
 
 
 def _direct_protocol_form(store, principal):
-    section_label("Registrar Representação Protocolada")
+    st.subheader("Registrar Representação Protocolada")
     st.caption(
         "Cadastre a Representação já protocolada no TRAMITA e anexe o PDF final."
     )
@@ -742,26 +777,29 @@ def _direct_protocol_form(store, principal):
             args=("representacoes_direct", "rep_direct_base_", "rep_direct_prot_"),
         )
         return
-    section_label("Dados do protocolo")
+    section_label("DADOS DO PROTOCOLO")
     protocol, upload = _protocol_fields("rep_direct_prot_")
-    if st.button(
-        "Salvar Representação protocolada", type="primary", key="rep_direct_save"
+    with st.container(
+        key="rep_form_actions", horizontal=True, horizontal_alignment="right"
     ):
-        try:
-            saved = register_direct_protocol(store, base, protocol, principal, upload)
-        except ValueError as exc:
-            st.error(str(exc))
-        else:
-            st.session_state.pop("representacoes_direct", None)
-            _queue_widget_cleanup("rep_direct_base_", "rep_direct_prot_")
-            st.session_state["representacoes_view"] = saved["id"]
-            _done("Representação protocolada.")
-    st.button(
-        "Cancelar",
-        key="rep_direct_cancel",
-        on_click=_clear_ui_state,
-        args=("representacoes_direct", "rep_direct_base_", "rep_direct_prot_"),
-    )
+        if st.button("Salvar", type="primary", key="rep_direct_save"):
+            try:
+                saved = register_direct_protocol(
+                    store, base, protocol, principal, upload
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state.pop("representacoes_direct", None)
+                _queue_widget_cleanup("rep_direct_base_", "rep_direct_prot_")
+                st.session_state["representacoes_view"] = saved["id"]
+                _done("Representação protocolada.")
+        st.button(
+            "Cancelar",
+            key="rep_direct_cancel",
+            on_click=_clear_ui_state,
+            args=("representacoes_direct", "rep_direct_base_", "rep_direct_prot_"),
+        )
 
 
 def _detail(store, principal, record):
@@ -1545,36 +1583,41 @@ def render(store, principal):
         else:
             st.subheader("Novo projeto de Representação")
         payload = _form(store, current)
-        if payload and st.button("Salvar", type="primary", key="rep_save"):
-            try:
-                if current:
-                    saved = update(store, current["id"], payload, principal)
-                    if (
-                        payload.get("situacao")
-                        and payload["situacao"] != current["situacao"]
-                    ):
-                        set_status(store, current["id"], payload["situacao"], principal)
+        with st.container(
+            key="rep_form_actions", horizontal=True, horizontal_alignment="right"
+        ):
+            if payload and st.button("Salvar", type="primary", key="rep_save"):
+                try:
+                    if current:
+                        saved = update(store, current["id"], payload, principal)
+                        if (
+                            payload.get("situacao")
+                            and payload["situacao"] != current["situacao"]
+                        ):
+                            set_status(
+                                store, current["id"], payload["situacao"], principal
+                            )
+                    else:
+                        saved = create(store, payload, principal)
+                except ValueError as exc:
+                    st.error(str(exc))
                 else:
-                    saved = create(store, payload, principal)
-            except ValueError as exc:
-                st.error(str(exc))
-            else:
-                st.session_state["representacoes_edit"] = None
-                st.session_state.pop("representacoes_edit", None)
-                _queue_widget_cleanup(
-                    "rep_form_" + str(current["id"] if current else "new")
-                )
-                st.session_state["representacoes_view"] = saved["id"]
-                _done(kind_saved_message(saved))
-        st.button(
-            "Cancelar",
-            key="rep_cancel",
-            on_click=_clear_ui_state,
-            args=(
-                "representacoes_edit",
-                "rep_form_" + str(current["id"] if current else "new"),
-            ),
-        )
+                    st.session_state["representacoes_edit"] = None
+                    st.session_state.pop("representacoes_edit", None)
+                    _queue_widget_cleanup(
+                        "rep_form_" + str(current["id"] if current else "new")
+                    )
+                    st.session_state["representacoes_view"] = saved["id"]
+                    _done(kind_saved_message(saved))
+            st.button(
+                "Cancelar",
+                key="rep_cancel",
+                on_click=_clear_ui_state,
+                args=(
+                    "representacoes_edit",
+                    "rep_form_" + str(current["id"] if current else "new"),
+                ),
+            )
         return
     if view_id:
         record = get(store, view_id)
