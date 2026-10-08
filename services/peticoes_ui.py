@@ -344,7 +344,20 @@ def _toggle(name):
     panel = dict(_painel())
     panel[name] = not panel.get(name, False)
     st.session_state["peticoes_painel"] = panel
-    st.rerun()
+
+
+def _open_pdf_panel(identifier):
+    panel = dict(_painel())
+    panel[f"p{identifier}"] = True
+    st.session_state["peticoes_painel"] = panel
+
+
+def _set_ui_state(key, value):
+    st.session_state[key] = value
+
+
+def _move_page(page_key, page):
+    st.session_state[page_key] = page
 
 
 def _preview(text):
@@ -533,31 +546,36 @@ def _card(store, db, principal, record, index, *, acompanhar):
         left, right = st.columns(2)
         detail_open = bool(panel.get(f"d{identifier}"))
         history_open = bool(panel.get(f"h{identifier}"))
-        if left.button(
+        left.button(
             "Ocultar detalhes" if detail_open else "Ver detalhes",
             key=f"peticoes_detalhe_btn_{identifier}",
-        ):
-            _toggle(f"d{identifier}")
-        if right.button(
+            on_click=_toggle,
+            args=(f"d{identifier}",),
+        )
+        right.button(
             (
                 "Ocultar histórico de andamentos"
                 if history_open
                 else "Ver histórico de andamentos"
             ),
             key=f"peticoes_hist_btn_{identifier}",
-        ):
-            _toggle(f"h{identifier}")
+            on_click=_toggle,
+            args=(f"h{identifier}",),
+        )
         extra_left, extra_right = st.columns(2)
-        if extra_left.button("PDF", key=f"peticoes_pdf_btn_{identifier}"):
-            opened = dict(_painel())
-            opened[f"p{identifier}"] = True
-            st.session_state["peticoes_painel"] = opened
-            st.rerun()
-        if has_permission(principal, "peticoes_editar") and extra_right.button(
-            "Editar", key=f"peticoes_edit_open_{identifier}"
-        ):
-            st.session_state["peticoes_edit_id"] = identifier
-            st.rerun()
+        extra_left.button(
+            "PDF",
+            key=f"peticoes_pdf_btn_{identifier}",
+            on_click=_open_pdf_panel,
+            args=(identifier,),
+        )
+        if has_permission(principal, "peticoes_editar"):
+            extra_right.button(
+                "Editar",
+                key=f"peticoes_edit_open_{identifier}",
+                on_click=_set_ui_state,
+                args=("peticoes_edit_id", identifier),
+            )
         if detail_open:
             st.markdown("**Objeto**")
             st.text(record.get("objeto") or "—")
@@ -735,13 +753,21 @@ def _render_lista(
         )
     if page or has_next:
         previous, label, nxt = st.columns([1, 2, 1])
-        if page and previous.button("Anterior", key=prefix + "prev"):
-            st.session_state[page_key] = page - 1
-            st.rerun()
+        if page:
+            previous.button(
+                "Anterior",
+                key=prefix + "prev",
+                on_click=_move_page,
+                args=(page_key, page - 1),
+            )
         label.caption(f"Página {page + 1}")
-        if has_next and nxt.button("Próxima", key=prefix + "next"):
-            st.session_state[page_key] = page + 1
-            st.rerun()
+        if has_next:
+            nxt.button(
+                "Próxima",
+                key=prefix + "next",
+                on_click=_move_page,
+                args=(page_key, page + 1),
+            )
 
 
 def render(store, principal):

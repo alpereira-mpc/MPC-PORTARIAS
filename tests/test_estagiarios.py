@@ -8,7 +8,7 @@ from database.estagiarios import EstagiariosStore, LOTACOES, limite_padrao
 from database.memorandos import MemorandosStore
 from document_generator.estagiarios_pdf import generate_estagiarios_pdf
 from services.access import Principal
-from services.estagiarios_ui import _can_manage, _sync_edit_limit
+from services.estagiarios_ui import _can_manage, _open_create_form, _sync_edit_limit
 
 
 class _InsertCursor:
@@ -214,6 +214,22 @@ def test_edit_limit_widget_is_updated_when_start_changes(monkeypatch):
 
     assert state["estagiario_edit_limit_1"] == limite_padrao(date(2024, 2, 29))
     assert state["estagiario_edit_limit_1"] == date(2026, 2, 28)
+
+
+def test_internship_actions_keep_reruns_inside_the_portal_fragment(monkeypatch):
+    import inspect
+
+    from services.estagiarios_ui import _active_controls, _add_form, _vacancy
+
+    state = {}
+    monkeypatch.setattr("services.estagiarios_ui.st.session_state", state)
+    _open_create_form()
+
+    assert state["estagiario_create_expanded"] is True
+    assert 'st.rerun(scope="fragment")' in inspect.getsource(_active_controls)
+    assert 'st.rerun(scope="fragment")' in inspect.getsource(_add_form)
+    assert "on_click=_open_create_form" in inspect.getsource(_vacancy)
+    assert "st.rerun(" not in inspect.getsource(_vacancy)
 
 
 def test_create_uses_cursor_identity_contract_for_postgresql():

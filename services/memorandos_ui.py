@@ -142,6 +142,16 @@ def _show_locked_snapshot(row):
     st.caption("Lotação documental: " + (row.get("lotacao") or "—"))
 
 
+def _add_cascade_stage():
+    st.session_state["memorando_stages"] = st.session_state.get("memorando_stages", 1) + 1
+
+
+def _remove_cascade_stage():
+    st.session_state["memorando_stages"] = max(
+        1, st.session_state.get("memorando_stages", 1) - 1
+    )
+
+
 def _chain(people):
     stages = st.session_state.setdefault("memorando_stages", 1)
     with st.expander("Etapa 1", expanded=True):
@@ -182,12 +192,16 @@ def _chain(people):
                 used.add(extra["servidor_id"])
                 previous = extra
     add, remove = st.columns(2)
-    if add.button("Adicionar substituição em cascata", disabled=not complete):
-        st.session_state["memorando_stages"] += 1
-        st.rerun()
-    if stages > 1 and remove.button("Remover última etapa"):
-        st.session_state["memorando_stages"] -= 1
-        st.rerun()
+    add.button(
+        "Adicionar substituição em cascata",
+        disabled=not complete,
+        on_click=_add_cascade_stage,
+    )
+    if stages > 1:
+        remove.button(
+            "Remover última etapa",
+            on_click=_remove_cascade_stage,
+        )
     return steps, complete
 
 

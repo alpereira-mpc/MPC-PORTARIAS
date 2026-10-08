@@ -124,6 +124,10 @@ def _done(message):
     st.rerun()
 
 
+def _set_ui_state(key, value):
+    st.session_state[key] = value
+
+
 def _people_options(store):
     members = procuradores(store)
     servers = assessores(store)
@@ -345,21 +349,36 @@ def _card(record, index, people, servers):
         )
         actions_mark()
         a, b, c, d, e = st.columns(5)
-        if a.button("Abrir", key="ouvi_open_" + str(record["id"])):
-            st.session_state["ouvidoria_view"] = record["id"]
-            st.rerun()
-        if b.button("Andamento", key="ouvi_prg_" + str(record["id"])):
-            st.session_state["ouvidoria_progress"] = record["id"]
-            st.rerun()
-        if c.button("Providência", key="ouvi_act_" + str(record["id"])):
-            st.session_state["ouvidoria_action"] = record["id"]
-            st.rerun()
-        if d.button("Anexar", key="ouvi_doc_" + str(record["id"])):
-            st.session_state["ouvidoria_file"] = record["id"]
-            st.rerun()
-        if e.button("Editar", key="ouvi_ed_" + str(record["id"])):
-            st.session_state["ouvidoria_edit"] = record["id"]
-            st.rerun()
+        a.button(
+            "Abrir",
+            key="ouvi_open_" + str(record["id"]),
+            on_click=_set_ui_state,
+            args=("ouvidoria_view", record["id"]),
+        )
+        b.button(
+            "Andamento",
+            key="ouvi_prg_" + str(record["id"]),
+            on_click=_set_ui_state,
+            args=("ouvidoria_progress", record["id"]),
+        )
+        c.button(
+            "Providência",
+            key="ouvi_act_" + str(record["id"]),
+            on_click=_set_ui_state,
+            args=("ouvidoria_action", record["id"]),
+        )
+        d.button(
+            "Anexar",
+            key="ouvi_doc_" + str(record["id"]),
+            on_click=_set_ui_state,
+            args=("ouvidoria_file", record["id"]),
+        )
+        e.button(
+            "Editar",
+            key="ouvi_ed_" + str(record["id"]),
+            on_click=_set_ui_state,
+            args=("ouvidoria_edit", record["id"]),
+        )
 
 
 def _detail(store, principal, record):

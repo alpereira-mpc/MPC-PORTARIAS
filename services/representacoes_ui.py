@@ -188,6 +188,10 @@ def _done(message):
     st.rerun()
 
 
+def _set_ui_state(key, value):
+    st.session_state[key] = value
+
+
 def _clear_forms():
     for key in (
         "representacoes_edit",
@@ -457,18 +461,30 @@ def _card(record, index, procuradores_map, assessores_map):
         )
         actions_mark()
         a, b, c, d = st.columns(4)
-        if a.button("Abrir", key="rep_open_" + str(record["id"])):
-            st.session_state["representacoes_view"] = record["id"]
-            st.rerun()
-        if b.button("Andamento", key="rep_prg_" + str(record["id"])):
-            st.session_state["representacoes_progress"] = record["id"]
-            st.rerun()
-        if c.button("Anexar", key="rep_doc_" + str(record["id"])):
-            st.session_state["representacoes_file"] = record["id"]
-            st.rerun()
-        if d.button("Editar", key="rep_ed_" + str(record["id"])):
-            st.session_state["representacoes_edit"] = record["id"]
-            st.rerun()
+        a.button(
+            "Abrir",
+            key="rep_open_" + str(record["id"]),
+            on_click=_set_ui_state,
+            args=("representacoes_view", record["id"]),
+        )
+        b.button(
+            "Andamento",
+            key="rep_prg_" + str(record["id"]),
+            on_click=_set_ui_state,
+            args=("representacoes_progress", record["id"]),
+        )
+        c.button(
+            "Anexar",
+            key="rep_doc_" + str(record["id"]),
+            on_click=_set_ui_state,
+            args=("representacoes_file", record["id"]),
+        )
+        d.button(
+            "Editar",
+            key="rep_ed_" + str(record["id"]),
+            on_click=_set_ui_state,
+            args=("representacoes_edit", record["id"]),
+        )
 
 
 def _progress_form(store, principal, identifier):

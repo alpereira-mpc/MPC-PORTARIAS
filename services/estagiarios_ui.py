@@ -76,7 +76,7 @@ def _add_form(service, store, principal):
                 )
                 _audit(store, principal, "ESTAGIARIO_VINCULO_CRIADO", "CADASTRAR", identifier, {"pessoa_id": person, "lotacao": lotacao})
                 st.session_state["estagiario_create_expanded"] = False
-                st.success("Vínculo cadastrado."); st.rerun()
+                st.success("Vínculo cadastrado."); st.rerun(scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
 
@@ -118,7 +118,7 @@ def _active_controls(service, store, principal, row):
                     administrator=_can_manage(principal),
                 )
                 _audit(store, principal, "ESTAGIARIO_VINCULO_EDITADO", "EDITAR", row["id"], {"lotacao": lotacao})
-                st.success("Vínculo atualizado."); st.rerun()
+                st.success("Vínculo atualizado."); st.rerun(scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
         with st.form("estagiario_close_" + key):
@@ -133,7 +133,7 @@ def _active_controls(service, store, principal, row):
                     administrator=_can_manage(principal),
                 )
                 _audit(store, principal, "ESTAGIARIO_VINCULO_ENCERRADO", "ENCERRAR", row["id"], {"encerramento": end.isoformat()})
-                st.success("Vínculo encerrado; o histórico foi preservado."); st.rerun()
+                st.success("Vínculo encerrado; o histórico foi preservado."); st.rerun(scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
         with st.form("estagiario_replace_" + key):
@@ -158,7 +158,7 @@ def _active_controls(service, store, principal, row):
                     administrator=_can_manage(principal),
                 )
                 _audit(store, principal, "ESTAGIARIO_SUBSTITUIDO", "SUBSTITUIR", new_id, {"anterior_id": row["id"], "pessoa_id": person, "lotacao": row["lotacao"]})
-                st.success("Substituição registrada; o vínculo anterior foi encerrado."); st.rerun()
+                st.success("Substituição registrada; o vínculo anterior foi encerrado."); st.rerun(scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
 
@@ -224,12 +224,18 @@ def _person_row(service, store, principal, row):
         _active_controls(service, store, principal, row)
 
 
+def _open_create_form():
+    st.session_state["estagiario_create_expanded"] = True
+
+
 def _vacancy(lotacao, position):
     left, right = st.columns([8, 3])
     left.caption("Vaga disponível")
-    if right.button("Cadastrar", key=f"estagiario_vacancy_{lotacao}_{position}"):
-        st.session_state["estagiario_create_expanded"] = True
-        st.rerun()
+    right.button(
+        "Cadastrar",
+        key=f"estagiario_vacancy_{lotacao}_{position}",
+        on_click=_open_create_form,
+    )
 
 
 def render(store, principal):

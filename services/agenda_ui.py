@@ -198,6 +198,28 @@ def open_period_analysis():
     st.session_state["agenda_period_analysis_open"] = True
 
 
+def start_new_appointment():
+    st.session_state.pop("agenda_leave_edit", None)
+    st.session_state["agenda_edit"] = {}
+
+
+def start_new_leave():
+    st.session_state.pop("agenda_edit", None)
+    st.session_state["agenda_leave_edit"] = {}
+
+
+def close_period_analysis():
+    st.session_state.pop("agenda_period_analysis_open", None)
+
+
+def close_appointment_editor():
+    st.session_state.pop("agenda_edit", None)
+
+
+def close_leave_editor():
+    st.session_state.pop("agenda_leave_edit", None)
+
+
 def audit_agenda(evento, acao, identifier=None, extra=None, entity_type="compromisso"):
     from services.audit import registrar_evento
 
@@ -535,9 +557,7 @@ def editor(agenda, people, principal=None):
             done("Compromisso salvo com sucesso.")
         except ValueError as exc:
             st.error(str(exc))
-    if st.button("Voltar à agenda", key=prefix + "back"):
-        st.session_state.pop("agenda_edit", None)
-        st.rerun()
+    st.button("Voltar à agenda", key=prefix + "back", on_click=close_appointment_editor)
 
 
 def consume_pending_open_agenda(agenda):
@@ -928,9 +948,7 @@ def leave_editor(agenda, people, principal):
             )
         except ValueError as exc:
             st.error(str(exc))
-    if st.button("Voltar à agenda", key=prefix + "back"):
-        st.session_state.pop("agenda_leave_edit", None)
-        st.rerun()
+    st.button("Voltar à agenda", key=prefix + "back", on_click=close_leave_editor)
 
 
 def apresentar_analise_periodo(inicio, fim, appointments, leaves, names):
@@ -1277,16 +1295,18 @@ def render(store=None, principal=None):
         and "agenda_leave_edit" not in st.session_state
     ):
         new, leave, _ = st.columns([1.6, 1.8, 4.8])
-        if new.button("+ Novo compromisso", type="primary", key="agenda_new"):
-            st.session_state.pop("agenda_leave_edit", None)
-            st.session_state["agenda_edit"] = {}
-            st.rerun()
-        if leave.button(
-            "Cadastrar afastamento", type="primary", key="agenda_new_leave"
-        ):
-            st.session_state.pop("agenda_edit", None)
-            st.session_state["agenda_leave_edit"] = {}
-            st.rerun()
+        new.button(
+            "+ Novo compromisso",
+            type="primary",
+            key="agenda_new",
+            on_click=start_new_appointment,
+        )
+        leave.button(
+            "Cadastrar afastamento",
+            type="primary",
+            key="agenda_new_leave",
+            on_click=start_new_leave,
+        )
     if st.session_state.get("agenda_period_analysis_open"):
         member = st.session_state.get("agenda_filter_member")
         kind = st.session_state.get("agenda_filter_type")
@@ -1294,9 +1314,11 @@ def render(store=None, principal=None):
         item_scope = st.session_state.get("agenda_filter_item_scope", "Todos")
         show_appointments = item_scope != "Somente afastamentos"
         show_leaves = item_scope != "Somente compromissos"
-        if st.button("← Voltar à agenda", key="agenda_close_period_analysis"):
-            st.session_state.pop("agenda_period_analysis_open", None)
-            st.rerun()
+        st.button(
+            "← Voltar à agenda",
+            key="agenda_close_period_analysis",
+            on_click=close_period_analysis,
+        )
         render_period_analysis(
             agenda,
             names,

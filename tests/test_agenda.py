@@ -336,37 +336,51 @@ def test_initial_listing_only_shows_registered_operational_records(
 def test_initial_listing_prioritizes_current_records_and_keeps_open_intervals(
     store, monkeypatch
 ):
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
     from services.agenda_ui import initial_listing_rows
 
     agenda = AgendaStore(store)
-    ongoing = draft("EVENTO", members=[1], day="2026-09-26")
-    ongoing.update(fim="2026-10-12T11:00:00", titulo="Ainda em andamento")
+    today = datetime.now(ZoneInfo("America/Recife")).date()
+    start = today - timedelta(days=6)
+    ongoing = draft("EVENTO", members=[1], day=start.isoformat())
+    ongoing.update(
+        fim=(today + timedelta(days=10)).isoformat() + "T11:00:00",
+        titulo="Ainda em andamento",
+    )
     ongoing_id = agenda.save(ongoing)
-    future = draft("EVENTO", members=[2], day="2026-10-04")
+    future_day = today + timedelta(days=2)
+    future = draft("EVENTO", members=[2], day=future_day.isoformat())
     future["titulo"] = "Compromisso futuro"
     future_id = agenda.save(future)
-    cancelled = agenda.save(draft("EVENTO", members=[3], day="2026-10-05"))
+    cancelled = agenda.save(
+        draft("EVENTO", members=[3], day=(today + timedelta(days=3)).isoformat())
+    )
     agenda.cancel(cancelled)
     current_leave = agenda.save_leave(
         {
             "procurador_id": 1,
             "motivo": "Férias",
-            "data_inicio": "2026-09-30",
-            "data_fim": "2026-10-02",
+            "data_inicio": (today - timedelta(days=2)).isoformat(),
+            "data_fim": today.isoformat(),
         }
     )
     future_leave = agenda.save_leave(
         {
             "procurador_id": 2,
             "motivo": "Férias",
-            "data_inicio": "2026-10-05",
-            "data_fim": "2026-10-06",
+            "data_inicio": (today + timedelta(days=3)).isoformat(),
+            "data_fim": (today + timedelta(days=4)).isoformat(),
         }
     )
-    monkeypatch.setattr("services.agenda_ui._agora", lambda: datetime(2026, 10, 2, 9))
+    monkeypatch.setattr(
+        "services.agenda_ui._agora",
+        lambda: datetime(today.year, today.month, today.day, 9),
+    )
 
     current, upcoming = initial_listing_rows(
-        agenda, date(2026, 10, 2), None, None, None, True, True, "Todos"
+        agenda, today, None, None, None, True, True, "Todos"
     )
 
     assert {row["id"] for row in current} == {ongoing_id, current_leave}
@@ -478,7 +492,7 @@ def test_agenda_renders_leave_records_separately_from_appointments(
 
 
 def test_create_forms_keep_existing_agenda_and_leave_records(store, monkeypatch):
-    from datetime import datetime
+    from datetime import datetime, time
     from zoneinfo import ZoneInfo
 
     from tests.access_testing import enable_login
@@ -486,6 +500,10 @@ def test_create_forms_keep_existing_agenda_and_leave_records(store, monkeypatch)
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     today = datetime.now(ZoneInfo("America/Sao_Paulo")).date().isoformat()
+    monkeypatch.setattr(
+        "services.agenda_ui._agora",
+        lambda: datetime.combine(datetime.fromisoformat(today).date(), time(8, 0)),
+    )
     agenda = AgendaStore(store)
     record = draft("EVENTO", members=[1], day=today)
     record["titulo"] = "Compromisso visível"
@@ -517,7 +535,10 @@ def test_create_forms_keep_existing_agenda_and_leave_records(store, monkeypatch)
     displayed = " ".join(str(item.value) for item in (*app.markdown, *app.caption))
     assert "Compromisso visível" in displayed
     assert "AFASTAMENTO" in displayed
-    assert any(radio.label == "Visualização" for radio in app.radio)
+    assert any(
+        widget.label == "Evento sem horário (dia inteiro)"
+        for widget in app.checkbox
+    )
     assert any(widget.label == "Possui viagem aérea" for widget in app.checkbox)
     back = next(button for button in app.button if button.label == "Voltar à agenda")
     back.click().run()
@@ -546,7 +567,7 @@ def test_create_forms_keep_existing_agenda_and_leave_records(store, monkeypatch)
 
 
 def test_edit_forms_render_after_the_selected_card_in_mixed_list(store, monkeypatch):
-    from datetime import datetime, timedelta
+    from datetime import datetime, time, timedelta
     from zoneinfo import ZoneInfo
 
     from tests.access_testing import enable_login
@@ -554,6 +575,9 @@ def test_edit_forms_render_after_the_selected_card_in_mixed_list(store, monkeypa
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)
     today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    monkeypatch.setattr(
+        "services.agenda_ui._agora", lambda: datetime.combine(today, time(8, 0))
+    )
     agenda = AgendaStore(store)
 
     for index, hour in enumerate((9, 10, 11)):
@@ -595,7 +619,8 @@ def test_edit_forms_render_after_the_selected_card_in_mixed_list(store, monkeypa
         for button in app.button
         if button.key and button.key.startswith("agenda_leave_edit_")
     ]
-    assert len(commitment_keys) == len(leave_keys) == 3
+    assert len(commitment_keys) == 4
+    assert len(leave_keys) == 3
 
     def assert_form_between_selected_and_next(keys, index, save_label):
         app.button(key=keys[index]).click().run()
