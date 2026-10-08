@@ -283,6 +283,8 @@ def _reader():
 
 
 def test_public_creation_and_finalization_require_administrator(tmp_path):
+    from services.institutional_reports import require_institutional_administrator
+
     store = Store(tmp_path / "authorized-workflow.db")
     snapshot = _content_snapshot()
     metadata = snapshot["metadados"]
@@ -308,6 +310,12 @@ def test_public_creation_and_finalization_require_administrator(tmp_path):
 
     finalized = finalize_institutional_report(store, created["id"], _admin())
     assert finalized["status"] == "FINALIZADO"
+
+    delegated_admin = Principal(
+        3, "Admin delegado", "delegado@test", "USUARIO", True,
+        False, False, False, True, (),
+    )
+    require_institutional_administrator(delegated_admin)
 
 
 def test_concurrent_new_versions_keep_one_editable_successor(tmp_path):

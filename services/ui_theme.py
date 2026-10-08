@@ -1172,6 +1172,13 @@ gap:.55rem;
 .mpc-record-head{{flex-direction:column;gap:.35rem;}}
 .mpc-record-title{{flex:none;}}
 .mpc-record-badges{{justify-content:flex-start;}}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label,
+section[data-testid="stSidebar"] [data-testid="stButton"] button,
+section[data-testid="stSidebar"] [data-testid="stCheckbox"] label,
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] [role="combobox"]{{
+min-height:44px;
+box-sizing:border-box;
+}}
 /* Streamlit's sidebar content is the scroll container. Keep the footer in
    normal flow so the dynamic iOS viewport can scroll past Safari's toolbar. */
 section[data-testid="stSidebar"] [data-testid="stSidebarContent"]:has(.st-key-portal_theme_footer){{

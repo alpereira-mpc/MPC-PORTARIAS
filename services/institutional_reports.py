@@ -3,6 +3,7 @@
 from datetime import date
 
 from database.tramita_reports import TramitaReportsStore
+from services.access import has_permission
 from services.institutional_presentation import format_report_period
 from services.tramita_reports import aging_band, turnaround_days
 
@@ -397,7 +398,7 @@ def can_finalize(snapshot):
 
 
 def require_institutional_administrator(principal):
-    if not getattr(principal, "administrator", False):
+    if not has_permission(principal, "admin"):
         raise PermissionError(
             "Apenas administradores podem executar esta ação em relatórios institucionais."
         )

@@ -1063,8 +1063,28 @@ def test_base_ui_does_not_hardcode_administrative_backend_flag():
 
     source = inspect.getsource(ui._base) + inspect.getsource(ui.render)
     assert "administrator=True" not in source
-    assert "administrator=principal.administrator" in inspect.getsource(ui._base)
-    assert "if not principal.administrator" in inspect.getsource(ui._base)
+    assert 'administrator=has_permission(principal, "admin")' in inspect.getsource(ui._base)
+    assert 'if not has_permission(principal, "admin")' in inspect.getsource(ui._base)
+
+
+def test_delegated_admin_permission_opens_memorandos_server_base():
+    from services.access import Principal
+    from services.memorandos_ui import NAV_BASE, _nav_pages
+
+    delegated_admin = Principal(
+        id=8,
+        nome="Admin delegado",
+        email="delegado@test.local",
+        perfil="USUARIO",
+        ativo=True,
+        pode_portarias=False,
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_admin=True,
+        gabinetes=(),
+    )
+
+    assert NAV_BASE in _nav_pages(delegated_admin)
 
 
 def test_server_correction_opens_empty_and_closes_after_save(store, monkeypatch):

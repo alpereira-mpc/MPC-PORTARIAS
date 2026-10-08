@@ -9,6 +9,7 @@ import uuid
 
 import streamlit as st
 
+from services.access import has_permission
 from services.date_format import format_datetime_br
 from services.email_transport import SENDER_ADDRESS
 from services.institutional_report_distribution import (
@@ -62,7 +63,7 @@ def _panel(store, principal, report):
     _clear_foreign_state(report)
     _show_result(report)
     snapshot = report.get("snapshot_dados") or {}
-    administrator = bool(getattr(principal, "administrator", False))
+    administrator = has_permission(principal, "admin")
     st.markdown("##### Distribuição")
     st.caption(
         f"{_institutional_title(snapshot)} · "

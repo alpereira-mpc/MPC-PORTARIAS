@@ -15,7 +15,7 @@ import streamlit as st
 from database.tramita_reports import TramitaReportsStore
 from database.institutional_reports import InstitutionalReportsStore
 from services import ai_service
-from services.access import require_permission
+from services.access import has_permission, require_permission
 from services.audit import registrar_evento
 from services.date_format import format_date_br, format_datetime_br
 from services.institutional_reports import (
@@ -2158,7 +2158,7 @@ def _set_ai_attempt(**values):
 
 
 def _render_last_institutional_ai_attempt(principal, report_id):
-    if not getattr(principal, "administrator", False):
+    if not has_permission(principal, "admin"):
         return
     item = st.session_state.get(_AI_LAST_ATTEMPT_KEY) or {}
     if item.get("report_id") != report_id:
@@ -2383,7 +2383,7 @@ def _render_version_continuation(
     store, principal, report, versions, *, tipo, year, quarter, placement
 ):
     """Offer the next step for a closed version without editing it."""
-    if not getattr(principal, "administrator", False):
+    if not has_permission(principal, "admin"):
         return
     workflow = report_workflow_state(versions or [report], report.get("id"))
     if report.get("status") not in ("FINALIZADO", "ENVIADO"):
@@ -2439,7 +2439,7 @@ def _render_institutional_editor(
         report["conteudo_estruturado"], report["snapshot_dados"]
     )
     locked = report["status"] in ("FINALIZADO", "ENVIADO")
-    editable = getattr(principal, "administrator", False) and not locked
+    editable = has_permission(principal, "admin") and not locked
     if locked:
         st.caption("Versão encerrada, disponível somente para consulta.")
         if report["status"] == "ENVIADO":
@@ -2708,7 +2708,7 @@ def _render_institutional_version_history_access(
                     key=f"inst_open_version_{candidate['id']}",
                     on_click=open_version,
                 )
-            if getattr(principal, "administrator", False):
+            if has_permission(principal, "admin"):
                 _render_delete_buttons(
                     versions[0], versions, placement="versions", repository=repository
                 )
@@ -2803,7 +2803,7 @@ def _render_period_suggestions(
             )
         clicked = render_ready_periods(
             period_plan(coverage, latest_rows),
-            administrator=getattr(principal, "administrator", False),
+            administrator=has_permission(principal, "admin"),
             selected_token=_period_token(tipo, year, quarter),
             tipo=tipo,
         )
@@ -2880,7 +2880,7 @@ def _render_institutional_created_reports(store, principal, repository, latest_r
             institutional_card_mark()
             st.markdown(f"**{period}**")
             st.caption(" · ".join(details))
-            actions = st.columns(3 if getattr(principal, "administrator", False) else 2)
+            actions = st.columns(3 if has_permission(principal, "admin") else 2)
             actions[0].button(
                 "Abrir",
                 key=f"inst_open_created_{report['id']}",
@@ -2891,7 +2891,7 @@ def _render_institutional_created_reports(store, principal, repository, latest_r
                 with actions[1]:
                     # The existing action keeps PDF bytes lazy and audits downloads.
                     _render_institutional_pdf_action(store, principal, report)
-            if getattr(principal, "administrator", False) and actions[2].button(
+            if has_permission(principal, "admin") and actions[2].button(
                 "Excluir",
                 key=f"inst_admin_delete_ask_{report['id']}",
                 type="secondary",
@@ -2908,7 +2908,7 @@ def _render_institutional_created_reports(store, principal, repository, latest_r
 def _render_administrative_delete_confirmation(store, principal):
     """Administrator-only confirmation for removing a whole report period."""
     pending = st.session_state.get("inst_admin_delete_pending")
-    if not pending or not getattr(principal, "administrator", False):
+    if not pending or not has_permission(principal, "admin"):
         return
     st.warning("Excluir relatório institucional?")
     st.caption(
@@ -2968,7 +2968,7 @@ def _render_institutional_creation(
             institutional_card_mark()
             st.markdown(f"**{item['titulo']}**")
             st.caption(item["cobertura"].capitalize())
-            if getattr(principal, "administrator", False) and st.button(
+            if has_permission(principal, "admin") and st.button(
                 "Criar relatório", key=f"inst_create_{token}"
             ):
                 try:
@@ -3016,7 +3016,7 @@ def _render_institutional_detail(store, principal, repository, tipo, year, quart
     latest = versions[0]
     snapshot = report.get("snapshot_dados") or {}
     _render_institutional_detail_header(report)
-    if getattr(principal, "administrator", False):
+    if has_permission(principal, "admin"):
         _render_delete_confirmation(store, principal, versions)
     if open_editor:
         st.session_state["inst_exibicao"] = "Conteúdo e revisão"
@@ -3540,7 +3540,7 @@ def _uploaded_preview(kind, uploaded, principal):
 
 
 def imports(store, principal):
-    if not principal.administrator:
+    if not has_permission(principal, "admin"):
         raise ValueError("Apenas administradores podem importar dados do Tramita.")
     reports = TramitaReportsStore(store)
     st.subheader("Importar Histórico Inicial")
@@ -3797,7 +3797,7 @@ def render(store, principal):
         "Avaliação Anual",
         "Relatórios Institucionais",
     )
-    if principal.administrator:
+    if has_permission(principal, "admin"):
         sections += ("Importações",)
     if st.session_state.get("relatorios_section") not in sections:
         st.session_state.pop("relatorios_section", None)

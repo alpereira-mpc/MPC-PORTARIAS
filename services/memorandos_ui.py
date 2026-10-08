@@ -2,7 +2,7 @@
 from datetime import date
 import hashlib
 import streamlit as st
-from services.access import require_permission
+from services.access import has_permission, require_permission
 from services.branding import module_title
 from services.date_format import format_date_br, format_datetime_br
 from services.ui_theme import badges, card_container, empty_state, filter_mark, guidance_note, render_record, status_tone
@@ -55,7 +55,7 @@ def _audit_memo(evento, acao, entidade_id=None, extra=None):
 
 def _nav_pages(principal):
     pages = [NAV_OVERVIEW, NAV_NEW, NAV_HISTORY]
-    if principal.administrator:
+    if has_permission(principal, "admin"):
         pages.append(NAV_BASE)
     return pages
 
@@ -358,7 +358,7 @@ def _details(service,row,principal):
             service.set_official_number(row["id"],number,principal.email)
             _audit_memo("NUMERO_OFICIAL","REGISTRAR",row["id"],{"numero_oficial": (number or "")[:40]})
             st.rerun()
-    if principal.administrator and r["status"] != "RASCUNHO":
+    if has_permission(principal, "admin") and r["status"] != "RASCUNHO":
         _hard_delete_controls(service, row, principal, r)
 
 
@@ -424,7 +424,7 @@ def _hard_delete_controls(service, row, principal, record):
         try:
             snapshot = service.delete_finalized(
                 identifier,
-                administrator=principal.administrator,
+                administrator=has_permission(principal, "admin"),
                 confirmation=typed,
             )
             _audit_memo(
@@ -535,7 +535,7 @@ def _listing(service, principal):
 
 
 def _base(service,principal):
-    if not principal.administrator:
+    if not has_permission(principal, "admin"):
         st.error("Acesso não autorizado à base de servidores.")
         return
     upload=st.file_uploader("Nova planilha XLSX",type=["xlsx"])
@@ -547,7 +547,7 @@ def _base(service,principal):
     if pending:
         name,digest,rows,report=pending; st.dataframe([{"Total":report["total"],"Novos":report["novos"],"Atualizados":report["atualizados"],"Matrícula vazia":len(report["sem_matricula"]),"Matrícula zero":len(report["matriculas_zero"]),"Duplicidades":len(report["duplicidades"]),"Inconsistentes":len(report["inconsistentes"])}],hide_index=True)
         if st.checkbox("Confirmo a importação desta prévia") and st.button("Importar base transacionalmente"):
-            result=service.import_servers(rows,actor_email=principal.email,filename=name,content_hash=digest,administrator=principal.administrator)
+            result=service.import_servers(rows,actor_email=principal.email,filename=name,content_hash=digest,administrator=has_permission(principal, "admin"))
             _audit_memo("BASE_IMPORTADA","IMPORTAR",None,{"registros_novos":result.get("incluidos"),"registros_atualizados":result.get("atualizados")})
             st.session_state.pop("memo_import", None)
             _reset_new_form()
@@ -595,7 +595,7 @@ def _base(service,principal):
         active=st.checkbox("Ativo", bool(current["ativo"]), key="memo_server_ativo_"+str(chosen))
         if st.form_submit_button("Salvar correção"):
             try:
-                service.update_server(current["id"], {"nome":name,"cargo":cargo,"setor":sector,"genero":gender,"ativo":active}, actor_email=principal.email, administrator=principal.administrator)
+                service.update_server(current["id"], {"nome":name,"cargo":cargo,"setor":sector,"genero":gender,"ativo":active}, actor_email=principal.email, administrator=has_permission(principal, "admin"))
                 _audit_memo("SERVIDOR_CORRIGIDO","CORRIGIR",current["id"])
             except ValueError as exc:
                 st.error(str(exc))
@@ -622,7 +622,7 @@ def render(store,principal):
     else:
         st.session_state["memorando_form_active"] = False
         if page==NAV_HISTORY: _listing(service,principal)
-        elif page==NAV_BASE and principal.administrator:
+        elif page==NAV_BASE and has_permission(principal, "admin"):
             _base(service,principal)
         else:
             counts = service.situacao_counts()

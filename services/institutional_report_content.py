@@ -7,6 +7,7 @@ from database.institutional_reports import InstitutionalReportsStore
 from database.store import now
 from services import ai_service
 from services.audit import registrar_evento
+from services.access import has_permission
 from services.institutional_presentation import (
     MONTHS,
     comparison_available,
@@ -345,7 +346,7 @@ class InstitutionalReportContentService:
 
     @staticmethod
     def _authorized(principal):
-        if not getattr(principal, "administrator", False):
+        if not has_permission(principal, "admin"):
             raise PermissionError(
                 "Apenas administradores podem editar o conteúdo institucional."
             )

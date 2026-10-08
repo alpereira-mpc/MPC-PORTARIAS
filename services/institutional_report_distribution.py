@@ -22,6 +22,7 @@ from services.email_transport import (
     NotConfigured,
     institutional_transport,
 )
+from services.access import has_permission
 from services.notifications import (
     SUBSCRIPTION_PROTOCOLO,
     email_valid,
@@ -546,7 +547,7 @@ def _validated_artifact(store, repository, report, principal):
 
 
 def _require_sender(principal):
-    if not getattr(principal, "administrator", False):
+    if not has_permission(principal, "admin"):
         raise ValueError(PERMISSION_MESSAGE)
 
 

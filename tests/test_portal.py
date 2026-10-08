@@ -775,7 +775,6 @@ def test_mobile_sidebar_collapses_only_after_an_effective_module_selection(
 
     modules = (
         "Busca Global",
-        "Pendências",
         "Portarias",
         "Agenda",
         "Ofícios",

@@ -52,17 +52,28 @@ def _add_form(service, store, principal):
         "Cadastrar vínculo",
         expanded=bool(st.session_state.get("estagiario_create_expanded", False)),
     ):
+        start_key = "estagiario_create_start"
+        limit_key = "estagiario_create_limit"
+        if start_key not in st.session_state:
+            st.session_state[start_key] = date.today()
+        if limit_key not in st.session_state:
+            _sync_edit_limit(start_key, limit_key)
+        start = st.date_input(
+            "Data de início",
+            format="DD/MM/YYYY",
+            key=start_key,
+            on_change=_sync_edit_limit,
+            args=(start_key, limit_key),
+        )
+        limit = st.date_input(
+            "Data limite",
+            format="DD/MM/YYYY",
+            key=limit_key,
+            disabled=True,
+        )
         with st.form("estagiario_create"):
             person = _form_people(service, "estagiario_create_person")
             lotacao = st.selectbox("Lotação", LOTACOES)
-            start = st.date_input("Data de início", value=date.today(), format="DD/MM/YYYY")
-            default_limit = limite_padrao(start)
-            limit = st.date_input(
-                "Data limite",
-                value=default_limit,
-                format="DD/MM/YYYY",
-                disabled=True,
-            )
             submitted = st.form_submit_button("Cadastrar vínculo", type="primary", disabled=person is None)
         if submitted:
             try:
@@ -97,6 +108,8 @@ def _active_controls(service, store, principal, row):
             on_change=_sync_edit_limit,
             args=(start_key, limit_key),
         )
+        start = st.session_state[start_key]
+        limit = st.session_state[limit_key]
         with st.form("estagiario_edit_" + key):
             selected = LOTACOES.index(row["lotacao"]) if row["lotacao"] in LOTACOES else 0
             lotacao = st.selectbox("Lotação", LOTACOES, index=selected, key="estagiario_edit_lotacao_" + key)
@@ -136,16 +149,27 @@ def _active_controls(service, store, principal, row):
                 st.success("Vínculo encerrado; o histórico foi preservado."); st.rerun(scope="fragment")
             except ValueError as exc:
                 st.error(str(exc))
+        replace_start_key = "estagiario_replace_start_" + key
+        replace_limit_key = "estagiario_replace_limit_" + key
+        if replace_start_key not in st.session_state:
+            st.session_state[replace_start_key] = date.today()
+        if replace_limit_key not in st.session_state:
+            _sync_edit_limit(replace_start_key, replace_limit_key)
+        start = st.date_input(
+            "Início do substituto",
+            format="DD/MM/YYYY",
+            key=replace_start_key,
+            on_change=_sync_edit_limit,
+            args=(replace_start_key, replace_limit_key),
+        )
+        limit = st.date_input(
+            "Limite do substituto",
+            format="DD/MM/YYYY",
+            key=replace_limit_key,
+            disabled=True,
+        )
         with st.form("estagiario_replace_" + key):
             person = _form_people(service, "estagiario_replace_person_" + key)
-            start = st.date_input("Início do substituto", value=date.today(), format="DD/MM/YYYY", key="estagiario_replace_start_" + key)
-            limit = st.date_input(
-                "Limite do substituto",
-                value=limite_padrao(start),
-                format="DD/MM/YYYY",
-                key="estagiario_replace_limit_" + key,
-                disabled=True,
-            )
             replace = st.form_submit_button("Substituir estagiário", disabled=person is None)
         if replace:
             try:
@@ -193,7 +217,13 @@ def _compact_styles():
         [class*="st-key-estagiarios_person_"] .mpc-record-meta { margin:.1rem 0 0 !important; font-size:.76rem !important; }
         [class*="st-key-estagiarios_cabinet_"] .stPopover button,
         [class*="st-key-estagiarios_cabinet_"] button[kind="secondary"] { min-height:1.8rem !important; padding:.1rem .45rem !important; font-size:.76rem !important; }
-        @media (max-width:700px) {
+        @media (max-width:768px) {
+          [class*="st-key-estagiarios_cabinet_"] .stPopover button,
+          [class*="st-key-estagiarios_cabinet_"] button[kind="secondary"] {
+            min-height:44px !important;
+            padding:.35rem .55rem !important;
+            font-size:.82rem !important;
+          }
           [class*="st-key-estagiarios_row_"] > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"] {
             flex-direction:column !important;
           }
@@ -290,7 +320,7 @@ def render(store, principal):
                                         end = date.fromisoformat(item["data_encerramento"]).strftime("%d/%m/%Y") if item["data_encerramento"] else "—"
                                         st.caption(f"{item['nome']} · {date.fromisoformat(item['data_inicio']).strftime('%d/%m/%Y')} a {end}")
     st.divider()
-    section_label("Composição atual")
+    section_label("Exportação")
     from document_generator.estagiarios_pdf import generate_estagiarios_pdf
 
     pdf = generate_estagiarios_pdf(service.current_composition())
