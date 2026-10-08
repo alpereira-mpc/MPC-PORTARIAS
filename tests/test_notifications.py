@@ -1,5 +1,8 @@
 """Supervised protocol notices: one message, no send without confirmation."""
 
+import base64
+from email import policy
+from email.parser import BytesParser
 from threading import Barrier, Thread
 import sys
 
@@ -31,7 +34,14 @@ class FakeTransport:
         return self.result
 
 
-def _protocolled(store, principal=None):
+_DEFAULT_PDF = object()
+
+
+def _protocolled(store, principal=None, pdf=_DEFAULT_PDF):
+    if pdf is _DEFAULT_PDF:
+        from tests.test_representacoes import _pdf
+
+        pdf = _pdf()
     principal = principal or _principal(store)
     payload, *_rest = _payload(store)
     record = create(store, payload, principal)
@@ -45,6 +55,7 @@ def _protocolled(store, principal=None):
             "fase_processual": "INSTRUCAO",
         },
         principal,
+        ("representacao.pdf", pdf) if pdf is not None else None,
     )
     return principal, saved
 
@@ -281,6 +292,101 @@ def test_protocol_message_includes_object_in_preview_and_sent_body(store):
     assert "Objeto: Apurar irregularidades" in transport.calls[0]["text"]
     assert "Objeto: Apurar irregularidades" in transport.calls[0]["html"]
     assert transport.calls[0]["subject"].endswith("TC 012345/26")
+
+
+def test_protocol_message_attaches_the_original_official_pdf(store):
+    from tests.test_representacoes import _pdf
+
+    content = _pdf()
+    principal, record = _protocolled(store, pdf=content)
+    _people(store, count=1)
+    transport = FakeTransport()
+
+    sent = confirm_send(store, record, principal, transport)
+
+    attachment = transport.calls[0]["attachment"]
+    assert attachment["content"] == content
+    assert attachment["filename"] == "Representacao_012345-26.pdf"
+    assert attachment["mime_type"] == "application/pdf"
+    assert attachment["size"] == len(content)
+    assert sent["status"] == "SENT"
+    assert sent["corpo_snapshot"]["anexo"] == {
+        "nome": "Representacao_012345-26.pdf",
+        "tipo": "application/pdf",
+        "tamanho": len(content),
+    }
+
+
+def test_gmail_payload_keeps_pdf_attachment_bytes_and_mime():
+    from services.gmail_transport import _raw_message
+
+    content = b"%PDF-1.4\nattachment\n%%EOF"
+    raw = _raw_message(
+        {
+            "to": ["pessoa@tce.pb.gov.br"],
+            "subject": "Teste",
+            "text": "Mensagem",
+            "html": "<p>Mensagem</p>",
+            "attachment": {
+                "filename": "Representacao_05657-26.pdf",
+                "mime_type": "application/pdf",
+                "content": content,
+                "size": len(content),
+            },
+        }
+    )
+    mail = BytesParser(policy=policy.default).parsebytes(
+        base64.urlsafe_b64decode(raw.encode("ascii"))
+    )
+    attachment = next(mail.iter_attachments())
+
+    assert attachment.get_content_type() == "application/pdf"
+    assert attachment.get_filename() == "Representacao_05657-26.pdf"
+    assert attachment.get_payload(decode=True) == content
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (b"arquivo invalido", "PDF inválido"),
+        (b"%PDF-" + b"x" * (10 * 1024 * 1024), "10 MB"),
+    ],
+    ids=["pdf-invalido", "pdf-acima-do-limite"],
+)
+def test_invalid_or_oversized_official_pdf_blocks_protocol_notice(
+    store, content, message
+):
+    from tests.test_representacoes import _pdf
+    from services.representacoes import download, pdf_oficial
+
+    principal, record = _protocolled(store, pdf=_pdf())
+    _people(store, count=1)
+    official = pdf_oficial(store, record["id"])
+    with store.connection() as connection:
+        connection.execute(
+            "UPDATE representacao_documentos SET arquivo=?, tamanho=? WHERE id=?",
+            (content, len(content), official["id"]),
+        )
+    transport = FakeTransport()
+
+    with pytest.raises(ValueError, match=message):
+        confirm_send(store, record, principal, transport)
+
+    saved = NotificationsStore(store).get_by_key(idempotency_key(record["id"]))
+    assert saved["status"] == "DRAFT"
+    assert transport.calls == []
+    assert download(store, official["id"])["conteudo"] == content
+
+
+def test_missing_official_pdf_blocks_protocol_notice(store):
+    principal, record = _protocolled(store, pdf=None)
+    _people(store, count=1)
+    transport = FakeTransport()
+
+    with pytest.raises(ValueError, match="PDF oficial.*não está disponível"):
+        confirm_send(store, record, principal, transport)
+
+    assert transport.calls == []
 
 
 def test_protocol_message_omits_empty_object(store):

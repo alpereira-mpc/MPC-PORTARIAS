@@ -186,6 +186,39 @@ def compose(record):
     return {"assunto": subject, "texto": text, "html": "".join(html_lines)}
 
 
+def _attachment_filename(record):
+    number = re.sub(r"(?i)^\s*tc\s*", "", str(record.get("numero_processo") or ""))
+    number = re.sub(r"[^A-Za-z0-9]+", "-", number).strip("-")
+    return "Representacao_" + (number or "protocolo") + ".pdf"
+
+
+def _protocol_attachment(store, record):
+    """Read and validate only the official PDF belonging to this representation."""
+    from services.oficios import validate_upload
+    from services.representacoes import download, pdf_oficial
+
+    official = pdf_oficial(store, record["id"])
+    if official is None:
+        raise ValueError("O PDF oficial da representação não está disponível para anexo.")
+    try:
+        file = download(store, official["id"])
+    except ValueError:
+        raise ValueError("O PDF oficial da representação não está disponível para anexo.") from None
+    content = file.get("conteudo") or b""
+    try:
+        _safe_name, mime = validate_upload("representacao.pdf", content)
+    except ValueError as exc:
+        raise ValueError("O PDF oficial não pode ser anexado: " + str(exc)) from None
+    if mime != "application/pdf" or file.get("tipo") != "application/pdf":
+        raise ValueError("O PDF oficial não pode ser anexado: tipo de arquivo inválido.")
+    return {
+        "filename": _attachment_filename(record),
+        "content": content,
+        "mime_type": "application/pdf",
+        "size": len(content),
+    }
+
+
 def build_preview(store, record, principal):
     require_permission(principal, "representacoes")
     _require_protocol(record)
@@ -205,6 +238,7 @@ def build_preview(store, record, principal):
             "error": "",
             "configured": True,
             "process_changed": record["numero_processo"] not in (saved.get("assunto_snapshot") or ""),
+            "attachment": body.get("anexo") or {},
         }
     recipients = list_recipients(store, active_only=True)
     blockers = assess_recipients(recipients)
@@ -231,19 +265,32 @@ def build_preview(store, record, principal):
         "error": "" if saved is None else (saved.get("erro") or ""),
         "configured": transport_available(),
         "process_changed": False,
+        "attachment": {
+            "filename": _attachment_filename(record),
+            "mime_type": "application/pdf",
+        },
     }
 
 
-def _snapshot_message(preview):
+def _snapshot_message(preview, attachment):
     return {
         "remetente": f"{SENDER_NAME} <{SENDER_ADDRESS}>",
         "destinatarios": preview["destinatarios"],
         "assunto": preview["assunto"],
-        "corpo": {"texto": preview["texto"], "html": preview["html"]},
+        "corpo": {
+            "texto": preview["texto"],
+            "html": preview["html"],
+            "anexo": {
+                "nome": attachment["filename"],
+                "tipo": attachment["mime_type"],
+                "tamanho": attachment["size"],
+            },
+        },
         "to": [item["email"] for item in preview["destinatarios"]],
         "text": preview["texto"],
         "html": preview["html"],
         "subject": preview["assunto"],
+        "attachment": attachment,
     }
 
 
@@ -269,7 +316,8 @@ def confirm_send(store, record, principal, transport=None):
             transport = institutional_transport()
         except NotConfigured:
             raise NotConfigured(NOT_CONFIGURED) from None
-    message = _snapshot_message(preview)
+    attachment = _protocol_attachment(store, record)
+    message = _snapshot_message(preview, attachment)
     claimed = _store(store).claim(saved["id"], message)
     if claimed is None:
         raise ValueError("Outra execução já assumiu esta comunicação.")
