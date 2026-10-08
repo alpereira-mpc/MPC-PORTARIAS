@@ -53,7 +53,12 @@ def _add_form(service, store, principal):
             lotacao = st.selectbox("Lotação", LOTACOES)
             start = st.date_input("Data de início", value=date.today(), format="DD/MM/YYYY")
             default_limit = limite_padrao(start)
-            limit = st.date_input("Data limite", value=default_limit, format="DD/MM/YYYY")
+            limit = st.date_input(
+                "Data limite",
+                value=default_limit,
+                format="DD/MM/YYYY",
+                disabled=True,
+            )
             submitted = st.form_submit_button("Cadastrar vínculo", type="primary", disabled=person is None)
         if submitted:
             try:
@@ -79,7 +84,13 @@ def _active_controls(service, store, principal, row):
             selected = LOTACOES.index(row["lotacao"]) if row["lotacao"] in LOTACOES else 0
             lotacao = st.selectbox("Lotação", LOTACOES, index=selected, key="estagiario_edit_lotacao_" + key)
             start = st.date_input("Data de início", value=date.fromisoformat(row["data_inicio"]), format="DD/MM/YYYY", key="estagiario_edit_start_" + key)
-            limit = st.date_input("Data limite", value=date.fromisoformat(row["data_limite"]), format="DD/MM/YYYY", key="estagiario_edit_limit_" + key)
+            limit = st.date_input(
+                "Data limite",
+                value=limite_padrao(start),
+                format="DD/MM/YYYY",
+                key="estagiario_edit_limit_" + key,
+                disabled=True,
+            )
             edited = st.form_submit_button("Salvar dados administrativos")
         if edited:
             try:
@@ -113,7 +124,13 @@ def _active_controls(service, store, principal, row):
         with st.form("estagiario_replace_" + key):
             person = _form_people(service, "estagiario_replace_person_" + key)
             start = st.date_input("Início do substituto", value=date.today(), format="DD/MM/YYYY", key="estagiario_replace_start_" + key)
-            limit = st.date_input("Limite do substituto", value=limite_padrao(start), format="DD/MM/YYYY", key="estagiario_replace_limit_" + key)
+            limit = st.date_input(
+                "Limite do substituto",
+                value=limite_padrao(start),
+                format="DD/MM/YYYY",
+                key="estagiario_replace_limit_" + key,
+                disabled=True,
+            )
             replace = st.form_submit_button("Substituir estagiário", disabled=person is None)
         if replace:
             try:

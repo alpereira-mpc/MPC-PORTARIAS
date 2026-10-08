@@ -173,6 +173,36 @@ def test_two_year_limit_close_and_replace_preserve_history(store):
     assert not service.list(include_inactive=False)
 
 
+def test_limit_is_always_calculated_from_start_and_keeps_early_closure(store):
+    people = _people(store)
+    service = EstagiariosStore(store)
+    identifier = service.create(
+        people["Ana Estágio"],
+        "ESPO",
+        date(2026, 3, 9),
+        date(2035, 1, 1),
+        administrator=True,
+    )
+    row = service.list(include_inactive=False)[0]
+    assert row["data_limite"] == "2028-03-09"
+
+    service.update(
+        identifier,
+        "ESPO",
+        date(2024, 2, 29),
+        date(2035, 1, 1),
+        administrator=True,
+    )
+    row = service.list(include_inactive=False)[0]
+    assert row["data_inicio"] == "2024-02-29"
+    assert row["data_limite"] == "2026-02-28"
+
+    service.close(identifier, date(2025, 1, 10), administrator=True)
+    closed = service.list()[0]
+    assert closed["data_encerramento"] == "2025-01-10"
+    assert closed["data_limite"] == "2026-02-28"
+
+
 def test_create_uses_cursor_identity_contract_for_postgresql():
     store = _PostgresCreateStore()
     service = EstagiariosStore.__new__(EstagiariosStore)

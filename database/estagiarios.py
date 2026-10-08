@@ -163,7 +163,8 @@ class EstagiariosStore:
 
     def create(self, pessoa_id, lotacao, inicio, limite=None, *, actor_email="", administrator=False):
         self._require_admin(administrator)
-        inicio = date.fromisoformat(str(inicio)); limite = date.fromisoformat(str(limite)) if limite else limite_padrao(inicio)
+        inicio = date.fromisoformat(str(inicio))
+        limite = limite_padrao(inicio)
         self._validate(lotacao, inicio, limite)
         stamp = now()
         with self.store.connection() as c:
@@ -180,7 +181,9 @@ class EstagiariosStore:
 
     def update(self, identifier, lotacao, inicio, limite, *, actor_email="", administrator=False):
         self._require_admin(administrator)
-        inicio = date.fromisoformat(str(inicio)); limite = date.fromisoformat(str(limite)); self._validate(lotacao, inicio, limite)
+        inicio = date.fromisoformat(str(inicio))
+        limite = limite_padrao(inicio)
+        self._validate(lotacao, inicio, limite)
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             self._lock_active_placements(c)
@@ -208,7 +211,8 @@ class EstagiariosStore:
 
     def replace(self, identifier, pessoa_id, inicio, limite=None, *, actor_email="", administrator=False):
         self._require_admin(administrator)
-        inicio = date.fromisoformat(str(inicio)); limite = date.fromisoformat(str(limite)) if limite else limite_padrao(inicio)
+        inicio = date.fromisoformat(str(inicio))
+        limite = limite_padrao(inicio)
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             self._lock_active_placements(c)
