@@ -16,7 +16,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     env:
       # Configure this repository variable with the public Streamlit URL.
       STREAMLIT_APP_URL: ${{ vars.STREAMLIT_APP_URL }}
