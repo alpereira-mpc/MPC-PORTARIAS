@@ -252,6 +252,7 @@ def test_success_persists_snapshot_and_refuses_a_second_send(store):
     assert len(transport.calls) == 1
     assert transport.calls[0]["to"][0].endswith("@tce.pb.gov.br")
     assert len(transport.calls[0]["to"]) == 1
+    assert get(store, record["id"])["situacao"] == "PROTOCOLADA"
     with pytest.raises(ValueError, match="já enviada"):
         confirm_send(store, record, principal, transport)
     assert len(transport.calls) == 1

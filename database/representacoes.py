@@ -317,14 +317,23 @@ class RepresentacoesStore:
         stamp = now()
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
-            if not c.execute(
-                "SELECT id FROM representacoes WHERE id=?", (identifier,)
-            ).fetchone():
+            record = c.execute(
+                "SELECT situacao FROM representacoes WHERE id=?", (identifier,)
+            ).fetchone()
+            if not record:
                 raise ValueError("Representação não encontrada.")
             self._add_progress(c, identifier, data, tipo, descricao, stamp, actor)
             c.execute(
-                "UPDATE representacoes SET atualizado_em=?,atualizado_por=? WHERE id=?",
-                (stamp, actor, identifier),
+                "UPDATE representacoes SET situacao=?,atualizado_em=?,atualizado_por=? "
+                "WHERE id=?",
+                (
+                    "EM_TRAMITACAO"
+                    if record["situacao"] == "PROTOCOLADA"
+                    else record["situacao"],
+                    stamp,
+                    actor,
+                    identifier,
+                ),
             )
         return self.progress(identifier)
 

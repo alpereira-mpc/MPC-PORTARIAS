@@ -262,6 +262,96 @@ def test_create_edit_team_protocol_phase_and_delete_rules(store):
     assert leftover >= 1
 
 
+def test_first_registered_progress_moves_only_protocolled_record_to_tramitacao(store):
+    principal = _principal(store, email="status-rep@test.local")
+    payload, *_ = _payload(store)
+    record = create(store, payload, principal)
+    protocolled = register_protocol(
+        store,
+        record["id"],
+        {
+            "numero_processo": "TC 05657/26",
+            "data_protocolo": "2026-10-01",
+            "relator": RELATORES[0],
+            "fase_processual": "INSTRUCAO",
+        },
+        principal,
+    )
+    assert protocolled["situacao"] == "PROTOCOLADA"
+    assert protocolled["fase_processual"] == "INSTRUCAO"
+
+    payload["titulo"] = "Cadastro sem andamento"
+    update(store, record["id"], payload, principal)
+    add_document(
+        store,
+        record["id"],
+        {
+            "tipo_documento": "OUTROS",
+            "data_documento": "2026-10-02",
+            "descricao": "Anexo isolado.",
+        },
+        "anexo.pdf",
+        _pdf(),
+        principal,
+    )
+    assert get(store, record["id"])["situacao"] == "PROTOCOLADA"
+
+    add_progress(
+        store,
+        record["id"],
+        {
+            "tipo": "LIVRE",
+            "data": "2026-10-03",
+            "descricao": "Primeiro andamento no Tramita.",
+        },
+        principal,
+    )
+    assert get(store, record["id"])["situacao"] == "EM_TRAMITACAO"
+    assert get(store, record["id"])["fase_processual"] == "INSTRUCAO"
+    listed = next(item for item in list_records(store) if item["id"] == record["id"])
+    assert listed["situacao"] == "EM_TRAMITACAO"
+    with store.connection(read_only=True) as c:
+        audit = c.execute(
+            "SELECT detalhes_json FROM auditoria_eventos WHERE evento=? AND entidade_id=? "
+            "ORDER BY id DESC LIMIT 1",
+            ("REPRESENTACAO_STATUS_ALTERADO", str(record["id"])),
+        ).fetchone()
+    assert audit is not None and "primeiro_andamento" in audit["detalhes_json"]
+
+    reopened = Store(store.path)
+    assert get(reopened, record["id"])["situacao"] == "EM_TRAMITACAO"
+    add_progress(
+        reopened,
+        record["id"],
+        {"tipo": "LIVRE", "data": "2026-10-04", "descricao": "Novo andamento."},
+        principal,
+    )
+    assert get(reopened, record["id"])["situacao"] == "EM_TRAMITACAO"
+
+    final_record = create(reopened, payload, principal)
+    final_protocolled = register_protocol(
+        reopened,
+        final_record["id"],
+        {
+            "numero_processo": "TC 05483/26",
+            "data_protocolo": "2026-10-01",
+            "relator": RELATORES[0],
+        },
+        principal,
+    )
+    from services.representacoes import set_status
+
+    set_status(reopened, final_record["id"], "JULGADA", principal)
+    add_progress(
+        reopened,
+        final_record["id"],
+        {"tipo": "JULGADO", "data": "2026-10-04", "descricao": ""},
+        principal,
+    )
+    assert final_protocolled["situacao"] == "PROTOCOLADA"
+    assert get(reopened, final_record["id"])["situacao"] == "JULGADA"
+
+
 def test_progress_documents_metadata_and_orphan_cleanup(store):
     principal = _principal(store, email="docs-rep@test.local")
     payload, *_ = _payload(store)

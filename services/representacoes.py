@@ -559,7 +559,8 @@ def atualizar_resumo_representacao(store, identifier, principal):
 
 
 def add_progress(store, identifier, values, principal):
-    if get(store, identifier) is None:
+    current = get(store, identifier)
+    if current is None:
         raise ValueError("Representação não encontrada.")
     tipo = values.get("tipo") or "LIVRE"
     if tipo not in ANDAMENTOS:
@@ -570,9 +571,29 @@ def add_progress(store, identifier, values, principal):
     if not descricao:
         descricao = ANDAMENTOS[tipo] + "."
     day = values.get("data") or date.today().isoformat()
-    return open_store(store).add_progress(
+    timeline = open_store(store).add_progress(
         identifier, day, tipo, descricao, actor_of(principal)
     )
+    if current["situacao"] == "PROTOCOLADA":
+        updated = get(store, identifier)
+        if updated["situacao"] == "EM_TRAMITACAO":
+            _audit(
+                store,
+                principal,
+                "REPRESENTACAO_STATUS_ALTERADO",
+                "MOVIMENTAR",
+                updated,
+                {
+                    "alteracoes": [
+                        "Situação: "
+                        + label(SITUACOES, "PROTOCOLADA")
+                        + " → "
+                        + label(SITUACOES, "EM_TRAMITACAO")
+                    ],
+                    "origem": "primeiro_andamento",
+                },
+            )
+    return timeline
 
 
 def add_document(store, identifier, values, name, content, principal):
