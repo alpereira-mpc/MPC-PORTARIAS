@@ -7,6 +7,8 @@ from pypdf import PdfReader
 from database.estagiarios import EstagiariosStore, LOTACOES, limite_padrao
 from database.memorandos import MemorandosStore
 from document_generator.estagiarios_pdf import generate_estagiarios_pdf
+from services.access import Principal
+from services.estagiarios_ui import _can_manage
 
 
 class _InsertCursor:
@@ -66,6 +68,21 @@ def _people(store):
     return {row["nome"]: row["id"] for row in base.all_servers()}
 
 
+def _principal(*, perfil="USUARIO", pode_admin=False, email="pessoa@test.local"):
+    return Principal(
+        id=1,
+        nome="Pessoa de teste",
+        email=email,
+        perfil=perfil,
+        ativo=True,
+        pode_portarias=False,
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_admin=pode_admin,
+        gabinetes=(),
+    )
+
+
 def test_limit_two_active_positions_and_admin_only(store):
     people = _people(store)
     service = EstagiariosStore(store)
@@ -82,6 +99,60 @@ def test_limit_two_active_positions_and_admin_only(store):
         service.create(people["Carla Estágio"], "ESPO", start, administrator=True)
     with pytest.raises(ValueError, match="classificada como estagiária"):
         service.create(people["Davi Analista"], "MTTF", start, administrator=True)
+
+
+def test_authorized_administrators_can_manage_internships_and_users_cannot(
+    store, monkeypatch
+):
+    from services.estagiarios_ui import render
+
+    people = _people(store)
+    service = EstagiariosStore(store)
+    profile_admin = _principal(
+        perfil="ADMINISTRADOR", pode_admin=True, email="admin@test.local"
+    )
+    delegated_admin = _principal(pode_admin=True, email="nguedes@test.local")
+    regular_user = _principal(email="usuario@test.local")
+
+    assert _can_manage(profile_admin)
+    assert _can_manage(delegated_admin)
+    assert not _can_manage(regular_user)
+
+    first = service.create(
+        people["Ana Estágio"],
+        "ESPO",
+        date(2026, 3, 10),
+        actor_email=profile_admin.email,
+        administrator=_can_manage(profile_admin),
+    )
+    service.update(
+        first,
+        "LAF",
+        date(2026, 3, 10),
+        date(2028, 3, 10),
+        actor_email=delegated_admin.email,
+        administrator=_can_manage(delegated_admin),
+    )
+    service.close(
+        first,
+        date(2026, 9, 1),
+        actor_email=delegated_admin.email,
+        administrator=_can_manage(delegated_admin),
+    )
+    assert not service.list()[0]["ativo"]
+
+    with pytest.raises(ValueError, match="administradores"):
+        service.create(
+            people["Bruno Estágio"],
+            "ESPO",
+            date(2026, 3, 10),
+            actor_email=regular_user.email,
+            administrator=_can_manage(regular_user),
+        )
+    messages = []
+    monkeypatch.setattr("services.estagiarios_ui.st.error", messages.append)
+    assert render(store, regular_user) is None
+    assert messages == ["Acesso restrito a usuários com permissão administrativa."]
 
 
 def test_two_year_limit_close_and_replace_preserve_history(store):

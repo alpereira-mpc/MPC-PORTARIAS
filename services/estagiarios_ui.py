@@ -5,8 +5,13 @@ from datetime import date
 import streamlit as st
 
 from database.estagiarios import GABINETES, EstagiariosStore, LOTACOES, limite_padrao
+from services.access import has_permission
 from services.audit import registrar_evento
 from services.ui_theme import badge, card_container, record_html, render_html, section_label
+
+
+def _can_manage(principal):
+    return has_permission(principal, "admin")
 
 
 def _remaining(limit, today=None):
@@ -52,7 +57,14 @@ def _add_form(service, store, principal):
             submitted = st.form_submit_button("Cadastrar vínculo", type="primary", disabled=person is None)
         if submitted:
             try:
-                identifier = service.create(person, lotacao, start, limit, actor_email=principal.email, administrator=principal.administrator)
+                identifier = service.create(
+                    person,
+                    lotacao,
+                    start,
+                    limit,
+                    actor_email=principal.email,
+                    administrator=_can_manage(principal),
+                )
                 _audit(store, principal, "ESTAGIARIO_VINCULO_CRIADO", "CADASTRAR", identifier, {"pessoa_id": person, "lotacao": lotacao})
                 st.session_state["estagiario_create_expanded"] = False
                 st.success("Vínculo cadastrado."); st.rerun()
@@ -71,7 +83,14 @@ def _active_controls(service, store, principal, row):
             edited = st.form_submit_button("Salvar dados administrativos")
         if edited:
             try:
-                service.update(row["id"], lotacao, start, limit, actor_email=principal.email, administrator=True)
+                service.update(
+                    row["id"],
+                    lotacao,
+                    start,
+                    limit,
+                    actor_email=principal.email,
+                    administrator=_can_manage(principal),
+                )
                 _audit(store, principal, "ESTAGIARIO_VINCULO_EDITADO", "EDITAR", row["id"], {"lotacao": lotacao})
                 st.success("Vínculo atualizado."); st.rerun()
             except ValueError as exc:
@@ -81,7 +100,12 @@ def _active_controls(service, store, principal, row):
             close = st.form_submit_button("Encerrar vínculo")
         if close:
             try:
-                service.close(row["id"], end, actor_email=principal.email, administrator=True)
+                service.close(
+                    row["id"],
+                    end,
+                    actor_email=principal.email,
+                    administrator=_can_manage(principal),
+                )
                 _audit(store, principal, "ESTAGIARIO_VINCULO_ENCERRADO", "ENCERRAR", row["id"], {"encerramento": end.isoformat()})
                 st.success("Vínculo encerrado; o histórico foi preservado."); st.rerun()
             except ValueError as exc:
@@ -93,7 +117,14 @@ def _active_controls(service, store, principal, row):
             replace = st.form_submit_button("Substituir estagiário", disabled=person is None)
         if replace:
             try:
-                new_id = service.replace(row["id"], person, start, limit, actor_email=principal.email, administrator=True)
+                new_id = service.replace(
+                    row["id"],
+                    person,
+                    start,
+                    limit,
+                    actor_email=principal.email,
+                    administrator=_can_manage(principal),
+                )
                 _audit(store, principal, "ESTAGIARIO_SUBSTITUIDO", "SUBSTITUIR", new_id, {"anterior_id": row["id"], "pessoa_id": person, "lotacao": row["lotacao"]})
                 st.success("Substituição registrada; o vínculo anterior foi encerrado."); st.rerun()
             except ValueError as exc:
@@ -170,8 +201,9 @@ def _vacancy(lotacao, position):
 
 
 def render(store, principal):
-    if not principal.administrator:
-        raise ValueError("Apenas administradores podem acessar Estagiários.")
+    if not _can_manage(principal):
+        st.error("Acesso restrito a usuários com permissão administrativa.")
+        return
     service = EstagiariosStore(store)
     st.subheader("Estagiários")
     with st.container(key="estagiarios_panel"):
