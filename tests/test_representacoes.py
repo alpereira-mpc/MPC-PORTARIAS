@@ -477,6 +477,112 @@ def test_direct_protocol_rolls_back_when_document_write_fails(store, monkeypatch
         assert c.execute("SELECT COUNT(*) FROM notificacoes_email").fetchone()[0] == 0
 
 
+def test_project_protocol_conversion_preserves_the_existing_record_and_links(store):
+    principal = _principal(store, email="conversion-preserve@test.local")
+    payload, responsible, signatories, assessor = _payload(store)
+    project = create(store, payload, principal)
+    original_document = add_document(
+        store,
+        project["id"],
+        {"tipo_documento": "MINUTA", "descricao": "Versão aprovada"},
+        "minuta.pdf",
+        _pdf(),
+        principal,
+    )
+    add_progress(
+        store,
+        project["id"],
+        {"tipo": "APROVADA", "data": "2026-09-17"},
+        principal,
+    )
+    before = get(store, project["id"])
+    converted = register_protocol(
+        store,
+        project["id"],
+        {
+            "numero_processo": "TC 012346/26",
+            "data_protocolo": "2026-09-18",
+            "relator": RELATORES[0],
+            "fase_processual": "INSTRUCAO",
+        },
+        principal,
+        ("representacao-final.pdf", _pdf()),
+    )
+
+    assert converted["id"] == project["id"]
+    for field in (
+        "titulo",
+        "objeto",
+        "origem",
+        "data_abertura",
+        "representado",
+        "tema",
+        "prioridade",
+        "observacoes",
+    ):
+        assert converted[field] == before[field]
+    roles = {(item["papel"], item["membro_id"]) for item in converted["integrantes"]}
+    assert ("PROCURADOR_RESPONSAVEL", responsible) in roles
+    assert {item[1] for item in roles if item[0] == "PROCURADOR_SIGNATARIO"} == set(
+        signatories
+    )
+    assert ("ASSESSOR", assessor) in roles
+    assert any(item["id"] == original_document for item in documents(store, project["id"]))
+    assert [item["tipo"] for item in progress(store, project["id"])].count("PROTOCOLADA") == 1
+    assert [item["id"] for item in list_records(store, {"situacao": "PROTOCOLADA"})] == [
+        project["id"]
+    ]
+    assert list_records(store, {"numero_processo": "012346"})[0]["id"] == project["id"]
+    assert overview(store)["tramitacao"] == 1
+
+    with pytest.raises(ValueError, match="já possui protocolo"):
+        register_protocol(
+            store,
+            project["id"],
+            {"numero_processo": "TC 012347/26", "relator": RELATORES[0]},
+            principal,
+        )
+    assert len(list_records(store, {})) == 1
+    assert get(store, project["id"])["numero_processo"] == "TC 012346/26"
+
+
+def test_project_protocol_conversion_rolls_back_on_artifact_failure(store, monkeypatch):
+    principal = _principal(store, email="conversion-rollback@test.local")
+    payload, *_ = _payload(store)
+    project = create(store, payload, principal)
+    add_document(
+        store,
+        project["id"],
+        {"tipo_documento": "MINUTA"},
+        "minuta.pdf",
+        _pdf(),
+        principal,
+    )
+    before = get(store, project["id"])
+    document_ids = [item["id"] for item in documents(store, project["id"])]
+    progress_types = [item["tipo"] for item in progress(store, project["id"])]
+
+    def fail(*_args):
+        raise RuntimeError("Falha simulada ao gravar artefatos")
+
+    monkeypatch.setattr(RepresentacoesStore, "_add_protocol_artifacts", fail)
+    with pytest.raises(RuntimeError, match="Falha simulada"):
+        register_protocol(
+            store,
+            project["id"],
+            {"numero_processo": "TC 012348/26", "relator": RELATORES[0]},
+            principal,
+            ("representacao-final.pdf", _pdf()),
+        )
+
+    restored = get(store, project["id"])
+    assert restored["id"] == before["id"]
+    assert restored["numero_processo"] is None
+    assert restored["situacao"] == before["situacao"]
+    assert [item["id"] for item in documents(store, project["id"])] == document_ids
+    assert [item["tipo"] for item in progress(store, project["id"])] == progress_types
+
+
 def test_first_registered_progress_moves_only_protocolled_record_to_tramitacao(store):
     principal = _principal(store, email="status-rep@test.local")
     payload, *_ = _payload(store)
@@ -1069,6 +1175,37 @@ def test_representation_management_and_cancelled_form_state_do_not_leak(store):
     assert description_key not in app.session_state
     app.button(key=f"rep_prg_{second}").click().run()
     assert app.text_area(key=description_key).value == ""
+    assert not app.exception
+
+
+def test_project_protocol_form_shows_context_and_cancel_keeps_project(store, monkeypatch):
+    import services.representacoes_ui as ui
+
+    monkeypatch.setattr(ui.st, "rerun", lambda **_kwargs: None)
+    principal = _principal(store, email="protocol-cancel@test.local")
+    payload, *_ = _payload(store, titulo="Projeto a protocolar")
+    project = create(store, payload, principal)
+    _UI_HOLD.clear()
+    _UI_HOLD.update(ui=ui, store=store, principal=principal)
+
+    def page():
+        from tests.test_representacoes import _UI_HOLD
+
+        _UI_HOLD["ui"].render(_UI_HOLD["store"], _UI_HOLD["principal"])
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key=f"rep_open_{project['id']}").click().run()
+    app.radio(key=f"rep_detail_section_{project['id']}").set_value("Gestão").run()
+    app.button(key="rep_dt_prot").click().run()
+    app.run()
+    assert app.text_input(key=f"rep_prot_{project['id']}num")
+    assert app.button(key=f"rep_prot_{project['id']}cancel")
+    assert any(
+        "Dados que serão preservados" in item.value for item in app.markdown
+    )
+    app.button(key=f"rep_prot_{project['id']}cancel").click().run()
+    assert "representacoes_protocol" not in app.session_state
+    assert get(store, project["id"])["numero_processo"] is None
     assert not app.exception
 
 

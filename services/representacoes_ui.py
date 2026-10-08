@@ -739,6 +739,27 @@ def _protocol_form(store, principal, identifier):
     if not has_permission(principal, "representacoes_registrar_protocolo"):
         st.error("Acesso não autorizado para registrar protocolo.")
         return
+    record = get(store, identifier)
+    if record is None:
+        st.error("Representação não encontrada.")
+        return
+    if is_protocolled(record):
+        st.error("Esta representação já possui protocolo.")
+        return
+    section_label("Projeto de Representação")
+    definition_block(
+        "Dados que serão preservados",
+        [
+            ("Título", record.get("titulo")),
+            ("Objeto/resumo", record.get("objeto")),
+            ("Origem", label(ORIGENS, record.get("origem"))),
+            ("Representado", record.get("representado")),
+            ("Tema/área", record.get("tema")),
+        ],
+    )
+    st.caption(
+        "O protocolo será registrado neste mesmo projeto; equipe, documentos, andamentos e vínculos existentes serão mantidos."
+    )
     section_label("Registrar protocolo")
     st.caption(
         "Informe os dados atribuídos pelo TRAMITA. Este projeto passa a ser tratado como Representação. "
