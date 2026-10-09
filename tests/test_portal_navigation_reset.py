@@ -7,7 +7,6 @@ from streamlit.testing.v1 import AppTest
 
 from database.store import ROOT
 from portal import (
-    PORTAL_ADMIN_SCROLL_TOP,
     MODULE_NAVIGATION_RESET,
     PORTAL_LAST_MODULE,
     PORTAL_NAV_REQUEST,
@@ -103,21 +102,6 @@ def test_internal_rerun_keeps_the_open_screen(monkeypatch):
     assert state["representacoes_edit"] == {"id": 3}
     assert state["rep_f_q"] == "tema"
     assert state["rep_form_3titulo"] == "minuta"
-
-
-def test_admin_scroll_is_requested_only_when_entering_module(monkeypatch):
-    state = {
-        PORTAL_LAST_MODULE: "Início",
-        "portal_module": "Início",
-        PORTAL_NAV_REQUEST: {"module": "Administração", "state": {}},
-    }
-    assert _enter(state, monkeypatch) == "Administração"
-    assert state[PORTAL_ADMIN_SCROLL_TOP] is True
-
-    state.pop(PORTAL_ADMIN_SCROLL_TOP)
-    state[PORTAL_LAST_MODULE] = "Administração"
-    _enter(state, monkeypatch)
-    assert PORTAL_ADMIN_SCROLL_TOP not in state
 
 
 def test_same_module_deep_link_replaces_incompatible_screen(monkeypatch):

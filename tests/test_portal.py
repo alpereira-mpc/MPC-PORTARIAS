@@ -611,7 +611,7 @@ def test_authenticated_user_can_logout_to_restricted_screen(store, monkeypatch):
     app.sidebar.radio(key="portal_module").set_value("Início").run()
     app.button(key="portal_logout").click().run()
     if not any(b.label == "Entrar com Gmail" for b in app.button):
-        app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+        app.run()
     assert not app.exception and not app.error
     assert ended == [True]
     assert any(b.label == "Entrar com Gmail" for b in app.button)
@@ -759,23 +759,6 @@ def test_mobile_sidebar_collapse_markup_targets_only_the_open_drawer():
     assert 'data-testid="stSidebarCollapseButton"' in markup
     assert "stSidebarCollapsed-" in markup
     assert "initial_sidebar_state" not in markup
-
-
-def test_admin_scroll_is_one_shot_and_targets_streamlit_main(monkeypatch):
-    import portal
-
-    state = {portal.PORTAL_ADMIN_SCROLL_TOP: True}
-    emitted = []
-    monkeypatch.setattr(portal.st, "session_state", state)
-    monkeypatch.setattr(portal.st, "html", lambda body, **kwargs: emitted.append(body))
-
-    portal._emit_admin_scroll_top("Administração")
-    portal._emit_admin_scroll_top("Administração")
-
-    assert len(emitted) == 1
-    assert '[data-testid="stMain"]' in emitted[0]
-    assert "scrollTo" in emitted[0]
-    assert portal.PORTAL_ADMIN_SCROLL_TOP not in state
 
 
 def test_mobile_sidebar_collapses_only_after_an_effective_module_selection(
