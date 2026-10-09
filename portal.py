@@ -54,6 +54,7 @@ PORTAL_NAVIGATION_ICONS = {
 # Set only from the module radio (or the sidebar logo when it actually
 # changes the module). Consumed once so later reruns do not touch the drawer.
 PORTAL_MOBILE_SIDEBAR_COLLAPSE = "_portal_mobile_sidebar_collapse"
+PORTAL_ADMIN_SCROLL_TOP = "_portal_admin_scroll_top"
 PORTAL_NAV_STATE_KEYS = frozenset(
     {
         "nav",
@@ -497,6 +498,8 @@ def enter_portal_module(allowed):
         _stash_listing(previous)
     _stash_listing("Alertas")
     module_changed = previous is not None and previous != target
+    if module_changed and target == "Administração":
+        st.session_state[PORTAL_ADMIN_SCROLL_TOP] = True
     if module_changed or nav_state:
         _reset_module_navigation(target, nav_state)
     _restore_listing(target)
@@ -1020,6 +1023,26 @@ def _emit_mobile_sidebar_collapse():
         )
 
 
+def _emit_admin_scroll_top(selected):
+    """Scroll once when entering Administration, never on its internal reruns."""
+    if selected != "Administração":
+        return
+    if not st.session_state.pop(PORTAL_ADMIN_SCROLL_TOP, False):
+        return
+    st.html(
+        """
+<script>
+(function () {
+  var main = document.querySelector('[data-testid="stMain"]');
+  if (main) main.scrollTop = 0;
+  window.scrollTo(0, 0);
+})();
+</script>
+""",
+        unsafe_allow_javascript=True,
+    )
+
+
 def _portal_navigation_label(option):
     """Present a portal module with its familiar Material icon.
 
@@ -1188,6 +1211,7 @@ def render_portal():
             st.session_state.pop("_tramita_previews", None)
     _emit_mobile_sidebar_collapse()
     render_institutional_header(home=selected == "Início")
+    _emit_admin_scroll_top(selected)
     if alerts_overlay_active(selected):
         st.session_state.pop("_global_search_home_active", None)
         from services.alerts_ui import render as render_alerts

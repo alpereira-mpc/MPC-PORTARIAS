@@ -1,6 +1,5 @@
-streamlit==1.56.0
+streamlit[auth]==1.59.2
 pyarrow<25
-Authlib==1.5.2
 python-docx>=1.1,<2
 lxml>=5,<7
 pywin32==311; sys_platform == "win32"
