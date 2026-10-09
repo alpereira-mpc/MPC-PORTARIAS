@@ -346,6 +346,29 @@ def _backup_audit(store, principal, event, report):
     )
 
 
+
+def _backup_validation_presentation(report):
+    """Map immutable validation facts to independent, user-facing indicators."""
+    manifest = report.get("manifest") or {}
+    engine = str(manifest.get("engine") or "").casefold()
+    integrity_ok = report.get("integrity_ok") is True
+    if not integrity_ok:
+        restoration = {"label": "Falhou", "kind": "error"}
+    elif engine == "postgresql":
+        restoration = {"label": "Não disponível nesta interface", "kind": "info"}
+    elif report.get("status") == "Válido para restauração":
+        restoration = {"label": "Aprovada em ambiente isolado", "kind": "success"}
+    else:
+        restoration = {"label": "Falhou", "kind": "error"}
+    counts = manifest.get("registros_por_tabela") or {}
+    return {
+        "engine": engine,
+        "integrity": {"label": "Aprovada" if integrity_ok else "Reprovada", "kind": "success" if integrity_ok else "error"},
+        "restoration": restoration,
+        "tables": len(counts) if counts else manifest.get("quantidade_tabelas", 0),
+        "records": sum(counts.values()) if counts else manifest.get("quantidade_registros", 0),
+        "documents": manifest.get("quantidade_documentos", 0),
+    }
 def _render_backup_validation(store, principal):
     import os
     from tempfile import TemporaryDirectory
@@ -358,10 +381,10 @@ def _render_backup_validation(store, principal):
     )
 
     st.caption(
-        "A validação não escreve no banco operacional. Reconstruções usam SQLite temporário e schema do código instalado."
+        "A validação confere a integridade do pacote sem escrever no banco operacional. A reconstrução pela interface é exclusiva para SQLite temporário."
     )
     st.info(
-        "Destino de teste: novo banco SQLite isolado. Substituição de produção bloqueada."
+        "A interface não restaura PostgreSQL. Esse ensaio exige ambiente PostgreSQL isolado e autorizado; produção permanece bloqueada."
     )
     upload = st.file_uploader(
         "Arquivo de backup ZIP", type=["zip"], key="backup_validate_upload"
@@ -382,24 +405,43 @@ def _render_backup_validation(store, principal):
                     import shutil
 
                     shutil.copyfileobj(upload, output, length=1024 * 1024)
-                with st.spinner("Verificando integridade e reconstrução isolada…"):
+                with st.spinner("Verificando integridade; SQLite também é reconstruído em ambiente isolado…"):
                     report = validate_backup(path, principal)
             st.session_state["backup_validation"] = report
     report = st.session_state.get("backup_validation")
     if report:
-        st.write("**Resultado:** " + report["status"])
+        presentation = _backup_validation_presentation(report)
+        integrity, restoration = st.columns(2)
+        with integrity:
+            getattr(st, presentation["integrity"]["kind"])(
+                "Integridade do backup: " + presentation["integrity"]["label"]
+            )
+        with restoration:
+            getattr(st, presentation["restoration"]["kind"])(
+                "Restauração: " + presentation["restoration"]["label"]
+            )
+        if presentation["engine"] == "postgresql" and report.get("integrity_ok"):
+            st.caption(
+                "A recuperação PostgreSQL exige ambiente isolado e autorizado; não é habilitada nesta interface."
+            )
+        metrics = st.columns(3)
+        metrics[0].metric("Tabelas", presentation["tables"])
+        metrics[1].metric("Registros", presentation["records"])
+        metrics[2].metric("Documentos", presentation["documents"])
         if st.button("Registrar relatório na Auditoria", key="backup_validation_audit"):
             _backup_audit(store, principal, "BACKUP_VALIDADO", report)
             st.caption(
                 "Resultado registrado na Auditoria por solicitação administrativa."
             )
         for issue in report.get("errors", []):
-            st.warning(issue)
+            if presentation["engine"] == "postgresql" and report.get("integrity_ok"):
+                st.caption(issue)
+            else:
+                st.warning(issue)
         manifest = report.get("manifest", {})
         st.caption(
             f"Formato: {manifest.get('formato', '—')} · Origem: {manifest.get('engine', '—')} · Data UTC: {manifest.get('gerado_em_utc', '—')}"
         )
-        st.write(f"Documentos incluídos: {manifest.get('quantidade_documentos', '—')}")
         counts = manifest.get("registros_por_tabela", {})
         if counts:
             st.dataframe(
@@ -418,7 +460,7 @@ def _render_backup_validation(store, principal):
         st.caption(
             "Destino persistente de teste não configurado. A validação descarta sua reconstrução temporária."
         )
-    elif report and report["status"] == VALID:
+    elif report and _backup_validation_presentation(report)["engine"] == "sqlite" and report["status"] == VALID:
         st.write("Diretório de teste autorizado: " + authorized_root)
         st.caption(
             "Impacto: cria uma pasta nova contendo dados institucionais recuperados; nenhum banco existente é substituído."

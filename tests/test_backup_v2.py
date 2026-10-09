@@ -412,6 +412,33 @@ def test_entire_initialized_module_missing_is_not_marked_unused():
 _UI_CONTEXT = {}
 
 
+def test_validation_presentation_separates_integrity_from_postgres_restore():
+    from services.system_ui import _backup_validation_presentation
+
+    postgres = _backup_validation_presentation(
+        {
+            "status": "Incompatível",
+            "integrity_ok": True,
+            "manifest": {
+                "engine": "PostgreSQL",
+                "registros_por_tabela": {"portarias": 2, "alertas_atencao": 1},
+                "quantidade_documentos": 3,
+            },
+        }
+    )
+    assert postgres["integrity"]["label"] == "Aprovada"
+    assert postgres["restoration"]["label"] == "Não disponível nesta interface"
+    assert (postgres["tables"], postgres["records"], postgres["documents"]) == (2, 3, 3)
+    failed = _backup_validation_presentation(
+        {"status": "Inválido", "integrity_ok": False, "manifest": {"engine": "SQLite"}}
+    )
+    assert failed["integrity"]["label"] == "Reprovada"
+    assert failed["restoration"]["label"] == "Falhou"
+    sqlite = _backup_validation_presentation(
+        {"status": VALID, "integrity_ok": True, "manifest": {"engine": "SQLite"}}
+    )
+    assert sqlite["restoration"]["label"] == "Aprovada em ambiente isolado"
+
 def test_validation_preview_does_not_write_operational_database(
     store, tmp_path, monkeypatch
 ):
