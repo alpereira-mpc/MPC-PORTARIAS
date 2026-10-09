@@ -99,7 +99,7 @@ def _postgres_signature(connection):
         for row in connection.execute(
             "SELECT c.relname,con.contype,pg_get_constraintdef(con.oid,true) "
             "FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid "
-            "WHERE con.connamespace=current_schema() ORDER BY c.relname,con.conname"
+            "WHERE con.connamespace=current_schema()::regnamespace ORDER BY c.relname,con.conname"
         )
     ]
     triggers = [
@@ -107,7 +107,7 @@ def _postgres_signature(connection):
         for row in connection.execute(
             "SELECT c.relname,pg_get_triggerdef(t.oid,true) FROM pg_trigger t "
             "JOIN pg_class c ON c.oid=t.tgrelid WHERE t.tgfoid <> 0 "
-            "AND NOT t.tgisinternal AND c.relnamespace=current_schema() "
+            "AND NOT t.tgisinternal AND c.relnamespace=current_schema()::regnamespace "
             "ORDER BY c.relname,t.tgname"
         )
     ]
