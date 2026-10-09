@@ -138,6 +138,22 @@ def _prepare_postgres_target(target_store, tables, schema):
         return _postgres_signature(connection)
 
 
+
+def _postgres_insert_values(columns, values):
+    """Wrap only trusted JSON columns for Psycopg, without changing digest inputs."""
+    from psycopg.types.json import Jsonb
+
+    adapted = []
+    for column, value in zip(columns, values):
+        column_type = str(column.get("type", "")).lower()
+        udt = str(column.get("udt", "")).lower()
+        if (column_type in {"json", "jsonb"} or udt in {"json", "jsonb"}) and isinstance(
+            value, (dict, list)
+        ):
+            adapted.append(Jsonb(value))
+        else:
+            adapted.append(value)
+    return adapted
 def _restore_postgres_disposable(archive, manifest, schema, source_store, target_store):
     if schema["engine"] != "postgresql":
         raise Incompatible("Pacote não foi gerado por PostgreSQL.")
@@ -167,7 +183,8 @@ def _restore_postgres_disposable(archive, manifest, schema, source_store, target
         target.raw.execute(truncate)
         verified = {}
         for table in tables:
-            columns = [column["name"] for column in schema["tables"][table]["columns"]]
+            metadata = schema["tables"][table]["columns"]
+            columns = [column["name"] for column in metadata]
             statement = (
                 "INSERT INTO "
                 + quoted(table)
@@ -183,7 +200,18 @@ def _restore_postgres_disposable(archive, manifest, schema, source_store, target
                     decode_cell(cell, lambda ref: archive.read(ref["arquivo"]))
                     for cell in row
                 ]
-                target.execute(statement, values)
+                try:
+                    target.execute(statement, _postgres_insert_values(metadata, values))
+                except Exception as exc:
+                    # The backend wraps Psycopg errors without SQLSTATE as "conexão".
+                    # Keep a safe diagnostic only in this already guarded test route.
+                    raise InvalidBackup(
+                        "Inserção PostgreSQL descartável falhou na tabela "
+                        + table
+                        + " ("
+                        + type(exc).__name__
+                        + ")."
+                    ) from None
                 expected[_row_digest(values)] += 1
             actual = Counter(
                 _row_digest(tuple(row))

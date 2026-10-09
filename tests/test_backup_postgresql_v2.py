@@ -19,6 +19,7 @@ from services.restore import (
     PG_TEST_MODE_ENV,
     PG_TEST_URL_ENV,
     _row_digest,
+    _postgres_insert_values,
     restore_postgresql_disposable_test,
 )
 from tests.access_testing import seed_access
@@ -26,6 +27,24 @@ from tests.test_backup import _insert_blobs, _prepare, _principal
 from tests.test_postgresql import pg_url  # noqa: F401
 
 
+
+def test_postgresql_jsonb_adapter_uses_only_json_columns():
+    from psycopg.types.json import Jsonb
+
+    payload = {"null": None, "items": [1, False]}
+    values = _postgres_insert_values(
+        [
+            {"name": "snapshot", "type": "jsonb", "udt": "jsonb"},
+            {"name": "title", "type": "text", "udt": "text"},
+            {"name": "legacy", "type": "json", "udt": "json"},
+        ],
+        [payload, payload, ["preservado"]],
+    )
+    assert isinstance(values[0], Jsonb)
+    assert values[0].obj == payload
+    assert values[1] is payload
+    assert isinstance(values[2], Jsonb)
+    assert values[2].obj == ["preservado"]
 def _store(url, tmp_path):
     store = Store(database_url=url, postgres_schema="mpc_test_" + uuid.uuid4().hex)
     store.path = tmp_path / store._postgres.schema
