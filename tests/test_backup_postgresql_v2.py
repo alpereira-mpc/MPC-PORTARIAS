@@ -144,7 +144,7 @@ def test_postgresql_v2_roundtrip_data_documents_sequences_and_reads(pg_pair, tmp
         assert c.execute("SELECT snapshot_dados->>'null' FROM relatorios_institucionais WHERE id=804").fetchone()[0] is None
         c.execute("INSERT INTO eventos(instante,acao,detalhes) VALUES('2026-10-10T00:00:00+00:00','after','{}')")
         assert c.execute("SELECT max(id) FROM eventos").fetchone()[0] > 999
-        c.rollback()
+        c.raw.rollback()
     assert target.get(blobs["portaria_id"])["pdf"] == blobs["portaria_pdf"]
 
 
