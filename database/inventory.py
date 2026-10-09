@@ -36,7 +36,13 @@ MEMORANDOS_TABLES = (
 
 ESTAGIARIOS_TABLES = ("estagiarios_lotacoes",)
 
-AGENDA_TABLES = ("agenda_compromissos", "agenda_compromisso_procuradores")
+AGENDA_TABLES = (
+    "agenda_compromissos",
+    "agenda_compromisso_procuradores",
+    "agenda_compromissos_viagens",
+    "agenda_afastamentos",
+    "agenda_afastamentos_viagens",
+)
 
 OFICIOS_TABLES = (
     "oficio_series",
@@ -76,6 +82,23 @@ RECORD_ENGAGEMENT_TABLES = ("registros_seguidos", "avisos_usuario")
 
 IA_TABLES = ("ia_telemetria",)
 
+TAREFAS_TABLES = ("tarefas", "tarefas_checklist", "tarefas_lembretes")
+PETICOES_TABLES = (
+    "peticoes",
+    "peticoes_signatarios",
+    "peticoes_pedidos",
+    "peticoes_andamentos",
+    "peticoes_documentos",
+)
+REPORT_TABLES = (
+    "relatorios_institucionais",
+    "relatorios_institucionais_pdf",
+    "relatorios_institucionais_envios",
+    "relatorios_institucionais_envio_destinatarios",
+)
+TRAMITA_TABLES = ("tramita_importacoes", "tramita_movimentacoes", "tramita_estoque")
+NOTIFICATION_TABLES = ("notificacoes_email", "notificacao_destinatarios")
+
 POSTGRES_ONLY_TABLES = ("schema_migrations", "backup_snapshots")
 
 APPLICATION_TABLES = (
@@ -91,6 +114,11 @@ APPLICATION_TABLES = (
     + INTERNAL_COLLABORATION_TABLES
     + RECORD_ENGAGEMENT_TABLES
     + IA_TABLES
+    + TAREFAS_TABLES
+    + PETICOES_TABLES
+    + REPORT_TABLES
+    + TRAMITA_TABLES
+    + NOTIFICATION_TABLES
     + POSTGRES_ONLY_TABLES
 )
 
@@ -107,6 +135,11 @@ ESSENTIAL_TABLES = (
     + INTERNAL_COLLABORATION_TABLES
     + RECORD_ENGAGEMENT_TABLES
     + IA_TABLES
+    + TAREFAS_TABLES
+    + PETICOES_TABLES
+    + REPORT_TABLES
+    + TRAMITA_TABLES
+    + NOTIFICATION_TABLES
 )
 
 SCHEMA_MARKERS = (
@@ -193,6 +226,8 @@ BLOB_COLUMNS = {
     "ouvidoria_documentos": ("arquivo",),
     "oficio_quarentena": ("arquivos",),
     "backup_snapshots": ("conteudo",),
+    "peticoes_documentos": ("arquivo",),
+    "relatorios_institucionais_pdf": ("conteudo",),
 }
 
 # Engine-specific dump of previous backups; embedding it would recurse and
@@ -204,6 +239,10 @@ DOCUMENT_FOLDERS = {
     "memorandos_arquivos": "documentos/memorandos",
     "oficio_arquivos": "documentos/oficios",
     "oficio_quarentena": "documentos/oficios_quarentena",
+    "representacao_documentos": "documentos/representacoes",
+    "ouvidoria_documentos": "documentos/ouvidoria",
+    "peticoes_documentos": "documentos/peticoes",
+    "relatorios_institucionais_pdf": "documentos/relatorios_institucionais",
 }
 
 
@@ -224,3 +263,45 @@ def backup_tables(backend, existing):
         for table in APPLICATION_TABLES
         if table in wanted and table in existing and table not in BACKUP_EXCLUDED_TABLES
     )
+
+
+# These modules initialize lazily. Absence of an entire group is reported;
+# partial presence is never accepted. No DDL is run by the backup service.
+LAZY_TABLE_GROUPS = (AGENDA_TABLES, OFICIOS_TABLES, PETICOES_TABLES, AUDIT_TABLES)
+EXCLUSION_REASONS = {
+    "backup_snapshots": "Snapshots nativos da exclusão administrativa: conservar no backup nativo PostgreSQL.",
+    "sqlite_sequence": "High-water marks exportados separadamente no manifesto de schema.",
+}
+# Migration staging table: its presence in a live schema still blocks backup.
+TRANSIENT_SCHEMA_TABLES = frozenset({"tramita_importacoes_nova"})
+
+
+def check_backup_coverage(backend, existing, markers=()):
+    existing = set(existing)
+    expected = set(ESSENTIAL_TABLES)
+    if backend == "postgresql":
+        expected.update(POSTGRES_ONLY_TABLES)
+    unknown = existing - set(APPLICATION_TABLES) - BACKUP_EXCLUDED_TABLES
+    absent_modules = []
+    marker_prefixes = {
+        AGENDA_TABLES: ("agenda_member_",),
+        OFICIOS_TABLES: ("oficios_schema_v",),
+        AUDIT_TABLES: ("auditoria_schema_v",),
+        PETICOES_TABLES: ("peticoes_schema_v",),
+    }
+    for group in LAZY_TABLE_GROUPS:
+        initialized = any(
+            marker.startswith(marker_prefixes[group]) for marker in markers
+        )
+        if not existing.intersection(group) and not initialized:
+            expected.difference_update(group)
+            absent_modules.extend(group)
+    missing = expected - existing
+    if unknown or missing:
+        raise ValueError(
+            "Cobertura de backup incompleta. Não inventariadas: "
+            + ", ".join(sorted(unknown))
+            + "; ausentes: "
+            + ", ".join(sorted(missing))
+        )
+    return sorted(absent_modules)

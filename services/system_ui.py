@@ -222,7 +222,7 @@ def _clear_backup_file(info):
         path.unlink(missing_ok=True)
 
 
-def render_backup(store, principal):
+def _render_generate_backup(store, principal):
     require_permission(principal, "admin")
     st.subheader("Backup administrativo")
     st.warning(
@@ -230,7 +230,7 @@ def render_backup(store, principal):
     )
     st.write(
         "Gera um arquivo ZIP lógico das tabelas da aplicação, compatível com "
-        "SQLite e PostgreSQL. A restauração automática não está disponível nesta versão."
+        "SQLite e PostgreSQL, no formato V2 tipado e verificável. A cópia manual é temporária; baixe e armazene em destino institucional aprovado."
     )
     previous = st.session_state.get(BACKUP_RESULT)
     if previous:
@@ -285,7 +285,10 @@ def render_backup(store, principal):
         )
         st.session_state.pop(BACKUP_RESULT, None)
         return
-    st.success("Backup pronto para download.")
+    st.success("Backup V2 com integridade verificada, pronto para download.")
+    st.caption(
+        "A conferência do ZIP não substitui o teste de restauração nem a cópia externa."
+    )
     st.write(f"Horário: {result.get('gerado_em_local')}")
     st.write(f"Tabelas: {result.get('quantidade_tabelas')}")
     st.write(f"Registros: {result.get('quantidade_registros')}")
@@ -323,6 +326,209 @@ def render_backup(store, principal):
         st.session_state[BACKUP_OFFERED] = token
     if offered:
         st.caption("O download foi solicitado neste navegador.")
+
+
+def _backup_audit(store, principal, event, report):
+    registrar_evento(
+        store,
+        evento=event,
+        modulo="admin",
+        acao="BACKUP",
+        resultado=(
+            "OK" if report.get("status") == "Válido para restauração" else "ATENCAO"
+        ),
+        principal=principal,
+        detalhes={
+            "status": report.get("status"),
+            "sha256": report.get("sha256"),
+            "verificado_em": report.get("checked_at"),
+        },
+    )
+
+
+def _render_backup_validation(store, principal):
+    import os
+    from tempfile import TemporaryDirectory
+    from services.restore import (
+        validate_backup,
+        restore_isolated,
+        CONFIRMATION,
+        VALID,
+        MAX_ARCHIVE,
+    )
+
+    st.caption(
+        "A validação não escreve no banco operacional. Reconstruções usam SQLite temporário e schema do código instalado."
+    )
+    st.info(
+        "Destino de teste: novo banco SQLite isolado. Substituição de produção bloqueada."
+    )
+    upload = st.file_uploader(
+        "Arquivo de backup ZIP", type=["zip"], key="backup_validate_upload"
+    )
+    token = getattr(upload, "file_id", None) if upload is not None else None
+    if st.session_state.get("backup_upload_token") != token:
+        st.session_state["backup_upload_token"] = token
+        st.session_state.pop("backup_validation", None)
+        st.session_state.pop("backup_test_restore", None)
+    if st.button("Validar arquivo", key="backup_validate", disabled=upload is None):
+        if upload.size > MAX_ARCHIVE:
+            st.error("Arquivo excede o limite permitido.")
+        else:
+            with TemporaryDirectory(prefix="mpc-upload-") as folder:
+                path = Path(folder) / "input.zip"
+                upload.seek(0)
+                with path.open("xb") as output:
+                    import shutil
+
+                    shutil.copyfileobj(upload, output, length=1024 * 1024)
+                with st.spinner("Verificando integridade e reconstrução isolada…"):
+                    report = validate_backup(path, principal)
+            st.session_state["backup_validation"] = report
+    report = st.session_state.get("backup_validation")
+    if report:
+        st.write("**Resultado:** " + report["status"])
+        if st.button("Registrar relatório na Auditoria", key="backup_validation_audit"):
+            _backup_audit(store, principal, "BACKUP_VALIDADO", report)
+            st.caption(
+                "Resultado registrado na Auditoria por solicitação administrativa."
+            )
+        for issue in report.get("errors", []):
+            st.warning(issue)
+        manifest = report.get("manifest", {})
+        st.caption(
+            f"Formato: {manifest.get('formato', '—')} · Origem: {manifest.get('engine', '—')} · Data UTC: {manifest.get('gerado_em_utc', '—')}"
+        )
+        st.write(f"Documentos incluídos: {manifest.get('quantidade_documentos', '—')}")
+        counts = manifest.get("registros_por_tabela", {})
+        if counts:
+            st.dataframe(
+                [{"Tabela": k, "Registros": v} for k, v in counts.items()],
+                hide_index=True,
+            )
+        st.download_button(
+            "Baixar relatório de validação",
+            __import__("json").dumps(report, ensure_ascii=False, indent=2),
+            "validacao_backup.json",
+            "application/json",
+            key="backup_validation_report",
+        )
+    authorized_root = os.environ.get("MPC_BACKUP_RESTORE_TEST_ROOT")
+    if not authorized_root:
+        st.caption(
+            "Destino persistente de teste não configurado. A validação descarta sua reconstrução temporária."
+        )
+    elif report and report["status"] == VALID:
+        st.write("Diretório de teste autorizado: " + authorized_root)
+        st.caption(
+            "Impacto: cria uma pasta nova contendo dados institucionais recuperados; nenhum banco existente é substituído."
+        )
+        accepted = st.checkbox(
+            "Confirmo que este diretório é isolado e autorizado para testes",
+            key="backup_restore_accept",
+        )
+        confirmation = st.text_input(
+            "Digite " + CONFIRMATION, key="backup_restore_confirmation"
+        )
+        if st.button(
+            "Restaurar cópia isolada",
+            key="backup_restore",
+            disabled=not accepted or confirmation != CONFIRMATION,
+        ):
+            try:
+                with TemporaryDirectory(prefix="mpc-upload-") as folder:
+                    path = Path(folder) / "input.zip"
+                    upload.seek(0)
+                    with path.open("xb") as output:
+                        import shutil
+
+                        shutil.copyfileobj(upload, output, length=1024 * 1024)
+                    from services.backup_format import file_hash
+
+                    if file_hash(path) != report["sha256"]:
+                        raise ValueError("Arquivo alterado; valide novamente.")
+                    with st.spinner("Restaurando e conferindo dados…"):
+                        restored = restore_isolated(
+                            path, principal, authorized_root, confirmation=confirmation
+                        )
+                st.session_state["backup_test_restore"] = restored
+                _backup_audit(store, principal, "BACKUP_RESTAURACAO_TESTADA", restored)
+            except (ValueError, OSError):
+                st.error(
+                    "Restauração isolada recusada ou falhou. O banco operacional não foi alterado."
+                )
+                _backup_audit(
+                    store, principal, "BACKUP_RESTAURACAO_FALHOU", {"status": "Falha"}
+                )
+    if restored := st.session_state.get("backup_test_restore"):
+        st.success("Cópia isolada recuperada e conferida.")
+        st.code(restored["restore"]["destination"], language=None)
+    st.warning(
+        "Recuperação definitiva exige autorização formal, backup independente, suspensão das escritas, reversão e validação. Consulte docs/SISTEMA_BACKUP_SAUDE.md. PostgreSQL não tem restauração automática habilitada."
+    )
+
+
+def _render_backup_protection(store, principal):
+    from services.backup_external import load_config, protection_status
+
+    result = st.session_state.get(BACKUP_RESULT)
+    st.write(
+        "Backup manual: "
+        + (
+            result.get("gerado_em_local", "gerado nesta sessão")
+            if result
+            else "nenhuma geração nesta sessão"
+        )
+    )
+    try:
+        external = protection_status(load_config())
+    except (ValueError, OSError):
+        external = {"status": "Configuração externa inválida", "last_verified": None}
+    st.write(external["status"])
+    if external["last_verified"]:
+        st.caption(
+            "Última verificação externa registrada: "
+            + external["last_verified"]["verified_at"]
+        )
+        st.caption(
+            "Este indicador lê o recibo do executor; não consulta o armazenamento externo a cada rerun."
+        )
+    st.caption(
+        "Sem cópia externa independente e recuperação comprovada, não há proteção completa contra desastres."
+    )
+    if st.button("Atualizar histórico de proteção", key="backup_history_refresh"):
+        from database.store import unwrap_store
+
+        try:
+            with unwrap_store(store).connection(read_only=True) as c:
+                rows = c.execute(
+                    "SELECT evento,resultado,criado_em FROM auditoria_eventos WHERE evento IN ('BACKUP_GERADO','BACKUP_FALHOU','BACKUP_VALIDADO','BACKUP_RESTAURACAO_TESTADA','BACKUP_RESTAURACAO_FALHOU') ORDER BY id DESC LIMIT 20"
+                ).fetchall()
+            st.session_state["backup_history"] = [
+                {"Evento": r[0], "Resultado": r[1], "Data": r[2]} for r in rows
+            ]
+        except Exception:
+            st.warning("Histórico indisponível. Nenhum estado positivo foi presumido.")
+    history = st.session_state.get("backup_history")
+    if history:
+        st.dataframe(history, hide_index=True)
+    else:
+        st.caption(
+            "Histórico de validação e restauração ainda não consultado nesta sessão."
+        )
+
+
+def render_backup(store, principal):
+    require_permission(principal, "admin")
+    generate, validate, protection = st.tabs(
+        ["Gerar backup", "Validar e restaurar", "Proteção e histórico"]
+    )
+    with generate:
+        _render_generate_backup(store, principal)
+    with validate:
+        _render_backup_validation(store, principal)
+    with protection:
+        _render_backup_protection(store, principal)
 
 
 _OPERACAO_ROTULO = {

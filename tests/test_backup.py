@@ -121,7 +121,7 @@ def _insert_blobs(store):
         )
         oficio_pdf = b"%PDF-1.4 oficio-original\n"
         c.execute(
-            "INSERT INTO oficio_arquivos VALUES(?,?,?,?,?,?,?)",
+            "INSERT INTO oficio_arquivos(id,oficio_id,nome,tipo,tamanho,incluida,conteudo) VALUES(?,?,?,?,?,?,?)",
             (
                 "arq-oficio",
                 "oficio-backup",
@@ -190,7 +190,7 @@ def test_backup_zip_manifest_readme_and_utf8(store, tmp_path):
         assert "dados/portarias.csv" in names
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["aplicacao"] == "Ferramentas MPC-PB"
-        assert manifest["formato"] == 1
+        assert manifest["formato"] == 2
         assert manifest["engine"] == "SQLite"
         assert manifest["quantidade_tabelas"] >= 1
         assert manifest["quantidade_documentos"] >= 4
@@ -444,8 +444,8 @@ def test_postgres_logical_backup_contract(pg_store, tmp_path):
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["engine"] == "PostgreSQL"
         schema = json.loads(archive.read("schema/schema_manifest.json"))
-        assert "schema_migrations" in schema["tabelas_exportadas"]
-        assert "backup_snapshots" not in schema["tabelas_exportadas"]
+        assert "schema_migrations" in schema["tables"]
+        assert "backup_snapshots" not in schema["tables"]
         documents = json.loads(archive.read("schema/documentos.json"))
         memo = next(i for i in documents if i["id"] == "arq-memo-pdf")
         assert archive.read(memo["arquivo"]) == blobs["memo_pdf"]

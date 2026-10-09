@@ -1,0 +1,47 @@
+name: PostgreSQL Backup V2 disposable validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore-postgresql-v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mpc_disposable_tests
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mpc_disposable_tests"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      MPC_BACKUP_PG_TEST_MODE: "1"
+      MPC_TEST_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/mpc_disposable_tests?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install application dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Create disposable test guard
+        run: >-
+          psql "$MPC_TEST_POSTGRES_URL" --set=ON_ERROR_STOP=1
+          -c "CREATE TABLE IF NOT EXISTS public.mpc_test_guard (tag text PRIMARY KEY)"
+          -c "INSERT INTO public.mpc_test_guard(tag) VALUES ('disposable-mpc-tests-v1') ON CONFLICT (tag) DO NOTHING"
+      - name: Validate Backup V2 recovery in PostgreSQL
+        run: >-
+          python -m pytest -q
+          tests/test_backup_postgresql_v2.py
+          tests/test_backup.py::test_postgres_logical_backup_contract
+          --basetemp=tmp/gha-postgresql-backup-v2

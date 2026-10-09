@@ -25,6 +25,9 @@ from tests.test_postgresql import pg_store, pg_url  # noqa: F401
 
 def _full_schema(store):
     AgendaStore(store)
+    from database.peticoes import PeticoesStore
+
+    PeticoesStore(store)
     OficiosStore(store)
     AuditStore(store)
     return store
