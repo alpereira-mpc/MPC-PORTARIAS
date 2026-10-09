@@ -484,17 +484,27 @@ def _render_backup_protection(store, principal):
         external = protection_status(load_config())
     except (ValueError, OSError):
         external = {"status": "Configuração externa inválida", "last_verified": None}
-    st.write(external["status"])
-    if external["last_verified"]:
-        st.caption(
-            "Última verificação externa registrada: "
-            + external["last_verified"]["verified_at"]
-        )
-        st.caption(
-            "Este indicador lê o recibo do executor; não consulta o armazenamento externo a cada rerun."
-        )
+    state = external["status"]
+    if state == "Protegido":
+        st.success("Proteção externa: Protegido")
+    elif state.startswith("Falha"):
+        st.error("Proteção externa: " + state)
+    elif state == "Não configurado":
+        st.info("Proteção externa: Não configurado")
+    else:
+        st.warning("Proteção externa: " + state)
+    receipt = external.get("last_verified")
+    monitor = external.get("monitor")
+    if receipt:
+        st.caption("Último backup externo comprovado: " + receipt["verified_at"])
+    if monitor:
+        st.caption("Última verificação remota: " + monitor["checked_at"])
+        if monitor.get("result") != "ok":
+            st.caption("Monitoramento: Falha")
+    else:
+        st.caption("Monitoramento: sem evidência remota recente")
     st.caption(
-        "Sem cópia externa independente e recuperação comprovada, não há proteção completa contra desastres."
+        "Este painel lê evidências duráveis do executor; não consulta o armazenamento remoto a cada rerun."
     )
     if st.button("Atualizar histórico de proteção", key="backup_history_refresh"):
         from database.store import unwrap_store

@@ -16,7 +16,13 @@ from services.access import principal_from_record
 from services.backup import generate_backup, _require_admin
 from services.backup_format import json_bytes
 from services.restore import validate_backup, restore_isolated, CONFIRMATION, VALID
-from services.backup_external import load_config, publish_backup, protection_status
+from services.backup_external import (
+    download_external_backup,
+    load_config,
+    publish_backup,
+    protection_status,
+    verify_external_backup,
+)
 
 
 class ExistingSource:
@@ -75,7 +81,7 @@ class ExistingSource:
         return principal
 
 
-def offline_principal(authorization_path):
+def offline_principal(authorization_path, *, scope="isolated-sqlite-recovery"):
     """OS-protected recovery authorization; independent of the unavailable source."""
     path = Path(authorization_path).resolve(strict=True)
     if os.name != "nt" and path.stat().st_mode & 0o022:
@@ -89,8 +95,8 @@ def offline_principal(authorization_path):
         or expires <= datetime.now(timezone.utc)
     ):
         raise ValueError("Autorização formal ausente ou expirada.")
-    if record.get("scope") != "isolated-sqlite-recovery":
-        raise ValueError("Autorização não permite recuperação isolada.")
+    if record.get("scope") != scope:
+        raise ValueError("Autorização não permite esta operação isolada.")
     return principal_from_record(
         {
             "id": 0,
@@ -102,6 +108,57 @@ def offline_principal(authorization_path):
     )
 
 
+@contextmanager
+def execution_lock(path):
+    """Atomic, local single-run lock for the independent scheduler."""
+    lock = Path(path).resolve()
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = None
+    try:
+        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.write(descriptor, json_bytes({"started_at": datetime.now(timezone.utc).isoformat(), "pid": os.getpid()}))
+        yield
+    except FileExistsError:
+        raise ValueError("Já existe uma execução de backup externo em andamento.") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+            Path(lock).unlink(missing_ok=True)
+
+
+def scheduled_backup(args):
+    """Generate, certify and publish once under a scheduler-owned lock."""
+    config = load_config(args.external_config)
+    if config is None:
+        raise ValueError("Execução agendada exige configuração externa aprovada.")
+    root = Path(args.work_dir).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    with execution_lock(args.lock_file):
+        source = ExistingSource(sqlite_path=args.sqlite, postgres_schema=args.postgres_schema)
+        principal = source.principal(args.actor)
+        last_error = None
+        package = None
+        for _ in range(args.prepublish_attempts):
+            package = root / ("backup-v2-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + os.urandom(8).hex() + ".zip")
+            try:
+                generated = generate_backup(source, principal, package, audit=False)
+                checked = validate_backup(package, principal, reconstruct=False)
+                if not checked.get("integrity_ok") or checked["status"] in ("Inválido", "Legado não certificado"):
+                    raise ValueError("Validação prévia à publicação falhou.")
+                break
+            except Exception as exc:
+                last_error = exc
+                package.unlink(missing_ok=True)
+                package = None
+        if package is None:
+            raise last_error
+        try:
+            receipt = publish_backup(package, principal, config)
+            return {"status": "publicado", "sha256": generated["sha256"], "receipt": receipt}
+        finally:
+            # The local artifact is discarded only after publish_backup verified read-back and wrote receipt.
+            if package is not None and 'receipt' in locals():
+                package.unlink(missing_ok=True)
 def parser():
     root = argparse.ArgumentParser(description=__doc__)
     root.add_argument(
@@ -115,6 +172,21 @@ def parser():
     generate.add_argument("--actor", required=True)
     generate.add_argument("--output", required=True)
     generate.add_argument("--external-config")
+    scheduled = subs.add_parser("scheduled")
+    scheduled_source = scheduled.add_mutually_exclusive_group(required=True)
+    scheduled_source.add_argument("--sqlite")
+    scheduled_source.add_argument("--postgres-schema")
+    scheduled.add_argument("--actor", required=True)
+    scheduled.add_argument("--work-dir", required=True)
+    scheduled.add_argument("--lock-file", required=True)
+    scheduled.add_argument("--external-config", required=True)
+    scheduled.add_argument("--prepublish-attempts", type=int, choices=(1, 2, 3), default=2)
+    verify = subs.add_parser("verify")
+    verify.add_argument("--external-config", required=True)
+    download = subs.add_parser("download")
+    download.add_argument("--external-config", required=True)
+    download.add_argument("--authorization", required=True)
+    download.add_argument("--destination", required=True)
     for action in ("validate", "restore", "publish"):
         command = subs.add_parser(action)
         command.add_argument("archive")
@@ -189,9 +261,16 @@ def main(argv=None):
                         "status": validation["status"],
                         "external": "Backup externo não configurado",
                     }
+            elif args.command == "scheduled":
+                report = scheduled_backup(args)
+            elif args.command == "verify":
+                report = verify_external_backup(load_config(args.external_config))
+            elif args.command == "download":
+                principal = offline_principal(args.authorization, scope="external-backup-download")
+                report = download_external_backup(load_config(args.external_config), principal, args.destination)
             elif args.command == "status":
                 report = protection_status(load_config(args.external_config))
-                if report["status"] != "Cópia externa verificada no horário registrado":
+                if report["status"] != "Protegido":
                     code = 2
             else:
                 principal = offline_principal(args.authorization)

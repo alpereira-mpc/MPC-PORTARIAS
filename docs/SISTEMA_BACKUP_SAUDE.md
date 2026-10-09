@@ -85,7 +85,7 @@ Códigos de saída: 0 concluído; 1 falha/recusa; 2 atenção, atraso ou valida�
 
 ## Armazenamento externo e recorrência (inativos por padrão)
 
-O adaptador implementado é AWS S3 via `boto3`, dependência opcional **somente no executor externo**. Não foi instalado nem conectado ao provedor. Não suporta endpoint HTTP arbitrário. Usa cadeia padrão de credenciais, TLS, SSE-KMS, versionamento, Object Lock COMPLIANCE, nome único, criação condicional e retenção configurável. Lê a versão gravada de volta e compara tamanho/SHA-256, criptografia e retenção antes de registrar sucesso.
+O adaptador implementado é AWS S3 via `boto3`, dependência opcional **somente no executor externo**. Não foi instalado nem conectado ao provedor. Não suporta endpoint HTTP arbitrário. Usa cadeia padrão de credenciais, TLS, SSE-KMS, versionamento, Object Lock configurado, nome único, criação condicional e retenção configurável. O modo COMPLIANCE exige referência institucional específica; o exemplo usa GOVERNANCE. Lê a versão gravada de volta e compara tamanho/SHA-256, criptografia e retenção antes de registrar sucesso.
 
 Exemplo de configuração sem credenciais:
 
@@ -98,14 +98,36 @@ Exemplo de configuração sem credenciais:
   "bucket":"BUCKET-PRIVADO-APROVADO",
   "prefix":"mpcpb/logical-v2",
   "kms_key_id":"ARN-DA-CHAVE-INSTITUCIONAL",
+  "object_lock_mode":"GOVERNANCE",
   "retention_days":90,
   "max_age_hours":26,
-  "receipt_path":"D:/MPCBackup/last-verified.json"
+  "receipt_path":"D:/MPCBackup/last-verified.json",
+  "monitor_path":"D:/MPCBackup/last-remote-check.json"
 }
 ```
 
 Configurar `MPC_BACKUP_EXTERNAL_CONFIG` no portal apenas se ele tiver acesso protegido à configuração e ao recibo atualizado pelo executor; caso contrário, o portal exibirá não configurado. O comando aceita `--external-config`. Nunca guardar backups, autorizações ou credenciais no GitHub.
 
+O monitor remoto deve executar, em conta institucional autorizada, sem abrir Streamlit:
+
+```powershell
+python -m scripts.backup_admin --audit-log D:/MPCBackup/monitor.jsonl verify --external-config D:/MPCBackup/external.json
+python -m scripts.backup_admin --audit-log D:/MPCBackup/monitor.jsonl status --external-config D:/MPCBackup/external.json
+```
+
+O backup diário usa arquivo temporário único, lock atômico e retentativas somente antes da publicação. Uma falha após iniciar publicação não é repetida automaticamente, para não duplicar objetos quando a resposta do provedor for incerta:
+
+```powershell
+python -m scripts.backup_admin --audit-log D:/MPCBackup/runner.jsonl scheduled --postgres-schema mpc_portarias --actor administrador@instituicao --work-dir D:/MPCBackup/staging --lock-file D:/MPCBackup/runner.lock --external-config D:/MPCBackup/external.json --prepublish-attempts 2
+```
+
+No Agendador de Tarefas, executar esse comando uma vez por dia sob uma conta de serviço restrita e configurar também `verify` a cada hora. Não habilitar “executar instâncias em paralelo”. Em systemd, use o mesmo comando em um serviço `Type=oneshot` e um timer diário; o lock permanece obrigatório mesmo quando o agendador oferece proteção própria.
+
+Para baixar a versão fixada no recibo sem o portal, use autorização local com escopo `external-backup-download` e um ZIP de destino inexistente. O executor confere hash/tamanho, valida V2 e nunca restaura produção:
+
+```powershell
+python -m scripts.backup_admin --audit-log D:/MPCBackup/recovery.jsonl download --external-config D:/MPCBackup/external.json --authorization D:/MPCBackup/download-authorization.json --destination D:/MPCRecovery/backup.zip
+```
 A equipe de infraestrutura deve, antes da ativação:
 
 1. Aprovar orçamento, região, bucket privado com bloqueio de acesso público, KMS e Object Lock/versionamento. Nada disso é provisionado pelo código.

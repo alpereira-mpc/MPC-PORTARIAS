@@ -4,9 +4,14 @@ import io
 import json
 import pytest
 
-from services.backup_external import publish_backup, protection_status
+from services.backup_external import (
+    download_external_backup,
+    publish_backup,
+    protection_status,
+    verify_external_backup,
+)
 from services.backup import generate_backup
-from scripts.backup_admin import ExistingSource, main
+from scripts.backup_admin import ExistingSource, execution_lock, main, scheduled_backup
 from tests.test_backup import _prepare, _principal
 
 
@@ -28,11 +33,12 @@ class Storage:
     def put_object(self, **kwargs):
         self.puts += 1
         assert kwargs["ServerSideEncryption"] == "aws:kms"
-        assert kwargs["ObjectLockMode"] == "COMPLIANCE"
+        assert kwargs["ObjectLockMode"] == "GOVERNANCE"
         assert kwargs["IfNoneMatch"] == "*"
         self.data = kwargs["Body"].read()
         self.retention = kwargs["ObjectLockRetainUntilDate"]
         self.kms_key = kwargs["SSEKMSKeyId"]
+        self.lock_mode = kwargs["ObjectLockMode"]
         return {"VersionId": "synthetic-version"}
 
     def get_object(self, **kwargs):
@@ -41,7 +47,7 @@ class Storage:
             "Body": io.BytesIO(b"bad" if self.corrupt else self.data),
             "ServerSideEncryption": "aws:kms",
             "SSEKMSKeyId": self.kms_key,
-            "ObjectLockMode": "COMPLIANCE",
+            "ObjectLockMode": self.lock_mode,
             "ObjectLockRetainUntilDate": self.retention,
         }
 
@@ -52,16 +58,18 @@ def config(tmp_path):
         "bucket": "institutional-test",
         "prefix": "mpc",
         "kms_key_id": "test-kms",
+        "object_lock_mode": "GOVERNANCE",
         "approved_by": "synthetic",
         "approval_reference": "TEST-ONLY",
         "retention_days": 30,
         "max_age_hours": 25,
         "receipt_path": str(tmp_path / "receipt.json"),
+        "monitor_path": str(tmp_path / "monitor.json"),
     }
 
 
 def test_external_disabled_receipt_verification_and_overdue(store, tmp_path):
-    assert protection_status()["status"] == "Backup externo não configurado"
+    assert protection_status()["status"] == "Não configurado"
     _prepare(store)
     path = tmp_path / "backup.zip"
     generate_backup(store, _principal(store), path)
@@ -71,12 +79,15 @@ def test_external_disabled_receipt_verification_and_overdue(store, tmp_path):
     receipt = publish_backup(path, _principal(store), cfg, client=storage)
     assert receipt["version_id"] == "synthetic-version"
     assert storage.puts == 1
-    assert protection_status(cfg)["last_verified"]["sha256"] == receipt["sha256"]
+    assert protection_status(cfg)["status"] == "Atenção: cópia aguarda verificação remota"
+    monitored = verify_external_backup(cfg, client=storage)
+    assert monitored["result"] == "ok"
+    assert protection_status(cfg)["status"] == "Protegido"
     receipt["verified_at"] = (
         datetime.now(timezone.utc) - timedelta(days=2)
     ).isoformat()
     Path(cfg["receipt_path"]).write_text(json.dumps(receipt))
-    assert protection_status(cfg)["status"] == "Cópia externa atrasada"
+    assert protection_status(cfg)["status"] == "Atenção: backup ou verificação remota atrasados"
 
 
 @pytest.mark.parametrize("corrupt,locked", [(True, True), (False, False)])
@@ -89,6 +100,79 @@ def test_external_failure_never_records_success(store, tmp_path, corrupt, locked
         publish_backup(path, _principal(store), cfg, client=Storage(corrupt, locked))
     assert not Path(cfg["receipt_path"]).exists()
 
+
+
+def test_execution_lock_rejects_concurrency_and_releases(tmp_path):
+    lock = tmp_path / "scheduled.lock"
+    with execution_lock(lock):
+        with pytest.raises(ValueError, match="em andamento"):
+            with execution_lock(lock):
+                pass
+    assert not lock.exists()
+
+
+def test_compliance_requires_specific_institutional_approval(tmp_path):
+    from services.backup_external import _validate_config
+
+    cfg = config(tmp_path)
+    cfg["object_lock_mode"] = "COMPLIANCE"
+    with pytest.raises(ValueError, match="aprovação institucional específica"):
+        _validate_config(cfg)
+    cfg["compliance_approval_reference"] = "ATO-ESPECIFICO"
+    assert _validate_config(cfg)["object_lock_mode"] == "COMPLIANCE"
+
+def test_external_download_is_pinned_validated_and_never_overwrites(store, tmp_path):
+    _prepare(store)
+    package = tmp_path / "backup.zip"
+    generate_backup(store, _principal(store), package)
+    cfg = config(tmp_path)
+    storage = Storage()
+    publish_backup(package, _principal(store), cfg, client=storage)
+    destination = tmp_path / "isolated-download.zip"
+    downloaded = download_external_backup(
+        cfg, _principal(store), destination, client=storage
+    )
+    assert destination.is_file()
+    assert downloaded["sha256"]
+    with pytest.raises(ValueError):
+        download_external_backup(cfg, _principal(store), destination, client=storage)
+
+def test_remote_monitor_failure_is_recorded_after_a_valid_publication(store, tmp_path):
+    _prepare(store)
+    package = tmp_path / "backup.zip"
+    generate_backup(store, _principal(store), package)
+    cfg = config(tmp_path)
+    storage = Storage()
+    publish_backup(package, _principal(store), cfg, client=storage)
+    storage.corrupt = True
+    with pytest.raises(ValueError):
+        verify_external_backup(cfg, client=storage)
+    assert protection_status(cfg)["status"] == "Falha: verificação remota não comprovada"
+    assert Path(cfg["monitor_path"]).is_file()
+
+def test_scheduled_backup_uses_lock_unique_staging_and_publishes_once(store, tmp_path, monkeypatch):
+    _prepare(store)
+    cfg_path = tmp_path / "external.json"
+    cfg_path.write_text(json.dumps(config(tmp_path)), encoding="utf-8")
+    import scripts.backup_admin as runner
+
+    published = []
+    def publish(path, principal, cfg):
+        published.append(Path(path))
+        assert Path(path).is_file()
+        return {"version_id": "synthetic", "sha256": "0" * 64}
+    monkeypatch.setattr(runner, "publish_backup", publish)
+    args = type("Args", (), {
+        "external_config": str(cfg_path), "work_dir": str(tmp_path / "staging"),
+        "lock_file": str(tmp_path / "runner.lock"), "sqlite": str(store.path),
+        "postgres_schema": None, "actor": _principal(store).email,
+        "prepublish_attempts": 1,
+    })()
+    result = scheduled_backup(args)
+    assert result["status"] == "publicado"
+    assert len(published) == 1
+    assert not list((tmp_path / "staging").glob("*.zip"))
+    assert not Path(args.lock_file).exists()
 
 def test_cli_existing_source_is_read_only_and_no_migrations(
     store, tmp_path, monkeypatch

@@ -122,10 +122,13 @@ def _prepare_postgres_target(target_store, tables, schema):
     """Build trusted local DDL, then only truncate the guarded disposable schema."""
     from database.agenda import AgendaStore
     from database.audit import AuditStore
+    from database.legacy_alert_attention import ensure_backup_schema as ensure_legacy_alert_attention
     from database.oficios import OficiosStore
     from database.peticoes import PeticoesStore
     for constructor in (AgendaStore, OficiosStore, PeticoesStore, AuditStore):
         constructor(target_store)
+    if "alertas_atencao" in tables:
+        ensure_legacy_alert_attention(target_store)
     with target_store.connection() as connection:
         existing = {
             row[0]
@@ -481,10 +484,12 @@ def _trusted_template(path):
     from database.oficios import OficiosStore
     from database.peticoes import PeticoesStore
     from database.audit import AuditStore
+    from database.legacy_alert_attention import ensure_backup_schema as ensure_legacy_alert_attention
 
     store = Store(path)
     for constructor in (AgendaStore, OficiosStore, PeticoesStore, AuditStore):
         constructor(store)
+    ensure_legacy_alert_attention(store)
     return store
 
 

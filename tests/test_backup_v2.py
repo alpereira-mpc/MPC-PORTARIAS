@@ -180,6 +180,36 @@ def test_roundtrip_all_data_documents_ids_and_sequences(store, tmp_path):
     assert InstitutionalReportsStore(reopened).pdf_artifact(804)["conteudo"] == binary
 
 
+
+def test_optional_legacy_alert_attention_is_backed_up_and_reconstructed(store, tmp_path):
+    from database.legacy_alert_attention import ensure_backup_schema
+
+    _prepare(store)
+    ensure_backup_schema(store)
+    stamp = "2026-10-09T12:00:00+00:00"
+    with store.connection() as connection:
+        connection.execute(
+            "INSERT INTO alertas_atencao(usuario_id,chave_alerta,lido_em,adiado_ate,criado_em,atualizado_em) VALUES(?,?,?,?,?,?)",
+            (1, "v1:oficios:42:prazo", stamp, None, stamp, stamp),
+        )
+    path = _archive(store, tmp_path)
+    with ZipFile(path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        schema = json.loads(archive.read("schema/schema_manifest.json"))
+    assert "alertas_atencao" in manifest["tabelas"]
+    assert [column["name"] for column in schema["tables"]["alertas_atencao"]["columns"]] == [
+        "id", "usuario_id", "chave_alerta", "lido_em", "adiado_ate", "criado_em", "atualizado_em"
+    ]
+    restored = restore_isolated(
+        path, _principal(store), tmp_path, confirmation=CONFIRMATION
+    )
+    with sqlite3.connect(restored["restore"]["destination"]) as recovered:
+        row = recovered.execute(
+            "SELECT usuario_id,chave_alerta,lido_em,adiado_ate FROM alertas_atencao"
+        ).fetchone()
+        assert row == (1, "v1:oficios:42:prazo", stamp, None)
+        assert recovered.execute("PRAGMA foreign_key_check").fetchall() == []
+
 def test_unknown_table_blocks_complete_backup(store, tmp_path):
     with store.connection() as c:
         c.execute("CREATE TABLE novo_modulo(id INTEGER PRIMARY KEY)")

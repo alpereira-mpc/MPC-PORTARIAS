@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 
+from database.legacy_alert_attention import ensure_backup_schema as ensure_legacy_alert_attention
 from database.peticoes import PeticoesStore
 from database.store import Store
 from services.backup import generate_backup
@@ -62,6 +63,7 @@ def pg_pair(pg_url, tmp_path, monkeypatch):
 
 
 def _seed_all_types(store):
+    ensure_legacy_alert_attention(store)
     blobs = _insert_blobs(store)
     stamp = "2026-10-09T12:00:00+00:00"
     binary = b"%PDF synthetic\x00\xff\x01"
@@ -103,6 +105,11 @@ def _seed_all_types(store):
         c.execute("SELECT setval(pg_get_serial_sequence('eventos','id'), 999, true)")
         c.execute("INSERT INTO tarefas(id,owner_user_id,titulo,criado_em,atualizado_em) VALUES(905,1,'Teste',?,?)", (stamp, stamp))
         c.execute("INSERT INTO tarefas_checklist(tarefa_id,texto,ordem,criado_em,atualizado_em) VALUES(905,'Item',1,?,?)", (stamp, stamp))
+    with store.connection() as c:
+        c.execute(
+            "INSERT INTO alertas_atencao(usuario_id,chave_alerta,lido_em,adiado_ate,criado_em,atualizado_em) VALUES(1,'v1:oficios:42:prazo',?,NULL,?,?)",
+            (stamp, stamp, stamp),
+        )
     return blobs, binary
 
 

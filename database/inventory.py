@@ -78,6 +78,8 @@ INTERNAL_COLLABORATION_TABLES = (
     "encaminhamentos_internos",
 )
 
+LEGACY_OPTIONAL_TABLES = ("alertas_atencao",)
+
 RECORD_ENGAGEMENT_TABLES = ("registros_seguidos", "avisos_usuario")
 
 IA_TABLES = ("ia_telemetria",)
@@ -113,6 +115,7 @@ APPLICATION_TABLES = (
     + AUDIT_TABLES
     + INTERNAL_COLLABORATION_TABLES
     + RECORD_ENGAGEMENT_TABLES
+    + LEGACY_OPTIONAL_TABLES
     + IA_TABLES
     + TAREFAS_TABLES
     + PETICOES_TABLES
