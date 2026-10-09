@@ -70,13 +70,11 @@ from services.representacoes_ai import match_people, match_person, match_relator
 from services.ui_theme import (
     actions_mark,
     badges,
-    card_container,
     definition_block,
     empty_state,
     filter_mark,
     form_mark,
     html_text,
-    kpi_mark,
     render_record,
     section_label,
 )
@@ -94,6 +92,11 @@ _LIST_FILTER_KEYS = (
     "rep_f_proc",
     "rep_f_procud",
     "rep_f_ass",
+)
+
+
+_ADVANCED_FILTER_KEYS = tuple(
+    key for key in _LIST_FILTER_KEYS if key not in {"rep_f_sit", "rep_f_q"}
 )
 
 
@@ -182,6 +185,25 @@ def _filter_select(label, mapping, empty, key):
         key=key,
     )
     return None if chosen == _FILTER_ALL else chosen
+
+
+def _has_filter_value(value):
+    """Return whether a saved filter actually restricts the listing."""
+    if value in (None, "", _FILTER_ALL):
+        return False
+    return bool(str(value).strip())
+
+
+def _advanced_filter_count():
+    return sum(
+        _has_filter_value(st.session_state.get(key)) for key in _ADVANCED_FILTER_KEYS
+    )
+
+
+def _clear_list_filters():
+    """Clear list widgets through their callback, before they are recreated."""
+    for key in _LIST_FILTER_KEYS:
+        st.session_state.pop(key, None)
 
 
 def _toolbar(prefix, items):
@@ -666,54 +688,199 @@ def _form(store, current=None, *, prefix=None):
     }
 
 
+def _listing_chrome():
+    """Keep the home view compact without styling other portal modules."""
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stMain"] .st-key-rep_kpis [data-testid="stMetric"] {
+            min-height:5.1rem;
+            padding:.62rem .72rem .56rem;
+            background:var(--mpc-card-b)!important;
+            border:1px solid var(--mpc-card-border-b)!important;
+            border-radius:8px;
+            box-shadow:none!important;
+        }
+        section[data-testid="stMain"] .st-key-rep_kpis [data-testid="stMetricLabel"] {
+            color:var(--mpc-text-2)!important;
+            font-size:.74rem!important;
+            letter-spacing:.025em;
+            text-transform:none;
+        }
+        section[data-testid="stMain"] .st-key-rep_kpis [data-testid="stMetricValue"] {
+            color:var(--mpc-text)!important;
+            font-size:1.55rem!important;
+            line-height:1.1;
+        }
+        section[data-testid="stMain"] .st-key-rep_home_actions [data-testid="stHorizontalBlock"],
+        section[data-testid="stMain"] [class*="st-key-rep_card_actions_"] [data-testid="stHorizontalBlock"] {
+            justify-content:flex-start;
+            align-items:center;
+            gap:.45rem;
+            flex-wrap:wrap;
+        }
+        section[data-testid="stMain"] .st-key-rep_home_actions [data-testid="stHorizontalBlock"]>div,
+        section[data-testid="stMain"] [class*="st-key-rep_card_actions_"] [data-testid="stHorizontalBlock"]>div {
+            flex:0 1 auto!important;
+            width:auto!important;
+            min-width:0;
+        }
+        section[data-testid="stMain"] .st-key-rep_home_actions button,
+        section[data-testid="stMain"] [class*="st-key-rep_card_actions_"] button {
+            min-height:2.35rem;
+            padding-inline:.78rem;
+        }
+        section[data-testid="stMain"] .st-key-rep_filters [data-testid="stVerticalBlockBorderWrapper"] {
+            padding:.16rem .72rem .62rem;
+            box-shadow:none!important;
+        }
+        section[data-testid="stMain"] .st-key-rep_filters [data-testid="stExpander"] {
+            margin-top:.08rem;
+            border:0;
+            background:transparent!important;
+        }
+        section[data-testid="stMain"] .st-key-rep_filters [data-testid="stExpanderDetails"] {
+            padding-top:.35rem;
+        }
+        section[data-testid="stMain"] [class*="st-key-rep_list_"] [data-testid="stVerticalBlockBorderWrapper"] {
+            background:var(--mpc-card-b)!important;
+            border:1px solid var(--mpc-card-border-b)!important;
+            border-radius:8px;
+            box-shadow:none!important;
+        }
+        section[data-testid="stMain"] [class*="st-key-rep_list_"] .mpc-record-boxed {
+            padding:0!important;
+            background:transparent!important;
+            border:0!important;
+            box-shadow:none!important;
+        }
+        section[data-testid="stMain"] [class*="st-key-rep_list_"] .mpc-record-title {
+            margin:0;
+            font-size:1.02rem;
+            line-height:1.35;
+        }
+        section[data-testid="stMain"] .rep-card-metadata {
+            display:grid;
+            grid-template-columns:repeat(3,minmax(0,1fr));
+            gap:.38rem .9rem;
+            margin:.55rem 0 .1rem;
+        }
+        section[data-testid="stMain"] .rep-card-meta-item { min-width:0; }
+        section[data-testid="stMain"] .rep-card-meta-label {
+            display:block;
+            color:var(--mpc-text-3);
+            font-size:.68rem;
+            font-weight:700;
+            letter-spacing:.035em;
+            line-height:1.25;
+            text-transform:uppercase;
+        }
+        section[data-testid="stMain"] .rep-card-meta-value {
+            display:block;
+            margin-top:.08rem;
+            color:var(--mpc-text-2);
+            font-size:.82rem;
+            line-height:1.35;
+            overflow-wrap:anywhere;
+        }
+        section[data-testid="stMain"] .rep-card-latest {
+            margin:.52rem 0 0;
+            color:var(--mpc-text-3);
+            font-size:.78rem;
+            line-height:1.35;
+        }
+        @media(max-width:768px) {
+            section[data-testid="stMain"] .st-key-rep_kpis [data-testid="stHorizontalBlock"] {
+                display:grid;
+                grid-template-columns:repeat(2,minmax(0,1fr));
+                gap:.45rem;
+            }
+            section[data-testid="stMain"] .st-key-rep_kpis [data-testid="stHorizontalBlock"]>div {
+                width:auto!important;
+                min-width:0;
+            }
+            section[data-testid="stMain"] .st-key-rep_home_actions [data-testid="stHorizontalBlock"]>div,
+            section[data-testid="stMain"] [class*="st-key-rep_card_actions_"] [data-testid="stHorizontalBlock"]>div {
+                flex:1 1 8.5rem!important;
+            }
+            section[data-testid="stMain"] .rep-card-metadata {
+                grid-template-columns:repeat(2,minmax(0,1fr));
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _kpis(counts):
     items = (
-        ("Em preparação", counts["preparacao"], "muted"),
-        ("Aguardando protocolo", counts["aguardando_protocolo"], "warning"),
-        ("Em tramitação", counts["tramitacao"], "brand"),
-        ("Julgadas", counts["julgadas"], "success"),
-    )
-    st.markdown(
-        "<style>@media(max-width:768px){"
-        ".st-key-rep_kpis [data-testid='stHorizontalBlock']{flex-direction:column}"
-        ".st-key-rep_kpis [data-testid='stHorizontalBlock']>div{"
-        "width:100%!important;flex:1 1 auto!important}"
-        "}</style>",
-        unsafe_allow_html=True,
+        ("Em preparação", counts["preparacao"]),
+        ("Aguardando protocolo", counts["aguardando_protocolo"]),
+        ("Em tramitação", counts["tramitacao"]),
+        ("Julgadas", counts["julgadas"]),
     )
     with st.container(key="rep_kpis"):
         columns = st.columns(len(items))
-        for column, (title, value, tone) in zip(columns, items):
+        for column, (title, value) in zip(columns, items):
             with column:
-                kpi_mark(tone)
                 st.metric(title, value)
 
 
 def _filters():
-    filter_mark()
-    a, b, c, d = st.columns(4)
-    with a:
-        situacao = _filter_select("Situação", SITUACOES, "Todas", "rep_f_sit")
-    with b:
-        fase = _filter_select("Fase processual", FASES, "Todas", "rep_f_fase")
-    year_options = {year: str(year) for year in range(date.today().year, 2023, -1)}
-    with c:
-        year = _filter_select("Ano", year_options, "Todos", "rep_f_year")
-    pesquisa = d.text_input("Pesquisa", key="rep_f_q")
-    e, f, g, h = st.columns(4)
-    representado = e.text_input("Representado", key="rep_f_rep")
-    tema = f.text_input("Tema", key="rep_f_tema")
-    relator = g.text_input("Relator", key="rep_f_rel")
-    processo = h.text_input("Nº do processo", key="rep_f_proc")
-    people, servers = st.session_state.get("_rep_people") or ({}, {})
-    i, j = st.columns(2)
-    with i:
-        procurador = _filter_select(
-            "Procurador responsável", people, "Todos", "rep_f_procud"
-        )
-    with j:
-        assessor = _filter_select("Assessor", servers, "Todos", "rep_f_ass")
-    filters = {
+    active_advanced = _advanced_filter_count()
+    advanced_label = "Filtros avançados"
+    if active_advanced:
+        advanced_label += f" · Filtros ativos ({active_advanced})"
+    has_filters = any(
+        _has_filter_value(st.session_state.get(key)) for key in _LIST_FILTER_KEYS
+    )
+    with st.container(key="rep_filters"):
+        filter_mark()
+        search_col, situation_col, clear_col = st.columns([1.8, 1, 0.7])
+        with search_col:
+            pesquisa = st.text_input(
+                "Pesquisa",
+                placeholder="Título, processo ou palavra-chave",
+                key="rep_f_q",
+            )
+        with situation_col:
+            situacao = _filter_select("Situação", SITUACOES, "Todas", "rep_f_sit")
+        with clear_col:
+            st.write("")
+            st.button(
+                "Limpar filtros",
+                key="rep_filters_clear",
+                disabled=not has_filters,
+                on_click=_clear_list_filters,
+            )
+        with st.expander(advanced_label, expanded=False):
+            phase_col, year_col, represented_col = st.columns(3)
+            with phase_col:
+                fase = _filter_select("Fase processual", FASES, "Todas", "rep_f_fase")
+            year_options = {
+                year: str(year) for year in range(date.today().year, 2023, -1)
+            }
+            with year_col:
+                year = _filter_select("Ano", year_options, "Todos", "rep_f_year")
+            with represented_col:
+                representado = st.text_input("Representado", key="rep_f_rep")
+            theme_col, rapporteur_col, process_col = st.columns(3)
+            with theme_col:
+                tema = st.text_input("Tema", key="rep_f_tema")
+            with rapporteur_col:
+                relator = st.text_input("Relator", key="rep_f_rel")
+            with process_col:
+                processo = st.text_input("Nº do processo", key="rep_f_proc")
+            people, servers = st.session_state.get("_rep_people") or ({}, {})
+            prosecutor_col, advisor_col = st.columns(2)
+            with prosecutor_col:
+                procurador = _filter_select(
+                    "Procurador responsável", people, "Todos", "rep_f_procud"
+                )
+            with advisor_col:
+                assessor = _filter_select("Assessor", servers, "Todos", "rep_f_ass")
+    return {
         "situacao": situacao,
         "fase_processual": fase,
         "representado": representado,
@@ -722,10 +889,9 @@ def _filters():
         "numero_processo": processo,
         "pesquisa": pesquisa,
         "ano": year,
+        "procurador_id": procurador,
+        "assessor_id": assessor,
     }
-    filters["procurador_id"] = procurador
-    filters["assessor_id"] = assessor
-    return filters
 
 
 def _badge_items(record):
@@ -755,79 +921,92 @@ def _badge_items(record):
     return chips
 
 
-def _card(record, index, procuradores_map, assessores_map):
-    groups = grouped_members(record, procuradores_map, assessores_map)
-    last = record.get("ultimo_andamento") or {}
-    secondary = "Representado: " + (record.get("representado") or "—")
-    meta = (
-        "Procuradores: "
-        + (
-            ", ".join(
-                groups["PROCURADOR_RESPONSAVEL"] + groups["PROCURADOR_SIGNATARIO"]
-            )
-            or "—"
+def _metadata_html(record, groups, last):
+    """Render the listing facts without putting labels into a dense paragraph."""
+    procurador = ", ".join(groups["PROCURADOR_RESPONSAVEL"]) or "—"
+    signatarios = ", ".join(groups["PROCURADOR_SIGNATARIO"]) or "—"
+    assessores = ", ".join(groups["ASSESSOR"]) or "—"
+    details = [
+        ("Representado", record.get("representado") or "—"),
+        ("Procurador responsável", procurador),
+        ("Procuradores signatários", signatarios),
+        ("Assessor", assessores),
+        ("Relator", record.get("relator") or "—"),
+    ]
+    if record.get("data_protocolo"):
+        details.append(
+            ("Protocolo", format_date_br(record.get("data_protocolo"), empty="—"))
         )
-        + " · Assessores: "
-        + (", ".join(groups["ASSESSOR"]) or "—")
+    items = "".join(
+        '<div class="rep-card-meta-item">'
+        f'<span class="rep-card-meta-label">{html_text(title)}</span>'
+        f'<span class="rep-card-meta-value">{html_text(value)}</span>'
+        "</div>"
+        for title, value in details
     )
-    if record.get("relator"):
-        meta += " · Relator: " + record["relator"]
-    extra = ""
+    latest = ""
     if last:
-        extra = (
-            '<p class="mpc-record-meta">'
+        latest = (
+            '<p class="rep-card-latest"><strong>Último andamento:</strong> '
             + html_text(label(ANDAMENTOS, last.get("tipo"), last.get("tipo")))
-            + " — "
-            + html_text(format_date_br(last.get("data"), empty=""))
+            + " · "
+            + html_text(format_date_br(last.get("data"), empty="—"))
             + "</p>"
         )
-    with card_container(index, "rep_" + str(record["id"])):
+    return '<div class="rep-card-metadata">' + items + "</div>" + latest
+
+
+def _card(record, index, procuradores_map, assessores_map):
+    groups = grouped_members(record, procuradores_map, assessores_map)
+    with st.container(border=True, key="rep_list_" + str(record["id"])):
         render_record(
             record["titulo"],
             badges_html=badges(*_badge_items(record)),
-            secondary=secondary,
-            meta=meta,
-            extra=extra,
+            extra=_metadata_html(record, groups, record.get("ultimo_andamento") or {}),
             boxed=True,
         )
-        actions_mark()
-        a, b, c, d = st.columns(4)
-        a.button(
-            "Abrir",
-            key="rep_open_" + str(record["id"]),
-            on_click=_open_representation,
-            args=(record["id"],),
-        )
-        b.button(
-            "Andamento",
-            key="rep_prg_" + str(record["id"]),
-            on_click=_set_ui_state,
-            args=(
-                "representacoes_progress",
-                record["id"],
-                "rep_prg_form_" + str(record["id"]),
-            ),
-        )
-        c.button(
-            "Anexar",
-            key="rep_doc_" + str(record["id"]),
-            on_click=_set_ui_state,
-            args=(
-                "representacoes_file",
-                record["id"],
-                "rep_doc_form_" + str(record["id"]),
-            ),
-        )
-        d.button(
-            "Editar",
-            key="rep_ed_" + str(record["id"]),
-            on_click=_set_ui_state,
-            args=(
-                "representacoes_edit",
-                record["id"],
-                "rep_form_" + str(record["id"]),
-            ),
-        )
+        with st.container(
+            key="rep_card_actions_" + str(record["id"]),
+            horizontal=True,
+            horizontal_alignment="left",
+        ):
+            st.button(
+                "Abrir",
+                type="primary",
+                key="rep_open_" + str(record["id"]),
+                on_click=_open_representation,
+                args=(record["id"],),
+            )
+            st.button(
+                "Andamento",
+                key="rep_prg_" + str(record["id"]),
+                on_click=_set_ui_state,
+                args=(
+                    "representacoes_progress",
+                    record["id"],
+                    "rep_prg_form_" + str(record["id"]),
+                ),
+            )
+            st.button(
+                "Anexar",
+                key="rep_doc_" + str(record["id"]),
+                on_click=_set_ui_state,
+                args=(
+                    "representacoes_file",
+                    record["id"],
+                    "rep_doc_form_" + str(record["id"]),
+                ),
+            )
+            st.button(
+                "Editar",
+                key="rep_ed_" + str(record["id"]),
+                on_click=_set_ui_state,
+                args=(
+                    "representacoes_edit",
+                    record["id"],
+                    "rep_form_" + str(record["id"]),
+                ),
+            )
 
 
 def _progress_form(store, principal, identifier):
@@ -1808,32 +1987,7 @@ def _detail_body(store, principal, record):
         st.rerun()
 
 
-def render(store, principal):
-    _consume_widget_cleanup()
-    require_permission(principal, "representacoes")
-    st.title(module_title("representacoes", "REPRESENTAÇÕES"))
-    st.caption(
-        "Acompanhamento interno dos projetos de Representação e das Representações protocoladas no TRAMITA."
-    )
-    st.caption(
-        "Este módulo acompanha as Representações protocoladas no TRAMITA a partir de janeiro de 2026."
-    )
-    if message := st.session_state.pop("representacoes_message", None):
-        st.success(message)
-    counts = overview(store)
-    _kpis(counts)
-    st.markdown(
-        "<style>"
-        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']{justify-content:flex-start;gap:.6rem}"
-        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{flex:0 1 auto;min-width:0;width:auto!important}"
-        "@media(max-width:768px){"
-        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']{flex-direction:column}"
-        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{width:100%!important;flex:1 1 auto!important}"
-        ".st-key-rep_home_actions button{min-height:44px}"
-        "}"
-        "</style>",
-        unsafe_allow_html=True,
-    )
+def _home_actions(principal):
     with st.container(key="rep_home_actions", horizontal=True):
         st.button(
             "+ Novo projeto de Representação",
@@ -1855,6 +2009,20 @@ def render(store, principal):
                     "rep_direct_ai_",
                 ),
             )
+
+
+def render(store, principal):
+    _consume_widget_cleanup()
+    require_permission(principal, "representacoes")
+    st.title(module_title("representacoes", "REPRESENTAÇÕES"))
+    st.caption(
+        "Acompanhamento interno das Representações protocoladas no TRAMITA desde janeiro de 2026."
+    )
+    _listing_chrome()
+    if message := st.session_state.pop("representacoes_message", None):
+        st.success(message)
+    counts = overview(store)
+    _kpis(counts)
     view_id = st.session_state.get("representacoes_view")
     edit_id = st.session_state.get("representacoes_edit")
     if st.session_state.get("representacoes_protocol"):
@@ -1922,6 +2090,7 @@ def render(store, principal):
         else:
             _detail(store, principal, record)
             return
+    _home_actions(principal)
     people, servers, procuradores_map, assessores_map = people_context(
         display_store(store)
     )
