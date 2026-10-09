@@ -276,25 +276,39 @@ border:0 !important;
 section[data-testid="stSidebar"] [data-testid="stCaption"]{{
 color:var(--mpc-text-2);
 }}
+section[data-testid="stSidebar"] .st-key-portal_navigation_menu .st-key-portal_module{{
+width:100%;
+}}
+/* 1.59 uses React Aria instead of BaseWeb and no longer sets largerLabel.
+   Keep native radio inputs and their keyboard behavior; hide only the artwork. */
 section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] [role="radiogroup"]{{
-gap:.14rem;
+gap:3px;
+align-items:stretch;
+width:100%;
 }}
 section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"]{{
-margin-top:.15rem;
+margin-top:2px;
+min-width:0;
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"]{{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]){{
 position:relative;
 display:flex;
-align-items:flex-start;
-min-height:2.2rem;
+align-items:center;
+box-sizing:border-box;
+width:100%;
+min-width:0;
+min-height:44px;
 margin:0;
-padding:.42rem .55rem .42rem .75rem;
+padding:9px 10px 9px 12px;
 border-radius:8px;
 border:1px solid transparent;
 box-shadow:none;
+color:var(--mpc-text);
+font-size:14.5px;
+font-weight:500;
 cursor:pointer;
-transition:background .12s ease,box-shadow .12s ease;
 }}
+/* BaseWeb indicator only (the input is a separate sibling). */
 section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child{{
 position:absolute !important;
 inline-size:1px !important;
@@ -302,27 +316,69 @@ block-size:1px !important;
 overflow:hidden !important;
 opacity:0 !important;
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"] > div:last-child{{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"] > div:last-child,
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-testid="stRadioOption"] > div{{
 min-width:0;
 padding-left:0 !important;
+color:inherit;
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"] p{{
+/* React Aria: content > row > circle followed by the Markdown label.
+   Do not hide the visually-hidden span containing the accessible input. */
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-testid="stRadioOption"] > div > div > div:first-child:not([data-testid]){{
+display:none;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]) [data-testid="stMarkdownContainer"],
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]) p{{
+font-size:14.5px;
+font-weight:inherit;
+color:inherit;
+line-height:24px;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]) p{{
+margin:0;
+display:flex;
+align-items:center;
+gap:8px;
 overflow-wrap:anywhere;
-line-height:1.35;
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"]:hover{{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]) span[role="img"]{{
+font-size:20px;
+line-height:24px;
+flex-shrink:0;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]):hover{{
 background:rgba({primary_rgb},.07);
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked){{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]):is(:has(input:checked), [data-selected]){{
 background:rgba({primary_rgb},.16);
 border-color:transparent;
 box-shadow:inset 3px 0 0 var(--mpc-brand);
 font-weight:650;
 color:var(--mpc-brand-dark);
 }}
-section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:focus-visible){{
+section[data-testid="stSidebar"] [class*="st-key-portal_navigation_menu"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]):is(:has(input:focus-visible), [data-focus-visible]){{
 outline:2px solid var(--mpc-brand-dark);
-outline-offset:2px;
+outline-offset:-2px;
+}}
+section[data-testid="stSidebar"] .st-key-portal_notifications [data-testid="stPopoverButton"]{{
+min-height:42px;
+padding:8px 12px;
+border-radius:8px;
+background:var(--mpc-control-bg);
+border:1px solid var(--mpc-control-border);
+color:var(--mpc-text);
+box-shadow:none;
+}}
+section[data-testid="stSidebar"] .st-key-portal_notifications [data-testid="stPopoverButton"] p{{
+font-size:14.5px;
+line-height:24px;
+}}
+section[data-testid="stSidebar"] .st-key-portal_notifications [data-testid="stPopoverButton"]:hover{{
+background:var(--mpc-control-hover);
+}}
+section[data-testid="stSidebar"] .st-key-portal_notifications [data-testid="stPopoverButton"]:focus-visible{{
+outline:2px solid var(--mpc-brand-dark);
+outline-offset:-2px;
 }}
 section[data-testid="stSidebar"] [data-testid="stExpander"]{{
 background:var(--mpc-control-bg) !important;
