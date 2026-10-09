@@ -95,6 +95,31 @@ _LIST_FILTER_KEYS = (
     "rep_f_procud",
     "rep_f_ass",
 )
+_ADVANCED_FILTER_KEYS = (
+    "rep_f_fase",
+    "rep_f_year",
+    "rep_f_rep",
+    "rep_f_tema",
+    "rep_f_rel",
+    "rep_f_proc",
+    "rep_f_procud",
+    "rep_f_ass",
+)
+
+
+def _has_filter_value(value):
+    return value not in (None, "", _FILTER_ALL)
+
+
+def _advanced_filter_count():
+    return sum(
+        _has_filter_value(st.session_state.get(key)) for key in _ADVANCED_FILTER_KEYS
+    )
+
+
+def _clear_list_filters():
+    for key in _LIST_FILTER_KEYS:
+        st.session_state.pop(key, None)
 
 
 class _BadgeItem(tuple):
@@ -691,28 +716,52 @@ def _kpis(counts):
 
 def _filters():
     filter_mark()
-    a, b, c, d = st.columns(4)
-    with a:
-        situacao = _filter_select("Situação", SITUACOES, "Todas", "rep_f_sit")
-    with b:
-        fase = _filter_select("Fase processual", FASES, "Todas", "rep_f_fase")
-    year_options = {year: str(year) for year in range(date.today().year, 2023, -1)}
-    with c:
-        year = _filter_select("Ano", year_options, "Todos", "rep_f_year")
-    pesquisa = d.text_input("Pesquisa", key="rep_f_q")
-    e, f, g, h = st.columns(4)
-    representado = e.text_input("Representado", key="rep_f_rep")
-    tema = f.text_input("Tema", key="rep_f_tema")
-    relator = g.text_input("Relator", key="rep_f_rel")
-    processo = h.text_input("Nº do processo", key="rep_f_proc")
     people, servers = st.session_state.get("_rep_people") or ({}, {})
-    i, j = st.columns(2)
-    with i:
-        procurador = _filter_select(
-            "Procurador responsável", people, "Todos", "rep_f_procud"
-        )
-    with j:
-        assessor = _filter_select("Assessor", servers, "Todos", "rep_f_ass")
+    advanced_count = _advanced_filter_count()
+    advanced_label = "Filtros avançados"
+    if advanced_count:
+        advanced_label += f" · Filtros ativos ({advanced_count})"
+
+    with st.container(key="rep_filters"):
+        search_col, status_col, clear_col = st.columns([2, 1, 0.42])
+        with search_col:
+            pesquisa = st.text_input("Pesquisa", key="rep_f_q")
+        with status_col:
+            situacao = _filter_select("Situação", SITUACOES, "Todas", "rep_f_sit")
+        with clear_col:
+            st.markdown("<div class='rep-filter-spacer'></div>", unsafe_allow_html=True)
+            st.button(
+                "Limpar",
+                key="rep_filters_clear",
+                on_click=_clear_list_filters,
+                help="Limpar filtros da listagem",
+            )
+
+        with st.expander(advanced_label, expanded=False):
+            a, b, c, d = st.columns(4)
+            with a:
+                fase = _filter_select("Fase processual", FASES, "Todas", "rep_f_fase")
+            with b:
+                year_options = {
+                    year: str(year) for year in range(date.today().year, 2023, -1)
+                }
+                year = _filter_select("Ano", year_options, "Todos", "rep_f_year")
+            with c:
+                representado = st.text_input("Representado", key="rep_f_rep")
+            with d:
+                tema = st.text_input("Tema", key="rep_f_tema")
+            e, f, g, h = st.columns(4)
+            with e:
+                relator = st.text_input("Relator", key="rep_f_rel")
+            with f:
+                processo = st.text_input("Nº do processo", key="rep_f_proc")
+            with g:
+                procurador = _filter_select(
+                    "Procurador responsável", people, "Todos", "rep_f_procud"
+                )
+            with h:
+                assessor = _filter_select("Assessor", servers, "Todos", "rep_f_ass")
+
     filters = {
         "situacao": situacao,
         "fase_processual": fase,
@@ -726,6 +775,36 @@ def _filters():
     filters["procurador_id"] = procurador
     filters["assessor_id"] = assessor
     return filters
+
+
+def _home_chrome():
+    st.markdown(
+        "<style>"
+        "section[data-testid='stMain'] .st-key-rep_top_area [data-testid='stHeading']{margin-bottom:.15rem!important}"
+        "section[data-testid='stMain'] .st-key-rep_top_area [data-testid='stCaption']{margin:.05rem 0!important}"
+        "section[data-testid='stMain'] .st-key-rep_top_area .st-key-rep_kpis [data-testid='stMetric']{"
+        "min-height:86px;padding:.65rem .75rem;background:var(--mpc-card-b)!important;"
+        "border:1px solid var(--mpc-card-border-b)!important;border-radius:10px;box-shadow:none!important}"
+        "section[data-testid='stMain'] .st-key-rep_top_area .st-key-rep_kpis [data-testid='stMetricLabel']{font-size:.82rem}"
+        "section[data-testid='stMain'] .st-key-rep_top_area .st-key-rep_kpis [data-testid='stMetricValue']{font-size:1.55rem}"
+        "section[data-testid='stMain'] .st-key-rep_top_controls .st-key-rep_home_actions [data-testid='stHorizontalBlock']{"
+        "justify-content:flex-start;align-items:center;gap:.5rem;flex-wrap:wrap}"
+        "section[data-testid='stMain'] .st-key-rep_top_controls .st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{"
+        "flex:0 1 auto!important;width:auto!important;min-width:0}"
+        "section[data-testid='stMain'] .st-key-rep_top_controls .st-key-rep_filters{"
+        "padding:.55rem .7rem .65rem;border:1px solid var(--mpc-card-border-b);border-radius:10px;background:var(--mpc-card-b)}"
+        "section[data-testid='stMain'] .st-key-rep_top_controls .st-key-rep_filters [data-testid='stExpander']{border:0;background:transparent}"
+        "section[data-testid='stMain'] .st-key-rep_top_controls .rep-filter-spacer{height:1.65rem}"
+        "@media(max-width:768px){"
+        "section[data-testid='stMain'] .st-key-rep_top_area .st-key-rep_kpis [data-testid='stHorizontalBlock'],"
+        "section[data-testid='stMain'] .st-key-rep_top_controls .st-key-rep_home_actions [data-testid='stHorizontalBlock']{flex-direction:column}"
+        "section[data-testid='stMain'] .st-key-rep_top_area .st-key-rep_kpis [data-testid='stHorizontalBlock']>div,"
+        "section[data-testid='stMain'] .st-key-rep_top_controls .st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{width:100%!important;flex:1 1 auto!important}"
+        "section[data-testid='stMain'] .st-key-rep_top_controls .st-key-rep_home_actions button{min-height:44px}"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
 
 
 def _badge_items(record):
@@ -1811,50 +1890,19 @@ def _detail_body(store, principal, record):
 def render(store, principal):
     _consume_widget_cleanup()
     require_permission(principal, "representacoes")
-    st.title(module_title("representacoes", "REPRESENTAÇÕES"))
-    st.caption(
-        "Acompanhamento interno dos projetos de Representação e das Representações protocoladas no TRAMITA."
-    )
-    st.caption(
-        "Este módulo acompanha as Representações protocoladas no TRAMITA a partir de janeiro de 2026."
-    )
-    if message := st.session_state.pop("representacoes_message", None):
-        st.success(message)
-    counts = overview(store)
-    _kpis(counts)
-    st.markdown(
-        "<style>"
-        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']{justify-content:flex-start;gap:.6rem}"
-        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{flex:0 1 auto;min-width:0;width:auto!important}"
-        "@media(max-width:768px){"
-        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']{flex-direction:column}"
-        ".st-key-rep_home_actions [data-testid='stHorizontalBlock']>div{width:100%!important;flex:1 1 auto!important}"
-        ".st-key-rep_home_actions button{min-height:44px}"
-        "}"
-        "</style>",
-        unsafe_allow_html=True,
-    )
-    with st.container(key="rep_home_actions", horizontal=True):
-        st.button(
-            "+ Novo projeto de Representação",
-            type="primary",
-            key="rep_new",
-            on_click=_set_ui_state,
-            args=("representacoes_edit", {}, "rep_form_new"),
+    _home_chrome()
+    with st.container(key="rep_top_area"):
+        st.title(module_title("representacoes", "REPRESENTAÇÕES"))
+        st.caption(
+            "Acompanhamento interno dos projetos de Representação e das Representações protocoladas no TRAMITA."
         )
-        if has_permission(principal, "representacoes_registrar_protocolo"):
-            st.button(
-                "Registrar Representação Protocolada",
-                key="rep_direct_new",
-                on_click=_set_ui_state,
-                args=(
-                    "representacoes_direct",
-                    True,
-                    "rep_direct_base_",
-                    "rep_direct_prot_",
-                    "rep_direct_ai_",
-                ),
-            )
+        st.caption(
+            "Este módulo acompanha as Representações protocoladas no TRAMITA a partir de janeiro de 2026."
+        )
+        if message := st.session_state.pop("representacoes_message", None):
+            st.success(message)
+        counts = overview(store)
+        _kpis(counts)
     view_id = st.session_state.get("representacoes_view")
     edit_id = st.session_state.get("representacoes_edit")
     if st.session_state.get("representacoes_protocol"):
@@ -1926,7 +1974,29 @@ def render(store, principal):
         display_store(store)
     )
     st.session_state["_rep_people"] = (people, servers)
-    filters = _filters()
+    with st.container(key="rep_top_controls"):
+        with st.container(key="rep_home_actions", horizontal=True):
+            st.button(
+                "+ Novo projeto de Representação",
+                type="primary",
+                key="rep_new",
+                on_click=_set_ui_state,
+                args=("representacoes_edit", {}, "rep_form_new"),
+            )
+            if has_permission(principal, "representacoes_registrar_protocolo"):
+                st.button(
+                    "Registrar Representação Protocolada",
+                    key="rep_direct_new",
+                    on_click=_set_ui_state,
+                    args=(
+                        "representacoes_direct",
+                        True,
+                        "rep_direct_base_",
+                        "rep_direct_prot_",
+                        "rep_direct_ai_",
+                    ),
+                )
+        filters = _filters()
     st.session_state["_representacoes_list_filters"] = {
         key: st.session_state[key]
         for key in _LIST_FILTER_KEYS
