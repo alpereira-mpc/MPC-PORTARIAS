@@ -1,6 +1,7 @@
 """Streamlit UI for Representações. Follows existing portal visual patterns."""
 
 from datetime import date
+import hashlib
 import logging
 
 import streamlit as st
@@ -65,6 +66,7 @@ from services.representacoes import (
     update,
 )
 from services.ui_store import display_store
+from services.representacoes_ai import match_people, match_person, match_relator
 from services.ui_theme import (
     actions_mark,
     badges,
@@ -285,6 +287,212 @@ def _people_options(store):
     )
 
 
+_DIRECT_AI_TEXT_KEYS = {
+    "rep_direct_base_titulo",
+    "rep_direct_base_objeto",
+    "rep_direct_base_representado",
+    "rep_direct_base_tema",
+    "rep_direct_base_obs",
+    "rep_direct_prot_num",
+    "rep_direct_prot_obs",
+}
+_DIRECT_AI_LIST_KEYS = {"rep_direct_base_sign", "rep_direct_base_ass"}
+
+
+def _mark_direct_dirty(key):
+    dirty = set(st.session_state.get("rep_direct_ai_dirty") or ())
+    dirty.add(key)
+    st.session_state["rep_direct_ai_dirty"] = dirty
+
+
+def _direct_change_kwargs(prefix, suffix):
+    if prefix not in ("rep_direct_base_", "rep_direct_prot_"):
+        return {}
+    return {"on_change": _mark_direct_dirty, "args": (prefix + suffix,)}
+
+
+def _direct_pdf_hash(upload):
+    return hashlib.sha256(upload.getvalue()).hexdigest() if upload is not None else None
+
+
+def _sync_direct_pdf(upload):
+    current_hash = _direct_pdf_hash(upload)
+    previous_hash = st.session_state.get("rep_direct_ai_file")
+    if previous_hash and previous_hash != current_hash:
+        dirty = set(st.session_state.get("rep_direct_ai_dirty") or ())
+        for key, entry in (st.session_state.get("rep_direct_ai_applied") or {}).items():
+            if key in dirty or st.session_state.get(key) != entry["after"]:
+                continue
+            if entry["present"]:
+                st.session_state[key] = entry["before"]
+            else:
+                st.session_state.pop(key, None)
+        for key in (
+            "rep_direct_ai_file",
+            "rep_direct_ai_pending",
+            "rep_direct_ai_applied",
+            "rep_direct_ai_missing",
+            "rep_direct_ai_notice",
+            "rep_direct_ai_changed",
+            "rep_direct_ai_cautelar_status",
+        ):
+            st.session_state.pop(key, None)
+    return current_hash
+
+
+def _preencher_representacao_com_ia(upload):
+    st.session_state.pop("rep_direct_ai_notice", None)
+    if upload is None:
+        st.warning("Selecione o PDF final antes de solicitar a análise.")
+        return
+    content = upload.getvalue()
+    try:
+        from services.ai_service import extrair_dados_representacao_pdf
+
+        with st.spinner("Analisando o PDF da Representação..."):
+            result = extrair_dados_representacao_pdf(content)
+    except RuntimeError as exc:
+        st.error(str(exc))
+        return
+    except Exception:
+        LOGGER.exception("Falha inesperada na extração da Representação.")
+        st.error("Não foi possível analisar o PDF. Tente novamente.")
+        return
+    if not isinstance(result, dict):
+        st.error("A IA não retornou dados válidos para o formulário.")
+        return
+    st.session_state["rep_direct_ai_file"] = hashlib.sha256(content).hexdigest()
+    st.session_state["rep_direct_ai_pending"] = result
+
+
+def _representacao_ai_suggestions(store, data):
+    people, servers = _people_options(store)
+    suggestions = {}
+    text_fields = {
+        "titulo": "rep_direct_base_titulo",
+        "objeto": "rep_direct_base_objeto",
+        "representado": "rep_direct_base_representado",
+        "tema": "rep_direct_base_tema",
+        "observacoes_internas": "rep_direct_base_obs",
+        "numero_processo": "rep_direct_prot_num",
+        "observacoes_protocolo": "rep_direct_prot_obs",
+    }
+    for source, target in text_fields.items():
+        value = data.get(source)
+        if isinstance(value, str) and value.strip():
+            suggestions[target] = value.strip()
+    choices = {
+        "origem": ("rep_direct_base_origem", ORIGENS),
+        "prioridade": ("rep_direct_base_prioridade", PRIORIDADES),
+        "fase_processual": ("rep_direct_prot_fase", FASES),
+    }
+    for source, (target, allowed) in choices.items():
+        value = data.get(source)
+        if isinstance(value, str) and value in allowed:
+            suggestions[target] = value
+    for source, target in (
+        ("data_abertura", "rep_direct_base_abertura"),
+        ("data_protocolo", "rep_direct_prot_data"),
+    ):
+        try:
+            suggestions[target] = date.fromisoformat(data[source])
+        except (KeyError, TypeError, ValueError):
+            pass
+    responsible = match_person(data.get("procurador_responsavel"), people)
+    dirty = set(st.session_state.get("rep_direct_ai_dirty") or ())
+    manual_signers = st.session_state.get("rep_direct_base_sign") or ()
+    if responsible is not None and not (
+        "rep_direct_base_sign" in dirty and responsible in manual_signers
+    ):
+        suggestions["rep_direct_base_resp"] = responsible
+    relator = match_relator(data.get("relator"), RELATORES)
+    if relator is not None:
+        suggestions["rep_direct_prot_rel"] = relator
+    signer_ids = match_people(data.get("procuradores_signatarios"), people)
+    current_responsible = st.session_state.get(
+        "rep_direct_base_resp", next(iter(people), None)
+    )
+    selected_responsible = (
+        current_responsible
+        if "rep_direct_base_resp" in dirty
+        else suggestions.get("rep_direct_base_resp", current_responsible)
+    )
+    signer_ids = reconcile_signatories(
+        signer_ids, signatory_options(people, selected_responsible)
+    )
+    if signer_ids:
+        suggestions["rep_direct_base_sign"] = signer_ids
+    assessor_ids = match_people(data.get("assessores"), servers)
+    if assessor_ids:
+        suggestions["rep_direct_base_ass"] = assessor_ids
+    cautelar = data.get("possui_medida_cautelar")
+    if cautelar in ("SIM", "NAO"):
+        suggestions["rep_direct_prot_cautelar"] = cautelar == "SIM"
+    missing = [
+        label
+        for key, label in (
+            ("titulo", "Título"),
+            ("numero_processo", "Número do processo"),
+            ("procurador_responsavel", "Procurador responsável"),
+            ("relator", "Relator"),
+        )
+        if key not in data
+        or not data.get(key)
+        or (key == "procurador_responsavel" and responsible is None)
+        or (key == "relator" and relator is None)
+    ]
+    return suggestions, missing
+
+
+def _apply_representacao_ai_prefill(store, upload):
+    current_hash = _direct_pdf_hash(upload)
+    if st.session_state.get("rep_direct_ai_file") != current_hash:
+        st.session_state.pop("rep_direct_ai_pending", None)
+        return
+    data = st.session_state.pop("rep_direct_ai_pending", None)
+    if not isinstance(data, dict):
+        return
+    suggestions, missing = _representacao_ai_suggestions(store, data)
+    dirty = set(st.session_state.get("rep_direct_ai_dirty") or ())
+    applied = dict(st.session_state.get("rep_direct_ai_applied") or {})
+    changed = 0
+    for key, value in suggestions.items():
+        if key in dirty:
+            continue
+        previous = applied.get(key)
+        current = st.session_state.get(key)
+        if (
+            previous is None
+            and key in _DIRECT_AI_TEXT_KEYS | _DIRECT_AI_LIST_KEYS
+            and current
+        ):
+            continue
+        if previous is not None and current != previous["after"]:
+            continue
+        if current == value:
+            continue
+        applied[key] = {
+            "present": (
+                previous["present"] if previous is not None else key in st.session_state
+            ),
+            "before": previous["before"] if previous is not None else current,
+            "after": value,
+        }
+        st.session_state[key] = value
+        changed += 1
+    st.session_state["rep_direct_ai_applied"] = applied
+    st.session_state["rep_direct_ai_missing"] = missing
+    st.session_state["rep_direct_ai_cautelar_status"] = data.get(
+        "possui_medida_cautelar", "NAO_IDENTIFICADO"
+    )
+    st.session_state["rep_direct_ai_changed"] = bool(changed)
+    st.session_state["rep_direct_ai_notice"] = (
+        "Campos sugeridos pela IA. Confira o documento antes de salvar."
+        if changed
+        else "Nenhum campo foi alterado pela IA. Confira as informações antes de salvar."
+    )
+
+
 def _form_layout():
     st.markdown(
         "<style>"
@@ -316,10 +524,16 @@ def _form(store, current=None, *, prefix=None):
     _form_layout()
     section_label("INFORMAÇÕES GERAIS")
     title = st.text_input(
-        "Título *", value=current.get("titulo") or "", key=prefix + "titulo"
+        "Título *",
+        value=current.get("titulo") or "",
+        key=prefix + "titulo",
+        **_direct_change_kwargs(prefix, "titulo"),
     )
     objeto = st.text_area(
-        "Objeto/resumo", value=current.get("objeto") or "", key=prefix + "objeto"
+        "Objeto/resumo",
+        value=current.get("objeto") or "",
+        key=prefix + "objeto",
+        **_direct_change_kwargs(prefix, "objeto"),
     )
     with st.container(key="rep_form_general"):
         left, right = st.columns(2)
@@ -330,6 +544,7 @@ def _form(store, current=None, *, prefix=None):
             index=origem_keys.index(current.get("origem") or "DE_OFICIO"),
             format_func=ORIGENS.get,
             key=prefix + "origem",
+            **_direct_change_kwargs(prefix, "origem"),
         )
         opening = right.date_input(
             "Data de abertura",
@@ -340,15 +555,20 @@ def _form(store, current=None, *, prefix=None):
             ),
             format="DD/MM/YYYY",
             key=prefix + "abertura",
+            **_direct_change_kwargs(prefix, "abertura"),
         )
         representado_col, tema_col = st.columns([1.85, 1])
         representado = representado_col.text_input(
             "Representado",
             value=current.get("representado") or "",
             key=prefix + "representado",
+            **_direct_change_kwargs(prefix, "representado"),
         )
         tema = tema_col.text_input(
-            "Tema/área", value=current.get("tema") or "", key=prefix + "tema"
+            "Tema/área",
+            value=current.get("tema") or "",
+            key=prefix + "tema",
+            **_direct_change_kwargs(prefix, "tema"),
         )
     existing = current.get("integrantes") or []
     responsible = next(
@@ -374,6 +594,7 @@ def _form(store, current=None, *, prefix=None):
             index=list(people).index(responsible) if responsible in people else 0,
             format_func=people.get,
             key=prefix + "resp",
+            **_direct_change_kwargs(prefix, "resp"),
         )
         prioridade_keys = list(PRIORIDADES)
         prioridade = prioridade_col.selectbox(
@@ -382,6 +603,7 @@ def _form(store, current=None, *, prefix=None):
             index=prioridade_keys.index(current.get("prioridade") or "NORMAL"),
             format_func=PRIORIDADES.get,
             key=prefix + "prioridade",
+            **_direct_change_kwargs(prefix, "prioridade"),
         )
         sign_key = prefix + "sign"
         allowed_signatories = signatory_options(people, procurador)
@@ -401,6 +623,7 @@ def _form(store, current=None, *, prefix=None):
             default=default_signatories,
             format_func=people.get,
             key=sign_key,
+            **_direct_change_kwargs(prefix, "sign"),
         )
         assessor_ids = assessores_col.multiselect(
             "Assessores",
@@ -408,6 +631,7 @@ def _form(store, current=None, *, prefix=None):
             default=[item for item in helpers if item in servers],
             format_func=servers.get,
             key=prefix + "ass",
+            **_direct_change_kwargs(prefix, "ass"),
         )
         if current:
             situacao_keys = list(SITUACOES)
@@ -424,6 +648,7 @@ def _form(store, current=None, *, prefix=None):
         "Observações internas",
         value=current.get("observacoes") or "",
         key=prefix + "obs",
+        **_direct_change_kwargs(prefix, "obs"),
     )
     return {
         "titulo": title,
@@ -685,15 +910,20 @@ def _document_form(store, principal, identifier):
     )
 
 
-def _protocol_fields(prefix):
+def _protocol_fields(prefix, *, upload=None, show_upload=True):
     with st.container(key="rep_protocol_fields"):
         number_col, day_col = st.columns([1.6, 1])
-        number = number_col.text_input("Número do processo *", key=prefix + "num")
+        number = number_col.text_input(
+            "Número do processo *",
+            key=prefix + "num",
+            **_direct_change_kwargs(prefix, "num"),
+        )
         day = day_col.date_input(
             "Data do protocolo",
             date.today(),
             format="DD/MM/YYYY",
             key=prefix + "data",
+            **_direct_change_kwargs(prefix, "data"),
         )
         relator_col, fase_col = st.columns(2)
         relator = relator_col.selectbox(
@@ -706,12 +936,14 @@ def _protocol_fields(prefix):
             ),
             placeholder="Selecione o Relator atribuído no TRAMITA",
             key=prefix + "rel",
+            **_direct_change_kwargs(prefix, "rel"),
         )
         fase = fase_col.selectbox(
             "Fase processual inicial",
             list(FASES),
             format_func=FASES.get,
             key=prefix + "fase",
+            **_direct_change_kwargs(prefix, "fase"),
         )
         cautelar = st.radio(
             "Possui pedido de medida cautelar?",
@@ -720,11 +952,15 @@ def _protocol_fields(prefix):
             format_func=lambda value: "Sim" if value else "Não",
             horizontal=True,
             key=prefix + "cautelar",
+            **_direct_change_kwargs(prefix, "cautelar"),
         )
-        uploaded = st.file_uploader(
-            "PDF final da Representação", type=["pdf"], key=prefix + "pdf"
-        )
-    observacoes = st.text_area("Observações", key=prefix + "obs")
+        if show_upload:
+            upload = st.file_uploader(
+                "PDF final da Representação", type=["pdf"], key=prefix + "pdf"
+            )
+    observacoes = st.text_area(
+        "Observações", key=prefix + "obs", **_direct_change_kwargs(prefix, "obs")
+    )
     return {
         "numero_processo": number,
         "data_protocolo": day.isoformat(),
@@ -732,7 +968,7 @@ def _protocol_fields(prefix):
         "fase_processual": fase,
         "observacoes": observacoes,
         "possui_medida_cautelar": cautelar,
-    }, ((uploaded.name, uploaded.getvalue()) if uploaded is not None else None)
+    }, ((upload.name, upload.getvalue()) if upload is not None else None)
 
 
 def _protocol_form(store, principal, identifier):
@@ -789,37 +1025,74 @@ def _direct_protocol_form(store, principal):
     st.caption(
         "Cadastre a Representação já protocolada no TRAMITA e anexe o PDF final."
     )
+    upload = st.file_uploader(
+        "PDF final da Representação", type=["pdf"], key="rep_direct_prot_pdf"
+    )
+    _sync_direct_pdf(upload)
+    if st.button("✨ Preencher com IA", key="rep_direct_ai_fill"):
+        _preencher_representacao_com_ia(upload)
+    _apply_representacao_ai_prefill(store, upload)
+    if notice := st.session_state.get("rep_direct_ai_notice"):
+        if st.session_state.get("rep_direct_ai_changed"):
+            st.success(notice)
+        else:
+            st.info(notice)
+    if missing := st.session_state.get("rep_direct_ai_missing"):
+        st.caption(
+            "A IA não identificou com segurança: "
+            + ", ".join(missing)
+            + ". Confira esses campos obrigatórios."
+        )
+    if st.session_state.get("rep_direct_ai_cautelar_status") == "NAO_IDENTIFICADO":
+        st.caption(
+            "A IA não identificou se há pedido de medida cautelar. "
+            "Confira essa opção antes de salvar."
+        )
     base = _form(store, prefix="rep_direct_base_")
     if base is None:
         st.button(
             "Cancelar",
             key="rep_direct_cancel",
             on_click=_clear_ui_state,
-            args=("representacoes_direct", "rep_direct_base_", "rep_direct_prot_"),
+            args=(
+                "representacoes_direct",
+                "rep_direct_base_",
+                "rep_direct_prot_",
+                "rep_direct_ai_",
+            ),
         )
         return
     section_label("DADOS DO PROTOCOLO")
-    protocol, upload = _protocol_fields("rep_direct_prot_")
+    protocol, upload_tuple = _protocol_fields(
+        "rep_direct_prot_", upload=upload, show_upload=False
+    )
     with st.container(
         key="rep_form_actions", horizontal=True, horizontal_alignment="right"
     ):
         if st.button("Salvar", type="primary", key="rep_direct_save"):
             try:
                 saved = register_direct_protocol(
-                    store, base, protocol, principal, upload
+                    store, base, protocol, principal, upload_tuple
                 )
             except ValueError as exc:
                 st.error(str(exc))
             else:
                 st.session_state.pop("representacoes_direct", None)
-                _queue_widget_cleanup("rep_direct_base_", "rep_direct_prot_")
+                _queue_widget_cleanup(
+                    "rep_direct_base_", "rep_direct_prot_", "rep_direct_ai_"
+                )
                 st.session_state["representacoes_view"] = saved["id"]
                 _done("Representação protocolada.")
         st.button(
             "Cancelar",
             key="rep_direct_cancel",
             on_click=_clear_ui_state,
-            args=("representacoes_direct", "rep_direct_base_", "rep_direct_prot_"),
+            args=(
+                "representacoes_direct",
+                "rep_direct_base_",
+                "rep_direct_prot_",
+                "rep_direct_ai_",
+            ),
         )
 
 
@@ -1579,6 +1852,7 @@ def render(store, principal):
                     True,
                     "rep_direct_base_",
                     "rep_direct_prot_",
+                    "rep_direct_ai_",
                 ),
             )
     view_id = st.session_state.get("representacoes_view")
