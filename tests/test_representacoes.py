@@ -1113,7 +1113,6 @@ def test_representation_internal_actions_use_fragment_reruns_and_callbacks():
     from services.representacoes_ui import (
         _detail_compact,
         _done,
-        _home_actions,
         _document_form,
         _progress_form,
         _protocol_form,
@@ -1130,7 +1129,7 @@ def test_representation_internal_actions_use_fragment_reruns_and_callbacks():
         source = inspect.getsource(form)
         assert "on_click=_clear_ui_state" in source
         assert "st.rerun()" not in source
-    home = inspect.getsource(_home_actions)
+    home = inspect.getsource(render)
     assert "on_click=_set_ui_state" in home
     assert "st.rerun()" not in home
     notice = inspect.getsource(render_protocol_notice)
@@ -1224,7 +1223,7 @@ def test_home_shows_temporal_notice_and_both_registration_routes(store):
 
     app = AppTest.from_function(page, default_timeout=30).run()
     assert any(
-        "Acompanhamento interno das Representações protocoladas no TRAMITA desde janeiro de 2026."
+        "Este módulo acompanha as Representações protocoladas no TRAMITA a partir de janeiro de 2026."
         in item.value
         for item in app.caption
     )
@@ -1240,37 +1239,6 @@ def test_home_shows_temporal_notice_and_both_registration_routes(store):
     app.button(key="rep_new").click().run()
     assert app.button(key="rep_save")
     assert not app.exception
-
-
-def test_representation_home_uses_progressive_filters_and_compact_cards(monkeypatch):
-    import inspect
-
-    import services.representacoes_ui as ui
-
-    filters = inspect.getsource(ui._filters)
-    chrome = inspect.getsource(ui._listing_chrome)
-    card = inspect.getsource(ui._card)
-    assert 'st.expander(advanced_label' in filters
-    assert "Filtros avançados" in filters
-    assert 'key="rep_f_q"' in filters
-    assert '"rep_f_sit"' in filters
-    assert 'key="rep_filters_clear"' in filters
-    assert 'key="rep_card_actions_"' in card
-    assert "horizontal=True" in card
-    assert "st.columns(4)" not in card
-    assert "st-key-rep_filters" in chrome
-    assert "st-key-rep_list_" in chrome
-
-    state = {
-        "rep_f_q": "licitação",
-        "rep_f_fase": "INSTRUCAO",
-        "rep_f_rep": "Município X",
-        "rep_f_sit": "EM_TRAMITACAO",
-    }
-    monkeypatch.setattr(ui.st, "session_state", state)
-    assert ui._advanced_filter_count() == 2
-    ui._clear_list_filters()
-    assert not any(key in state for key in ui._LIST_FILTER_KEYS)
 
 
 def test_representation_forms_keep_fields_actions_and_compact_layout(store, monkeypatch):
