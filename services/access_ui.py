@@ -34,9 +34,22 @@ _USER_COLUMNS = (
     "Memorandos",
     "Relatórios",
     "Representações",
+    "Petições",
     "Ouvidoria",
     "Admin",
     "Gabinetes",
+)
+
+_MODULE_PERMISSION_LABELS = (
+    ("pode_portarias", "Portarias"),
+    ("pode_agenda", "Agenda"),
+    ("pode_oficios", "Ofícios"),
+    ("pode_memorandos", "Memorandos"),
+    ("pode_relatorios", "Relatórios"),
+    ("pode_representacoes", "Representações"),
+    ("pode_peticoes", "Petições"),
+    ("pode_ouvidoria", "Ouvidoria"),
+    ("pode_admin", "Administração"),
 )
 
 
@@ -60,6 +73,50 @@ def user_rows(users):
         }
         for user in users
     ]
+
+
+def permission_summary(user):
+    """Compact, deterministic description used by the administrative listing."""
+    enabled = [label for key, label in _MODULE_PERMISSION_LABELS if user.get(key)]
+    return ", ".join(enabled) or "Sem módulos atribuídos"
+
+
+def filter_users(users, query="", status="Todos", profile="Todos"):
+    """Filter the already-loaded user collection without issuing new queries."""
+    term = (query or "").strip().casefold()
+    filtered = []
+    for user in users:
+        if term and term not in (user.get("nome") or "").casefold() and term not in (
+            user.get("email") or ""
+        ).casefold():
+            continue
+        if status == "Ativos" and not user.get("ativo"):
+            continue
+        if status == "Inativos" and user.get("ativo"):
+            continue
+        if profile != "Todos" and user.get("perfil") != profile:
+            continue
+        filtered.append(user)
+    return filtered
+
+
+def compact_user_rows(users):
+    """Return the small set of columns needed to scan the user registry."""
+    rows = []
+    for user in users:
+        profile = "Administrador" if user.get("perfil") == "ADMINISTRADOR" else "Usuário"
+        if user.get("protegido"):
+            profile += " protegido"
+        rows.append(
+            {
+                "Usuário": user.get("nome") or "—",
+                "E-mail": user.get("email") or "—",
+                "Situação": "Ativo" if user.get("ativo") else "Inativo",
+                "Perfil": profile,
+                "Permissões": permission_summary(user),
+            }
+        )
+    return rows
 
 
 def style_user_table(rows, theme_name=DEFAULT_THEME):
@@ -447,23 +504,47 @@ def render(store, principal):
     if st.session_state.pop("acesso_select_new", False):
         st.session_state["acesso_pick"] = 0
     section_label("Usuários")
-    st.markdown(
-        """
-        <style>
-        .st-key-admin_users_table [data-testid="stDataFrame"] {
-          background: var(--mpc-themed-table-bg);
-          color: var(--mpc-themed-table-fg);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
+    filter_a, filter_b, filter_c = st.columns([2, 1, 1])
+    query = filter_a.text_input(
+        "Pesquisar",
+        key="admin_users_search",
+        placeholder="Nome ou e-mail",
     )
-    st.dataframe(
-        style_user_table(user_rows(users), _active_theme_name()),
-        hide_index=True,
-        width="stretch",
-        key="admin_users_table",
+    status_filter = filter_b.selectbox(
+        "Filtrar por situação", ("Todos", "Ativos", "Inativos"), key="admin_users_status"
     )
+    profile_filter = filter_c.selectbox(
+        "Filtrar por perfil",
+        ("Todos", "ADMINISTRADOR", "USUARIO"),
+        format_func=lambda value: {
+            "Todos": "Todos",
+            "ADMINISTRADOR": "Administradores",
+            "USUARIO": "Usuários",
+        }[value],
+        key="admin_users_profile",
+    )
+    filtered_users = filter_users(users, query, status_filter, profile_filter)
+    st.caption(f"{len(filtered_users)} de {len(users)} usuário(s)")
+    if filtered_users:
+        from services.ui_theme import style_striped_table
+
+        st.dataframe(
+            style_striped_table(compact_user_rows(filtered_users), _active_theme_name()),
+            hide_index=True,
+            width="stretch",
+            key="admin_users_table",
+            column_config={
+                "Usuário": st.column_config.TextColumn("Usuário", width="medium"),
+                "E-mail": st.column_config.TextColumn("E-mail", width="medium"),
+                "Situação": st.column_config.TextColumn("Situação", width="small"),
+                "Perfil": st.column_config.TextColumn("Perfil", width="small"),
+                "Permissões": st.column_config.TextColumn("Permissões", width="large"),
+            },
+        )
+    else:
+        from services.ui_theme import empty_state
+
+        empty_state("Nenhum usuário corresponde aos filtros informados.")
     section_label("Cadastro")
     choices = {0: "Novo usuário"}
     for user in users:
@@ -530,70 +611,101 @@ def render(store, principal):
             key=prefix + "perfil",
             disabled=protected,
         )
-        st.write("Acesso")
-        portarias = st.checkbox(
-            "Portarias", value=current["pode_portarias"], key=prefix + "portarias"
-        )
-        agenda = st.checkbox(
-            "Agenda e Afastamentos", value=current["pode_agenda"], key=prefix + "agenda"
-        )
-        oficios = st.checkbox(
-            "Ofícios", value=current["pode_oficios"], key=prefix + "oficios"
-        )
-        memorandos = st.checkbox(
-            "Memorandos", value=current["pode_memorandos"], key=prefix + "memorandos"
-        )
-        relatorios = st.checkbox(
-            "Relatórios e Indicadores",
-            value=current["pode_relatorios"],
-            key=prefix + "relatorios",
-        )
-        representacoes = st.checkbox(
-            "Representações",
-            value=current["pode_representacoes"],
-            key=prefix + "representacoes",
-        )
-        peticoes = st.checkbox(
-            "Petições",
-            value=current.get("pode_peticoes", False),
-            key=prefix + "peticoes",
-        )
-        peticoes_cadastrar = st.checkbox("Petições — Cadastrar", value=current.get("pode_peticoes_cadastrar", False), key=prefix + "peticoes_cadastrar")
-        peticoes_editar = st.checkbox("Petições — Editar", value=current.get("pode_peticoes_editar", False), key=prefix + "peticoes_editar")
-        peticoes_andamento = st.checkbox("Petições — Registrar andamento", value=current.get("pode_peticoes_registrar_andamento", False), key=prefix + "peticoes_andamento")
-        peticoes_resultado = st.checkbox("Petições — Registrar resultado", value=current.get("pode_peticoes_registrar_resultado", False), key=prefix + "peticoes_resultado")
-        peticoes_concluir = st.checkbox("Petições — Concluir", value=current.get("pode_peticoes_concluir", False), key=prefix + "peticoes_concluir")
-        protocolo = st.checkbox(
-            "Representações — Registrar protocolo",
-            value=current.get("pode_representacoes_registrar_protocolo", False),
-            key=prefix + "representacoes_registrar_protocolo",
-        )
-        comunicacao = st.checkbox(
-            "Representações — Enviar comunicação de protocolo",
-            value=current.get("pode_representacoes_enviar_comunicacao", False),
-            key=prefix + "representacoes_enviar_comunicacao",
-        )
-        destinatarios = st.checkbox(
-            "Comunicações — Configurar destinatários",
-            value=current.get("pode_comunicacoes_configurar_destinatarios", False),
-            key=prefix + "comunicacoes_configurar_destinatarios",
-        )
-        teste_email = st.checkbox(
-            "Comunicações — Enviar e-mail de teste",
-            value=current.get("pode_comunicacoes_enviar_teste", False),
-            key=prefix + "comunicacoes_enviar_teste",
-        )
-        ouvidoria = st.checkbox(
-            "Ouvidoria",
-            value=current.get("pode_ouvidoria", False),
-            key=prefix + "ouvidoria",
-        )
-        admin = st.checkbox(
-            "Administração",
-            value=current["pode_admin"],
-            key=prefix + "admin",
-            disabled=protected,
-        )
+        st.markdown("**Módulos**")
+        modules_a, modules_b = st.columns(2)
+        with modules_a:
+            portarias = st.checkbox(
+                "Portarias", value=current["pode_portarias"], key=prefix + "portarias"
+            )
+            agenda = st.checkbox(
+                "Agenda e Afastamentos", value=current["pode_agenda"], key=prefix + "agenda"
+            )
+            oficios = st.checkbox(
+                "Ofícios", value=current["pode_oficios"], key=prefix + "oficios"
+            )
+            memorandos = st.checkbox(
+                "Memorandos", value=current["pode_memorandos"], key=prefix + "memorandos"
+            )
+            relatorios = st.checkbox(
+                "Relatórios e Indicadores",
+                value=current["pode_relatorios"],
+                key=prefix + "relatorios",
+            )
+        with modules_b:
+            representacoes = st.checkbox(
+                "Representações",
+                value=current["pode_representacoes"],
+                key=prefix + "representacoes",
+            )
+            peticoes = st.checkbox(
+                "Petições",
+                value=current.get("pode_peticoes", False),
+                key=prefix + "peticoes",
+            )
+            ouvidoria = st.checkbox(
+                "Ouvidoria",
+                value=current.get("pode_ouvidoria", False),
+                key=prefix + "ouvidoria",
+            )
+            admin = st.checkbox(
+                "Administração",
+                value=current["pode_admin"],
+                key=prefix + "admin",
+                disabled=protected,
+            )
+            st.caption(
+                "Administração concede poderes elevados sobre usuários, "
+                "auditoria, backups e configurações do sistema."
+            )
+        st.markdown("**Capacidades específicas**")
+        capability_a, capability_b = st.columns(2)
+        with capability_a:
+            protocolo = st.checkbox(
+                "Representações — Registrar protocolo",
+                value=current.get("pode_representacoes_registrar_protocolo", False),
+                key=prefix + "representacoes_registrar_protocolo",
+            )
+            comunicacao = st.checkbox(
+                "Representações — Enviar comunicação de protocolo",
+                value=current.get("pode_representacoes_enviar_comunicacao", False),
+                key=prefix + "representacoes_enviar_comunicacao",
+            )
+            destinatarios = st.checkbox(
+                "Comunicações — Configurar destinatários",
+                value=current.get("pode_comunicacoes_configurar_destinatarios", False),
+                key=prefix + "comunicacoes_configurar_destinatarios",
+            )
+            teste_email = st.checkbox(
+                "Comunicações — Enviar e-mail de teste",
+                value=current.get("pode_comunicacoes_enviar_teste", False),
+                key=prefix + "comunicacoes_enviar_teste",
+            )
+        with capability_b:
+            peticoes_cadastrar = st.checkbox(
+                "Petições — Cadastrar",
+                value=current.get("pode_peticoes_cadastrar", False),
+                key=prefix + "peticoes_cadastrar",
+            )
+            peticoes_editar = st.checkbox(
+                "Petições — Editar",
+                value=current.get("pode_peticoes_editar", False),
+                key=prefix + "peticoes_editar",
+            )
+            peticoes_andamento = st.checkbox(
+                "Petições — Registrar andamento",
+                value=current.get("pode_peticoes_registrar_andamento", False),
+                key=prefix + "peticoes_andamento",
+            )
+            peticoes_resultado = st.checkbox(
+                "Petições — Registrar resultado",
+                value=current.get("pode_peticoes_registrar_resultado", False),
+                key=prefix + "peticoes_resultado",
+            )
+            peticoes_concluir = st.checkbox(
+                "Petições — Concluir",
+                value=current.get("pode_peticoes_concluir", False),
+                key=prefix + "peticoes_concluir",
+            )
         gabinetes = st.multiselect(
             "Gabinetes de Ofícios",
             list(GABINETES),

@@ -27,6 +27,9 @@ from services.audit import (
 )
 from services.themes import valid_theme
 from services.ui_theme import (
+    DANGER,
+    INFO,
+    WARNING,
     badges,
     card_container,
     definition_block,
@@ -92,6 +95,69 @@ def _result_tone(code):
     return "success"
 
 
+def event_highlight(record):
+    """Return the most relevant administrative signal for one audit event."""
+    result = record.get("resultado") or ""
+    event = record.get("evento") or ""
+    action = record.get("acao") or ""
+    if result in ("ERRO", "FALHA"):
+        return "Falha", "danger"
+    if result == "NEGADO" or "NEGADO" in event or "BLOQUEADO" in event:
+        return "Acesso negado", "warning"
+    if action in ("EXCLUIR", "REMOVER") or "EXCLUID" in event:
+        return "Exclusão", "danger"
+    if action == "PERMISSOES" or "PERMISSO" in event:
+        return "Permissões", "warning"
+    if action == "EXPORTAR" or event in ("DOCUMENTO_BAIXADO", "BACKUP_DISPONIBILIZADO"):
+        return "Download", "info"
+    return "", "neutral"
+
+
+def event_rows(rows):
+    return [
+        {
+            "Data/hora": format_local_short(row.get("criado_em")),
+            "Usuário": row.get("usuario_nome") or row.get("usuario_email") or "—",
+            "Módulo": module_label(row.get("modulo")),
+            "Ação": action_label(row.get("acao") or row.get("evento")),
+            "Resultado": result_label(row.get("resultado")),
+            "Destaque": event_highlight(row)[0] or "—",
+            "Resumo": resumo_humano(row),
+        }
+        for row in rows
+    ]
+
+
+def style_event_table(rows, theme_name):
+    """Theme-aware compact log with semantic emphasis limited to one column."""
+    import pandas as pd
+    from services.themes import theme_tokens
+
+    frame = pd.DataFrame(event_rows(rows))
+    tokens = theme_tokens(valid_theme(theme_name))
+    base = tokens["themed_table_bg"]
+    stripe = tokens["themed_table_stripe_bg"]
+    foreground = tokens["themed_table_fg"]
+    tones = {
+        "Falha": DANGER,
+        "Acesso negado": WARNING,
+        "Exclusão": DANGER,
+        "Permissões": WARNING,
+        "Download": INFO,
+    }
+
+    def paint(row):
+        fill = base if row.name % 2 == 0 else stripe
+        styles = [f"background-color: {fill}; color: {foreground}"] * len(row)
+        highlight = row.get("Destaque")
+        if highlight in tones:
+            position = frame.columns.get_loc("Destaque")
+            styles[position] += f"; color: {tones[highlight]}; font-weight: 700"
+        return styles
+
+    return frame.style.apply(paint, axis=1)
+
+
 def _render_kpis(store, principal):
     data = dashboard_hoje(store, principal)
     items = (
@@ -101,11 +167,12 @@ def _render_kpis(store, principal):
         ("Downloads de documentos", data["downloads"], "success"),
         ("Falhas/erros registrados", data["falhas"], "danger" if data["falhas"] else "muted"),
     )
-    columns = st.columns(len(items))
-    for column, (title, value, tone) in zip(columns, items):
-        with column:
-            kpi_mark(tone)
-            st.metric(title, value)
+    for group in (items[:3], items[3:]):
+        columns = st.columns(len(group))
+        for column, (title, value, tone) in zip(columns, group):
+            with column:
+                kpi_mark(tone)
+                st.metric(title, value)
 
 
 def _render_overview(store, principal):
@@ -295,6 +362,7 @@ def _render_log(store, principal):
     users = AccessStore(store).list_users()
     emails = {u["email"]: u["nome"] + " · " + u["email"] for u in users}
     filter_mark()
+    section_label("Filtros")
     filters = _period_filter("log_") or {}
     a, b, c = st.columns(3)
     picked = a.selectbox(
@@ -362,27 +430,42 @@ def _render_log(store, principal):
     )
     if not rows:
         empty_state("Nenhum evento no período filtrado.")
-    for index, row in enumerate(rows):
-        with card_container(index, f"audit_{row['id']}"):
-            render_record(
-                format_local_short(row["criado_em"]),
-                badges_html=badges(
-                    (result_label(row.get("resultado")), _result_tone(row.get("resultado"))),
-                    (action_label(row.get("acao") or row.get("evento")), "brand"),
-                ),
-                secondary=(row.get("usuario_nome") or "—") + " · " + resumo_humano(row),
-                meta=" · ".join(
-                    part
-                    for part in (
-                        module_label(row.get("modulo")),
-                        objeto_humano(row),
-                    )
-                    if part and part != "—"
-                ),
-                accent=_result_tone(row.get("resultado")),
-            )
-            with st.expander("Detalhes"):
-                _event_details(row)
+    if rows:
+        st.dataframe(
+            style_event_table(rows, _theme_name()),
+            hide_index=True,
+            width="stretch",
+            key="audit_events_table",
+            column_config={
+                "Data/hora": st.column_config.TextColumn("Data/hora", width="small"),
+                "Usuário": st.column_config.TextColumn("Usuário", width="medium"),
+                "Módulo": st.column_config.TextColumn("Módulo", width="small"),
+                "Ação": st.column_config.TextColumn("Ação", width="small"),
+                "Resultado": st.column_config.TextColumn("Resultado", width="small"),
+                "Destaque": st.column_config.TextColumn("Destaque", width="small"),
+                "Resumo": st.column_config.TextColumn("Resumo", width="large"),
+            },
+        )
+        by_id = {row["id"]: row for row in rows}
+        detail_key = "audit_detail_id"
+        if st.session_state.get(detail_key) not in (None, *by_id):
+            st.session_state.pop(detail_key, None)
+        selected_id = st.selectbox(
+            "Detalhes do evento",
+            [None, *by_id],
+            format_func=lambda identifier: (
+                "Selecione um evento"
+                if identifier is None
+                else format_local_short(by_id[identifier]["criado_em"])
+                + " · "
+                + (by_id[identifier].get("usuario_nome") or "—")
+                + " · "
+                + resumo_humano(by_id[identifier])
+            ),
+            key=detail_key,
+        )
+        if selected_id is not None:
+            _event_details(by_id[selected_id])
     nav_a, nav_b, nav_c = st.columns([1, 2, 1])
     nav_a.button(
         "Anterior",

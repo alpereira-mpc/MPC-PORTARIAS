@@ -1,6 +1,13 @@
 import inspect
 
-from services.access_ui import ADMIN_SECTIONS, style_user_table, user_rows
+from services.access_ui import (
+    ADMIN_SECTIONS,
+    compact_user_rows,
+    filter_users,
+    permission_summary,
+    style_user_table,
+    user_rows,
+)
 from services.themes import THEMES
 from services.ui_theme import DANGER, SUCCESS
 
@@ -17,6 +24,7 @@ def _user():
         "pode_memorandos": False,
         "pode_relatorios": True,
         "pode_representacoes": False,
+        "pode_peticoes": True,
         "pode_ouvidoria": True,
         "pode_admin": False,
         "gabinetes": ["Gabinete"],
@@ -36,6 +44,7 @@ def test_user_rows_keep_columns_and_sim_nao_values():
         "Memorandos",
         "Relatórios",
         "Representações",
+        "Petições",
         "Ouvidoria",
         "Admin",
         "Gabinetes",
@@ -43,6 +52,30 @@ def test_user_rows_keep_columns_and_sim_nao_values():
     assert rows[0]["Ativo"] == "Sim"
     assert rows[0]["Agenda e Afastamentos"] == "Não"
     assert rows[0]["Nome"] == "Ana"
+    assert rows[0]["Petições"] == "Sim"
+
+
+def test_compact_user_listing_search_filters_and_permission_summary():
+    active = _user()
+    inactive = {
+        **_user(),
+        "nome": "Bruno",
+        "email": "bruno@mpc.pb.gov.br",
+        "ativo": False,
+        "perfil": "ADMINISTRADOR",
+        "protegido": True,
+        "pode_peticoes": False,
+    }
+    users = [active, inactive]
+
+    assert filter_users(users, "ANA") == [active]
+    assert filter_users(users, "bruno@", "Inativos", "ADMINISTRADOR") == [inactive]
+    assert filter_users(users, "", "Ativos", "USUARIO") == [active]
+    assert "Petições" in permission_summary(active)
+    rows = compact_user_rows(users)
+    assert list(rows[0]) == ["Usuário", "E-mail", "Situação", "Perfil", "Permissões"]
+    assert rows[0]["Situação"] == "Ativo"
+    assert rows[1]["Perfil"] == "Administrador protegido"
 
 
 def test_user_table_style_keeps_values_and_theme_surface():
@@ -101,8 +134,8 @@ def test_audit_dataframes_reuse_the_striped_table():
     log = getsource(audit_ui._render_log)
     assert "style_striped_table(" in overview
     assert "style_striped_table(" in accesses
-    assert "style_striped_table(" not in log
-    assert "st.dataframe" not in log
+    assert "style_event_table(" in log
+    assert "st.dataframe" in log
     rows = [
         {"Nome": "Ana", "E-mail": "ana@mpc.pb.gov.br", "Módulos": "Ofícios"},
         {"Nome": "Bruno", "E-mail": "bruno@mpc.pb.gov.br", "Módulos": "Agenda"},
@@ -128,11 +161,66 @@ def test_other_admin_sections_remain():
         "Usuários",
         "Solicitações",
         "Funções Institucionais",
+        "Estagiários",
         "Acessos e Auditoria",
         "Sistema",
     )
     for section in ADMIN_SECTIONS:
         assert section in source or section == "Usuários"
+
+
+def test_user_selection_and_permission_widgets_keep_stable_keys():
+    from services.access_ui import render
+
+    source = inspect.getsource(render)
+    for key in (
+        "admin_users_search",
+        "admin_users_status",
+        "admin_users_profile",
+        "acesso_pick",
+    ):
+        assert key in source
+    for permission in (
+        "pode_portarias",
+        "pode_peticoes",
+        "pode_peticoes_concluir",
+        "pode_admin",
+    ):
+        assert permission in source
+    assert "Administração concede poderes elevados" in source
+
+
+def test_audit_event_highlights_and_compact_table_support_all_themes():
+    from services.audit_ui import event_highlight, style_event_table
+
+    rows = [
+        {
+            "id": 1,
+            "criado_em": "2026-10-10T12:00:00+00:00",
+            "usuario_nome": "Ana",
+            "evento": "ERRO_OPERACIONAL",
+            "modulo": "admin",
+            "acao": "EDITAR",
+            "resultado": "ERRO",
+        },
+        {
+            "id": 2,
+            "criado_em": "2026-10-10T12:01:00+00:00",
+            "usuario_nome": "Bruno",
+            "evento": "DOCUMENTO_BAIXADO",
+            "modulo": "oficios",
+            "acao": "EXPORTAR",
+            "resultado": "OK",
+        },
+    ]
+    assert event_highlight(rows[0]) == ("Falha", "danger")
+    assert event_highlight(rows[1]) == ("Download", "info")
+    for name, tokens in THEMES.items():
+        styler = style_event_table(rows, name)
+        assert list(styler.data["Destaque"]) == ["Falha", "Download"]
+        html = styler.to_html().lower()
+        assert tokens["themed_table_bg"].lower() in html
+        assert tokens["themed_table_stripe_bg"].lower() in html
 
 
 def test_protocol_notice_table_reuses_theme_stripes():
