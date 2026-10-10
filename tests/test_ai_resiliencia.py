@@ -10,6 +10,7 @@ from services.ai_service import (
     GEMINI_FALLBACK_MODEL,
     GEMINI_MODEL,
     GeminiErro,
+    analisar_peticao_pdf,
     analisar_periodo_agenda,
     analisar_tarefas_ativas,
     extrair_dados_oficio_pdf,
@@ -250,6 +251,29 @@ def test_telemetry_does_not_store_prompt_or_user_content(store, monkeypatch):
     assert PROMPT_MARK not in stored
     assert "1 0 obj" not in stored
     assert "chave-de-teste" not in stored
+
+
+def test_petition_ai_telemetry_identifies_operation_without_document_content(
+    store, monkeypatch
+):
+    _persist(monkeypatch, store)
+    monkeypatch.setattr(
+        ai_service,
+        "_post",
+        lambda _request: _gemini_json(ai_service.PETICAO_EXTRAIDA_VAZIA),
+    )
+    _key(monkeypatch)
+    result = analisar_peticao_pdf(PDF)
+    assert result == ai_service.PETICAO_EXTRAIDA_VAZIA
+    rows = _rows(store)
+    assert len(rows) == 1
+    assert rows[0]["modulo"] == "peticoes"
+    assert rows[0]["operacao"] == "peticoes_extracao"
+    assert rows[0]["sucesso"] == 1
+    stored = json.dumps(rows, ensure_ascii=False)
+    assert "1 0 obj" not in stored
+    assert "chave-de-teste" not in stored
+    assert ai_service.PROMPT_EXTRACAO_PETICAO[:40] not in stored
 
 
 def test_telemetry_failure_does_not_hide_the_answer(monkeypatch):

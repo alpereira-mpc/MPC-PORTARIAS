@@ -149,6 +149,22 @@ def audit_oficio(evento, acao, record=None, extra=None, resultado="OK"):
     )
 
 
+def audit_download_oficio(record, file, operacao):
+    from services.audit import registrar_download
+
+    store = st.session_state.get("_mpc_store") or st.session_state.get("_oficios_store")
+    registrar_download(
+        store,
+        modulo="oficios",
+        entidade_tipo="oficio",
+        entidade_id=(record or {}).get("id"),
+        arquivo=(file or {}).get("nome"),
+        formato=(file or {}).get("tipo"),
+        rotulo=(record or {}).get("assunto") or (record or {}).get("numero"),
+        operacao=operacao,
+    )
+
+
 def label(r):
     return f"{r['serie'] or ''} {r['numero'] or r['numero_externo'] or 'Rascunho'}/{r['ano']} — {r['assunto'][:75]}"
 
@@ -380,6 +396,8 @@ def editor(service, people):
                 service.download(f["id"]),
                 f["nome"],
                 mime=f["tipo"],
+                on_click=audit_download_oficio,
+                args=(final, f, "solicitado"),
             )
         if attachments:
             st.caption(f"Anexos ({len(attachments)})")
@@ -390,6 +408,8 @@ def editor(service, people):
                     f["nome"],
                     mime=f["tipo"],
                     key="oficio_final_attachment_" + f["id"],
+                    on_click=audit_download_oficio,
+                    args=(final, f, "solicitado"),
                 )
         st.button(
             "Ver em Enviados",
@@ -989,18 +1009,15 @@ def _render_detail_documents(service, r):
             if st.button(
                 "Preparar download: " + f["nome"], key="oficio_file_" + f["id"]
             ):
-                audit_oficio(
-                    "DOCUMENTO_BAIXADO",
-                    "EXPORTAR",
-                    r,
-                    extra={"formato": f.get("tipo"), "arquivo": f["nome"][:80]},
-                )
+                audit_download_oficio(r, f, "preparado")
                 st.download_button(
                     "Baixar arquivo",
                     service.download(f["id"]),
                     f["nome"],
                     mime=f["tipo"],
                     key="oficio_download_" + f["id"],
+                    on_click=audit_download_oficio,
+                    args=(r, f, "solicitado"),
                 )
 
 

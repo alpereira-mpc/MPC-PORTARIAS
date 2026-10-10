@@ -107,6 +107,7 @@ ACTION_LABELS = {
     "REBAIXAR": "Alteração de perfil",
     "BLOQUEADO": "Operação recusada",
     "PREVIA": "Geração",
+    "PREPARAR": "Preparação de download",
     "MOVIMENTAR": "Alteração de status",
     "ACESSAR": "Acesso",
     "REGISTRAR": "Registro",
@@ -150,6 +151,8 @@ EVENT_LABELS = {
     "BACKUP_GERADO": "Backup gerado",
     "BACKUP_DISPONIBILIZADO": "Backup disponibilizado para download",
     "DOCUMENTO_BAIXADO": "Download de documento",
+    "DOWNLOAD_PREPARADO": "Download preparado",
+    "DOWNLOAD_SOLICITADO": "Download solicitado",
     "DOCUMENTO_ANEXADO": "Documento anexado",
     "ERRO_OPERACIONAL": "Falha operacional",
     "PORTARIA_FINALIZADA": "Portaria finalizada",
@@ -298,9 +301,22 @@ USER_FIELD_LABELS = {
     "pode_memorandos": "Memorandos",
     "pode_admin": "Administração",
     "pode_representacoes": "Representações",
+    "pode_representacoes_registrar_protocolo": "Representações — Registrar protocolo",
+    "pode_representacoes_enviar_comunicacao": "Representações — Enviar comunicação",
+    "pode_comunicacoes_configurar_destinatarios": "Comunicações — Configurar destinatários",
+    "pode_comunicacoes_enviar_teste": "Comunicações — Enviar e-mail de teste",
+    "pode_peticoes": "Petições",
+    "pode_peticoes_cadastrar": "Petições — Cadastrar",
+    "pode_peticoes_editar": "Petições — Editar",
+    "pode_peticoes_registrar_andamento": "Petições — Registrar andamento",
+    "pode_peticoes_registrar_resultado": "Petições — Registrar resultado",
+    "pode_peticoes_concluir": "Petições — Concluir",
     "pode_ouvidoria": "Ouvidoria",
     "pode_relatorios": "Relatórios",
 }
+PERMISSION_KEYS = tuple(
+    key for key in USER_FIELD_LABELS if key.startswith("pode_")
+)
 
 
 def format_local(value):
@@ -508,10 +524,15 @@ def _default_summary(evento, acao, modulo, entidade_tipo, entidade_id, details):
     target = details.get("usuario_alvo") or details.get("nome_alvo")
     entity = entity_label(entidade_tipo) if entidade_tipo else module_label(modulo)
     action = event_label(evento) or action_label(acao)
-    if evento == "DOCUMENTO_BAIXADO":
+    if evento in ("DOCUMENTO_BAIXADO", "DOWNLOAD_PREPARADO", "DOWNLOAD_SOLICITADO"):
         who = entity if entity and entity != "—" else "documento"
         name = title or ""
-        return f"Baixou {who}" + (f" {name}" if name else "")
+        verb = {
+            "DOCUMENTO_BAIXADO": "Baixou",
+            "DOWNLOAD_PREPARADO": "Preparou o download de",
+            "DOWNLOAD_SOLICITADO": "Solicitou o download de",
+        }[evento]
+        return f"{verb} {who}" + (f" {name}" if name else "")
     if evento == "BACKUP_GERADO":
         return "Gerou backup administrativo"
     if evento == "BACKUP_DISPONIBILIZADO":
@@ -787,6 +808,19 @@ def registrar_logout(store, principal=None, identity=None, state=None):
 
 
 def registrar_erro(store, *, modulo, acao, erro, principal=None):
+    code = None
+    for attribute in ("code", "status", "sqlstate", "pgcode"):
+        try:
+            candidate = getattr(erro, attribute, None)
+            normalized = str(candidate).strip() if candidate is not None else ""
+        except Exception:
+            continue
+        if candidate is not None:
+            if normalized and len(normalized) <= 40 and all(
+                character.isalnum() or character in "_-" for character in normalized
+            ):
+                code = normalized
+                break
     registrar_evento(
         store,
         evento="ERRO_OPERACIONAL",
@@ -794,7 +828,7 @@ def registrar_erro(store, *, modulo, acao, erro, principal=None):
         acao=acao,
         resultado="ERRO",
         principal=principal,
-        detalhes={"tipo": type(erro).__name__, "mensagem": str(erro)[:MAX_STRING]},
+        detalhes={"tipo": type(erro).__name__, "codigo": code},
     )
 
 
@@ -821,12 +855,18 @@ def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
         )
 
     if criado:
+        granted = [
+            USER_FIELD_LABELS[key]
+            for key in PERMISSION_KEYS
+            if bool(depois.get(key))
+        ]
         emit(
             "USUARIO_CRIADO",
             "CRIAR",
             {
                 "perfil": depois.get("perfil"),
                 "ativo": depois.get("ativo"),
+                "permissoes_concedidas": granted,
                 "resumo": f"Criou o usuário {alvo or nome or identifier}",
             },
         )
@@ -838,14 +878,7 @@ def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
             "nome": "Nome",
             "ativo": "Situação",
             "perfil": "Perfil",
-            "pode_portarias": "Portarias",
-            "pode_agenda": "Agenda",
-            "pode_oficios": "Ofícios",
-            "pode_memorandos": "Memorandos",
-            "pode_admin": "Administração",
-            "pode_representacoes": "Representações",
-            "pode_ouvidoria": "Ouvidoria",
-            "pode_relatorios": "Relatórios",
+            **{key: USER_FIELD_LABELS[key] for key in PERMISSION_KEYS},
         },
     )
     extra_edit = {"alteracoes": changes} if changes else None
@@ -870,18 +903,9 @@ def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
                     "REBAIXAR",
                     {"de": antes.get("perfil"), "para": depois.get("perfil"), "campo": "perfil"},
                 )
-        permission_keys = (
-            "pode_portarias",
-            "pode_agenda",
-            "pode_oficios",
-            "pode_memorandos",
-            "pode_admin",
-            "pode_representacoes",
-            "pode_ouvidoria",
-        )
         changed = [
             key
-            for key in permission_keys
+            for key in PERMISSION_KEYS
             if bool(antes.get(key)) != bool(depois.get(key))
         ]
         if changed:
@@ -898,6 +922,16 @@ def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
                     ],
                     "de": {k: bool(antes.get(k)) for k in changed},
                     "para": {k: bool(depois.get(k)) for k in changed},
+                    "concedidas": [
+                        USER_FIELD_LABELS[key]
+                        for key in changed
+                        if bool(depois.get(key))
+                    ],
+                    "revogadas": [
+                        USER_FIELD_LABELS[key]
+                        for key in changed
+                        if not bool(depois.get(key))
+                    ],
                 },
             )
         before_offices = list(antes.get("gabinetes") or [])
@@ -1002,12 +1036,22 @@ def registrar_download(
     formato=None,
     rotulo=None,
     principal=None,
+    operacao="concluido",
 ):
+    operations = {
+        "preparado": ("DOWNLOAD_PREPARADO", "PREPARAR"),
+        "solicitado": ("DOWNLOAD_SOLICITADO", "EXPORTAR"),
+        "concluido": ("DOCUMENTO_BAIXADO", "EXPORTAR"),
+    }
+    if operacao not in operations:
+        LOGGER.warning("Operação de auditoria de download inválida: %s.", operacao)
+        return None
+    evento, acao = operations[operacao]
     return registrar_evento(
         store,
-        evento="DOCUMENTO_BAIXADO",
+        evento=evento,
         modulo=modulo,
-        acao="EXPORTAR",
+        acao=acao,
         resultado="OK",
         principal=principal,
         entidade_tipo=entidade_tipo,
@@ -1016,8 +1060,17 @@ def registrar_download(
             "arquivo": (arquivo or "")[:80] or None,
             "formato": formato,
             "titulo": rotulo,
+            "operacao": operacao,
         },
     )
+
+
+def _csv_cell(value):
+    text = "" if value is None else str(value)
+    candidate = text.lstrip()
+    if text.startswith(("\t", "\r")) or candidate.startswith(("=", "+", "-", "@")):
+        return "'" + text
+    return text
 
 
 def _require_audit_reader(principal):
@@ -1117,22 +1170,21 @@ def export_csv(store, principal, filters=None):
         ]
     )
     for row in rows:
-        writer.writerow(
-            [
-                format_local(row["criado_em"]),
-                row.get("usuario_nome") or "",
-                row.get("usuario_email") or "",
-                module_label(row.get("modulo")),
-                event_label(row.get("evento")),
-                action_label(row.get("acao") or row.get("evento")),
-                result_label(row.get("resultado")),
-                entity_label(row.get("entidade_tipo"))
-                if row.get("entidade_tipo")
-                else "",
-                row.get("entidade_id") or "",
-                row.get("detalhes_json") or "",
-            ]
+        values = (
+            format_local(row["criado_em"]),
+            row.get("usuario_nome") or "",
+            row.get("usuario_email") or "",
+            module_label(row.get("modulo")),
+            event_label(row.get("evento")),
+            action_label(row.get("acao") or row.get("evento")),
+            result_label(row.get("resultado")),
+            entity_label(row.get("entidade_tipo"))
+            if row.get("entidade_tipo")
+            else "",
+            row.get("entidade_id") or "",
+            row.get("detalhes_json") or "",
         )
+        writer.writerow([_csv_cell(value) for value in values])
     return buffer.getvalue(), total, truncated
 
 

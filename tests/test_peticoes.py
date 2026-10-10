@@ -1,4 +1,5 @@
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from pypdf import PdfWriter
@@ -62,6 +63,24 @@ def test_petition_badges_map_status_and_keep_date_neutral():
     unknown = _badge_items({"situacao": "FUTURA", "data_protocolo": "2026-09-30"})
     assert unknown[0] == ("FUTURA", "neutral", "pet-status pet-status-unknown")
     assert unknown[1][0] == "30/09/2026"
+
+
+def test_petition_download_preparation_is_audited_without_false_completion(
+    store, monkeypatch
+):
+    import services.peticoes_ui as ui
+    from database.audit import AuditStore
+
+    monkeypatch.setattr(ui, "st", SimpleNamespace(session_state={}))
+    ui._open_pdf_panel(77, store, _principal(store), "116439/26")
+    events = AuditStore(store).list_events({"modulo": "peticoes"}, limit=10)
+    assert len(events) == 1
+    assert events[0]["evento"] == "DOWNLOAD_PREPARADO"
+    assert events[0]["entidade_id"] == "77"
+    assert ui.st.session_state["peticoes_painel"]["p77"] is True
+    source = __import__("inspect").getsource(ui._card)
+    assert source.count('"operacao": "solicitado"') == 2
+    assert "DOCUMENTO_BAIXADO" not in source
 
 
 def test_create_list_document_and_constraints(store):

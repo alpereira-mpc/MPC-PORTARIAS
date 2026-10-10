@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+import csv
+import io
+import json
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -15,6 +18,9 @@ from services.audit import (
     overview,
     period_bounds,
     registrar_acesso_negado,
+    registrar_alteracao_usuario,
+    registrar_download,
+    registrar_erro,
     registrar_evento,
     registrar_modulo,
     sanitize_details,
@@ -508,7 +514,7 @@ def test_last_admin_block_is_recorded(store):
 
 
 def test_sensitive_payloads_and_human_labels(store):
-    from services.audit import event_label, registrar_download, result_label
+    from services.audit import event_label, result_label
 
     clean = sanitize_details(
         {
@@ -539,6 +545,130 @@ def test_sensitive_payloads_and_human_labels(store):
     assert row["acao"] == "EXPORTAR"
     assert "peca.pdf" in (row["detalhes_json"] or "")
     assert "Baixou" in (row["detalhes_json"] or "")
+
+
+def test_download_operations_do_not_claim_completion(store):
+    principal = _principal(store)
+    common = {
+        "modulo": "peticoes",
+        "entidade_tipo": "peticao",
+        "entidade_id": "41",
+        "arquivo": "peticao.pdf",
+        "formato": "application/pdf",
+        "rotulo": "116439/26",
+        "principal": principal,
+    }
+    registrar_download(store, **common, operacao="preparado")
+    registrar_download(store, **common, operacao="solicitado")
+    events = AuditStore(store).list_events({"modulo": "peticoes"}, limit=20)
+    assert [row["evento"] for row in events] == [
+        "DOWNLOAD_SOLICITADO",
+        "DOWNLOAD_PREPARADO",
+    ]
+    assert not any(row["evento"] == "DOCUMENTO_BAIXADO" for row in events)
+    details = [json.loads(row["detalhes_json"]) for row in events]
+    assert {item["operacao"] for item in details} == {"preparado", "solicitado"}
+    assert all("conteudo" not in item and "pdf" not in item for item in details)
+
+
+def test_granular_permission_changes_report_grants_and_revocations(store):
+    from services.audit import PERMISSION_KEYS
+
+    assert {
+        "pode_peticoes",
+        "pode_peticoes_cadastrar",
+        "pode_peticoes_editar",
+        "pode_peticoes_registrar_andamento",
+        "pode_peticoes_registrar_resultado",
+        "pode_peticoes_concluir",
+        "pode_representacoes",
+        "pode_representacoes_registrar_protocolo",
+        "pode_representacoes_enviar_comunicacao",
+        "pode_comunicacoes_configurar_destinatarios",
+        "pode_comunicacoes_enviar_teste",
+    } <= set(PERMISSION_KEYS)
+    principal = _principal(store)
+    before = {
+        "id": 91,
+        "nome": "Usuário granular",
+        "email": "granular@test.local",
+        "pode_representacoes": False,
+        "pode_representacoes_enviar_comunicacao": False,
+        "pode_comunicacoes_enviar_teste": True,
+        "pode_peticoes": False,
+        "pode_peticoes_concluir": False,
+    }
+    after = {
+        **before,
+        "pode_representacoes": True,
+        "pode_representacoes_enviar_comunicacao": True,
+        "pode_comunicacoes_enviar_teste": False,
+        "pode_peticoes": True,
+        "pode_peticoes_concluir": True,
+    }
+    registrar_alteracao_usuario(store, principal, before, after)
+    row = AuditStore(store).list_events({"evento": "PERMISSOES_ALTERADAS"})[0]
+    details = json.loads(row["detalhes_json"])
+    assert set(details["campos"]) == {
+        "pode_representacoes",
+        "pode_representacoes_enviar_comunicacao",
+        "pode_comunicacoes_enviar_teste",
+        "pode_peticoes",
+        "pode_peticoes_concluir",
+    }
+    assert "Petições — Concluir" in details["concedidas"]
+    assert "Representações — Enviar comunicação" in details["concedidas"]
+    assert details["revogadas"] == ["Comunicações — Enviar e-mail de teste"]
+    assert any("Não → Sim" in item for item in details["alteracoes"])
+    assert any("Sim → Não" in item for item in details["alteracoes"])
+
+
+def test_audit_csv_neutralizes_formulas_without_changing_stored_data(store):
+    principal = _principal(store)
+    AuditStore(store).insert(
+        {
+            "usuario_nome": "=HYPERLINK(\"https://invalid\")",
+            "usuario_email": "+cmd@test.local",
+            "evento": "EVENTO_TESTE",
+            "modulo": "@modulo",
+            "acao": "-ACAO",
+            "resultado": "OK",
+            "entidade_tipo": "documento",
+            "entidade_id": "\tformula",
+            "criado_em": "2026-10-10T12:00:00+00:00",
+        }
+    )
+    csv_text, total, truncated = export_csv(store, principal, {"evento": "EVENTO_TESTE"})
+    exported = next(csv.DictReader(io.StringIO(csv_text)))
+    assert total == 1 and not truncated
+    for column in ("nome", "email", "modulo", "acao", "entidade_id"):
+        assert exported[column].startswith("'")
+    stored = AuditStore(store).list_events({"evento": "EVENTO_TESTE"})[0]
+    assert stored["usuario_nome"].startswith("=")
+    assert stored["entidade_id"].startswith("\t")
+
+
+def test_operational_error_keeps_only_safe_diagnostics(store):
+    class ProviderFailure(RuntimeError):
+        code = "AUTH_401"
+
+    registrar_erro(
+        store,
+        modulo="peticoes",
+        acao="ANALISAR",
+        erro=ProviderFailure(
+            r"token=segredo; C:\\Users\\Pessoa\\documento.pdf; pessoa@exemplo.local"
+        ),
+        principal=_principal(store),
+    )
+    row = AuditStore(store).list_events({"evento": "ERRO_OPERACIONAL"})[0]
+    details = json.loads(row["detalhes_json"])
+    assert details["tipo"] == "ProviderFailure"
+    assert details["codigo"] == "AUTH_401"
+    serialized = row["detalhes_json"]
+    assert "segredo" not in serialized
+    assert "Users" not in serialized
+    assert "pessoa@" not in serialized
 
 
 def test_text_search_action_type_and_dashboard(store):

@@ -1559,7 +1559,7 @@ def test_official_pdf_summary_is_manual_and_keeps_the_previous_text(store, monke
     with store.connection(read_only=True) as c:
         audited = c.execute(
             "SELECT COUNT(*) FROM auditoria_eventos WHERE evento=? AND entidade_id=?",
-            ("DOCUMENTO_BAIXADO", str(identifier)),
+            ("DOWNLOAD_SOLICITADO", str(identifier)),
         ).fetchone()[0]
     assert audited == 1
     assert resumo_ia(store, identifier) is None

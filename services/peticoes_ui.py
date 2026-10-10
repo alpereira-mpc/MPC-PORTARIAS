@@ -8,6 +8,7 @@ import streamlit as st
 
 from database.peticoes import PeticoesStore
 from services.access import has_permission, require_permission
+from services.audit import registrar_download
 from services.branding import module_title
 from services.date_format import format_date_br
 from services.peticoes import (
@@ -346,10 +347,21 @@ def _toggle(name):
     st.session_state["peticoes_painel"] = panel
 
 
-def _open_pdf_panel(identifier):
+def _open_pdf_panel(identifier, store=None, principal=None, rotulo=None):
     panel = dict(_painel())
     panel[f"p{identifier}"] = True
     st.session_state["peticoes_painel"] = panel
+    if store is not None:
+        registrar_download(
+            store,
+            modulo="peticoes",
+            entidade_tipo="peticao",
+            entidade_id=identifier,
+            formato="application/pdf",
+            rotulo=rotulo,
+            principal=principal,
+            operacao="preparado",
+        )
 
 
 def _set_ui_state(key, value):
@@ -567,7 +579,7 @@ def _card(store, db, principal, record, index, *, acompanhar):
             "PDF",
             key=f"peticoes_pdf_btn_{identifier}",
             on_click=_open_pdf_panel,
-            args=(identifier,),
+            args=(identifier, store, principal, record.get("numero_tramita")),
         )
         if has_permission(principal, "peticoes_editar"):
             extra_right.button(
@@ -623,6 +635,18 @@ def _card(store, db, principal, record, index, *, acompanhar):
                             payload["nome"],
                             payload["mime_type"],
                             key=f"peticoes_documento_download_{document['id']}",
+                            on_click=registrar_download,
+                            kwargs={
+                                "store": store,
+                                "modulo": "peticoes",
+                                "entidade_tipo": "peticao",
+                                "entidade_id": identifier,
+                                "arquivo": payload["nome"],
+                                "formato": payload["mime_type"],
+                                "rotulo": record.get("numero_tramita"),
+                                "principal": principal,
+                                "operacao": "solicitado",
+                            },
                         )
                 if has_permission(
                     principal, "peticoes_registrar_andamento"
@@ -645,6 +669,18 @@ def _card(store, db, principal, record, index, *, acompanhar):
                     document["nome"],
                     document["mime_type"],
                     key=f"peticoes_pdf_ready_{identifier}",
+                    on_click=registrar_download,
+                    kwargs={
+                        "store": store,
+                        "modulo": "peticoes",
+                        "entidade_tipo": "peticao",
+                        "entidade_id": identifier,
+                        "arquivo": document["nome"],
+                        "formato": document["mime_type"],
+                        "rotulo": record.get("numero_tramita"),
+                        "principal": principal,
+                        "operacao": "solicitado",
+                    },
                 )
             else:
                 st.warning("PDF protocolado não encontrado.")

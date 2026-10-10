@@ -483,7 +483,27 @@ def _detail(store, principal, record):
             cols[2].caption(format_date_br(item.get("data_documento"), empty=""))
             if pending == item["id"]:
                 file = download(store, item["id"], principal)
-                cols[3].download_button("Baixar", file["conteudo"], file["nome"], file["tipo"], key="ouvi_dl_" + item["id"])
+                from services.audit import registrar_download
+
+                cols[3].download_button(
+                    "Baixar",
+                    file["conteudo"],
+                    file["nome"],
+                    file["tipo"],
+                    key="ouvi_dl_" + item["id"],
+                    on_click=registrar_download,
+                    kwargs={
+                        "store": store,
+                        "modulo": "ouvidoria",
+                        "entidade_tipo": "noticia_fato",
+                        "entidade_id": record["id"],
+                        "arquivo": file["nome"],
+                        "formato": file["tipo"],
+                        "rotulo": record.get("numero_interno") or record.get("titulo"),
+                        "principal": principal,
+                        "operacao": "solicitado",
+                    },
+                )
             elif cols[3].button("Preparar download", key="ouvi_prep_" + item["id"]):
                 from services.audit import registrar_download
 
@@ -496,6 +516,7 @@ def _detail(store, principal, record):
                     formato=item.get("mime_type"),
                     rotulo=record.get("numero_interno") or record.get("titulo"),
                     principal=principal,
+                    operacao="preparado",
                 )
                 st.session_state["ouvidoria_download"] = item["id"]
                 st.rerun()
