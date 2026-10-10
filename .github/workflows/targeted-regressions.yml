@@ -1,6 +1,9 @@
 name: Targeted regression checks
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -35,4 +38,4 @@ jobs:
           tests/test_deletion.py::test_delete_repeat_does_not_touch_reused_number
           tests/test_ui_cache.py::test_fragment_preview_finalize_and_lazy_download
           tests/test_ui_cache.py::test_edited_fragment_cannot_finalize_old_preview
-          --basetemp=tmp/pytest-targeted-regressions
+          --basetemp=pytest-targeted-regressions
