@@ -259,6 +259,20 @@ class AccessStore:
             ).fetchone()
             return self._hydrate(c, row) if row else None
 
+    def authorization_version(self, email):
+        """Return the lightweight version used to validate a session principal."""
+        email = normalize_email(email)
+        if not email:
+            return None
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT id,ativo,atualizado_em FROM usuarios_acesso WHERE email=?",
+                (email,),
+            ).fetchone()
+            if not row:
+                return None
+            return (int(row["id"]), bool(row["ativo"]), row["atualizado_em"])
+
     def get_theme(self, identifier):
         with self.store.connection(read_only=True) as c:
             row = c.execute(

@@ -5,6 +5,7 @@ import re
 import streamlit as st
 
 from database.tarefas import ACTIVE, HISTORY, TarefasStore, effective_deadline
+from services.access import require_permission
 from services.audit import INSTITUTIONAL_TZ, registrar_evento
 from services.branding import module_title
 from services.tarefas import contexto_analise_tarefas, leitura_analise_tarefas_salva
@@ -76,6 +77,7 @@ def _audit(store, principal, event, action, identifier):
 def _transition_active_status(
     repo, store, principal, identifier, status, action, message
 ):
+    principal = require_permission(principal, "tarefas")
     _record, changed = repo.transition_status(identifier, principal.id, status)
     if changed:
         _audit(store, principal, "TAREFA_STATUS_ALTERADO", action, identifier)
@@ -83,6 +85,7 @@ def _transition_active_status(
 
 
 def _finish_task(repo, store, principal, identifier):
+    principal = require_permission(principal, "tarefas")
     _record, changed = repo.transition_status(identifier, principal.id, "CONCLUIDA")
     if changed:
         _audit(store, principal, "TAREFA_STATUS_ALTERADO", "CONCLUIR", identifier)
@@ -90,18 +93,21 @@ def _finish_task(repo, store, principal, identifier):
 
 
 def _cancel_task(repo, store, principal, identifier):
+    principal = require_permission(principal, "tarefas")
     repo.change_status(identifier, principal.id, "CANCELADA")
     _audit(store, principal, "TAREFA_STATUS_ALTERADO", "CANCELAR", identifier)
     _remember("Tarefa cancelada.")
 
 
 def _reopen_task(repo, store, principal, identifier):
+    principal = require_permission(principal, "tarefas")
     repo.change_status(identifier, principal.id, "A_FAZER")
     _audit(store, principal, "TAREFA_STATUS_ALTERADO", "REABRIR", identifier)
     _remember("Tarefa reaberta.")
 
 
 def _delete_task(repo, store, principal, identifier):
+    principal = require_permission(principal, "tarefas")
     if repo.delete(identifier, principal.id):
         _audit(store, principal, "TAREFA_EXCLUIDA", "EXCLUIR", identifier)
         _remember("Tarefa excluída.")
@@ -252,6 +258,7 @@ def _cancel_editor(prefix):
 
 def _save_editor(repo, store, principal, prefix, old):
     try:
+        principal = require_permission(principal, "tarefas")
         values = _editor_payload(prefix)
         values["origem_modulo"] = old.get("origem_modulo")
         values["origem_id"] = old.get("origem_id")

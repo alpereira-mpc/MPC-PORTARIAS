@@ -7,7 +7,7 @@ import unicodedata
 import streamlit as st
 
 from database.peticoes import PeticoesStore
-from services.access import has_permission, require_permission
+from services.access import authorization_scope, has_permission, require_permission
 from services.audit import registrar_download
 from services.branding import module_title
 from services.date_format import format_date_br
@@ -381,6 +381,11 @@ def _preview(text):
 
 def _registrar_andamento(store, principal, identifier, date_key, text_key, error_key, uploads=()):
     try:
+        with authorization_scope(store, principal) as current:
+            require_permission(current, "peticoes")
+            principal = require_permission(
+                current, "peticoes_registrar_andamento"
+            )
         documents = []
         for uploaded, category in uploads or ():
             documents.append(
@@ -414,6 +419,11 @@ def _registrar_andamento(store, principal, identifier, date_key, text_key, error
 
 def _salvar_resultado(store, principal, identifier, key, error_key):
     try:
+        with authorization_scope(store, principal) as current:
+            require_permission(current, "peticoes")
+            principal = require_permission(
+                current, "peticoes_registrar_resultado"
+            )
         save_resultado(store, identifier, st.session_state.get(key) or "", principal)
     except ValueError as exc:
         st.session_state[error_key] = str(exc)
@@ -424,6 +434,9 @@ def _salvar_resultado(store, principal, identifier, key, error_key):
 
 def _concluir_peticao(store, principal, identifier, key, error_key):
     try:
+        with authorization_scope(store, principal) as current:
+            require_permission(current, "peticoes")
+            principal = require_permission(current, "peticoes_concluir")
         conclude(store, identifier, st.session_state.get(key) or "", principal)
     except ValueError as exc:
         st.session_state[error_key] = str(exc)

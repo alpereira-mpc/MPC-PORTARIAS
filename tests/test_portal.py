@@ -19,6 +19,43 @@ def _visible_text(app):
     return "\n".join(parts)
 
 
+def test_module_fragment_rechecks_permission_before_render(monkeypatch):
+    from contextlib import contextmanager, nullcontext
+    import inspect
+    from types import SimpleNamespace
+
+    import portal
+    from services import access
+
+    denied = SimpleNamespace(ativo=True, pode_peticoes=False)
+
+    @contextmanager
+    def authorization_scope(_store, _principal):
+        yield denied
+
+    class Stopped(Exception):
+        pass
+
+    rendered = []
+    errors = []
+    monkeypatch.setattr(access, "authorization_scope", authorization_scope)
+    monkeypatch.setattr(portal, "phase", lambda _name: nullcontext())
+    monkeypatch.setattr(portal.st, "error", errors.append)
+    monkeypatch.setattr(portal.st, "stop", lambda: (_ for _ in ()).throw(Stopped()))
+    render_fragment = inspect.unwrap(portal._render_module_fragment)
+
+    with pytest.raises(Stopped):
+        render_fragment(
+            lambda *_args: rendered.append(True),
+            SimpleNamespace(backend="sqlite"),
+            denied,
+            "peticoes",
+        )
+
+    assert rendered == []
+    assert errors == ["Acesso não autorizado a este módulo."]
+
+
 def test_portal_navigation_format_keeps_internal_values_and_uses_material_icons():
     from inspect import getsource
 

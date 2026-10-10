@@ -121,6 +121,7 @@ def test_nested_read_scope_reuses_one_connection_and_one_commit(backend):
 
 def test_portal_module_fragment_opens_one_postgres_read_scope(monkeypatch):
     import portal
+    from services import access
 
     calls = []
 
@@ -131,9 +132,18 @@ def test_portal_module_fragment_opens_one_postgres_read_scope(monkeypatch):
 
     store = SimpleNamespace(backend="postgresql", connection=connection)
     monkeypatch.setattr(portal, "phase", lambda _name: nullcontext())
+
+    @contextmanager
+    def authorization_scope(_store, principal):
+        yield principal
+
+    monkeypatch.setattr(access, "authorization_scope", authorization_scope)
     renderer = inspect.unwrap(portal._render_module_fragment)
     renderer(
-        lambda received_store, _principal: calls.append(received_store), store, None
+        lambda received_store, _principal: calls.append(received_store),
+        store,
+        SimpleNamespace(ativo=True),
+        "tarefas",
     )
 
     assert calls == [True, store]

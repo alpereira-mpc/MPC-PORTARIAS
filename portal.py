@@ -218,17 +218,36 @@ def _session_get(key, default=None):
 
 @st.fragment
 @profile_rerun
-def _render_module_fragment(renderer, store, principal):
+def _render_module_fragment(renderer, store, principal, permission):
     """Keep the portal shell stable during interactions inside one module."""
+    from services.access import authorization_scope, has_permission
+
+    def render_confirmed(current):
+        if current is None or not has_permission(current, permission):
+            st.error("Acesso não autorizado a este módulo.")
+            st.stop()
+        renderer(store, current)
+
     with phase("module_render"):
         if getattr(store, "backend", None) == "postgresql":
             # A screen render is a bounded synchronous read scope. Repository
             # reads reuse it through PostgresBackend's ContextVar; a mutation
             # opens its own writer transaction and is never run in this scope.
             with store.connection(read_only=True):
-                renderer(store, principal)
+                with authorization_scope(store, principal) as current:
+                    render_confirmed(current)
         else:
-            renderer(store, principal)
+            with authorization_scope(store, principal) as current:
+                render_confirmed(current)
+
+
+def _render_authorized_fragment(renderer, store, principal, permission):
+    """Authorize once on a full run; the fragment revalidates on later reruns."""
+    from services.access import authorization_scope, require_permission
+
+    with authorization_scope(store, principal) as current:
+        current = require_permission(current, permission)
+        _render_module_fragment(renderer, store, current, permission)
 
 
 def _active_theme(identity):
@@ -1224,7 +1243,7 @@ def render_portal():
             st.error(str(exc))
             st.stop()
         registrar_modulo(store, principal, "Alertas")
-        _render_module_fragment(render_alerts, store, principal)
+        _render_module_fragment(render_alerts, store, principal, "alertas")
         st.stop()
     if selected == "Início":
         st.session_state.pop("_global_search_home_active", None)
@@ -1243,58 +1262,49 @@ def render_portal():
     registrar_modulo(store, principal, selected)
     try:
         if selected == "Agenda":
-            require_permission(principal, "agenda")
             from services.agenda_ui import render
 
-            _render_module_fragment(render, store, principal)
+            _render_authorized_fragment(render, store, principal, "agenda")
             st.stop()
         if selected == "Ofícios":
-            require_permission(principal, "oficios")
             from services.oficios_ui import render
 
-            _render_module_fragment(render, store, principal)
+            _render_authorized_fragment(render, store, principal, "oficios")
             st.stop()
         if selected == "Memorandos":
-            require_permission(principal, "memorandos")
             from services.memorandos_ui import render
 
-            _render_module_fragment(render, store, principal)
+            _render_authorized_fragment(render, store, principal, "memorandos")
             st.stop()
         if selected == "Tarefas":
-            require_permission(principal, "tarefas")
             from services.tarefas_ui import render
 
-            _render_module_fragment(render, store, principal)
+            _render_authorized_fragment(render, store, principal, "tarefas")
             st.stop()
         if selected == "Relatórios e Indicadores":
-            require_permission(principal, "relatorios")
             from services.relatorios_ui import render
 
-            _render_module_fragment(render, store, principal)
+            _render_authorized_fragment(render, store, principal, "relatorios")
             st.stop()
         if selected == "Representações":
-            require_permission(principal, "representacoes")
             from services.representacoes_ui import render
 
-            _render_module_fragment(render, store, principal)
+            _render_authorized_fragment(render, store, principal, "representacoes")
             st.stop()
         if selected == "Petições":
-            require_permission(principal, "peticoes")
             from services.peticoes_ui import render
 
-            _render_module_fragment(render, store, principal)
+            _render_authorized_fragment(render, store, principal, "peticoes")
             st.stop()
         if selected == "Ouvidoria":
-            require_permission(principal, "ouvidoria")
             from services.ouvidoria_ui import render
 
-            _render_module_fragment(render, store, principal)
+            _render_authorized_fragment(render, store, principal, "ouvidoria")
             st.stop()
         if selected == "Administração":
-            require_permission(principal, "admin")
             from services.access_ui import render
 
-            _render_module_fragment(render, store, principal)
+            _render_authorized_fragment(render, store, principal, "admin")
             st.stop()
         require_permission(principal, "portarias")
     except ValueError as exc:

@@ -1,8 +1,11 @@
 """Authorization independent of the Streamlit OIDC identity source."""
 
-from dataclasses import dataclass
-import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+import logging
 from database.access import AccessStore, normalize_email
+from database.store import unwrap_store
 from services.oficios import GABINETES
 
 MODULES = ("portarias", "agenda", "oficios", "memorandos", "tarefas", "relatorios", "representacoes", "peticoes", "ouvidoria", "admin")
@@ -14,7 +17,8 @@ CAPABILITIES = (
     "comunicacoes_configurar_destinatarios",
     "comunicacoes_enviar_teste",
 )
-CACHE_SECONDS = 20
+_AUTHORIZATION_SCOPE = ContextVar("authorization_scope", default=None)
+LOGGER = logging.getLogger("mpc.access")
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,8 @@ class Principal:
     pode_peticoes_concluir: bool = False
     pode_comunicacoes_configurar_destinatarios: bool = False
     pode_comunicacoes_enviar_teste: bool = False
+    _authorization_version: tuple | None = field(default=None, repr=False, compare=False)
+    _store: object = field(default=None, repr=False, compare=False)
 
     @property
     def administrator(self):
@@ -91,7 +97,13 @@ def oidc_identity():
     return {"email": email, "name": name or email, "email_verified": verified}
 
 
-def principal_from_record(record):
+def principal_from_record(record, store=None):
+    version = (
+        int(record["id"]),
+        bool(record["ativo"]),
+        record.get("atualizado_em"),
+    )
+    source = unwrap_store(store) if store is not None else None
     if record["perfil"] == "ADMINISTRADOR":
         return Principal(
             id=record["id"],
@@ -114,6 +126,8 @@ def principal_from_record(record):
             pode_comunicacoes_enviar_teste=True,
             pode_admin=True,
             gabinetes=tuple(GABINETES),
+            _authorization_version=version,
+            _store=source,
         )
     gabinetes = tuple(
         code for code in GABINETES if code in set(record.get("gabinetes") or [])
@@ -141,16 +155,75 @@ def principal_from_record(record):
         pode_comunicacoes_enviar_teste=bool(record.get("pode_comunicacoes_enviar_teste", False)),
         pode_admin=bool(record["pode_admin"]),
         gabinetes=gabinetes,
+        _authorization_version=version,
+        _store=source,
     )
 
 
 def resolve_principal(store, identity):
     if not identity or not identity.get("email"):
         return None
-    record = AccessStore(store).get_by_email(identity["email"])
+    access = AccessStore(store)
+    record = access.get_by_email(identity["email"])
     if not record or not record["ativo"]:
         return None
-    return principal_from_record(record)
+    return principal_from_record(record, access.store)
+
+
+def confirm_principal(principal, store=None):
+    """Refresh a principal only when its persisted authorization version changed."""
+    if principal is None:
+        return None
+    source = unwrap_store(store) if store is not None else principal._store
+    if source is None:
+        return principal
+    access = AccessStore(source)
+    version = access.authorization_version(principal.email)
+    if version is None or not version[1]:
+        return None
+    if version == principal._authorization_version:
+        return principal
+    record = access.get_by_email(principal.email)
+    if not record or not record["ativo"]:
+        return None
+    return principal_from_record(record, access.store)
+
+
+@contextmanager
+def authorization_scope(store, principal):
+    """Confirm once and reuse the result during one module or fragment render."""
+    scoped = _AUTHORIZATION_SCOPE.get()
+    source = unwrap_store(store)
+    if (
+        scoped is not None
+        and principal is not None
+        and scoped.id == principal.id
+        and scoped.email == principal.email
+        and scoped._store is source
+    ):
+        current = scoped
+    else:
+        try:
+            current = confirm_principal(principal, store)
+        except Exception as exc:
+            LOGGER.warning(
+                "Falha ao confirmar autorização do fragmento (%s).",
+                type(exc).__name__,
+            )
+            current = None
+    token = _AUTHORIZATION_SCOPE.set(current)
+    try:
+        yield current
+    finally:
+        _AUTHORIZATION_SCOPE.reset(token)
+
+
+def _confirmed_for_operation(principal):
+    scoped = _AUTHORIZATION_SCOPE.get()
+    if scoped is not None and principal is not None:
+        if scoped.id == principal.id and scoped.email == principal.email:
+            return scoped
+    return confirm_principal(principal)
 
 
 def current_user(store):
@@ -166,23 +239,23 @@ def current_user(store):
             if "_access_cache" in st.session_state
             else None
         )
-        if (
-            cache
-            and cache.get("store_id") == id(store)
-            and cache.get("email") == identity["email"]
-            and time.monotonic() - cache.get("at", 0) < CACHE_SECONDS
-        ):
-            return cache.get("principal")
     except Exception:
         cache = None
-    principal = resolve_principal(store, identity)
+    if (
+        cache
+        and cache.get("store_id") == id(store)
+        and cache.get("email") == identity["email"]
+        and cache.get("principal") is not None
+    ):
+        principal = confirm_principal(cache.get("principal"), store)
+    else:
+        principal = resolve_principal(store, identity)
     try:
         import streamlit as st
 
         st.session_state["_access_cache"] = {
             "store_id": id(store),
             "email": identity["email"],
-            "at": time.monotonic(),
             "principal": principal,
         }
     except Exception:
@@ -257,10 +330,20 @@ def can_use_gabinete(principal, code):
 
 
 def require_permission(principal, module):
-    if not has_permission(principal, module):
+    try:
+        current = _confirmed_for_operation(principal)
+    except Exception:
+        raise ValueError("Não foi possível confirmar a autorização desta operação.") from None
+    if not has_permission(current, module):
         raise ValueError("Acesso não autorizado a este módulo.")
+    return current
 
 
 def require_gabinete(principal, code):
-    if not can_use_gabinete(principal, code):
+    try:
+        current = _confirmed_for_operation(principal)
+    except Exception:
+        raise ValueError("Não foi possível confirmar a autorização desta operação.") from None
+    if not can_use_gabinete(current, code):
         raise ValueError("Acesso não autorizado a este gabinete.")
+    return current

@@ -1,6 +1,8 @@
 from services.access import (
+    authorization_scope,
     allowed_gabinetes,
     can_use_gabinete,
+    current_user,
     has_permission,
     principal_from_record,
     require_gabinete,
@@ -31,6 +33,242 @@ def test_missing_and_inactive_are_denied(store):
     assert resolve_principal(store, {"email": "nobody@test.local"}) is None
     assert resolve_principal(store, {"email": "off@test.local"}) is None
     assert resolve_principal(store, None) is None
+
+
+def test_other_session_refreshes_revoked_modules_capabilities_and_offices(
+    store, monkeypatch
+):
+    import streamlit as st
+
+    from services.audit import aplicar_usuario
+
+    access = AccessStore(store)
+    identifier = access.save_user(
+        {
+            "nome": "Sessão antiga",
+            "email": "sessao.antiga@test.local",
+            "perfil": "USUARIO",
+            "pode_oficios": True,
+            "gabinetes": ["PROGE"],
+            "pode_peticoes": True,
+            "pode_peticoes_concluir": True,
+            "pode_representacoes": True,
+            "pode_representacoes_enviar_comunicacao": True,
+        }
+    )
+    identity = {"email": "sessao.antiga@test.local", "name": "Sessão antiga"}
+    user_session = {}
+    admin_session = {}
+    active_identity = {"value": identity}
+    monkeypatch.setattr(st, "session_state", user_session)
+    monkeypatch.setattr(
+        "services.access.oidc_identity", lambda: active_identity["value"]
+    )
+    stale = current_user(store)
+    assert has_permission(stale, "peticoes")
+    assert has_permission(stale, "peticoes_concluir")
+    assert can_use_gabinete(stale, "PROGE")
+
+    active_identity["value"] = TEST_IDENTITY
+    monkeypatch.setattr(st, "session_state", admin_session)
+    admin = current_user(store)
+    current = access.get(identifier)
+    aplicar_usuario(
+        store,
+        admin,
+        {
+            **current,
+            "pode_oficios": False,
+            "gabinetes": [],
+            "pode_peticoes": False,
+            "pode_peticoes_concluir": False,
+            "pode_representacoes": False,
+            "pode_representacoes_enviar_comunicacao": False,
+        },
+        identifier,
+    )
+
+    with pytest.raises(ValueError, match="módulo"):
+        require_permission(stale, "peticoes")
+    with pytest.raises(ValueError, match="módulo"):
+        require_permission(stale, "peticoes_concluir")
+    with pytest.raises(ValueError, match="gabinete"):
+        require_gabinete(stale, "PROGE")
+    active_identity["value"] = identity
+    monkeypatch.setattr(st, "session_state", user_session)
+    refreshed = current_user(store)
+    assert refreshed is not None
+    assert not has_permission(refreshed, "peticoes")
+    assert not has_permission(refreshed, "representacoes")
+    assert allowed_gabinetes(refreshed) == ()
+
+
+def test_stale_sessions_deny_deactivated_deleted_and_downgraded_users(store):
+    access = AccessStore(store)
+    deactivated_id = access.save_user(
+        {
+            "nome": "Desativado",
+            "email": "desativado.cache@test.local",
+            "perfil": "USUARIO",
+            "pode_agenda": True,
+        }
+    )
+    deactivated = resolve_principal(
+        store, {"email": "desativado.cache@test.local"}
+    )
+    access.set_active(deactivated_id, False)
+    with pytest.raises(ValueError, match="módulo"):
+        require_permission(deactivated, "agenda")
+
+    deleted_id = access.save_user(
+        {
+            "nome": "Excluído",
+            "email": "excluido.cache@test.local",
+            "perfil": "USUARIO",
+            "pode_portarias": True,
+        }
+    )
+    deleted = resolve_principal(store, {"email": "excluido.cache@test.local"})
+    access.delete_user(deleted_id)
+    with pytest.raises(ValueError, match="módulo"):
+        require_permission(deleted, "portarias")
+
+    admin_id = access.save_user(
+        {
+            "nome": "Administrador rebaixado",
+            "email": "rebaixado.cache@test.local",
+            "perfil": "ADMINISTRADOR",
+        }
+    )
+    downgraded = resolve_principal(store, {"email": "rebaixado.cache@test.local"})
+    access.save_user(
+        {
+            **access.get(admin_id),
+            "perfil": "USUARIO",
+            "pode_admin": False,
+        },
+        admin_id,
+    )
+    with pytest.raises(ValueError, match="módulo"):
+        require_permission(downgraded, "admin")
+
+
+def test_authorization_scope_reuses_one_check_and_unaffected_user_keeps_access(
+    store, monkeypatch
+):
+    identifier = AccessStore(store).save_user(
+        {
+            "nome": "Não afetado",
+            "email": "nao.afetado@test.local",
+            "perfil": "USUARIO",
+            "pode_oficios": True,
+            "gabinetes": ["PROGE"],
+        }
+    )
+    principal = resolve_principal(store, {"email": "nao.afetado@test.local"})
+    calls = []
+    original = AccessStore.authorization_version
+
+    def counted(self, email):
+        calls.append(email)
+        return original(self, email)
+
+    monkeypatch.setattr(AccessStore, "authorization_version", counted)
+    with authorization_scope(store, principal) as current:
+        with authorization_scope(store, current) as nested:
+            assert nested.id == identifier
+            assert require_permission(nested, "oficios") is nested
+            assert require_gabinete(nested, "PROGE") is nested
+    assert calls == ["nao.afetado@test.local"]
+
+
+def test_authorization_lookup_failure_is_fail_closed(store, monkeypatch):
+    identifier = AccessStore(store).save_user(
+        {
+            "nome": "Falha de consulta",
+            "email": "falha.auth@test.local",
+            "perfil": "USUARIO",
+            "pode_peticoes": True,
+        }
+    )
+    principal = resolve_principal(store, {"email": "falha.auth@test.local"})
+    assert identifier == principal.id
+    monkeypatch.setattr(
+        AccessStore,
+        "authorization_version",
+        lambda self, email: (_ for _ in ()).throw(RuntimeError("indisponível")),
+    )
+    with pytest.raises(ValueError, match="confirmar a autorização"):
+        require_permission(principal, "peticoes")
+
+
+def test_stale_peticoes_callback_does_not_use_revoked_capability(
+    store, monkeypatch
+):
+    import streamlit as st
+
+    from services.peticoes_ui import _concluir_peticao
+
+    access = AccessStore(store)
+    identifier = access.save_user(
+        {
+            "nome": "Callback antigo",
+            "email": "callback.peticoes@test.local",
+            "perfil": "USUARIO",
+            "pode_peticoes": True,
+            "pode_peticoes_concluir": True,
+        }
+    )
+    stale = resolve_principal(
+        store, {"email": "callback.peticoes@test.local"}
+    )
+    access.save_user(
+        {
+            **access.get(identifier),
+            "pode_peticoes_concluir": False,
+        },
+        identifier,
+    )
+    called = []
+    monkeypatch.setattr(st, "session_state", {"resultado": "texto"})
+    monkeypatch.setattr(
+        "services.peticoes_ui.conclude",
+        lambda *args: called.append(args),
+    )
+
+    _concluir_peticao(
+        store, stale, 1, "resultado", "peticoes_callback_error"
+    )
+
+    assert called == []
+    assert "não autorizado" in st.session_state["peticoes_callback_error"]
+
+
+def test_stale_task_callback_denies_inactive_user_before_mutation(store):
+    from services.tarefas_ui import _finish_task
+
+    access = AccessStore(store)
+    identifier = access.save_user(
+        {
+            "nome": "Tarefa antiga",
+            "email": "callback.tarefa@test.local",
+            "perfil": "USUARIO",
+        }
+    )
+    stale = resolve_principal(store, {"email": "callback.tarefa@test.local"})
+    access.set_active(identifier, False)
+
+    class Repo:
+        called = False
+
+        def transition_status(self, *args):
+            self.called = True
+            return None, False
+
+    repo = Repo()
+    with pytest.raises(ValueError, match="módulo"):
+        _finish_task(repo, store, stale, 1)
+    assert repo.called is False
 
 
 def test_administrator_has_all_modules_and_offices(store):
