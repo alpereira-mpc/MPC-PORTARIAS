@@ -1,36 +1,72 @@
-# Repository Guidelines
+# Guia de intervenção do Codex
 
-## Project Structure
+## Antes de alterar
 
-Ferramentas MPC-PB is a local Python 3.12/Streamlit application. `app.py` implements the four screens. `database/` holds SQLite persistence and initial seed data; `services/` contains Portuguese wording, validation, and exports; `document_generator/` handles DOCX and PDF conversion. Institutional template packages and artwork live in `templates/` and `assets/`.
+Avalie autonomamente a intervenção mínima necessária. Ajustes simples não
+justificam auditoria ampla, refatoração, múltiplas ferramentas nem suíte completa.
+Leia primeiro o teste e o componente diretamente afetados; só amplie a inspeção
+quando houver evidência concreta de dependência ou risco.
 
-`referencias/` contains immutable original DOC/PDF pairs. `tests/` covers domain rules, persistence, and the Streamlit workflow. `docs/` records visual validation and sample documents. Runtime data belongs in `data/`, generated documents in `exports/`, and development intermediates in ignored `tmp/`.
+Não faça refatorações oportunistas, mudanças estéticas ou atualização de
+dependências. Preserve as funcionalidades e as regras de negócio atuais.
 
-## Development Commands
+## Arquitetura
 
-Use PowerShell from the repository root:
+- `app.py`: entrada e módulo Portarias.
+- `portal.py`: autenticação, autorização, temas, shell e navegação.
+- `services/`: regras e interfaces dos módulos.
+- `database/`: persistência comum, SQLite, PostgreSQL, schemas e inventário.
+- `document_generator/`: DOCX/PDF.
+- `templates/` e `assets/`: identidade institucional.
+- `tests/`: contratos de domínio, persistência e Streamlit.
+- `docs/`: operação e decisões técnicas; `referencias/` é imutável.
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m streamlit run app.py
-.\.venv\Scripts\python.exe -m pytest -q
-```
+Antes de mudar código compartilhado, localize importadores, callbacks e testes
+dependentes. Mantenha regras de negócio fora da interface quando possível.
 
-These create the environment, install dependencies, launch locally, and run tests. `Iniciar_MPC.cmd` launches an existing environment. Install `requirements-dev.txt` for Black; format with `python -m black app.py database services document_generator tests scripts`.
+## Regras de segurança
 
-## Coding Style & Naming
+- Preserve numeração, estados, snapshots, auditoria, permissões, transações,
+  idempotência e prevenção de duplicações.
+- Finalização deve persistir número anual único e DOCX atomicamente. Cancelamento
+  mantém o número. Exclusão definitiva só ocorre na rotina administrativa com
+  confirmação, backup, auditoria e recálculo transacional permitido.
+- Seeds e migrations nunca sobrescrevem dados ou configurações existentes.
+- Não conecte à produção, execute migration operacional, leia Secrets reais nem
+  altere autenticação ou Backup V2 sem defeito comprovado.
+- Não modifique originais em `referencias/`, não sobrescreva exportações e não
+  envie documentos a serviços externos.
+- Não faça commit, tag ou push sem solicitação explícita.
 
-Use four-space indentation, Black formatting, `snake_case` functions/modules, and `PascalCase` classes. Keep business rules independent of Streamlit. Use testable Portuguese templates, explicit grammatical gender, and full four-digit years. Store configurable members, reasons, and legal bases in SQLite. Seed changes must never overwrite existing user settings.
+## Streamlit e temas
 
-## Testing Guidelines
+Trate `st.session_state` como estado por sessão: use chaves por módulo, registro e
+usuário quando necessário; limpe apenas chaves transitórias explícitas. Ao voltar
+de uma tela, preserve filtros e pesquisa, mas descarte confirmações, uploads e
+valores provisórios que não pertencem ao próximo registro.
 
-Use pytest and `tests/test_*.py`; isolate databases and files with `tmp_path`. Test draft/finalized/cancelled transitions, concurrent and repeated finalization, annual rollover, recovery, and a fresh process reopening the database. Cover gender, cascading substitutions, footnotes, manual overrides, and invalid inputs. No numerical coverage threshold is established.
+Callbacks apenas atualizam estado e deixam o rerun natural ocorrer. Chamadas no
+corpo do script podem solicitar rerun; dentro de fragmentos, escolha
+conscientemente `scope="fragment"` ou `scope="app"`. Mudanças entre módulos devem
+reentrar no app; interações internas não devem reinicializar navegação ou sessão.
 
-For generator changes, render Portarias 5/2026, 6/2026, and 8/2026 and inspect every page against the references. Preserve the institutional package structure documented in `docs/PADRAO_INSTITUCIONAL.md`. Report any unavailable converter instead of claiming PDF validation passed.
+Use tokens de `services/themes.py` e `services/ui_theme.py`; não introduza cores
+fixas para superfícies compartilhadas. Valide componentes comuns nos cinco temas.
 
-## Safety & Contributions
+## Validação proporcional
 
-Never modify reference originals, silently overwrite exports, or send documents to external services. Finalized acts may only be deleted through the explicit administrative routine with confirmation, backup, audit log, and transactional sequence recalculation. Ordinary cancellation retains the number. Finalization must atomically persist a unique annual number and DOCX snapshot. Preserve administrative baselines and existing data across migrations.
+Use Python 3.12, pytest e bancos/arquivos sintéticos em `tmp_path`. Execute primeiro
+os testes existentes do comportamento alterado e acrescente apenas regressões
+relevantes. Para navegação/estado, cubra abrir, voltar, cancelar e alternar dois
+registros. Para mutações, cubra autorização no serviço, sucesso, repetição e
+rollback conforme o risco.
 
-No Git metadata or historical commit convention is available. Use concise imperative commit subjects. PRs should describe behavior, test evidence, migration implications, and rendered comparisons for document or interface changes. Exclude runtime databases, logs, environments, and exports from commits.
+Não execute a suíte completa por padrão. Sempre verifique a sintaxe dos arquivos
+Python alterados e `git diff --check`. Mudanças em geradores exigem as Portarias
+5, 6 e 8/2026; informe conversor indisponível em vez de afirmar validação PDF.
+Preserve os testes PostgreSQL aprovados e nunca aponte-os para produção.
+
+## Entrega
+
+Relate brevemente: alterações, testes executados, riscos encontrados, riscos
+residuais e decisões deliberadamente evitadas por segurança.

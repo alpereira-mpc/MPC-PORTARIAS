@@ -2,7 +2,7 @@
 
 O Google autentica a identidade. O banco da aplicação (SQLite local ou PostgreSQL/Supabase) autoriza o e-mail e as permissões. Não há senha no sistema. Não use Supabase Auth.
 
-A versão do Streamlit do projeto (`1.49.1`) já oferece `st.login()`, `st.user` e `st.logout()`. Não foi necessário atualizar o Streamlit.
+A versão do Streamlit fixada pelo projeto (`1.59.2`) oferece `st.login()`, `st.user` e `st.logout()`.
 
 ## A. Google Cloud OAuth
 

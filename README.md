@@ -1,34 +1,55 @@
 # Ferramentas MPC-PB
 
-Portal Integrado de Gestão e Apoio Operacional do Ministério Público de Contas da Paraíba.
+Portal institucional em Python 3.12 e Streamlit para apoiar rotinas do Ministério
+Público de Contas da Paraíba. A aplicação reúne autenticação Google, autorização
+por módulo e gabinete, auditoria, temas por usuário e persistência em SQLite ou
+PostgreSQL/Supabase.
 
-O primeiro módulo ativo inclui o **Gerador de Portarias PROGE**, para elaboração,
-numeração, geração e gerenciamento de Portarias de substituição.
+## Módulos
 
-A entrada é **Início**. Use o card **Acessar Portarias** ou a opção **Portarias**
-na sidebar para acessar Nova Portaria, Histórico, Procuradores e Configurações.
-Memorandos, Ofícios, Agenda e Relatórios aparecem apenas como **Em breve**.
+- **Portarias:** elaboração, numeração, finalização, DOCX/PDF e histórico.
+- **Agenda e Afastamentos:** eventos, reuniões, despachos, afastamentos e
+  substituições.
+- **Ofícios:** geração, registro, documentos, movimentações e acompanhamento de
+  enviados e recebidos.
+- **Memorandos:** preparação e controle de memorandos de substituição.
+- **Representações e Petições:** elaboração, protocolo e acompanhamento interno.
+- **Ouvidoria:** notícias de fato, triagem, providências e encaminhamentos.
+- **Tarefas:** demandas pessoais, prazos, prioridades, checklists e lembretes.
+- **Relatórios e Indicadores:** produção, estoque processual e relatórios
+  institucionais.
+- **Administração:** usuários, permissões, auditoria, saúde e Backup V2.
 
-O portal funciona com Streamlit, SQLite local e PostgreSQL/Supabase na nuvem.
-A Home não inicializa o módulo Portarias nem consulta o banco. `portal.py`
-concentra o catálogo visual de módulos e a navegação; o módulo existente permanece
-em `app.py`, sem duplicação. Novos módulos poderão ter entradas próprias e usar
-as camadas de dados existentes; esta etapa não cria tabelas ou autenticação.
-A alteração de nome não modifica a URL de deployment, que é configurada no painel Cloud.
+A Home e a Busca Global integram o acesso aos módulos. A interface só exibe as
+áreas autorizadas ao usuário; as operações sensíveis também validam permissão na
+camada de serviço.
 
-## Iniciar neste computador
+## Arquitetura
 
-Execute `Iniciar_MPC.cmd` ou, no PowerShell aberto nesta pasta:
+- `app.py`: ponto de entrada e telas do módulo Portarias.
+- `portal.py`: autenticação, shell, temas, navegação e carregamento dos módulos.
+- `services/`: regras de negócio e componentes de interface por domínio.
+- `database/`: Store comum, SQLite, adaptador PostgreSQL, schemas e inventário.
+- `document_generator/`: geração de DOCX/PDF e cabeçalhos institucionais.
+- `templates/` e `assets/`: pacotes e arte institucional.
+- `tests/`: regras, persistência e fluxos Streamlit com dados sintéticos.
+- `docs/`: operação, arquitetura, validação e padrões documentais.
+- `referencias/`: originais imutáveis usados como referência visual.
 
-```powershell
-.\.venv\Scripts\python.exe -m streamlit run app.py
-```
+`Store()` usa `DATABASE_URL` quando ela existe e, caso contrário, abre SQLite em
+`data/mpc.db` (ou o caminho explícito de `MPC_DB_PATH`). A URL configurada e
+inválida causa erro; não há fallback silencioso. O schema PostgreSQL da aplicação
+é privado e as migrations são aditivas e idempotentes. Seeds não sobrescrevem
+configurações nem dados existentes.
 
-Abra http://127.0.0.1:8502. Para encerrar, pressione Ctrl+C no terminal. O servidor aceita conexões somente do próprio computador.
+O Google OIDC autentica a identidade. A tabela interna de usuários autoriza o
+e-mail, os módulos e os gabinetes; não há senha da aplicação nem uso de Supabase
+Auth. Dados de sessão e widgets pertencem à sessão Streamlit do usuário, e chaves
+de formulários por registro evitam contaminação entre edições.
 
-## Instalação em outro computador
+## Instalação e execução local
 
-Requisitos: Python 3.12 de 64 bits; Windows recomendado para conversão com Microsoft Word. No PowerShell:
+No PowerShell, a partir da raiz do repositório:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -36,56 +57,81 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Em Linux/macOS, use Python 3.12, `python3 -m venv .venv` e `.venv/bin/python`; instale LibreOffice para PDFs. Preserve `templates/` e `assets/` junto ao código. Os modelos DOC originais não são necessários durante a execução, mas devem permanecer intactos em `referencias/`.
+`Iniciar_MPC.cmd` inicia um ambiente já instalado. No Linux/macOS, use os
+equivalentes `python3 -m venv` e `.venv/bin/python`. A conversão PDF usa Microsoft
+Word no Windows ou LibreOffice quando disponível; sem conversor, o DOCX continua
+disponível e a interface informa a limitação.
 
-## Primeiro uso
+### Configuração de desenvolvimento
 
-1. Abra **Configurações → Numeração anual** e confirme a última Portaria realmente emitida. Para 2026, a sugestão é 8; não é aplicada sem confirmação. Após confirmar 8, o próximo número será 9.
-2. Confira os sete procuradores iniciais, os ocupantes das funções, as bases legais e o diretório de exportação. Nomes e funções iniciais vêm da especificação e são editáveis.
-3. Em **Nova Portaria**, escolha titular, substituto, função, assento, datas, motivo e signatário. O substituto não é escolhido automaticamente.
-4. Adicione outras substituições se necessário. Cada uma pode ter período próprio e motivo próprio ou decorrente da anterior.
-5. Prepare a prévia. Confira o texto e, se necessário, edite somente aquela Portaria. Restaure a redação automática a qualquer momento.
-6. Clique em **FINALIZAR PORTARIA**. O DOCX fica preservado no banco e é exportado. O PDF é gerado pelo botão independente.
+Copie `.streamlit/secrets.example.toml` para o arquivo local ignorado
+`.streamlit/secrets.toml` e preencha apenas no ambiente de desenvolvimento. Nunca
+versione Client Secrets, tokens, chaves, URLs de banco ou credenciais SMTP. Sem
+`DATABASE_URL`, o desenvolvimento usa SQLite local.
 
-Prévia DOCX/PDF recebe identificação `[PRÉVIA]`; o número exibido na tela é uma previsão. Se outro usuário local finalizar antes, o número definitivo será recalculado sob transação. Rascunhos não reservam número. Uma Portaria cancelada mantém seu número. Duplicar cria um rascunho sem número e restaura o texto automático.
+Não aponte testes para produção. As fixtures removem conexões herdadas e usam
+bancos temporários. A integração PostgreSQL exige a variável exclusiva de teste,
+um banco descartável em loopback e o marcador de proteção descrito em
+[`docs/POSTGRESQL_SUPABASE.md`](docs/POSTGRESQL_SUPABASE.md).
 
-## Banco, arquivos e recuperação
+## Testes
 
-Na versão 1.1, o Histórico oferece **Excluir Portaria definitivamente** com motivo, confirmação textual, backup automático e log administrativo. A exclusão da última Portaria recalcula a sequência respeitando o baseline anterior ao aplicativo; cancelamento continua ocupando número. Rascunhos têm exclusão com confirmação simples. Consulte o [guia de exclusão e quarentena](docs/EXCLUSAO_ADMINISTRATIVA.md).
-
-- Banco: `data/mpc.db`, relativo à pasta da aplicação, independentemente do diretório do terminal.
-- Exportações: `exports/` por padrão, alterável nas Configurações.
-- Logs: `data/mpc.log`, com rotação de até três arquivos adicionais.
-- Backup consistente: **Configurações → Backup local**. Para restaurar, encerre o aplicativo, preserve o banco atual e seus arquivos WAL/SHM como conjunto de segurança e substitua o banco pelo backup usando um diretório limpo. Não troque bancos com o programa aberto.
-- Testes: bancos e exportações temporários; não alteram o banco de uso real.
-- Exemplos: `docs/exemplos/`, com as Portarias 5, 6 e 8/2026 geradas para validação; não são registros de emissão.
-
-A inicialização tem versão de esquema e não recria cadastros nem reinicia sequências. Uma finalização grava número, dados e DOCX na mesma transação. Se a exportação em disco falhar, reexporte pelo Histórico: o DOCX continua no banco. Arquivos existentes recebem uma nova versão (`_v2`, `_v3`); nunca são sobrescritos. Atos finalizados preservam dados e DOCX originais mesmo após alterações dos cadastros/templates. Cancelamento exige confirmação e motivo, registrados no histórico.
-
-## PDF e identidade visual
-
-No Windows, o modo Automático tenta **Microsoft Word via pywin32**, em processo separado, e depois **LibreOffice headless**. Word deve estar instalado e operacional para o mesmo usuário. Cada tentativa tem limite de 55 segundos. Sem conversor funcional, o aplicativo apresenta uma mensagem e mantém o DOCX disponível.
-
-LibreOffice é localizado no PATH ou nos diretórios usuais; `MPC_LIBREOFFICE` pode indicar seu executável. Word foi validado neste computador. LibreOffice não estava instalado, portanto sua conversão real não foi validada aqui. Para reproduzir a mesma paginação em outro computador, use Word e Times New Roman; a renderização entre programas pode variar.
-
-Os templates preservam os pacotes institucionais convertidos de cópias dos documentos originais: A4, margens, espaçamento, logo, título, corpo e assinatura. O logo foi extraído em JPEG de 1092 × 768 pixels, incluindo a área branca original. Um PNG oficial de alta resolução pode melhorar a impressão, mas não é necessário para funcionar. As notas são notas de rodapé reais do Word.
-
-A redação corrige gênero, anos truncados, a expressão “Ministério Público de Contas” e a fundamentação. A base legal por extenso ocupa uma linha adicional em relação aos exemplos antigos. Os três documentos de validação permanecem com uma página. Veja `docs/VALIDACAO.md`.
-
-## Bases legais
-
-A configuração inicial usa art. 61, § 6º, para Procuradoria-Geral/Subprocuradoria-Geral e art. 70, § 3º, para Corregedoria/Ouvidoria. Conferência feita no [Regimento Interno RN-TC nº 07/2024 publicado pelo TCE-PB](https://tce.pb.gov.br/wp-content/uploads/2024/12/REGIMENTOINTERNORNTCN07_2024.pdf), páginas impressas 30 e 34. As bases e notas são editáveis no banco; funções sem base predefinida exigem preenchimento. Avisos de coincidência de períodos e situações incomuns permitem confirmação. O sistema não determina juridicamente quem deve substituir o titular.
-
-## Desenvolvimento e testes
+Escolha o menor conjunto compatível com o risco. Exemplos:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m black app.py database services document_generator tests scripts
+# Navegação, filtros e estado entre módulos
+.\.venv\Scripts\python.exe -m pytest -q tests\test_portal_navigation_reset.py
+
+# Temas e componentes visuais compartilhados
+.\.venv\Scripts\python.exe -m pytest -q tests\test_ui_theme.py tests\test_themes.py
+
+# Permissões de ações institucionais
+.\.venv\Scripts\python.exe -m pytest -q tests\test_external_action_permissions.py
 ```
 
-`app.py` contém as telas; `database/` trata persistência; `services/` contém redação, validação e exportação; `document_generator/` gera DOCX/PDF. `database/seed.json` é usado somente na criação inicial do banco. `MPC_DB_PATH` permite apontar uma instância separada para outro banco, por exemplo em homologação. Não coloque bancos, logs nem documentos emitidos no controle de versão.
+O workflow `targeted-regressions.yml` executa em pull requests um recorte SQLite
+sem Secrets ou conexão externa. A validação PostgreSQL do Backup V2 permanece em
+workflow manual próprio e usa apenas um serviço descartável protegido.
 
-Para gerar novos exemplos isolados: `python scripts/generate_examples.py`. As evidências dos testes estão em `docs/VALIDACAO.md` e `docs/test-results.xml`.
+Mudanças nos geradores exigem renderizar as Portarias 5, 6 e 8/2026 e comparar
+todas as páginas com `referencias/`. Não declare validação PDF quando o conversor
+não estiver disponível.
 
-A atualização administrativa e a limpeza autorizada da Portaria de teste 9/2026 estão documentadas em [Relatório da atualização](docs/atualizacao-administrativa/RELATORIO.md), com testes, backups e conferência do banco após reiniciar.
+## Publicação e versionamento
+
+A versão oficial fica em `services/versioning.py` e segue SemVer. Uma entrega
+deve registrar mudanças em `CHANGELOG.md`, executar os testes proporcionais ao
+risco e só então receber commit/tag por solicitação explícita. Configurações e
+Secrets de publicação permanecem no ambiente de hospedagem, nunca no Git.
+
+Consulte [`docs/VERSIONAMENTO.md`](docs/VERSIONAMENTO.md) e
+[`docs/ACESSO.md`](docs/ACESSO.md). O repositório não deve conter bancos de
+execução, logs, ambientes virtuais, exportações ou documentos institucionais
+emitidos.
+
+## Backup e recuperação
+
+O Backup V2 produz pacote lógico tipado, documentos originais, manifesto e hashes.
+A validação e a restauração foram exercitadas apenas em destinos sintéticos e
+isolados. Nenhuma rotina substitui automaticamente o banco de produção.
+
+A guarda diária manual no servidor institucional está prevista como procedimento
+operacional. Armazenamento externo automatizado, monitoramento e alertas permanecem
+inativos até configuração e aprovação da infraestrutura. Download no Streamlit
+ou arquivo temporário não comprova cópia durável.
+
+SQLite pode ser reconstruído em banco novo isolado. PostgreSQL possui restauração
+de teste restrita a ambiente descartável protegido; recuperação operacional deve
+seguir autorização, backup nativo, validação segregada e plano de reversão. O
+mecanismo, o inventário e os limites estão em
+[`docs/SISTEMA_BACKUP_SAUDE.md`](docs/SISTEMA_BACKUP_SAUDE.md).
+
+## Documentos técnicos
+
+- [Autenticação e autorização](docs/ACESSO.md)
+- [SQLite e PostgreSQL/Supabase](docs/POSTGRESQL_SUPABASE.md)
+- [Backup V2, recuperação e saúde](docs/SISTEMA_BACKUP_SAUDE.md)
+- [Exclusão administrativa](docs/EXCLUSAO_ADMINISTRATIVA.md)
+- [Padrão institucional de documentos](docs/PADRAO_INSTITUCIONAL.md)
+- [Validação documental](docs/VALIDACAO.md)
+- [Alertas internos](docs/ALERTAS_INTERNOS.md)

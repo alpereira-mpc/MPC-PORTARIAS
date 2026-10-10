@@ -1,0 +1,38 @@
+name: Targeted regression checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite-ui-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run targeted regression checks
+        run: >-
+          python -m pytest -q
+          tests/test_portal_navigation_reset.py
+          tests/test_portal.py::test_queue_portal_navigation_does_not_rerun
+          tests/test_portal.py::test_home_card_callbacks_only_queue_navigation
+          tests/test_ui_theme.py
+          tests/test_themes.py
+          tests/test_external_action_permissions.py
+          tests/test_persistence.py
+          tests/test_access.py::test_admin_form_new_user_is_not_contaminated_by_logged_administrator
+          tests/test_access.py::test_admin_delete_requires_confirmation_and_can_be_cancelled
+          tests/test_deletion.py::test_rollback_all_on_log_failure
+          tests/test_deletion.py::test_delete_repeat_does_not_touch_reused_number
+          tests/test_ui_cache.py::test_fragment_preview_finalize_and_lazy_download
+          tests/test_ui_cache.py::test_edited_fragment_cannot_finalize_old_preview
+          --basetemp=tmp/pytest-targeted-regressions

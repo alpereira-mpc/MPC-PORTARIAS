@@ -2,7 +2,7 @@
 
 ## Estado e limites
 
-O portal gera um **backup lógico V2 do banco da aplicação**, com JSONL tipado, CSV de consulta, anexos originais e hashes SHA-256. SQLite dispõe de reconstrução automática em banco novo isolado. PostgreSQL dispõe de exportação lógica em transação somente leitura; **sua restauração automática permanece bloqueada**. Não houve conexão com produção, migração externa, envio real, criação de infraestrutura ou teste real PostgreSQL nesta implementação.
+O portal gera um **backup lógico V2 do banco da aplicação**, com JSONL tipado, CSV de consulta, anexos originais e hashes SHA-256. SQLite dispõe de reconstrução automática em banco novo isolado. PostgreSQL dispõe de exportação lógica em transação somente leitura e de restauração restrita a banco descartável protegido, validada pelo workflow manual `postgresql-backup-v2.yml`. **A restauração operacional ou automática de produção permanece bloqueada.** Não houve conexão com produção, migração externa, envio real nem criação de infraestrutura externa nesta implementação.
 
 **Backup externo não configurado** é o estado padrão. ZIP temporário no Streamlit e download solicitado não comprovam cópia durável. Não existe proteção completa contra desastres até que armazenamento externo, monitoramento, credenciais de recuperação e ensaio institucional sejam configurados e comprovados.
 
@@ -141,7 +141,7 @@ A equipe de infraestrutura deve, antes da ativação:
 
 ## Recuperação definitiva PostgreSQL/Supabase — execução bloqueada no portal
 
-Não há comando de substituir/truncar produção nesta implementação. O ZIP V2 PostgreSQL não é certificado para reconstrução automática: tipos próprios, gatilhos e sequências não transacionais precisam de ensaio real no mesmo engine. Valores de sequências são registrados para diagnóstico, mas sua consistência não é garantida por REPEATABLE READ. Não converter esse ZIP para SQLite e anunciar recuperação integral.
+Não há comando de substituir/truncar produção nesta implementação. A restauração V2 PostgreSQL existe somente para testes descartáveis com URL de loopback, banco e marcador de proteção específicos; isso comprova o fluxo técnico isolado, não autoriza recuperação automática de produção. Tipos próprios, gatilhos, sequências, permissões e infraestrutura operacional ainda exigem ensaio e procedimento institucional no destino real. Não converter esse ZIP para SQLite e anunciar recuperação integral.
 
 Procedimento institucional necessário:
 
@@ -204,4 +204,4 @@ Runtime conferido: **Streamlit 1.59.2**, usando a instalação isolada em `tmp/s
 - Adaptador externo testado com cliente **simulado**, incluindo leitura de volta, corrupção, ausência de lock e recibo somente após sucesso. Nenhum upload real foi executado.
 - Inventário atual: **73 tabelas declaradas**, com diferenças por engine, exclusões técnicas e módulos aditivos explicitadas. Este número não é uma contagem do schema de produção, que não foi consultado.
 
-A capacidade integral comprovada é a ida e volta **SQLite sintética**. Não há certificação de recuperação PostgreSQL, ensaio real de S3, entrega de alertas, agendamento ativado ou restauração de produção. Arquivos externos, snapshots administrativos nativos, credenciais e infraestrutura continuam exigindo os procedimentos separados descritos acima.
+A capacidade comprovada inclui a ida e volta **SQLite sintética** e a restauração PostgreSQL em banco descartável protegido pelo workflow manual. Isso não certifica recuperação do ambiente de produção. Não houve ensaio real de S3, entrega de alertas, agendamento externo ativado ou restauração de produção. A guarda diária manual no servidor institucional é o procedimento previsto enquanto a infraestrutura externa automatizada permanecer inativa. Arquivos externos, snapshots administrativos nativos, credenciais e infraestrutura continuam exigindo os procedimentos separados descritos acima.

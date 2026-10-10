@@ -208,7 +208,7 @@ def test_stripe_and_header_helpers_are_available():
     assert "Abrir ofício" in render
     from services.ui_theme import _css
 
-    css = _css()
+    css = _css("vermelho")
     compact = css.replace(" ", "")
     dense = "".join(css.split())
     assert "st-key-mpc_card_" in css
@@ -339,12 +339,13 @@ def test_oficios_recebidos_acompanhamento_controls_are_scoped():
     from services.ui_theme import _css
 
     details = getsource(oficios_ui.details)
-    assert 'recebidos_acompanhamento_key(r["id"])' in details
-    assert 'recebidos_historico_key(r["id"])' in details
-    assert 'key="oficios_recebidos_acompanhamento"' not in details
-    assert 'key="oficios_recebidos_historico"' not in details
-    assert "_render_recebidos_historico" in details
-    assert "st.dataframe" in details
+    movements = getsource(oficios_ui._render_detail_movements)
+    assert "_render_detail_movements" in details
+    assert 'recebidos_acompanhamento_key(r["id"])' in movements
+    assert 'recebidos_historico_key(r["id"])' in movements
+    assert 'key="oficios_recebidos_acompanhamento"' not in movements
+    assert 'key="oficios_recebidos_historico"' not in movements
+    assert "_render_recebidos_historico" in movements
     assert oficios_ui._RECEBIDOS_HISTORICO_COLUMNS == (
         "instante",
         "anterior",
@@ -437,6 +438,14 @@ def test_two_received_details_can_render_in_the_same_rerun():
         default_timeout=30,
     ).run()
     assert not app.exception
+    assert len(app.radio) == 3
+    app.radio(key="oficio_detail_section_id-beta").set_value("Movimentações").run()
+    assert app.radio(key="oficio_detail_section_id-alpha").value == "Resumo"
+    assert app.radio(key="oficio_detail_section_id-beta").value == "Movimentações"
+    assert app.radio(key="oficio_detail_section_id-gamma").value == "Resumo"
+    app.radio(key="oficio_detail_section_id-alpha").set_value("Movimentações").run()
+    app.radio(key="oficio_detail_section_id-gamma").set_value("Movimentações").run()
+    assert not app.exception
     assert len(app.selectbox) == 3
     assert len(app.date_input) == 6
     assert len(app.text_area) >= 3
@@ -458,7 +467,9 @@ def test_oficio_detail_button_uses_the_same_open_state():
     assert "Abrir detalhes" in listing
     assert "on_click=_toggle_oficio_detail" in listing
     assert 'if st.button(\n                "Ocultar detalhes"' not in listing
-    assert 'recebidos_excluir_key(r["id"])' in details
+    more = getsource(oficios_ui._render_detail_more)
+    assert "_render_detail_more" in details
+    assert 'recebidos_excluir_key(r["id"])' in more
     assert oficios_ui.recebidos_excluir_key("of-1") != oficios_ui.recebidos_excluir_key(
         "of-2"
     )
