@@ -18,7 +18,6 @@ from services.audit import (
     format_local,
     format_local_short,
     module_label,
-    objeto_humano,
     overview,
     period_bounds,
     result_label,
@@ -30,13 +29,10 @@ from services.ui_theme import (
     DANGER,
     INFO,
     WARNING,
-    badges,
-    card_container,
     definition_block,
     empty_state,
     filter_mark,
     kpi_mark,
-    render_record,
     section_label,
     style_striped_table,
 )
@@ -158,11 +154,37 @@ def style_event_table(rows, theme_name):
     return frame.style.apply(paint, axis=1)
 
 
+def compact_modules(modules, limit=2):
+    labels = [module_label(module) for module in modules or ()]
+    if len(labels) <= limit:
+        return ", ".join(labels) or "—"
+    return ", ".join(labels[:limit]) + f" +{len(labels) - limit}"
+
+
+def access_event_rows(rows):
+    def historical_identity(row):
+        name = row.get("usuario_nome") or ""
+        email = row.get("usuario_email") or ""
+        return " · ".join(item for item in (name, email) if item) or "—"
+
+    return [
+        {
+            "Data/hora": format_local_short(row.get("criado_em")),
+            "Identidade histórica": historical_identity(row),
+            "Módulo": module_label(row.get("modulo")),
+            "Evento": event_label(row.get("evento")),
+            "Resultado": result_label(row.get("resultado")),
+            "Resumo": resumo_humano(row),
+        }
+        for row in rows
+    ]
+
+
 def _render_kpis(store, principal):
     data = dashboard_hoje(store, principal)
     items = (
         ("Atividades hoje", data["atividades"], "brand"),
-        ("Usuários ativos", data["usuarios_ativos"], "info"),
+        ("Usuários que acessaram hoje", data["usuarios_ativos"], "info"),
         ("Alterações administrativas", data["admin"], "warning"),
         ("Downloads de documentos", data["downloads"], "success"),
         ("Falhas/erros registrados", data["falhas"], "danger" if data["falhas"] else "muted"),
@@ -179,34 +201,39 @@ def _render_overview(store, principal):
     # The page-level KPI strip already loaded today's dashboard.
     data = overview(store, principal, include_dashboard=False)
     st.caption("Indicadores calculados no fuso institucional America/Recife. Logs em UTC.")
-    section_label("Indicadores")
-    today, week, month = st.columns(3)
-    with today:
-        st.markdown("**Hoje**")
-        st.metric("Usuários que acessaram", data["hoje"]["usuarios"])
-        st.metric("Sessões", data["hoje"]["sessoes"])
-        st.metric("Ações registradas", data["hoje"]["acoes"])
-    with week:
-        st.markdown("**Últimos 7 dias**")
-        st.metric("Usuários distintos", data["semana"]["usuarios"])
-        st.metric("Acessos", data["semana"]["sessoes"])
-        st.metric("Ações", data["semana"]["acoes"])
-    with month:
-        st.markdown("**Últimos 30 dias**")
-        st.metric("Usuários distintos", data["mes"]["usuarios"])
-        st.metric("Acessos", data["mes"]["sessoes"])
-        st.metric("Ações", data["mes"]["acoes"])
+    section_label("Períodos comparados")
+    st.dataframe(
+        style_striped_table(
+            [
+                {
+                    "Período": label,
+                    "Usuários que acessaram": data[key]["usuarios"],
+                    "Sessões": data[key]["sessoes"],
+                    "Atividades": data[key]["acoes"],
+                }
+                for key, label in (
+                    ("hoje", "Hoje"),
+                    ("semana", "Últimos 7 dias"),
+                    ("mes", "Últimos 30 dias"),
+                )
+            ],
+            _theme_name(),
+        ),
+        hide_index=True,
+        width="stretch",
+        key="audit_period_comparison",
+    )
     latest = data["ultimo_acesso"]
     used = data["modulo_mais_usado"]
-    a, b, c, d = st.columns(4)
+    section_label("Resumo operacional")
+    a, b, c = st.columns(3)
     a.metric("Usuários ativos cadastrados", data["usuarios_ativos"])
-    b.write("**Usuário mais recente**")
+    b.write("**Último usuário que acessou**")
     b.write(latest["nome"] if latest else "—")
     b.caption(latest["email"] if latest else "")
-    c.write("**Último acesso ao sistema**")
-    c.write(format_local(latest["criado_em"]) if latest else "—")
-    d.write("**Módulo mais utilizado (30 dias)**")
-    d.write(module_label(used["modulo"]) if used else "—")
+    b.caption(format_local(latest["criado_em"]) if latest else "")
+    c.write("**Módulo mais utilizado · últimos 30 dias**")
+    c.write(module_label(used["modulo"]) if used else "—")
     rows = user_overview(
         store,
         principal,
@@ -220,7 +247,7 @@ def _render_overview(store, principal):
                 {
                     "Usuário": f"{r['nome']} ({r['email']})" if r["email"] else r["nome"],
                     "Último acesso": format_local(r.get("ultimo_acesso")),
-                    "Acessos": r.get("sessoes") or 0,
+                    "Sessões": r.get("sessoes") or 0,
                     "Última atividade": format_local(r.get("ultima_atividade")),
                 }
                 for r in rows
@@ -269,16 +296,12 @@ def _render_accesses(store, principal):
         style_striped_table(
             [
                 {
-                    "Nome": r["nome"],
-                    "E-mail": r["email"],
+                    "Usuário": f"{r['nome']} · {r['email']}" if r["email"] else r["nome"],
                     "Perfil": r.get("perfil") or "—",
-                    "Ativo": "Sim" if r.get("ativo") else ("Não" if r.get("ativo") is False else "—"),
-                    "Primeiro acesso": format_local(r.get("primeiro_acesso")),
-                    "Último acesso": format_local(r.get("ultimo_acesso")),
+                    "Situação": "Ativo" if r.get("ativo") else ("Inativo" if r.get("ativo") is False else "—"),
                     "Sessões": r.get("sessoes") or 0,
-                    "Dias distintos": r.get("dias_distintos") or 0,
-                    "Última atividade": format_local(r.get("ultima_atividade")),
-                    "Módulos": ", ".join(module_label(m) for m in r.get("modulos") or []) or "—",
+                    "Último acesso": format_local(r.get("ultimo_acesso")),
+                    "Módulos": compact_modules(r.get("modulos")),
                 }
                 for r in rows
             ],
@@ -295,22 +318,25 @@ def _render_accesses(store, principal):
         key="acc_timeline",
     )
     if selected:
-        events = AuditStore(store).user_timeline(selected)
-        for index, event in enumerate(events):
-            with card_container(index, f"acc_tl_{event['id']}"):
-                render_record(
-                    format_local_short(event["criado_em"]),
-                    badges_html=badges(
-                        (result_label(event.get("resultado")), _result_tone(event.get("resultado"))),
-                        (action_label(event.get("acao") or event.get("evento")), "brand"),
-                    ),
-                    secondary=(event.get("usuario_nome") or "—")
-                    + " · "
-                    + resumo_humano(event),
-                    meta=module_label(event.get("modulo"))
-                    + " · "
-                    + objeto_humano(event),
-                )
+        selected_row = next((row for row in rows if row.get("email") == selected), None)
+        if selected_row:
+            module_names = ", ".join(
+                module_label(item) for item in selected_row.get("modulos") or []
+            )
+            st.caption(
+                "Módulos no período: " + (module_names or "—")
+            )
+        st.caption("O histórico abaixo respeita o período e o módulo selecionados nos filtros.")
+        events = AuditStore(store).user_timeline(selected, filters=filters)
+        if events:
+            st.dataframe(
+                style_striped_table(access_event_rows(events), _theme_name()),
+                hide_index=True,
+                width="stretch",
+                key="access_timeline_table",
+            )
+        else:
+            empty_state("Nenhum evento do usuário corresponde aos filtros informados.")
 
 
 def _event_details(record):

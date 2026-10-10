@@ -66,6 +66,7 @@ MODULE_LABELS = {
     "tarefas": "Tarefas",
     "relatorios": "Relatórios e Indicadores",
     "representacoes": "Representações",
+    "peticoes": "Petições",
     "ouvidoria": "Ouvidoria",
 }
 MODULE_KEYS = {
@@ -79,6 +80,7 @@ MODULE_KEYS = {
     "Tarefas": "tarefas",
     "Relatórios e Indicadores": "relatorios",
     "Representações": "representacoes",
+    "Petições": "peticoes",
     "Ouvidoria": "ouvidoria",
 }
 ACTION_LABELS = {
@@ -187,6 +189,15 @@ EVENT_LABELS = {
     "ENCAMINHAMENTO_CRIADO": "Encaminhamento criado",
     "ENCAMINHAMENTO_CIENTE": "Ciência de encaminhamento registrada",
     "ENCAMINHAMENTO_CONCLUIDO": "Encaminhamento concluído",
+    "PETICAO_CRIADA": "Petição criada",
+    "PETICAO_EDITADA": "Petição alterada",
+    "PETICAO_PDF_SUBSTITUIDO": "PDF da Petição substituído",
+    "PETICAO_PEDIDOS_EDITADOS": "Pedidos da Petição alterados",
+    "PETICAO_PEDIDO_EXCLUIDO_LOGICAMENTE": "Pedido da Petição excluído logicamente",
+    "PETICAO_ANDAMENTO_CRIADO": "Andamento da Petição registrado",
+    "PETICAO_ANDAMENTO_EXCLUIDO_LOGICAMENTE": "Andamento da Petição excluído logicamente",
+    "PETICAO_RESULTADO_REGISTRADO": "Resultado da Petição registrado",
+    "PETICAO_CONCLUIDA": "Petição concluída",
 }
 ENTITY_LABELS = {
     "portaria": "Portaria",
@@ -208,6 +219,7 @@ ENTITY_LABELS = {
     "memorando": "Memorando",
     "representacao": "Representação",
     "ouvidoria": "Notícia de fato",
+    "peticao": "Petição",
 }
 RESULT_LABELS = {
     "OK": "Sucesso",
@@ -1065,15 +1077,16 @@ def user_overview(store, principal, filters=None, *, users=None):
     from database.access import AccessStore
 
     source = AccessStore(store).list_users() if users is None else users
-    listed = {u["email"]: u for u in source}
+    listed = {(u.get("email") or "").strip().lower(): u for u in source if u.get("email")}
     rows = []
     for row in AuditStore(store).user_rows(filters):
-        cadastro = listed.get(row["usuario_email"], {})
+        historical_email = row.get("usuario_email") or ""
+        cadastro = listed.get(historical_email.strip().lower(), {})
         rows.append(
             {
                 **row,
                 "nome": cadastro.get("nome") or row.get("usuario_nome") or "—",
-                "email": row["usuario_email"],
+                "email": cadastro.get("email") or historical_email,
                 "perfil": cadastro.get("perfil") or "—",
                 "ativo": cadastro.get("ativo"),
             }

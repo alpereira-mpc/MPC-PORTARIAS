@@ -336,57 +336,64 @@ class AuditStore:
 
     def user_rows(self, filters=None):
         where, args = self._filters(filters)
+        identity = (
+            "CASE "
+            "WHEN TRIM(COALESCE(usuario_email,''))!='' "
+            "THEN 'email:' || LOWER(TRIM(usuario_email)) "
+            "WHEN usuario_id IS NOT NULL THEN 'id:' || CAST(usuario_id AS TEXT) "
+            "WHEN COALESCE(sessao_id,'')!='' THEN 'session:' || sessao_id "
+            "ELSE 'event:' || CAST(id AS TEXT) END"
+        )
         with self.store.connection(read_only=True) as c:
             rows = c.execute(
-                "SELECT usuario_id,usuario_email,usuario_nome,"
+                "WITH filtered AS (SELECT id,usuario_id,usuario_email,usuario_nome,"
+                "sessao_id,evento,modulo,criado_em,"
+                + identity
+                + " AS identity_key FROM auditoria_eventos"
+                + where
+                + "), ranked AS (SELECT *, ROW_NUMBER() OVER ("
+                "PARTITION BY identity_key ORDER BY criado_em DESC,id DESC) AS rn "
+                "FROM filtered) SELECT identity_key,"
+                "MAX(CASE WHEN rn=1 THEN usuario_id END) AS usuario_id,"
+                "MAX(CASE WHEN rn=1 THEN usuario_email END) AS usuario_email,"
+                "MAX(CASE WHEN rn=1 THEN usuario_nome END) AS usuario_nome,"
                 "MIN(criado_em) AS primeira_atividade,"
                 "MAX(criado_em) AS ultima_atividade,"
                 "MIN(CASE WHEN evento='SESSAO_INICIADA' THEN criado_em END) AS primeiro_acesso,"
                 "MAX(CASE WHEN evento='SESSAO_INICIADA' THEN criado_em END) AS ultimo_acesso,"
                 "SUM(CASE WHEN evento='SESSAO_INICIADA' THEN 1 ELSE 0 END) AS sessoes "
-                "FROM auditoria_eventos"
-                + where
-                + " GROUP BY usuario_id,usuario_email,usuario_nome "
+                "FROM ranked GROUP BY identity_key "
                 "ORDER BY MAX(CASE WHEN evento='SESSAO_INICIADA' THEN criado_em END) DESC, "
                 "MAX(criado_em) DESC",
                 args,
             ).fetchall()
-            emails = [r[1] for r in rows if r[1]]
             modules = {}
             days = {}
-            if emails:
-                placeholders = ",".join("?" * len(emails))
-                extra = list(args)
-                extra.extend(emails)
-                for item in c.execute(
-                    "SELECT usuario_email,modulo,criado_em FROM auditoria_eventos"
-                    + where
-                    + (" AND " if where else " WHERE ")
-                    + f"usuario_email IN ({placeholders})",
-                    extra,
-                ):
-                    email = item[0]
-                    if item[1]:
-                        modules.setdefault(email, set()).add(item[1])
-                    days.setdefault(email, set()).add((item[2] or "")[:10])
+            for item in c.execute(
+                "SELECT "
+                + identity
+                + " AS identity_key,modulo,criado_em FROM auditoria_eventos"
+                + where,
+                args,
+            ):
+                key = item[0]
+                if item[1]:
+                    modules.setdefault(key, set()).add(item[1])
+                days.setdefault(key, set()).add((item[2] or "")[:10])
             result = []
             for row in rows:
                 record = dict(row)
-                email = record["usuario_email"]
-                record["modulos"] = sorted(modules.get(email, ()))
-                record["dias_distintos"] = len(days.get(email, ()))
+                key = record.pop("identity_key")
+                record["modulos"] = sorted(modules.get(key, ()))
+                record["dias_distintos"] = len(days.get(key, ()))
                 record["sessoes"] = int(record["sessoes"] or 0)
                 result.append(record)
             return result
 
-    def user_timeline(self, email, *, limit=80):
-        with self.store.connection(read_only=True) as c:
-            rows = c.execute(
-                f"SELECT {COLUMNS} FROM auditoria_eventos WHERE usuario_email=? "
-                "ORDER BY criado_em DESC, id DESC LIMIT ?",
-                (email, limit),
-            ).fetchall()
-            return [dict(r) for r in rows]
+    def user_timeline(self, email, *, filters=None, limit=80):
+        data = dict(filters or {})
+        data["usuario_email"] = email
+        return self.list_events(data, limit=limit, offset=0)
 
     def session_bounds(self, sessao_id):
         if not sessao_id:

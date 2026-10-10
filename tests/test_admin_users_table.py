@@ -153,6 +153,71 @@ def test_audit_dataframes_reuse_the_striped_table():
         assert not styler.table_styles
 
 
+def test_audit_labels_periods_and_compact_access_rows():
+    from inspect import getsource
+
+    from services.audit import entity_label, event_label, module_label
+    from services.audit_ui import (
+        _render_accesses,
+        _render_kpis,
+        _render_overview,
+        access_event_rows,
+        compact_modules,
+    )
+
+    kpis = getsource(_render_kpis)
+    overview = getsource(_render_overview)
+    accesses = getsource(_render_accesses)
+    assert "Usuários que acessaram hoje" in kpis
+    assert "Usuários ativos\"" not in kpis
+    assert "Último usuário que acessou" in overview
+    assert all(label in overview for label in ("Hoje", "Últimos 7 dias", "Últimos 30 dias"))
+    assert "filters=filters" in accesses
+    assert "Primeiro acesso" not in accesses
+    assert compact_modules(["agenda", "peticoes", "oficios"]) == (
+        "Agenda e Afastamentos, Petições +1"
+    )
+    row = access_event_rows(
+        [
+            {
+                "criado_em": "2026-10-10T12:00:00+00:00",
+                "usuario_nome": "Nome histórico",
+                "usuario_email": "historico@mpc.pb.gov.br",
+                "modulo": "peticoes",
+                "evento": "PETICAO_CONCLUIDA",
+                "resultado": "OK",
+            }
+        ]
+    )[0]
+    assert row["Identidade histórica"] == "Nome histórico · historico@mpc.pb.gov.br"
+    assert row["Evento"] == "Petição concluída"
+    assert row["Resultado"] == "Sucesso"
+    assert module_label("peticoes") == "Petições"
+    assert event_label("PETICAO_EDITADA") == "Petição alterada"
+    assert entity_label("peticao") == "Petição"
+
+
+def test_compact_audit_access_rows_support_all_themes():
+    from services.audit_ui import access_event_rows
+    from services.ui_theme import style_striped_table
+
+    rows = access_event_rows(
+        [
+            {
+                "criado_em": "2026-10-10T12:00:00+00:00",
+                "usuario_email": "historico@mpc.pb.gov.br",
+                "modulo": "peticoes",
+                "evento": "PETICAO_CRIADA",
+                "resultado": "OK",
+            }
+        ]
+    )
+    for name, tokens in THEMES.items():
+        html = style_striped_table(rows, name).to_html().lower()
+        assert tokens["themed_table_bg"].lower() in html
+        assert tokens["themed_table_fg"].lower() in html
+
+
 def test_other_admin_sections_remain():
     from services.access_ui import render
 

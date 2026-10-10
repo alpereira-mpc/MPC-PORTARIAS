@@ -221,6 +221,11 @@ def test_administrator_opens_audit_ui(store, monkeypatch):
     assert not app.exception and not app.error
     headings = [h.value for h in app.subheader]
     assert any("Acessos e Auditoria" in str(h) for h in headings)
+    metric_labels = [metric.label for metric in app.metric]
+    assert "Usuários que acessaram hoje" in metric_labels
+    assert "Usuários ativos cadastrados" in metric_labels
+    app.radio(key="audit_tab").set_value("Acessos").run()
+    assert not app.exception and not app.error
     app.radio(key="audit_tab").set_value("Auditoria").run()
     assert not app.exception
     assert any(b.label == "Exportar auditoria (CSV)" for b in app.get("download_button"))
@@ -253,6 +258,122 @@ def test_filters_pagination_dates_and_csv(store):
     assert total >= 1
     assert truncated is False
     assert EXPORT_LIMIT >= PAGE_SIZE
+
+
+def test_user_rows_consolidate_email_and_preserve_historical_identities(store):
+    audit = AuditStore(store)
+    shared = "identidade.audit@test.local"
+
+    def insert(*, user_id, email, name, session, event, module, stamp):
+        audit.insert(
+            {
+                "usuario_id": user_id,
+                "usuario_email": email,
+                "usuario_nome": name,
+                "sessao_id": session,
+                "evento": event,
+                "modulo": module,
+                "acao": "ACESSO" if event == "SESSAO_INICIADA" else "ENTRAR",
+                "resultado": "OK",
+                "criado_em": stamp,
+            }
+        )
+
+    insert(
+        user_id=40,
+        email=shared,
+        name="Nome Antigo",
+        session="sessao-antiga",
+        event="SESSAO_INICIADA",
+        module="",
+        stamp="2026-09-01T12:00:00+00:00",
+    )
+    insert(
+        user_id=40,
+        email=shared,
+        name="Nome Antigo",
+        session="sessao-antiga",
+        event="MODULO_ACESSADO",
+        module="agenda",
+        stamp="2026-09-01T12:01:00+00:00",
+    )
+    insert(
+        user_id=55,
+        email=shared,
+        name="Nome Novo",
+        session="sessao-nova",
+        event="SESSAO_INICIADA",
+        module="",
+        stamp="2026-09-02T12:00:00+00:00",
+    )
+    insert(
+        user_id=55,
+        email=shared,
+        name="Nome Novo",
+        session="sessao-nova",
+        event="MODULO_ACESSADO",
+        module="peticoes",
+        stamp="2026-09-02T12:01:00+00:00",
+    )
+    insert(
+        user_id=101,
+        email="",
+        name="Identidade sem e-mail A",
+        session="sem-email-a",
+        event="SESSAO_INICIADA",
+        module="",
+        stamp="2026-09-03T12:00:00+00:00",
+    )
+    insert(
+        user_id=102,
+        email="",
+        name="Identidade sem e-mail B",
+        session="sem-email-b",
+        event="SESSAO_INICIADA",
+        module="",
+        stamp="2026-09-03T13:00:00+00:00",
+    )
+
+    consolidated = audit.user_rows({"usuario_email": shared})
+    assert len(consolidated) == 1
+    assert consolidated[0]["usuario_id"] == 55
+    assert consolidated[0]["usuario_nome"] == "Nome Novo"
+    assert consolidated[0]["sessoes"] == 2
+    assert consolidated[0]["dias_distintos"] == 2
+    assert consolidated[0]["modulos"] == ["agenda", "peticoes"]
+
+    all_rows = audit.user_rows()
+    assert {row["usuario_id"] for row in all_rows if not row["usuario_email"]} >= {101, 102}
+    historical = audit.list_events({"usuario_email": shared}, limit=20)
+    assert {row["usuario_id"] for row in historical} == {40, 55}
+    assert {row["usuario_nome"] for row in historical} == {"Nome Antigo", "Nome Novo"}
+    agenda = audit.user_timeline(shared, filters={"modulo": "agenda"})
+    assert len(agenda) == 1 and agenda[0]["modulo"] == "agenda"
+
+
+def test_user_overview_prefers_current_registration_data(store):
+    from services.audit import user_overview
+
+    email = "cadastro.atual@test.local"
+    AccessStore(store).save_user(
+        {"nome": "Cadastro Atual", "email": email, "perfil": "USUARIO"}
+    )
+    AuditStore(store).insert(
+        {
+            "usuario_id": 999,
+            "usuario_email": email,
+            "usuario_nome": "Nome Histórico",
+            "sessao_id": "historica",
+            "evento": "SESSAO_INICIADA",
+            "acao": "ACESSO",
+            "resultado": "OK",
+            "criado_em": "2026-09-04T12:00:00+00:00",
+        }
+    )
+
+    row = next(item for item in user_overview(store, _principal(store)) if item["email"] == email)
+    assert row["nome"] == "Cadastro Atual"
+    assert row["usuario_nome"] == "Nome Histórico"
 
 
 def test_logger_failure_does_not_break_main_operation(store, monkeypatch):
