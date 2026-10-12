@@ -39,6 +39,10 @@ BELL_EPOCH = "_alerts_bell_epoch"
 BELL_INTENT = "_alerts_bell_intent"
 
 
+class _BellReadTransactionAborted(RuntimeError):
+    pass
+
+
 def _require(principal):
     if not can_view_alertas(principal):
         raise ValueError("Acesso não autorizado a este módulo.")
@@ -129,12 +133,42 @@ def load_bell_summary(store, principal):
         and now - cache.get("at", 0) < BELL_CACHE_SECONDS
     ):
         return cache["payload"]
-    payload = get_alert_summary(
-        store,
-        principal,
-        cached_health=_health_cache(),
-        revision=revision,
-    )
+    if store.backend == "postgresql":
+        # The cold bell combines five independent read sources. PostgreSQL's
+        # existing nested read scope lets them share one transaction without
+        # changing the SQLite path or any writer boundary.
+        try:
+            with store.connection(read_only=True) as connection:
+                payload = get_alert_summary(
+                    store,
+                    principal,
+                    cached_health=_health_cache(),
+                    revision=revision,
+                )
+                status = getattr(
+                    getattr(getattr(connection, "raw", None), "info", None),
+                    "transaction_status",
+                    None,
+                )
+                if getattr(status, "name", None) == "INERROR":
+                    raise _BellReadTransactionAborted
+        except _BellReadTransactionAborted:
+            # A source may catch its own SQL error after PostgreSQL has aborted
+            # the shared transaction. Retry with the previous isolated scopes
+            # so one unavailable source cannot suppress the healthy ones.
+            payload = get_alert_summary(
+                store,
+                principal,
+                cached_health=_health_cache(),
+                revision=revision,
+            )
+    else:
+        payload = get_alert_summary(
+            store,
+            principal,
+            cached_health=_health_cache(),
+            revision=revision,
+        )
     st.session_state[BELL_CACHE_KEY] = {
         "at": now,
         "revision": revision,

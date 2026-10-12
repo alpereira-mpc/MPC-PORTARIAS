@@ -56,7 +56,7 @@ class Pool:
 def backend(monkeypatch):
     import database.pool as pool_module
 
-    raws = [Raw() for _ in range(4)]
+    raws = [Raw() for _ in range(8)]
     pool = Pool(*raws)
     monkeypatch.setattr(
         pool_module, "resource", lambda _options: SimpleNamespace(pool=pool)
@@ -117,6 +117,117 @@ def test_nested_read_scope_reuses_one_connection_and_one_commit(backend):
         "pg_advisory_xact_lock" not in str(command[0]) for command in raws[0].commands
     )
     assert "search_path" in repr(raws[0].commands[0][0])
+
+
+def test_cold_bell_reuses_one_read_transaction_and_hot_cache_uses_none(
+    backend, monkeypatch
+):
+    from services import alerts_ui
+    from services.alerts import invalidate_alert_summary
+
+    subject, pool, raws = backend
+    state = {}
+    store = SimpleNamespace(
+        backend="postgresql",
+        connection=subject.connection,
+    )
+    principal = object()
+    monkeypatch.setattr(alerts_ui.st, "session_state", state)
+
+    def five_read_sources(received_store, *_args, **_kwargs):
+        for _ in range(5):
+            with received_store.connection(read_only=True) as connection:
+                connection.execute("SELECT 1")
+        return {"total": 0}
+
+    monkeypatch.setattr(alerts_ui, "get_alert_summary", five_read_sources)
+
+    five_read_sources(store)
+    assert pool.acquisitions == 5
+    assert sum(raw.commits for raw in raws[:5]) == 5
+    assert sum(len(raw.commands) + raw.commits for raw in raws[:5]) == 15
+
+    alerts_ui.load_bell_summary(store, principal)
+    assert pool.acquisitions == 6
+    assert raws[5].commits == 1
+    assert sum(
+        str(command[0]) == "SELECT 1" for command in raws[5].commands
+    ) == 5
+    assert len(raws[5].commands) + raws[5].commits == 7
+
+    alerts_ui.load_bell_summary(store, principal)
+    assert pool.acquisitions == 6
+
+    invalidate_alert_summary(state)
+    alerts_ui.load_bell_summary(store, principal)
+    assert pool.acquisitions == 7
+    assert raws[6].commits == 1
+
+
+def test_bell_retries_isolated_reads_after_caught_sql_failure(monkeypatch):
+    from services import alerts_ui
+
+    class Status:
+        name = "INTRANS"
+
+    class ReadConnection:
+        def __init__(self):
+            self.raw = SimpleNamespace(
+                info=SimpleNamespace(transaction_status=Status())
+            )
+
+        def execute(self, statement):
+            status = self.raw.info.transaction_status
+            if statement == "BROKEN":
+                status.name = "INERROR"
+                raise RuntimeError("sql failure")
+            if status.name == "INERROR":
+                raise RuntimeError("current transaction is aborted")
+            return 1
+
+    class Store:
+        backend = "postgresql"
+
+        def __init__(self):
+            self.active = None
+
+        @contextmanager
+        def connection(self, *, read_only):
+            assert read_only is True
+            if self.active is not None:
+                yield self.active
+                return
+            connection = ReadConnection()
+            self.active = connection
+            try:
+                yield connection
+            finally:
+                self.active = None
+
+    store = Store()
+    healthy_reads = []
+    monkeypatch.setattr(alerts_ui.st, "session_state", {})
+
+    def summary(received_store, *_args, **_kwargs):
+        try:
+            with received_store.connection(read_only=True) as connection:
+                connection.execute("BROKEN")
+        except RuntimeError:
+            pass
+        try:
+            with received_store.connection(read_only=True) as connection:
+                connection.execute("HEALTHY")
+                healthy_reads.append(True)
+        except RuntimeError:
+            pass
+        return {"total": len(healthy_reads)}
+
+    monkeypatch.setattr(alerts_ui, "get_alert_summary", summary)
+
+    payload = alerts_ui.load_bell_summary(store, object())
+
+    assert payload["total"] == 1
+    assert healthy_reads == [True]
 
 
 def test_portal_module_fragment_opens_one_postgres_read_scope(monkeypatch):
