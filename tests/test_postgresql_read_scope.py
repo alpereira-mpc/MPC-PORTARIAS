@@ -176,6 +176,44 @@ def test_checkout_reports_pool_stat_deltas_without_queries(backend, monkeypatch)
     assert all(call[0][0] != "postgres.execute" for call in database_calls)
 
 
+def test_instrumented_rerun_counts_postgresql_operations_and_pool_check(
+    backend, monkeypatch, capsys
+):
+    import database.pool as pool_module
+    import database.postgresql as postgresql
+    from services import performance
+
+    subject, _pool, _raws = backend
+    monkeypatch.setenv("MPC_PERF_LOG", "1")
+    performance.enabled.cache_clear()
+    monkeypatch.setattr(performance, "_telemetry_confirmation_emitted", False)
+    monkeypatch.setattr(
+        pool_module.ConnectionPool,
+        "check_connection",
+        lambda _raw: None,
+    )
+
+    @performance.profile_rerun
+    def measured():
+        performance.record_backend("postgresql")
+        assert postgresql.performance_active()
+        assert pool_module.performance_active()
+        pool_module.check_connection(SimpleNamespace())
+        with subject.connection(read_only=True) as connection:
+            connection.execute("SELECT 1")
+
+    measured()
+
+    message = capsys.readouterr().out.splitlines()[-1]
+    assert "backend=postgresql" in message
+    assert "db_queries=1" in message
+    assert "round_trips=3" in message
+    assert "pool_wait_ms=" in message
+    assert "pool_checks=1" in message
+    assert "db_ops=" in message
+    performance.enabled.cache_clear()
+
+
 def test_nested_read_scope_reuses_one_connection_and_one_commit(backend):
     subject, pool, raws = backend
 

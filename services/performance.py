@@ -42,6 +42,7 @@ def enabled():
 @dataclass
 class Metrics:
     started: float = field(default_factory=time.perf_counter)
+    backend: str | None = None
     phases: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     queries: int = 0
     round_trips: int = 0
@@ -62,6 +63,13 @@ class Metrics:
 def active():
     """True only while an opted-in portal or fragment rerun is being measured."""
     return _METRICS.get() is not None
+
+
+def record_backend(name):
+    """Attach only the safe persistence kind to the current rerun."""
+    metrics = _METRICS.get()
+    if metrics is not None and name in {"postgresql", "sqlite"}:
+        metrics.backend = name
 
 
 @contextmanager
@@ -150,19 +158,25 @@ def _emit(metrics):
     fields = [
         "PERF",
         f"module={_module_name()}",
-        f"total_ms={total_ms:.1f}",
-        f"db_queries={metrics.queries}",
-        f"db_ms={metrics.database_ms:.1f}",
-        f"db_max_ms={metrics.database_max_ms:.1f}",
-        f"round_trips={metrics.round_trips}",
-        f"pool_wait_ms={metrics.pool_wait_ms:.1f}",
-        f"pool_queue_wait_ms={metrics.pool_queue_wait_ms:.1f}",
-        f"pool_queued={metrics.pool_queued}",
-        f"pool_check_ms={metrics.pool_check_ms:.1f}",
-        f"pool_checks={metrics.pool_checks}",
-        f"pool_connect_ms={metrics.pool_connect_ms:.1f}",
-        f"pool_connects={metrics.pool_connects}",
     ]
+    if metrics.backend is not None:
+        fields.append(f"backend={metrics.backend}")
+    fields.extend(
+        [
+            f"total_ms={total_ms:.1f}",
+            f"db_queries={metrics.queries}",
+            f"db_ms={metrics.database_ms:.1f}",
+            f"db_max_ms={metrics.database_max_ms:.1f}",
+            f"round_trips={metrics.round_trips}",
+            f"pool_wait_ms={metrics.pool_wait_ms:.1f}",
+            f"pool_queue_wait_ms={metrics.pool_queue_wait_ms:.1f}",
+            f"pool_queued={metrics.pool_queued}",
+            f"pool_check_ms={metrics.pool_check_ms:.1f}",
+            f"pool_checks={metrics.pool_checks}",
+            f"pool_connect_ms={metrics.pool_connect_ms:.1f}",
+            f"pool_connects={metrics.pool_connects}",
+        ]
+    )
     fields.extend(
         f"{name}_ms={elapsed:.1f}" for name, elapsed in sorted(metrics.phases.items())
     )

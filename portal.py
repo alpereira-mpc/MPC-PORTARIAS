@@ -25,7 +25,7 @@ from services.ui_theme import (
 )
 from services.themes import DEFAULT_THEME, THEME_LABELS, valid_theme
 from services.versioning import APP_VERSION
-from services.performance import phase, profile_rerun
+from services.performance import phase, profile_rerun, record_backend
 
 LOGGER = logging.getLogger(__name__)
 
@@ -232,6 +232,7 @@ def _render_module_fragment(renderer, store, principal, permission):
         # A fragment rerun does not execute ``render_portal``. Reset the
         # PostgreSQL catalogue cache here as well so reuse stays rerun-scoped.
         store.begin_rerun()
+        record_backend(getattr(store, "backend", None))
         if getattr(store, "backend", None) == "postgresql":
             # A screen render is a bounded synchronous read scope. Repository
             # reads reuse it through PostgresBackend's ContextVar; a mutation
@@ -1102,6 +1103,7 @@ def render_portal():
         with phase("portal_store"):
             store = _application_store()
             store.begin_rerun()
+            record_backend(getattr(store, "backend", None))
     except Exception:
         # logger.exception records the traceback only on the server. Do not
         # interpolate configuration or identity values into this message.
