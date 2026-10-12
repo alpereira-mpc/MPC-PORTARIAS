@@ -109,30 +109,35 @@ class AuditStore:
         ).fetchone()
         return bool(row)
 
-    def insert(self, row):
+    def insert(self, row, *, connection=None):
+        if connection is not None:
+            return self._insert(connection, row)
         with self.store.connection() as c:
             c.execute("BEGIN IMMEDIATE")
-            inserted = c.execute(
-                "INSERT INTO auditoria_eventos("
-                "usuario_id,usuario_email,usuario_nome,sessao_id,evento,modulo,acao,"
-                "entidade_tipo,entidade_id,resultado,detalhes_json,criado_em) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    row.get("usuario_id"),
-                    row.get("usuario_email") or "",
-                    row.get("usuario_nome") or "",
-                    row.get("sessao_id"),
-                    row["evento"],
-                    row.get("modulo") or "",
-                    row.get("acao") or "",
-                    row.get("entidade_tipo"),
-                    None if row.get("entidade_id") is None else str(row.get("entidade_id")),
-                    row.get("resultado") or "OK",
-                    row.get("detalhes_json"),
-                    row["criado_em"],
-                ),
-            )
-            return inserted.lastrowid
+            return self._insert(c, row)
+
+    def _insert(self, c, row):
+        inserted = c.execute(
+            "INSERT INTO auditoria_eventos("
+            "usuario_id,usuario_email,usuario_nome,sessao_id,evento,modulo,acao,"
+            "entidade_tipo,entidade_id,resultado,detalhes_json,criado_em) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                row.get("usuario_id"),
+                row.get("usuario_email") or "",
+                row.get("usuario_nome") or "",
+                row.get("sessao_id"),
+                row["evento"],
+                row.get("modulo") or "",
+                row.get("acao") or "",
+                row.get("entidade_tipo"),
+                None if row.get("entidade_id") is None else str(row.get("entidade_id")),
+                row.get("resultado") or "OK",
+                row.get("detalhes_json"),
+                row["criado_em"],
+            ),
+        )
+        return inserted.lastrowid
 
     def _in_clause(self, column, values):
         items = [item for item in values or [] if item not in (None, "")]

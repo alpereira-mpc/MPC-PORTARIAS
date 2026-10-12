@@ -11,6 +11,7 @@ from database.audit import AuditStore, EXPORT_LIMIT, PAGE_SIZE, MARKER, ensure_s
 from database.store import ROOT
 from services.access import has_permission, resolve_principal
 from services.audit import (
+    aplicar_exclusao_usuario,
     aplicar_usuario,
     export_csv,
     format_local,
@@ -149,6 +150,203 @@ def test_document_and_admin_actions_are_recorded(store):
     details = permission["detalhes_json"] or ""
     assert "Portarias:" in details
     assert "→" in details
+
+
+def _administrative_event_count(store):
+    AuditStore(store)
+    with store.connection(read_only=True) as c:
+        return c.execute(
+            "SELECT COUNT(*) FROM auditoria_eventos WHERE modulo='admin'"
+        ).fetchone()[0]
+
+
+def _internal_access_event_count(store, action):
+    with store.connection(read_only=True) as c:
+        return c.execute(
+            "SELECT COUNT(*) FROM eventos WHERE acao=?", (action,)
+        ).fetchone()[0]
+
+
+def test_required_audit_creation_and_deactivation_commit_together(store):
+    principal = _principal(store)
+    identifier = aplicar_usuario(
+        store,
+        principal,
+        {
+            "nome": "Auditado",
+            "email": "auditado@test.local",
+            "perfil": "USUARIO",
+            "ativo": True,
+            "pode_agenda": True,
+        },
+    )
+    assert AccessStore(store).get(identifier)["ativo"]
+    assert _count(store, "USUARIO_CRIADO") == 1
+
+    current = AccessStore(store).get(identifier)
+    aplicar_usuario(store, principal, {**current, "ativo": False}, identifier)
+    assert not AccessStore(store).get(identifier)["ativo"]
+    assert _count(store, "USUARIO_EDITADO") == 1
+    assert _count(store, "USUARIO_DESATIVADO") == 1
+
+    current = AccessStore(store).get(identifier)
+    aplicar_usuario(store, principal, {**current, "ativo": True}, identifier)
+    assert AccessStore(store).get(identifier)["ativo"]
+    assert _count(store, "USUARIO_EDITADO") == 2
+    assert _count(store, "USUARIO_ATIVADO") == 1
+
+
+def test_required_audit_deletion_commits_with_user_removal(store):
+    principal = _principal(store)
+    access = AccessStore(store)
+    identifier = access.save_user(
+        {
+            "nome": "Excluir com auditoria",
+            "email": "excluir.audit@test.local",
+            "perfil": "USUARIO",
+            "pode_oficios": True,
+            "gabinetes": ["PROGE"],
+        }
+    )
+    aplicar_exclusao_usuario(store, principal, identifier)
+    assert access.get_by_email("excluir.audit@test.local") is None
+    assert _count(store, "USUARIO_EXCLUIDO") == 1
+
+
+def test_required_audit_failure_on_first_event_rolls_back_creation(store, monkeypatch):
+    principal = _principal(store)
+    before_internal = _internal_access_event_count(store, "acesso_criar_usuario")
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("falha sintética")
+
+    monkeypatch.setattr(AuditStore, "insert", fail)
+    with pytest.raises(ValueError, match="registro obrigatório de auditoria"):
+        aplicar_usuario(
+            store,
+            principal,
+            {
+                "nome": "Não persistir",
+                "email": "rollback.create@test.local",
+                "perfil": "USUARIO",
+                "pode_agenda": True,
+            },
+        )
+    assert AccessStore(store).get_by_email("rollback.create@test.local") is None
+    assert _count(store, "USUARIO_CRIADO") == 0
+    assert (
+        _internal_access_event_count(store, "acesso_criar_usuario") == before_internal
+    )
+
+
+def _exercise_last_required_event_rollback(store, monkeypatch):
+    principal = _principal(store)
+    access = AccessStore(store)
+    identifier = access.save_user(
+        {
+            "nome": "Rollback integral",
+            "email": "rollback.edit@test.local",
+            "perfil": "USUARIO",
+            "ativo": True,
+            "pode_oficios": True,
+            "gabinetes": ["PROGE"],
+        }
+    )
+    before = access.get(identifier)
+    before_admin_events = _administrative_event_count(store)
+    before_internal = _internal_access_event_count(store, "acesso_atualizar_usuario")
+    original = AuditStore.insert
+    calls = 0
+
+    def fail_last(self, row, *, connection=None):
+        nonlocal calls
+        calls += 1
+        if calls == 4:
+            raise RuntimeError("falha sintética no último evento")
+        return original(self, row, connection=connection)
+
+    monkeypatch.setattr(AuditStore, "insert", fail_last)
+    with pytest.raises(ValueError, match="registro obrigatório de auditoria"):
+        aplicar_usuario(
+            store,
+            principal,
+            {
+                **before,
+                "ativo": False,
+                "pode_portarias": True,
+                "gabinetes": ["LAF"],
+            },
+            identifier,
+        )
+    after = access.get(identifier)
+    assert calls == 4
+    assert after["ativo"] is True
+    assert after["pode_portarias"] is False
+    assert after["gabinetes"] == ["PROGE"]
+    assert _administrative_event_count(store) == before_admin_events
+    assert (
+        _internal_access_event_count(store, "acesso_atualizar_usuario")
+        == before_internal
+    )
+
+
+def test_required_audit_failure_on_last_event_rolls_back_everything(store, monkeypatch):
+    _exercise_last_required_event_rollback(store, monkeypatch)
+
+
+def test_required_audit_deletion_failure_preserves_user_and_gabinetes(
+    store, monkeypatch
+):
+    principal = _principal(store)
+    access = AccessStore(store)
+    identifier = access.save_user(
+        {
+            "nome": "Preservar exclusão",
+            "email": "rollback.delete@test.local",
+            "perfil": "USUARIO",
+            "pode_oficios": True,
+            "gabinetes": ["PROGE", "LAF"],
+        }
+    )
+    before_admin_events = _administrative_event_count(store)
+    before_internal = _internal_access_event_count(store, "acesso_excluir_usuario")
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("falha sintética")
+
+    monkeypatch.setattr(AuditStore, "insert", fail)
+    with pytest.raises(ValueError, match="registro obrigatório de auditoria"):
+        aplicar_exclusao_usuario(store, principal, identifier)
+    preserved = access.get(identifier)
+    assert preserved["email"] == "rollback.delete@test.local"
+    assert set(preserved["gabinetes"]) == {"PROGE", "LAF"}
+    assert _administrative_event_count(store) == before_admin_events
+    assert (
+        _internal_access_event_count(store, "acesso_excluir_usuario") == before_internal
+    )
+
+
+def test_postgres_required_audit_success_and_last_event_rollback(pg_store, monkeypatch):
+    principal = _principal(pg_store)
+    identifier = aplicar_usuario(
+        pg_store,
+        principal,
+        {
+            "nome": "Auditoria PostgreSQL",
+            "email": "required.audit@pg.test.local",
+            "perfil": "USUARIO",
+            "ativo": True,
+            "pode_agenda": True,
+        },
+    )
+    current = AccessStore(pg_store).get(identifier)
+    aplicar_usuario(pg_store, principal, {**current, "ativo": False}, identifier)
+    aplicar_exclusao_usuario(pg_store, principal, identifier)
+    assert AccessStore(pg_store).get_by_email("required.audit@pg.test.local") is None
+    assert _count(pg_store, "USUARIO_CRIADO") == 1
+    assert _count(pg_store, "USUARIO_DESATIVADO") == 1
+    assert _count(pg_store, "USUARIO_EXCLUIDO") == 1
+    _exercise_last_required_event_rollback(pg_store, monkeypatch)
 
 
 def test_protected_admin_block_is_recorded(store):

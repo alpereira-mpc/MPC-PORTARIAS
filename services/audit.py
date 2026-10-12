@@ -55,6 +55,10 @@ MAX_STRING = 200
 MAX_KEYS = 24
 MAX_SEARCH = 80
 DASHBOARD_CACHE_SECONDS = 20
+AUDITORIA_OBRIGATORIA_MESSAGE = (
+    "A operação não foi concluída porque o registro obrigatório de auditoria falhou. "
+    "Tente novamente."
+)
 MODULE_LABELS = {
     "portarias": "Portarias",
     "agenda": "Agenda e Afastamentos",
@@ -544,6 +548,78 @@ def _default_summary(evento, acao, modulo, entidade_tipo, entidade_id, details):
     return action
 
 
+class AuditoriaObrigatoriaError(ValueError):
+    """Safe administrative error used to force transactional rollback."""
+
+
+def _persistir_evento(
+    store,
+    *,
+    evento,
+    modulo="",
+    acao="",
+    resultado="OK",
+    principal=None,
+    identity=None,
+    entidade_tipo=None,
+    entidade_id=None,
+    detalhes=None,
+    sessao_id=None,
+    state=None,
+    connection=None,
+    audit_store=None,
+    efeitos=True,
+):
+    if store is None:
+        return None
+    store = unwrap_store(store)
+    state = state if state is not None else _session_map()
+    fields = _identity_fields(principal, identity, state)
+    stamp = utc_now()
+    payload = dict(sanitize_details(detalhes) or {})
+    if fields.get("perfil_ator") and "perfil_ator" not in payload:
+        payload["perfil_ator"] = fields["perfil_ator"]
+    gabinetes = fields.get("gabinetes_ator")
+    if gabinetes and "gabinetes_ator" not in payload:
+        payload["gabinetes_ator"] = gabinetes
+    if "resumo" not in payload:
+        built = _default_summary(
+            evento, acao, modulo, entidade_tipo, entidade_id, payload
+        )
+        if built:
+            payload["resumo"] = built[:MAX_STRING]
+    row = {
+        **fields,
+        "sessao_id": sessao_id if sessao_id is not None else session_id(state),
+        "evento": evento,
+        "modulo": modulo or "",
+        "acao": acao or evento,
+        "entidade_tipo": entidade_tipo,
+        "entidade_id": entidade_id,
+        "resultado": resultado or "OK",
+        "detalhes_json": json.dumps(payload, ensure_ascii=False) if payload else None,
+        "criado_em": stamp,
+    }
+    identifier = (audit_store or AuditStore(store)).insert(
+        row, connection=connection
+    )
+    if efeitos:
+        try:
+            _emit_follow_notice(store, row, identifier)
+        except Exception:
+            LOGGER.exception("Falha ao gerar aviso de acompanhamento; auditoria preservada.")
+        if state is not None:
+            try:
+                if "audit_sessao_inicio" not in state:
+                    state["audit_sessao_inicio"] = stamp
+                state["audit_ultima_atividade"] = stamp
+                if modulo:
+                    state["audit_ultimo_modulo"] = modulo
+            except Exception:
+                pass
+    return identifier
+
+
 def registrar_evento(
     store,
     *,
@@ -559,53 +635,58 @@ def registrar_evento(
     sessao_id=None,
     state=None,
 ):
-    if store is None:
-        return None
     try:
-        store = unwrap_store(store)
-        state = state if state is not None else _session_map()
-        fields = _identity_fields(principal, identity, state)
-        stamp = utc_now()
-        payload = dict(sanitize_details(detalhes) or {})
-        if fields.get("perfil_ator") and "perfil_ator" not in payload:
-            payload["perfil_ator"] = fields["perfil_ator"]
-        gabinetes = fields.get("gabinetes_ator")
-        if gabinetes and "gabinetes_ator" not in payload:
-            payload["gabinetes_ator"] = gabinetes
-        if "resumo" not in payload:
-            built = _default_summary(evento, acao, modulo, entidade_tipo, entidade_id, payload)
-            if built:
-                payload["resumo"] = built[:MAX_STRING]
-        row = {
-            **fields,
-            "sessao_id": sessao_id if sessao_id is not None else session_id(state),
-            "evento": evento,
-            "modulo": modulo or "",
-            "acao": acao or evento,
-            "entidade_tipo": entidade_tipo,
-            "entidade_id": entidade_id,
-            "resultado": resultado or "OK",
-            "detalhes_json": json.dumps(payload, ensure_ascii=False) if payload else None,
-            "criado_em": stamp,
-        }
-        identifier = AuditStore(store).insert(row)
-        try:
-            _emit_follow_notice(store, row, identifier)
-        except Exception:
-            LOGGER.exception("Falha ao gerar aviso de acompanhamento; auditoria preservada.")
-        if state is not None:
-            try:
-                if "audit_sessao_inicio" not in state:
-                    state["audit_sessao_inicio"] = stamp
-                state["audit_ultima_atividade"] = stamp
-                if modulo:
-                    state["audit_ultimo_modulo"] = modulo
-            except Exception:
-                pass
-        return identifier
+        return _persistir_evento(
+            store,
+            evento=evento,
+            modulo=modulo,
+            acao=acao,
+            resultado=resultado,
+            principal=principal,
+            identity=identity,
+            entidade_tipo=entidade_tipo,
+            entidade_id=entidade_id,
+            detalhes=detalhes,
+            sessao_id=sessao_id,
+            state=state,
+        )
     except Exception:
         LOGGER.exception("Falha ao registrar auditoria; operação principal preservada.")
         return None
+
+
+def registrar_evento_obrigatorio(
+    store,
+    *,
+    connection,
+    evento,
+    modulo="",
+    acao="",
+    resultado="OK",
+    principal=None,
+    entidade_tipo=None,
+    entidade_id=None,
+    detalhes=None,
+    audit_store=None,
+):
+    try:
+        return _persistir_evento(
+            store,
+            evento=evento,
+            modulo=modulo,
+            acao=acao,
+            resultado=resultado,
+            principal=principal,
+            entidade_tipo=entidade_tipo,
+            entidade_id=entidade_id,
+            detalhes=detalhes,
+            connection=connection,
+            audit_store=audit_store,
+            efeitos=False,
+        )
+    except Exception:
+        LOGGER.exception("Falha ao registrar auditoria administrativa obrigatória.")
+        raise AuditoriaObrigatoriaError(AUDITORIA_OBRIGATORIA_MESSAGE) from None
 
 
 def _emit_follow_notice(store, row, audit_id):
@@ -832,7 +913,16 @@ def registrar_erro(store, *, modulo, acao, erro, principal=None):
     )
 
 
-def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
+def registrar_alteracao_usuario(
+    store,
+    principal,
+    antes,
+    depois,
+    criado=False,
+    *,
+    connection=None,
+    audit_store=None,
+):
     alvo = (depois or antes or {}).get("email")
     nome = (depois or antes or {}).get("nome")
     identifier = (depois or antes or {}).get("id")
@@ -842,17 +932,25 @@ def registrar_alteracao_usuario(store, principal, antes, depois, criado=False):
         detalhes = dict(base)
         if extra:
             detalhes.update(extra)
-        registrar_evento(
-            store,
-            evento=evento,
-            modulo="admin",
-            acao=acao,
-            resultado="OK",
-            principal=principal,
-            entidade_tipo="usuario",
-            entidade_id=identifier,
-            detalhes=detalhes,
-        )
+        arguments = {
+            "evento": evento,
+            "modulo": "admin",
+            "acao": acao,
+            "resultado": "OK",
+            "principal": principal,
+            "entidade_tipo": "usuario",
+            "entidade_id": identifier,
+            "detalhes": detalhes,
+        }
+        if connection is None:
+            registrar_evento(store, **arguments)
+        else:
+            registrar_evento_obrigatorio(
+                store,
+                connection=connection,
+                audit_store=audit_store,
+                **arguments,
+            )
 
     if criado:
         granted = [
@@ -973,10 +1071,27 @@ def registrar_bloqueio_admin(store, principal, alvo, motivo, evento):
 def aplicar_usuario(store, principal, payload, identifier=None):
     from database.access import AccessStore, LAST_ADMIN_MESSAGE, PROTECTED_ADMIN_MESSAGE
 
+    store = unwrap_store(store)
     access = AccessStore(store)
-    antes = access.get(identifier) if identifier else None
+    audit_store = AuditStore(store)
+    antes = None
     try:
-        new_id = access.save_user(payload, identifier)
+        with store.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            antes = (
+                access.get(identifier, connection=connection) if identifier else None
+            )
+            new_id = access.save_user(payload, identifier, connection=connection)
+            depois = access.get(new_id, connection=connection)
+            registrar_alteracao_usuario(
+                store,
+                principal,
+                antes,
+                depois,
+                criado=identifier is None,
+                connection=connection,
+                audit_store=audit_store,
+            )
     except ValueError as exc:
         message = str(exc)
         alvo = antes or payload
@@ -989,18 +1104,38 @@ def aplicar_usuario(store, principal, payload, identifier=None):
                 store, principal, alvo, message, "ULTIMO_ADMIN_BLOQUEADO"
             )
         raise
-    depois = access.get(new_id)
-    registrar_alteracao_usuario(store, principal, antes, depois, criado=identifier is None)
     return new_id
 
 
 def aplicar_exclusao_usuario(store, principal, identifier):
     from database.access import AccessStore, LAST_ADMIN_MESSAGE, PROTECTED_ADMIN_MESSAGE
 
+    store = unwrap_store(store)
     access = AccessStore(store)
+    audit_store = AuditStore(store)
     alvo = access.get(identifier)
     try:
-        snapshot = access.delete_user(identifier, actor_id=principal.id)
+        with store.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            snapshot = access.delete_user(
+                identifier, actor_id=principal.id, connection=connection
+            )
+            registrar_evento_obrigatorio(
+                store,
+                connection=connection,
+                audit_store=audit_store,
+                evento="USUARIO_EXCLUIDO",
+                modulo="admin",
+                acao="EXCLUIR",
+                resultado="OK",
+                principal=principal,
+                entidade_tipo="usuario",
+                entidade_id=snapshot["id"],
+                detalhes={
+                    "usuario_alvo": snapshot["email"],
+                    "nome_alvo": snapshot["nome"],
+                },
+            )
     except ValueError as exc:
         message = str(exc)
         if PROTECTED_ADMIN_MESSAGE in message or "protegido" in message:
@@ -1012,17 +1147,6 @@ def aplicar_exclusao_usuario(store, principal, identifier):
                 store, principal, alvo, message, "ULTIMO_ADMIN_BLOQUEADO"
             )
         raise
-    registrar_evento(
-        store,
-        evento="USUARIO_EXCLUIDO",
-        modulo="admin",
-        acao="EXCLUIR",
-        resultado="OK",
-        principal=principal,
-        entidade_tipo="usuario",
-        entidade_id=snapshot["id"],
-        detalhes={"usuario_alvo": snapshot["email"], "nome_alvo": snapshot["nome"]},
-    )
     return snapshot
 
 

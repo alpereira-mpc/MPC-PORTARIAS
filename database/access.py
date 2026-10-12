@@ -1,5 +1,6 @@
 """Additive authorized-users schema on the existing Store connection."""
 
+from contextlib import nullcontext
 import re
 from database.store import now, schema_key_of, unwrap_store
 from services.oficios import GABINETES
@@ -306,8 +307,13 @@ class AccessStore:
             if not rowcount:
                 raise ValueError("Usuário não encontrado.")
 
-    def get(self, identifier):
-        with self.store.connection(read_only=True) as c:
+    def get(self, identifier, *, connection=None):
+        context = (
+            nullcontext(connection)
+            if connection is not None
+            else self.store.connection(read_only=True)
+        )
+        with context as c:
             row = c.execute(
                 f"SELECT {USER_COLUMNS} FROM usuarios_acesso WHERE id=?",
                 (identifier,),
@@ -351,7 +357,7 @@ class AccessStore:
                 users.append(record)
             return users
 
-    def save_user(self, payload, identifier=None):
+    def save_user(self, payload, identifier=None, *, connection=None):
         nome = (payload.get("nome") or "").strip()
         email = normalize_email(payload.get("email"))
         perfil = (payload.get("perfil") or "USUARIO").strip().upper()
@@ -389,8 +395,14 @@ class AccessStore:
         ativo = flag(True if payload.get("ativo", True) else False)
         protegido = flag(email == PROTECTED_ADMIN_EMAIL)
         stamp = now()
-        with self.store.connection() as c:
-            c.execute("BEGIN IMMEDIATE")
+        context = (
+            nullcontext(connection)
+            if connection is not None
+            else self.store.connection()
+        )
+        with context as c:
+            if connection is None:
+                c.execute("BEGIN IMMEDIATE")
             duplicate = c.execute(
                 "SELECT id FROM usuarios_acesso WHERE email=?", (email,)
             ).fetchone()
@@ -509,26 +521,36 @@ class AccessStore:
                 ).fetchone()
             return row[0]
 
-    def delete_user(self, identifier, *, actor_id=None):
-        user = self.get(identifier)
-        if user.get("protegido"):
-            raise ValueError(PROTECTED_ADMIN_MESSAGE)
-        if actor_id is not None and identifier == actor_id:
-            raise ValueError("Não é permitido excluir o próprio cadastro.")
-        if (
-            user["perfil"] == "ADMINISTRADOR"
-            and user["ativo"]
-            and self.active_administrator_count(exclude_id=identifier) == 0
-        ):
-            raise ValueError("Não é possível excluir o último administrador ativo.")
-        snapshot = {
-            "id": user["id"],
-            "email": user["email"],
-            "nome": user["nome"],
-            "perfil": user["perfil"],
-        }
-        with self.store.connection() as c:
-            c.execute("BEGIN IMMEDIATE")
+    def delete_user(self, identifier, *, actor_id=None, connection=None):
+        context = (
+            nullcontext(connection)
+            if connection is not None
+            else self.store.connection()
+        )
+        with context as c:
+            if connection is None:
+                c.execute("BEGIN IMMEDIATE")
+            user = self.get(identifier, connection=c)
+            if user.get("protegido"):
+                raise ValueError(PROTECTED_ADMIN_MESSAGE)
+            if actor_id is not None and identifier == actor_id:
+                raise ValueError("Não é permitido excluir o próprio cadastro.")
+            if user["perfil"] == "ADMINISTRADOR" and user["ativo"]:
+                remaining = c.execute(
+                    "SELECT COUNT(*) FROM usuarios_acesso "
+                    "WHERE perfil='ADMINISTRADOR' AND ativo=1 AND id!=?",
+                    (identifier,),
+                ).fetchone()[0]
+                if remaining == 0:
+                    raise ValueError(
+                        "Não é possível excluir o último administrador ativo."
+                    )
+            snapshot = {
+                "id": user["id"],
+                "email": user["email"],
+                "nome": user["nome"],
+                "perfil": user["perfil"],
+            }
             current = c.execute(
                 f"SELECT {USER_COLUMNS} FROM usuarios_acesso WHERE id=?",
                 (identifier,),
