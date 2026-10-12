@@ -51,6 +51,9 @@ class Pool:
     def putconn(self, connection):
         self.returned.append(connection)
 
+    def get_stats(self):
+        return {}
+
 
 @pytest.fixture
 def backend(monkeypatch):
@@ -102,6 +105,75 @@ def test_broken_connection_check_remains_safely_sanitized(monkeypatch):
     ) as error:
         pool_module.check_connection(connection)
     assert "internal dsn" not in str(error.value)
+
+
+def test_idle_health_check_has_separate_telemetry(monkeypatch):
+    import database.pool as pool_module
+
+    recorded = []
+    connection = SimpleNamespace()
+    monkeypatch.setattr(pool_module, "performance_active", lambda: True)
+    monkeypatch.setattr(pool_module, "record_pool_check", recorded.append)
+    monkeypatch.setattr(
+        pool_module.ConnectionPool,
+        "check_connection",
+        lambda _raw: None,
+    )
+
+    pool_module.check_connection(connection)
+
+    assert len(recorded) == 1
+    assert recorded[0] >= 0
+
+
+def test_checkout_reports_pool_stat_deltas_without_queries(backend, monkeypatch):
+    import database.postgresql as postgresql
+
+    subject, pool, _raws = backend
+    snapshots = iter(
+        (
+            {
+                "requests_queued": 2,
+                "requests_wait_ms": 100,
+                "connections_num": 1,
+                "connections_ms": 400,
+            },
+            {
+                "requests_queued": 3,
+                "requests_wait_ms": 588,
+                "connections_num": 2,
+                "connections_ms": 887,
+            },
+        )
+    )
+    pool.get_stats = lambda: next(snapshots)
+    waits, activity, database_calls = [], [], []
+    monkeypatch.setattr(postgresql, "performance_active", lambda: True)
+    monkeypatch.setattr(postgresql, "record_pool_wait", waits.append)
+    monkeypatch.setattr(
+        postgresql,
+        "record_pool_activity",
+        lambda **values: activity.append(values),
+    )
+    monkeypatch.setattr(
+        postgresql,
+        "record_database_call",
+        lambda *args, **kwargs: database_calls.append((args, kwargs)),
+    )
+
+    with subject.connection(read_only=True):
+        pass
+
+    assert len(waits) == 1
+    assert activity == [
+        {
+            "queued": 1,
+            "queue_wait_ms": 488,
+            "connections": 1,
+            "connection_ms": 487,
+        }
+    ]
+    assert all(call[0][0] != "postgres.execute" for call in database_calls)
 
 
 def test_nested_read_scope_reuses_one_connection_and_one_commit(backend):

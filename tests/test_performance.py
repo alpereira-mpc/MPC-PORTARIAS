@@ -57,6 +57,13 @@ def test_rerun_prints_one_safe_consolidated_line_with_flush(
             with performance.database_operation("AgendaStore.list"):
                 performance.record_database_call("postgres.execute", 12.5)
             performance.record_pool_wait(1.25)
+            performance.record_pool_check(0.75)
+            performance.record_pool_activity(
+                queued=1,
+                queue_wait_ms=4,
+                connections=1,
+                connection_ms=3,
+            )
 
     measured()
 
@@ -69,6 +76,13 @@ def test_rerun_prints_one_safe_consolidated_line_with_flush(
     assert "round_trips=1" in message
     assert "module_render_ms=" in message
     assert "AgendaStore.list:1/12.5ms" in message
+    assert "pool_wait_ms=1.2" in message
+    assert "pool_queue_wait_ms=4.0" in message
+    assert "pool_queued=1" in message
+    assert "pool_check_ms=0.8" in message
+    assert "pool_checks=1" in message
+    assert "pool_connect_ms=3.0" in message
+    assert "pool_connects=1" in message
     assert "SELECT" not in message
     assert "DATABASE_URL" not in message
 

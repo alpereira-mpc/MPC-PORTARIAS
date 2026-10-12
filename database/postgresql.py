@@ -22,7 +22,11 @@ from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 from services.performance import active as performance_active
-from services.performance import record_database_call, record_pool_wait
+from services.performance import (
+    record_database_call,
+    record_pool_activity,
+    record_pool_wait,
+)
 
 TABLES = (
     "procuradores",
@@ -435,10 +439,28 @@ class PostgresBackend:
         pool = resource(self._options).pool
         try:
             measured = performance_active()
+            stats_before = pool.get_stats() if measured else None
             started = time.perf_counter() if measured else None
             raw = pool.getconn()
             if measured:
                 record_pool_wait((time.perf_counter() - started) * 1000)
+                stats_after = pool.get_stats()
+
+                def delta(name):
+                    return max(
+                        0,
+                        stats_after.get(name, 0) - stats_before.get(name, 0),
+                    )
+
+                # Connection creation happens in pool workers. These cumulative
+                # deltas report activity observed during this checkout, without
+                # claiming that every worker event was caused by this request.
+                record_pool_activity(
+                    queued=delta("requests_queued"),
+                    queue_wait_ms=delta("requests_wait_ms"),
+                    connections=delta("connections_num"),
+                    connection_ms=delta("connections_ms"),
+                )
             # One round trip for transaction setup, including transaction-pooler safety.
             started = time.perf_counter() if measured else None
             try:

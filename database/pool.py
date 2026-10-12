@@ -9,6 +9,8 @@ from threading import RLock
 import psycopg
 import streamlit as st
 from psycopg_pool import ConnectionPool
+from services.performance import active as performance_active
+from services.performance import record_pool_check
 
 
 HEALTH_CHECK_AFTER_IDLE_SECONDS = 30
@@ -41,10 +43,15 @@ def check_connection(connection):
         and time.monotonic() - idle_since < HEALTH_CHECK_AFTER_IDLE_SECONDS
     ):
         return
+    measured = performance_active()
+    started = time.perf_counter() if measured else None
     try:
         ConnectionPool.check_connection(connection)
     except psycopg.Error:
         raise psycopg.OperationalError("Conexão PostgreSQL interrompida") from None
+    finally:
+        if measured:
+            record_pool_check((time.perf_counter() - started) * 1000)
 
 
 def mark_connection_idle(connection):

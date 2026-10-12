@@ -48,6 +48,12 @@ class Metrics:
     database_ms: float = 0.0
     database_max_ms: float = 0.0
     pool_wait_ms: float = 0.0
+    pool_queue_wait_ms: float = 0.0
+    pool_queued: int = 0
+    pool_check_ms: float = 0.0
+    pool_checks: int = 0
+    pool_connect_ms: float = 0.0
+    pool_connects: int = 0
     operations: dict[str, list[float]] = field(
         default_factory=lambda: defaultdict(lambda: [0, 0.0])
     )
@@ -107,6 +113,27 @@ def record_pool_wait(elapsed_ms):
         metrics.pool_wait_ms += max(0.0, float(elapsed_ms))
 
 
+def record_pool_check(elapsed_ms):
+    """Record a checkout health check without counting application SQL."""
+    metrics = _METRICS.get()
+    if metrics is not None:
+        metrics.pool_checks += 1
+        metrics.pool_check_ms += max(0.0, float(elapsed_ms))
+
+
+def record_pool_activity(
+    *, queued=0, queue_wait_ms=0.0, connections=0, connection_ms=0.0
+):
+    """Record pool-stat deltas observed while the request waited in getconn()."""
+    metrics = _METRICS.get()
+    if metrics is None:
+        return
+    metrics.pool_queued += max(0, int(queued))
+    metrics.pool_queue_wait_ms += max(0.0, float(queue_wait_ms))
+    metrics.pool_connects += max(0, int(connections))
+    metrics.pool_connect_ms += max(0.0, float(connection_ms))
+
+
 def _module_name():
     try:
         import streamlit as st
@@ -129,6 +156,12 @@ def _emit(metrics):
         f"db_max_ms={metrics.database_max_ms:.1f}",
         f"round_trips={metrics.round_trips}",
         f"pool_wait_ms={metrics.pool_wait_ms:.1f}",
+        f"pool_queue_wait_ms={metrics.pool_queue_wait_ms:.1f}",
+        f"pool_queued={metrics.pool_queued}",
+        f"pool_check_ms={metrics.pool_check_ms:.1f}",
+        f"pool_checks={metrics.pool_checks}",
+        f"pool_connect_ms={metrics.pool_connect_ms:.1f}",
+        f"pool_connects={metrics.pool_connects}",
     ]
     fields.extend(
         f"{name}_ms={elapsed:.1f}" for name, elapsed in sorted(metrics.phases.items())
