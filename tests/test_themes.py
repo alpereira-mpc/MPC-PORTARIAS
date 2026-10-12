@@ -167,9 +167,11 @@ def test_theme_selector_precedes_navigation_and_account_remains_in_footer():
 
     source = getsource(render_portal)
     theme = source.index('with st.container(key="portal_theme_control")')
+    brand = source.index("render_sidebar_brand(on_click=open_home)")
+    notifications = source.index('with st.container(key="portal_notifications")')
     navigation = source.index('with st.container(key="portal_navigation_menu")')
     footer = source.index('with st.container(key="portal_theme_footer")')
-    assert theme < navigation < footer
+    assert theme < brand < notifications < navigation < footer
     assert "st.selectbox(" in source[theme:navigation]
     assert '"Tema"' in source[theme:navigation]
     assert 'key="portal_user_area"' in source[footer:]

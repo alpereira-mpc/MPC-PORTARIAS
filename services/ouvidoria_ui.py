@@ -891,7 +891,7 @@ def render(store, principal):
     search_col, status_col, clear_col = st.columns(
         [2, 1, 0.42], vertical_alignment="bottom"
     )
-    pesquisa = search_col.text_input("Pesquisa / OUVI", key="ouvi_fq")
+    pesquisa = search_col.text_input("Pesquisa", key="ouvi_fq")
     with status_col:
         situacao = _filter_select("Situação", SITUACOES, "Todas", "ouvi_fs")
     clear_col.button(

@@ -1246,6 +1246,21 @@ def render_portal():
         st.session_state["portal_module"] = "Início"
     apply_alerts_view_request()
     with st.sidebar:
+        theme_key = f"portal_theme_select_{principal.id}"
+        active_theme = _active_theme(identity)
+        if st.session_state.get(theme_key) != active_theme:
+            st.session_state[theme_key] = active_theme
+        with st.container(key="portal_theme_control"):
+            st.selectbox(
+                "Tema",
+                tuple(THEME_LABELS),
+                format_func=THEME_LABELS.get,
+                key=theme_key,
+                on_change=_change_theme,
+                args=(store, principal.id, identity["email"], theme_key),
+            )
+            if message := st.session_state.pop("_portal_theme_error", None):
+                st.warning(message)
         render_sidebar_brand(on_click=open_home)
         from services.alerts import can_view_alertas
         from services.alerts_ui import render_bell
@@ -1266,21 +1281,6 @@ def render_portal():
             with st.container(key="portal_notifications"):
                 with phase("sidebar_bell"):
                     render_bell(store, principal)
-        theme_key = f"portal_theme_select_{principal.id}"
-        active_theme = _active_theme(identity)
-        if st.session_state.get(theme_key) != active_theme:
-            st.session_state[theme_key] = active_theme
-        with st.container(key="portal_theme_control"):
-            st.selectbox(
-                "Tema",
-                tuple(THEME_LABELS),
-                format_func=THEME_LABELS.get,
-                key=theme_key,
-                on_change=_change_theme,
-                args=(store, principal.id, identity["email"], theme_key),
-            )
-            if message := st.session_state.pop("_portal_theme_error", None):
-                st.warning(message)
         with st.container(key="portal_navigation_menu"):
             selected = st.radio(
                 "Portal",

@@ -730,6 +730,7 @@ def test_ouvidoria_filters_are_grouped_counted_and_cleared(store, monkeypatch):
     assert not app.exception
     assert app.expander[0].label == "Filtros avançados"
     assert app.expander[0].proto.expanded is False
+    assert app.text_input(key="ouvi_fq").label == "Pesquisa"
     assert {widget.key for widget in app.text_input if widget.key in ui._LIST_FILTER_KEYS} == {
         "ouvi_fq",
         "ouvi_frep",
