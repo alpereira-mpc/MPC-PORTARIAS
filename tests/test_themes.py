@@ -161,6 +161,22 @@ def test_theme_labels_are_official_and_legacy_keys_keep_their_palettes():
     assert "format_func=THEME_LABELS.get" in source
 
 
+def test_theme_selector_precedes_navigation_and_account_remains_in_footer():
+    from inspect import getsource
+    from portal import render_portal
+
+    source = getsource(render_portal)
+    theme = source.index('with st.container(key="portal_theme_control")')
+    navigation = source.index('with st.container(key="portal_navigation_menu")')
+    footer = source.index('with st.container(key="portal_theme_footer")')
+    assert theme < navigation < footer
+    assert "st.selectbox(" in source[theme:navigation]
+    assert '"Tema"' in source[theme:navigation]
+    assert 'key="portal_user_area"' in source[footer:]
+    assert 'key="portal_logout"' in source[footer:]
+    assert 'st.selectbox(' not in source[footer:]
+
+
 def test_gold_palette_is_the_fallback():
     gold = _css("dourado")
     assert "--mpc-brand:#765414" in gold

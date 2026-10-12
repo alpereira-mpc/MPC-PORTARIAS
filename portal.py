@@ -1266,6 +1266,21 @@ def render_portal():
             with st.container(key="portal_notifications"):
                 with phase("sidebar_bell"):
                     render_bell(store, principal)
+        theme_key = f"portal_theme_select_{principal.id}"
+        active_theme = _active_theme(identity)
+        if st.session_state.get(theme_key) != active_theme:
+            st.session_state[theme_key] = active_theme
+        with st.container(key="portal_theme_control"):
+            st.selectbox(
+                "Tema",
+                tuple(THEME_LABELS),
+                format_func=THEME_LABELS.get,
+                key=theme_key,
+                on_change=_change_theme,
+                args=(store, principal.id, identity["email"], theme_key),
+            )
+            if message := st.session_state.pop("_portal_theme_error", None):
+                st.warning(message)
         with st.container(key="portal_navigation_menu"):
             selected = st.radio(
                 "Portal",
@@ -1276,10 +1291,6 @@ def render_portal():
                 label_visibility="collapsed",
             )
         st.session_state[PORTAL_LAST_MODULE] = selected
-        theme_key = f"portal_theme_select_{principal.id}"
-        active_theme = _active_theme(identity)
-        if st.session_state.get(theme_key) != active_theme:
-            st.session_state[theme_key] = active_theme
         with st.container(key="portal_theme_footer"):
             with st.container(key="portal_user_area", width="content"):
                 st.caption(principal.nome + " · " + principal.email)
@@ -1292,16 +1303,6 @@ def render_portal():
                 ):
                     if st.button("Sair", type="primary", key="portal_logout"):
                         _logout()
-            st.selectbox(
-                "Tema",
-                tuple(THEME_LABELS),
-                format_func=THEME_LABELS.get,
-                key=theme_key,
-                on_change=_change_theme,
-                args=(store, principal.id, identity["email"], theme_key),
-            )
-            if message := st.session_state.pop("_portal_theme_error", None):
-                st.warning(message)
         st.caption(f"Versão {APP_VERSION}", text_alignment="right")
         if selected != "Memorandos":
             st.session_state["memorando_form_active"] = False
