@@ -1073,7 +1073,11 @@ def test_representation_navigation_callbacks_restore_list_and_clear_temporary_st
         "_representacoes_list_filters": {
             "rep_f_q": "licitação",
             "rep_f_sit": "EM_TRAMITACAO",
+            "representacoes_page": 2,
+            "representacoes_page_filters": (("pesquisa", "licitação"),),
         },
+        "representacoes_page": 2,
+        "representacoes_page_filters": (("pesquisa", "licitação"),),
     }
     monkeypatch.setattr(ui.st, "session_state", state)
 
@@ -1103,6 +1107,156 @@ def test_representation_navigation_callbacks_restore_list_and_clear_temporary_st
     assert "representacoes_progress" not in state
     assert state["rep_f_q"] == "licitação"
     assert state["rep_f_sit"] == "EM_TRAMITACAO"
+    assert state["representacoes_page"] == 2
+    assert state["representacoes_page_filters"] == (("pesquisa", "licitação"),)
+
+
+@pytest.mark.parametrize(
+    ("total", "visible", "has_next"),
+    ((0, 0, False), (1, 1, False), (25, 25, False), (26, 25, True)),
+)
+def test_representation_first_page_uses_lookahead(
+    monkeypatch, total, visible, has_next
+):
+    import services.representacoes_ui as ui
+
+    records = [{"id": identifier} for identifier in range(total)]
+    calls = []
+
+    def list_page(_store, _filters, *, limit, offset):
+        calls.append((limit, offset))
+        return records[offset : offset + limit]
+
+    monkeypatch.setattr(ui.st, "session_state", {})
+    monkeypatch.setattr(ui, "list_records", list_page)
+
+    rows, page, found_next = ui._read_list_page(object(), {"pesquisa": None})
+
+    assert len(rows) == visible
+    assert page == 0
+    assert found_next is has_next
+    assert calls == [(26, 0)]
+
+
+def test_representation_pages_cover_more_than_fifty_without_duplicates(monkeypatch):
+    import services.representacoes_ui as ui
+
+    records = [{"id": identifier} for identifier in range(51)]
+
+    def list_page(_store, _filters, *, limit, offset):
+        return records[offset : offset + limit]
+
+    state = {}
+    monkeypatch.setattr(ui.st, "session_state", state)
+    monkeypatch.setattr(ui, "list_records", list_page)
+    visible = []
+    next_flags = []
+    for expected_page in range(3):
+        state["representacoes_page"] = expected_page
+        rows, page, has_next = ui._read_list_page(object(), {"situacao": None})
+        assert page == expected_page
+        visible.extend(row["id"] for row in rows)
+        next_flags.append(has_next)
+
+    assert visible == list(range(51))
+    assert len(visible) == len(set(visible))
+    assert next_flags == [True, True, False]
+
+
+def test_representation_filter_change_and_clear_reset_page(monkeypatch):
+    import services.representacoes_ui as ui
+
+    state = {
+        "rep_f_q": "antigo",
+        "representacoes_page": 2,
+        "representacoes_page_filters": (("pesquisa", "antigo"),),
+    }
+    monkeypatch.setattr(ui.st, "session_state", state)
+    monkeypatch.setattr(ui, "list_records", lambda *_args, **_kwargs: [])
+
+    _rows, page, _has_next = ui._read_list_page(
+        object(), {"pesquisa": "novo"}
+    )
+    assert page == 0
+    assert state["representacoes_page"] == 0
+
+    state["representacoes_page"] = 2
+    ui._clear_list_filters()
+    assert "rep_f_q" not in state
+    assert state["representacoes_page"] == 0
+    assert "representacoes_page_filters" not in state
+
+
+def test_representation_empty_page_moves_back_after_record_change(monkeypatch):
+    import services.representacoes_ui as ui
+
+    records = [{"id": identifier} for identifier in range(50)]
+
+    def list_page(_store, _filters, *, limit, offset):
+        return records[offset : offset + limit]
+
+    state = {
+        "representacoes_page": 2,
+        "representacoes_page_filters": (("situacao", None),),
+    }
+    monkeypatch.setattr(ui.st, "session_state", state)
+    monkeypatch.setattr(ui, "list_records", list_page)
+
+    rows, page, has_next = ui._read_list_page(object(), {"situacao": None})
+
+    assert page == 1
+    assert [row["id"] for row in rows] == list(range(25, 50))
+    assert has_next is False
+    assert state["representacoes_page"] == 1
+
+
+def test_representation_pagination_buttons_and_detail_return(store):
+    import services.representacoes_ui as ui
+
+    principal = _principal(store, email="rep-pages@test.local")
+    payload, *_ = _payload(store)
+    identifiers = [
+        create(store, {**payload, "titulo": f"Projeto paginado {index:02d}"}, principal)[
+            "id"
+        ]
+        for index in range(26)
+    ]
+    _UI_HOLD.clear()
+    _UI_HOLD.update(ui=ui, store=store, principal=principal)
+
+    def page():
+        from tests.test_representacoes import _UI_HOLD
+
+        _UI_HOLD["ui"].render(_UI_HOLD["store"], _UI_HOLD["principal"])
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert not app.exception
+    assert app.button(key="representacoes_page_previous").disabled
+    assert not app.button(key="representacoes_page_next").disabled
+    assert len([button for button in app.button if button.key.startswith("rep_open_")]) == 25
+
+    app = app.button(key="representacoes_page_next").click().run()
+    assert not app.exception
+    assert app.session_state["representacoes_page"] == 1
+    assert not app.button(key="representacoes_page_previous").disabled
+    assert app.button(key="representacoes_page_next").disabled
+    open_buttons = [button for button in app.button if button.key.startswith("rep_open_")]
+    assert len(open_buttons) == 1
+    assert open_buttons[0].key == "rep_open_" + str(identifiers[0])
+
+    app = open_buttons[0].click().run()
+    assert app.session_state["representacoes_view"] == identifiers[0]
+    app = app.button(key="rep_dt_back").click().run()
+    assert not app.exception
+    assert app.session_state["representacoes_page"] == 1
+    assert not app.button(key="representacoes_page_previous").disabled
+    assert app.button(key="representacoes_page_next").disabled
+
+    app = app.text_input(key="rep_f_q").set_value("sem correspondência").run()
+    assert not app.exception
+    assert app.session_state["representacoes_page"] == 0
+    assert app.button(key="representacoes_page_previous").disabled
+    assert app.button(key="representacoes_page_next").disabled
 
 
 def test_representation_internal_actions_use_fragment_reruns_and_callbacks():

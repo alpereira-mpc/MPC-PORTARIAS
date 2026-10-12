@@ -321,7 +321,7 @@ def test_stripe_and_header_helpers_are_available():
     assert 'st-key-mpc_card_b"][data-testid="stExpander"]' not in compact
     assert 'st-key-mpc_card_operational"][data-testid="stExpander"]' not in compact
     assert 'section[data-testid="stSidebar"][data-testid="stExpander"]' in compact
-    assert 'st.button("← Trocar gabinete", type="primary"' in render
+    assert 'st.button("← Trocar gabinete", type="secondary"' in render
     assert 'type="primary"' in render[render.index("Novo Ofício") :]
     from portal import render_denied, render_portal
 

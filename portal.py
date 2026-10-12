@@ -18,10 +18,8 @@ from services.branding import (
 from services.ui_store import asset
 from services.ui_theme import (
     apply_theme,
-    badge,
     empty_state,
     institutional_card_mark,
-    render_html,
 )
 from services.themes import DEFAULT_THEME, THEME_LABELS, valid_theme
 from services.versioning import APP_VERSION
@@ -78,6 +76,18 @@ PORTAL_LAST_MODULE = "_portal_last_module"
 # This plain dict keeps those values across that cleanup.
 PORTAL_LISTING_STATE = "_portal_listing_state"
 MODULE_LISTING_KEYS = {
+    "Memorandos": (
+        "memo_history_search",
+        "memo_history_server",
+        "memo_history_cabinet",
+        "memo_history_status",
+        "memo_history_situation",
+        "memo_history_official",
+        "memo_history_start",
+        "memo_history_end",
+        "memorandos_history_page",
+        "memorandos_history_filters",
+    ),
     "Tarefas": (
         "tarefas_q",
         "tarefas_priority",
@@ -87,6 +97,8 @@ MODULE_LISTING_KEYS = {
         "tarefas_history_q",
         "tarefas_history_priority",
         "tarefas_history_status",
+        "tarefas_history_page",
+        "tarefas_history_filters",
     ),
     "Representações": (
         "rep_f_sit",
@@ -99,6 +111,8 @@ MODULE_LISTING_KEYS = {
         "rep_f_proc",
         "rep_f_procud",
         "rep_f_ass",
+        "representacoes_page",
+        "representacoes_page_filters",
     ),
     "Ouvidoria": (
         "ouvi_fs",
@@ -112,6 +126,55 @@ MODULE_LISTING_KEYS = {
         "ouvi_fresp",
         "ouvi_fpart",
         "ouvi_fass",
+        "ouvidoria_page",
+        "ouvidoria_page_filters",
+    ),
+    "Ofícios": (
+        "oficio_list_overview_search",
+        "oficio_list_overview_status",
+        "oficio_list_overview_year",
+        "oficio_list_overview_number",
+        "oficio_list_overview_recipient",
+        "oficio_list_overview_start",
+        "oficio_list_overview_end",
+        "oficio_list_overview_deadline",
+        "oficio_list_overview_subject",
+        "oficio_list_overview_page",
+        "oficio_list_overview_filters",
+        "oficio_list_sent_search",
+        "oficio_list_sent_status",
+        "oficio_list_sent_year",
+        "oficio_list_sent_number",
+        "oficio_list_sent_recipient",
+        "oficio_list_sent_start",
+        "oficio_list_sent_end",
+        "oficio_list_sent_deadline",
+        "oficio_list_sent_subject",
+        "oficio_list_sent_page",
+        "oficio_list_sent_filters",
+        "oficio_list_received_search",
+        "oficio_list_received_status",
+        "oficio_list_received_year",
+        "oficio_list_received_number",
+        "oficio_list_received_recipient",
+        "oficio_list_received_start",
+        "oficio_list_received_end",
+        "oficio_list_received_deadline",
+        "oficio_list_received_subject",
+        "oficio_list_received_page",
+        "oficio_list_received_filters",
+        "oficio_list_tracking_search",
+        "oficio_list_tracking_status",
+        "oficio_list_tracking_year",
+        "oficio_list_tracking_number",
+        "oficio_list_tracking_recipient",
+        "oficio_list_tracking_start",
+        "oficio_list_tracking_end",
+        "oficio_list_tracking_deadline",
+        "oficio_list_tracking_subject",
+        "oficio_list_tracking_direction",
+        "oficio_list_tracking_page",
+        "oficio_list_tracking_filters",
     ),
     "Agenda": (
         "agenda_filter_member",
@@ -189,6 +252,7 @@ MODULE_NAVIGATION_RESET = {
         "pending_open_oficio",
     ),
     "Memorandos": (
+        "memo_draft_delete_confirmations",
         "memo_engagement_open",
         "memo_hard_delete_id",
         "memo_server_edit_open",
@@ -205,9 +269,16 @@ MODULE_NAVIGATION_RESET = {
     "Petições": (
         "peticoes_edit_id",
         "peticoes_painel",
+        "peticoes_remove_confirmations",
         "peticoes_view",
         "peticoes_view_ready",
     ),
+}
+# Confirmation prompts are intentionally transient: unlike a filter or draft,
+# they must not reappear after the user leaves the module that opened them.
+MODULE_EXIT_RESET = {
+    "Memorandos": ("memo_draft_delete_confirmations",),
+    "Petições": ("peticoes_remove_confirmations",),
 }
 
 
@@ -521,6 +592,9 @@ def enter_portal_module(allowed):
         _stash_listing(previous)
     _stash_listing("Alertas")
     module_changed = previous is not None and previous != target
+    if module_changed:
+        for key in MODULE_EXIT_RESET.get(previous, ()):
+            st.session_state.pop(key, None)
     if module_changed and target == "Administração":
         st.session_state[PORTAL_ADMIN_SCROLL_TOP] = True
     if module_changed or nav_state:
@@ -641,7 +715,6 @@ def card(module):
         st.markdown(f"### :material/{module.icon}: {module.title}")
         st.write(module.description)
         if module.active:
-            render_html(badge("ATIVO", "success"))
             st.button(
                 f"Acessar {module.label}",
                 key=f"open_{module.key}",

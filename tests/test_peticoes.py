@@ -1,4 +1,5 @@
 from io import BytesIO
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -553,3 +554,127 @@ def test_editing_other_fields_does_not_rewrite_requests(store):
     current = PeticoesStore(store).get(record["id"])
     assert current["assunto"] == "Somente o assunto"
     assert [item["id"] for item in current["pedidos"]] == before
+
+
+def test_progress_removal_requires_its_own_confirmation_and_reports_success(
+    store, monkeypatch
+):
+    import services.peticoes_ui as ui
+
+    principal = _principal(store)
+    state = {}
+    calls = []
+
+    @contextmanager
+    def authorized(_store, _principal):
+        yield principal
+
+    monkeypatch.setattr(ui, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(ui, "authorization_scope", authorized)
+    monkeypatch.setattr(ui, "remove_progress", lambda *args: calls.append(args))
+
+    ui._request_remove_progress(11, 101)
+    ui._request_remove_progress(22, 202)
+    assert calls == []
+    assert ui._remove_confirmation(11, 101)
+    assert ui._remove_confirmation(22, 202)
+
+    ui._cancel_remove_progress(101)
+    assert ui._remove_confirmation(11, 101) is None
+    assert ui._remove_confirmation(22, 202)
+    assert calls == []
+
+    state["peticoes_painel"] = {"h22": True}
+    ui._toggle_history(22)
+    assert ui._remove_confirmation(22, 202) is None
+
+    ui._request_remove_progress(22, 202)
+    ui._remover_andamento(store, principal, 202, "remove_error", 22)
+    assert len(calls) == 1
+    assert calls[0][1:3] == (202, "Exclusão registrada pelo usuário.")
+    assert ui._remove_confirmation(22, 202) is None
+    assert state["peticoes_remove_ok_22"] == "Andamento removido logicamente."
+
+
+def test_progress_removal_confirmation_handles_error_and_revoked_permission(
+    store, monkeypatch
+):
+    import services.peticoes_ui as ui
+
+    principal = _principal(store)
+    state = {}
+
+    @contextmanager
+    def authorized(_store, _principal):
+        yield principal
+
+    monkeypatch.setattr(ui, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(ui, "authorization_scope", authorized)
+    monkeypatch.setattr(
+        ui,
+        "remove_progress",
+        lambda *_args: (_ for _ in ()).throw(ValueError("Falha simulada.")),
+    )
+    ui._request_remove_progress(11, 101)
+    ui._remover_andamento(store, principal, 101, "remove_error", 11)
+    assert ui._remove_confirmation(11, 101)["error"] == "Falha simulada."
+    assert "peticoes_remove_ok_11" not in state
+
+    calls = []
+
+    @contextmanager
+    def revoked(_store, _principal):
+        yield None
+
+    monkeypatch.setattr(ui, "authorization_scope", revoked)
+    monkeypatch.setattr(ui, "remove_progress", lambda *args: calls.append(args))
+    ui._request_remove_progress(11, 102)
+    ui._remover_andamento(store, principal, 102, "revoked_error", 11)
+    assert calls == []
+    assert ui._remove_confirmation(11, 102)["error"]
+    assert "peticoes_remove_ok_11" not in state
+
+
+def test_progress_removal_rechecks_persisted_capability_after_confirmation(
+    store, monkeypatch
+):
+    import services.peticoes_ui as ui
+    from tests.access_testing import seed_access
+
+    email = "peticoes-remove-revoked@test.local"
+    seed_access(
+        store,
+        email=email,
+        nome="Usuário Petições",
+        perfil="USUARIO",
+        pode_portarias=False,
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_admin=False,
+        pode_peticoes=True,
+        pode_peticoes_registrar_andamento=True,
+    )
+    principal = resolve_principal(store, {"email": email})
+    seed_access(
+        store,
+        email=email,
+        nome="Usuário Petições",
+        perfil="USUARIO",
+        pode_portarias=False,
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_admin=False,
+        pode_peticoes=True,
+        pode_peticoes_registrar_andamento=False,
+    )
+    state = {}
+    calls = []
+    monkeypatch.setattr(ui, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(ui, "remove_progress", lambda *args: calls.append(args))
+
+    ui._request_remove_progress(11, 101)
+    ui._remover_andamento(store, principal, 101, "revoked_error", 11)
+
+    assert calls == []
+    assert ui._remove_confirmation(11, 101)["error"]
+    assert "peticoes_remove_ok_11" not in state

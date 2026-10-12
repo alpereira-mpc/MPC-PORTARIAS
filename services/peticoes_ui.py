@@ -345,6 +345,73 @@ def _toggle(name):
     st.session_state["peticoes_painel"] = panel
 
 
+def _remove_confirmations():
+    confirmations = st.session_state.get("peticoes_remove_confirmations")
+    return dict(confirmations) if isinstance(confirmations, dict) else {}
+
+
+def _request_remove_progress(identifier, progress_id, error_key=None):
+    confirmations = _remove_confirmations()
+    confirmations[str(progress_id)] = {
+        "peticao_id": identifier,
+        "error": None,
+        "error_key": error_key,
+    }
+    st.session_state["peticoes_remove_confirmations"] = confirmations
+
+
+def _cancel_remove_progress(progress_id, error_key=None):
+    confirmations = _remove_confirmations()
+    confirmation = confirmations.pop(str(progress_id), None)
+    key = error_key or (
+        confirmation.get("error_key") if isinstance(confirmation, dict) else None
+    )
+    if key:
+        st.session_state.pop(key, None)
+    st.session_state["peticoes_remove_confirmations"] = confirmations
+
+
+def _remove_confirmation(identifier, progress_id):
+    confirmation = _remove_confirmations().get(str(progress_id))
+    return (
+        confirmation
+        if isinstance(confirmation, dict)
+        and confirmation.get("peticao_id") == identifier
+        else None
+    )
+
+
+def _set_remove_confirmation_error(progress_id, message):
+    confirmations = _remove_confirmations()
+    confirmation = confirmations.get(str(progress_id))
+    if confirmation is not None:
+        confirmations[str(progress_id)] = {**confirmation, "error": message}
+        st.session_state["peticoes_remove_confirmations"] = confirmations
+
+
+def _clear_remove_confirmations_for_petition(identifier):
+    confirmations = {
+        progress_id: confirmation
+        for progress_id, confirmation in _remove_confirmations().items()
+        if not isinstance(confirmation, dict)
+        or confirmation.get("peticao_id") != identifier
+    }
+    for confirmation in _remove_confirmations().values():
+        if (
+            isinstance(confirmation, dict)
+            and confirmation.get("peticao_id") == identifier
+        ):
+            if key := confirmation.get("error_key"):
+                st.session_state.pop(key, None)
+    st.session_state["peticoes_remove_confirmations"] = confirmations
+
+
+def _toggle_history(identifier):
+    _toggle(f"h{identifier}")
+    if not _painel().get(f"h{identifier}"):
+        _clear_remove_confirmations_for_petition(identifier)
+
+
 def _open_pdf_panel(identifier, store=None, principal=None, rotulo=None):
     panel = dict(_painel())
     panel[f"p{identifier}"] = True
@@ -415,7 +482,7 @@ def _registrar_andamento(store, principal, identifier, date_key, text_key, error
         )
 
 
-def _remover_andamento(store, principal, progress_id, error_key):
+def _remover_andamento(store, principal, progress_id, error_key, identifier=None):
     try:
         with authorization_scope(store, principal) as current:
             require_permission(current, "peticoes")
@@ -430,8 +497,14 @@ def _remover_andamento(store, principal, progress_id, error_key):
         )
     except ValueError as exc:
         st.session_state[error_key] = str(exc)
+        _set_remove_confirmation_error(progress_id, str(exc))
     else:
         st.session_state.pop(error_key, None)
+        _cancel_remove_progress(progress_id)
+        if identifier is not None:
+            st.session_state[f"peticoes_remove_ok_{identifier}"] = (
+                "Andamento removido logicamente."
+            )
 
 
 def _salvar_resultado(store, principal, identifier, key, error_key):
@@ -601,8 +674,8 @@ def _card(store, db, principal, record, index, *, acompanhar):
                 else "Ver histórico de andamentos"
             ),
             key=f"peticoes_hist_btn_{identifier}",
-            on_click=_toggle,
-            args=(f"h{identifier}",),
+            on_click=_toggle_history,
+            args=(identifier,),
         )
         extra_left, extra_right = st.columns(2)
         extra_left.button(
@@ -642,6 +715,8 @@ def _card(store, db, principal, record, index, *, acompanhar):
                         f"{format_date_br(item['data'])} — {document['nome']}"
                     )
         if history_open:
+            if message := st.session_state.pop(f"peticoes_remove_ok_{identifier}", None):
+                st.success(message)
             items = db.progress(identifier)
             document_bytes = {
                 item["id"]: item for item in db.progress_documents(identifier)
@@ -680,19 +755,39 @@ def _card(store, db, principal, record, index, *, acompanhar):
                         )
                 if has_permission(principal, "peticoes_registrar_andamento"):
                     error_key = f"peticoes_remove_erro_{item['id']}"
-                    st.button(
-                        "Excluir logicamente",
-                        key=f"peticoes_remove_{item['id']}",
-                        on_click=_remover_andamento,
-                        args=(
-                            store,
-                            principal,
-                            item["id"],
-                            error_key,
-                        ),
-                    )
-                    if message := st.session_state.get(error_key):
-                        st.error(message)
+                    confirmation = _remove_confirmation(identifier, item["id"])
+                    if confirmation is None:
+                        st.button(
+                            "Remover andamento",
+                            key=f"peticoes_remove_{item['id']}",
+                            on_click=_request_remove_progress,
+                            args=(identifier, item["id"], error_key),
+                        )
+                    else:
+                        st.warning(
+                            "Este andamento será removido logicamente; o registro não será excluído fisicamente."
+                        )
+                        cancel, confirm = st.columns(2)
+                        cancel.button(
+                            "Cancelar",
+                            key=f"peticoes_remove_cancel_{item['id']}",
+                            on_click=_cancel_remove_progress,
+                            args=(item["id"],),
+                        )
+                        confirm.button(
+                            "Confirmar remoção",
+                            key=f"peticoes_remove_confirm_{item['id']}",
+                            on_click=_remover_andamento,
+                            args=(
+                                store,
+                                principal,
+                                item["id"],
+                                error_key,
+                                identifier,
+                            ),
+                        )
+                        if message := confirmation.get("error"):
+                            st.error(message)
         if panel.get(f"p{identifier}"):
             document = db.document(identifier)
             if document:

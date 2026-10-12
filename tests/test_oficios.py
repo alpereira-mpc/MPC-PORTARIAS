@@ -12,6 +12,9 @@ from services.oficios import attention, validate_upload, safe_name
 from tests.test_postgresql import pg_url, pg_store
 
 
+_OFICIO_UI_HOLD = {}
+
+
 def sample(service, member=None, year=2026):
     series = service.series()
     member = member or next(s["membro_id"] for s in series if s["sigla"] == "PROGE")
@@ -403,7 +406,11 @@ def test_numbering_configuration_is_rendered_only_in_its_page(store, monkeypatch
     assert any(input.label == "Ano da sequência" for input in app.number_input)
     assert any("PROGE/2026: próximo 8" in item.value for item in app.markdown)
 
-    next(button for button in app.button if button.label == "← Trocar gabinete").click().run()
+    switch = next(
+        button for button in app.button if button.label == "← Trocar gabinete"
+    )
+    assert switch.proto.type == "secondary"
+    switch.click().run()
     app.button(key="gabinete_LAF").click().run()
     app.radio(key="oficio_page").set_value("Numeração").run()
     assert any("LAF/2026: próximo 4" in item.value for item in app.markdown)
@@ -487,6 +494,418 @@ def test_filters_and_attention_pagination(store):
         == 4
     )
     assert not s.list(start="2026-09-11")
+
+
+def _listing_filters(**changes):
+    filters = {
+        "direction": "ENVIADO",
+        "series": None,
+        "member": 1,
+        "number": None,
+        "year": None,
+        "recipient": "",
+        "subject": "",
+        "status": None,
+        "start": None,
+        "end": None,
+        "search": "",
+        "deadline": None,
+        "tracking": False,
+    }
+    filters.update(changes)
+    return filters
+
+
+@pytest.mark.parametrize(
+    ("total", "visible", "has_next"),
+    ((0, 0, False), (1, 1, False), (50, 50, False), (51, 50, True)),
+)
+def test_oficio_listing_first_page_uses_lookahead(
+    monkeypatch, total, visible, has_next
+):
+    from services import oficios_ui as ui
+
+    records = [{"id": str(identifier)} for identifier in range(total)]
+    calls = []
+
+    def read_page(_service, **kwargs):
+        calls.append(kwargs)
+        return records[kwargs["offset"] : kwargs["offset"] + kwargs["limit"]]
+
+    monkeypatch.setattr(ui.st, "session_state", {})
+    monkeypatch.setattr(ui, "read_list", read_page)
+    rows, page, found_next = ui._read_listing_page(
+        object(), "sent", _listing_filters()
+    )
+
+    assert len(rows) == visible
+    assert page == 0
+    assert found_next is has_next
+    assert calls[0]["limit"] == 51
+    assert calls[0]["offset"] == 0
+
+
+def test_oficio_listing_pages_cover_one_hundred_one_without_duplicates(monkeypatch):
+    from services import oficios_ui as ui
+
+    records = [{"id": str(identifier)} for identifier in range(101)]
+
+    def read_page(_service, **kwargs):
+        return records[kwargs["offset"] : kwargs["offset"] + kwargs["limit"]]
+
+    state = {}
+    monkeypatch.setattr(ui.st, "session_state", state)
+    monkeypatch.setattr(ui, "read_list", read_page)
+    visible = []
+    next_flags = []
+    for expected_page in range(3):
+        state[ui._listing_state_key("sent", "page")] = expected_page
+        rows, page, has_next = ui._read_listing_page(
+            object(), "sent", _listing_filters()
+        )
+        assert page == expected_page
+        visible.extend(row["id"] for row in rows)
+        next_flags.append(has_next)
+
+    assert visible == [str(identifier) for identifier in range(101)]
+    assert len(visible) == len(set(visible))
+    assert next_flags == [True, True, False]
+
+
+@pytest.mark.parametrize(
+    "changed_filter",
+    (
+        "direction",
+        "series",
+        "member",
+        "number",
+        "year",
+        "recipient",
+        "subject",
+        "status",
+        "start",
+        "end",
+        "search",
+        "deadline",
+        "tracking",
+    ),
+)
+def test_each_oficio_listing_filter_change_resets_its_page(
+    monkeypatch, changed_filter
+):
+    from services import oficios_ui as ui
+
+    filters = _listing_filters()
+    page_key = ui._listing_state_key("sent", "page")
+    filters_key = ui._listing_state_key("sent", "filters")
+    state = {
+        page_key: 2,
+        filters_key: tuple(sorted(filters.items())),
+    }
+    filters[changed_filter] = not filters[changed_filter] if changed_filter == "tracking" else "novo"
+    monkeypatch.setattr(ui.st, "session_state", state)
+    monkeypatch.setattr(ui, "read_list", lambda *_args, **_kwargs: [])
+
+    _rows, page, _has_next = ui._read_listing_page(object(), "sent", filters)
+
+    assert page == 0
+    assert state[page_key] == 0
+
+
+def test_oficio_listing_pages_are_isolated_and_empty_page_moves_back(monkeypatch):
+    from services import oficios_ui as ui
+
+    records = [{"id": str(identifier)} for identifier in range(100)]
+
+    def read_page(_service, **kwargs):
+        return records[kwargs["offset"] : kwargs["offset"] + kwargs["limit"]]
+
+    sent_page = ui._listing_state_key("sent", "page")
+    received_page = ui._listing_state_key("received", "page")
+    tracking_page = ui._listing_state_key("tracking", "page")
+    filters = _listing_filters()
+    state = {
+        sent_page: 2,
+        ui._listing_state_key("sent", "filters"): tuple(sorted(filters.items())),
+        received_page: 1,
+        tracking_page: 0,
+    }
+    monkeypatch.setattr(ui.st, "session_state", state)
+    monkeypatch.setattr(ui, "read_list", read_page)
+
+    rows, page, has_next = ui._read_listing_page(object(), "sent", filters)
+
+    assert page == 1
+    assert [row["id"] for row in rows] == [str(identifier) for identifier in range(50, 100)]
+    assert has_next is False
+    assert state[sent_page] == 1
+    assert state[received_page] == 1
+    assert state[tracking_page] == 0
+
+
+def test_overview_query_requires_confirmation_and_survives_page_changes(monkeypatch):
+    from services import oficios_ui as ui
+
+    state = {}
+    monkeypatch.setattr(ui.st, "session_state", state)
+    filters = _listing_filters(direction=None)
+
+    assert ui._active_overview_query({**filters, "submitted": False}) is None
+
+    applied = ui._active_overview_query({**filters, "submitted": True})
+    assert applied == filters
+    assert state[ui._listing_state_key("overview", "page")] == 0
+
+    ui._move_listing_page("overview", 1)
+    repeated = ui._active_overview_query({**filters, "submitted": False})
+    assert repeated == filters
+    assert state[ui._listing_state_key("overview", "page")] == 1
+
+    assert (
+        ui._active_overview_query(
+            {**filters, "search": "nova consulta", "submitted": False}
+        )
+        is None
+    )
+    assert state["oficio_overview_query_active"] is False
+
+    refreshed = ui._active_overview_query(
+        {**filters, "search": "nova consulta", "submitted": True}
+    )
+    assert refreshed["search"] == "nova consulta"
+    assert state[ui._listing_state_key("overview", "page")] == 0
+
+
+def test_oficio_listing_clears_all_contexts_when_gabinete_changes(monkeypatch):
+    from services import oficios_ui as ui
+
+    state = {
+        "oficio_listing_gabinete_member": 1,
+        "oficio_overview_query_active": True,
+        ui._listing_state_key("overview", "page"): 2,
+        ui._listing_state_key("sent", "page"): 1,
+        ui._listing_state_key("received", "search"): "restrito",
+        ui._listing_state_key("tracking", "page"): 3,
+    }
+    monkeypatch.setattr(ui.st, "session_state", state)
+
+    ui._ensure_listing_gabinete(2)
+
+    assert state == {"oficio_listing_gabinete_member": 2}
+
+
+def test_oficio_gabinete_change_discards_only_its_listing_snapshot(monkeypatch):
+    from services import oficios_ui as ui
+    from portal import PORTAL_LISTING_STATE, _restore_listing, _stash_listing
+
+    state = {
+        PORTAL_LISTING_STATE: {
+            "Ofícios": {
+                ui._listing_state_key("sent", "search"): "PROGE",
+                ui._listing_state_key("sent", "page"): 2,
+            },
+            "Ouvidoria": {"ouvi_fq": "preservar"},
+        },
+        "oficio_listing_gabinete_member": 1,
+        "oficio_gabinete_member": 1,
+        "oficio_overview_query_active": True,
+        "oficio_overview_applied_filters": {"member": 1},
+    }
+    for context in ui._LIST_CONTEXTS:
+        state[ui._listing_state_key(context, "page")] = 2
+        state[ui._listing_state_key(context, "search")] = "PROGE"
+    monkeypatch.setattr(ui.st, "session_state", state)
+
+    ui._ensure_listing_gabinete(1)
+    assert state[ui._listing_state_key("sent", "page")] == 2
+    assert state["oficio_overview_query_active"] is True
+    assert state[PORTAL_LISTING_STATE]["Ofícios"]
+
+    ui._ensure_listing_gabinete(2)
+    assert state[PORTAL_LISTING_STATE] == {
+        "Ouvidoria": {"ouvi_fq": "preservar"}
+    }
+    assert "oficio_overview_query_active" not in state
+    assert "oficio_overview_applied_filters" not in state
+    for context in ui._LIST_CONTEXTS:
+        assert ui._listing_state_key(context, "page") not in state
+        assert ui._listing_state_key(context, "search") not in state
+
+    state["oficio_gabinete_member"] = 2
+    _stash_listing("Ofícios")
+    _restore_listing("Ofícios")
+    assert ui._listing_state_key("sent", "search") not in state
+    assert state[PORTAL_LISTING_STATE]["Ouvidoria"] == {
+        "ouvi_fq": "preservar"
+    }
+
+
+def test_oficio_filter_does_not_reappear_after_gabinete_and_module_switch(
+    store, monkeypatch
+):
+    from streamlit.testing.v1 import AppTest
+    from database.store import ROOT
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app = app.sidebar.radio(key="portal_module").set_value("Ofícios").run()
+    app = app.button(key="gabinete_PROGE").click().run()
+    app = app.radio(key="oficio_page").set_value("Enviados").run()
+    app = app.text_input(key="oficio_list_sent_search").set_value("PROGE").run()
+    assert app.text_input(key="oficio_list_sent_search").value == "PROGE"
+
+    switch = next(button for button in app.button if button.label == "← Trocar gabinete")
+    app = switch.click().run()
+    app = app.button(key="gabinete_BTLC").click().run()
+    app = app.sidebar.radio(key="portal_module").set_value("Início").run()
+    app = app.sidebar.radio(key="portal_module").set_value("Ofícios").run()
+    app = app.radio(key="oficio_page").set_value("Enviados").run()
+
+    assert not app.exception
+    assert app.session_state["oficio_gabinete"] == "BTLC"
+    assert app.text_input(key="oficio_list_sent_search").value == ""
+
+
+def test_oficio_pagination_keeps_postgresql_read_list_cache_path(monkeypatch):
+    from types import SimpleNamespace
+    from services import oficios_ui as ui
+
+    captured = []
+
+    class Store:
+        backend = "postgresql"
+
+        def read_cache_key(self, tables):
+            return tuple(tables)
+
+    service = SimpleNamespace(store=Store())
+
+    def cached(key, operation, arguments, _service):
+        captured.append((key, operation, dict(arguments), _service))
+        return []
+
+    monkeypatch.setattr(ui.st, "session_state", {"oficio_gabinete_member": 7})
+    monkeypatch.setattr(ui, "cached_metadata", cached)
+
+    rows, page, has_next = ui._read_listing_page(
+        service, "sent", _listing_filters(member=7)
+    )
+
+    assert rows == []
+    assert page == 0
+    assert has_next is False
+    assert captured[0][1] == "list"
+    assert captured[0][2]["member"] == 7
+    assert captured[0][2]["limit"] == 51
+    assert captured[0][2]["offset"] == 0
+    assert captured[0][3] is service
+
+
+def test_overview_pagination_does_not_require_another_consult_click(monkeypatch):
+    from types import SimpleNamespace
+    from streamlit.testing.v1 import AppTest
+    from services import oficios_ui as ui
+
+    def row(identifier):
+        return {
+            "id": str(identifier),
+            "serie": "PROGE",
+            "numero": identifier + 1,
+            "numero_externo": None,
+            "ano": 2026,
+            "assunto": f"Ofício {identifier:03d}",
+            "status": "Enviado",
+            "direcao": "ENVIADO",
+            "data": "2026-10-01",
+            "prazo": None,
+            "aguarda_resposta": False,
+            "responde_a": None,
+        }
+
+    records = [row(identifier) for identifier in range(51)]
+
+    class Service:
+        def __init__(self):
+            self.store = SimpleNamespace(backend="sqlite")
+            self.calls = []
+
+        def list(self, **kwargs):
+            self.calls.append(kwargs)
+            selected = records
+            if kwargs["search"]:
+                term = kwargs["search"].casefold()
+                selected = [item for item in selected if term in item["assunto"].casefold()]
+            return selected[kwargs["offset"] : kwargs["offset"] + kwargs["limit"]]
+
+    service = Service()
+    _OFICIO_UI_HOLD.clear()
+    _OFICIO_UI_HOLD.update(ui=ui, service=service)
+
+    def page():
+        import streamlit as st
+        from tests.test_oficios import _OFICIO_UI_HOLD
+
+        ui = _OFICIO_UI_HOLD["ui"]
+        st.session_state.setdefault("oficio_gabinete_member", 1)
+        ui._ensure_listing_gabinete(st.session_state["oficio_gabinete_member"])
+        filters = ui.render_filters(
+            submit_label="Consultar ofícios", context="overview"
+        )
+        query = ui._active_overview_query(filters)
+        if query is not None:
+            ui.listing(
+                _OFICIO_UI_HOLD["service"],
+                {},
+                filters=query,
+                context="overview",
+            )
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert not app.exception
+    assert not any(button.key == "oficio_list_overview_next" for button in app.button)
+
+    app = app.button(key="oficio_overview_search").click().run()
+    assert not app.exception
+    previous = app.button(key="oficio_list_overview_previous")
+    following = app.button(key="oficio_list_overview_next")
+    assert previous.proto.type == "secondary"
+    assert following.proto.type == "secondary"
+    assert previous.disabled
+    assert not following.disabled
+    assert any(caption.value == "Página 1" for caption in app.caption)
+    assert service.calls[-1]["limit"] == 51
+    assert service.calls[-1]["offset"] == 0
+
+    app = app.button(key="oficio_list_overview_next").click().run()
+    assert not app.exception
+    assert app.session_state[ui._listing_state_key("overview", "page")] == 1
+    assert not app.button(key="oficio_list_overview_previous").disabled
+    assert app.button(key="oficio_list_overview_next").disabled
+    assert any(caption.value == "Página 2" for caption in app.caption)
+    assert service.calls[-1]["offset"] == 50
+
+    app = app.run()
+    assert not app.exception
+    assert app.session_state[ui._listing_state_key("overview", "page")] == 1
+    assert service.calls[-1]["offset"] == 50
+
+    app = app.text_input(key="oficio_list_overview_search").set_value("Ofício 000").run()
+    assert not app.exception
+    assert not any(button.key == "oficio_list_overview_next" for button in app.button)
+
+    app = app.button(key="oficio_overview_search").click().run()
+    assert not app.exception
+    assert app.session_state[ui._listing_state_key("overview", "page")] == 0
+    assert service.calls[-1]["search"] == "Ofício 000"
+    assert service.calls[-1]["offset"] == 0
+
+    app.session_state["oficio_gabinete_member"] = 2
+    app = app.run()
+    assert not app.exception
+    assert "oficio_overview_query_active" not in app.session_state
+    assert not any(button.key == "oficio_list_overview_next" for button in app.button)
 
 
 def test_metadata_queries_exclude_binary(store, monkeypatch):

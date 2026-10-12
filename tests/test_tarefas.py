@@ -428,7 +428,7 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
         "Em andamento",
         "Aguardando",
     ]
-    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (2)"
+    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas"
     assert app.expander[0].proto.expanded is False
     assert app.button(key=f"task_finish_{first['id']}")
     assert app.button(key=f"task_finish_{second['id']}")
@@ -447,12 +447,26 @@ def test_task_page_prioritizes_active_tasks_and_updates_collapsed_history(
     app.button(key=f"task_finish_{first['id']}").click().run()
 
     assert not app.exception
+    assert [message.value for message in app.success] == ["Tarefa concluída."]
     assert repo.get(first["id"], owner["id"])["status"] == "CONCLUIDA"
-    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas (3)"
+    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas"
     assert not any(
         button.key == f"task_finish_{first['id']}" for button in app.button
     )
     assert app.button(key=f"task_reopen_{first['id']}")
+
+    app.run()
+    assert not app.exception
+    assert not app.success
+
+    app.button(key=f"task_reopen_{first['id']}").click().run()
+    assert not app.exception
+    assert [message.value for message in app.success] == ["Tarefa reaberta."]
+    assert repo.get(first["id"], owner["id"])["status"] == "A_FAZER"
+
+    app.run()
+    assert not app.exception
+    assert not app.success
 
     app.text_input(key="tarefas_q").set_value("beta").run()
 
@@ -508,6 +522,185 @@ def test_active_task_cards_are_paginated(store, monkeypatch):
         [button for button in app.button if str(button.key).startswith("task_finish_")]
     ) == 5
     assert app.button(key="tarefas_active_previous")
+
+
+@pytest.mark.parametrize(
+    ("total", "visible", "has_next"),
+    ((0, 0, False), (1, 1, False), (30, 30, False), (31, 30, True)),
+)
+def test_task_history_first_page_uses_lookahead(
+    monkeypatch, total, visible, has_next
+):
+    import services.tarefas_ui as ui
+
+    records = [{"id": identifier} for identifier in range(total)]
+
+    class Repo:
+        calls = []
+
+        def list_history(self, owner, filters, *, limit, offset):
+            self.calls.append((owner, filters, limit, offset))
+            return records[offset : offset + limit]
+
+    repo = Repo()
+    monkeypatch.setattr(ui.st, "session_state", {})
+
+    rows, page, found_next = ui._read_history_page(
+        repo, 7, {"pesquisa": "", "prioridade": None, "status": None}
+    )
+
+    assert len(rows) == visible
+    assert page == 0
+    assert found_next is has_next
+    assert [(limit, offset) for _, _, limit, offset in repo.calls] == [(31, 0)]
+
+
+def test_task_history_pages_cover_sixty_one_without_duplicates(monkeypatch):
+    import services.tarefas_ui as ui
+
+    records = [{"id": identifier} for identifier in range(61)]
+
+    class Repo:
+        def list_history(self, _owner, _filters, *, limit, offset):
+            return records[offset : offset + limit]
+
+    state = {}
+    monkeypatch.setattr(ui.st, "session_state", state)
+    visible = []
+    next_flags = []
+    for expected_page in range(3):
+        state["tarefas_history_page"] = expected_page
+        rows, page, has_next = ui._read_history_page(
+            Repo(), 7, {"pesquisa": "", "prioridade": None, "status": None}
+        )
+        assert page == expected_page
+        visible.extend(row["id"] for row in rows)
+        next_flags.append(has_next)
+
+    assert visible == list(range(61))
+    assert len(visible) == len(set(visible))
+    assert next_flags == [True, True, False]
+
+
+@pytest.mark.parametrize("changed_filter", ("pesquisa", "prioridade", "status"))
+def test_each_task_history_filter_change_resets_page(monkeypatch, changed_filter):
+    import services.tarefas_ui as ui
+
+    filters = {"pesquisa": "", "prioridade": None, "status": None}
+    state = {
+        "tarefas_history_page": 2,
+        "tarefas_history_filters": tuple(sorted(filters.items())),
+    }
+    filters[changed_filter] = "novo"
+
+    class Repo:
+        def list_history(self, *_args, **_kwargs):
+            return []
+
+    monkeypatch.setattr(ui.st, "session_state", state)
+
+    _rows, page, _has_next = ui._read_history_page(Repo(), 7, filters)
+
+    assert page == 0
+    assert state["tarefas_history_page"] == 0
+
+
+def test_task_history_empty_page_moves_back_after_record_change(monkeypatch):
+    import services.tarefas_ui as ui
+
+    records = [{"id": identifier} for identifier in range(60)]
+    filters = {"pesquisa": "", "prioridade": None, "status": None}
+
+    class Repo:
+        def list_history(self, _owner, _filters, *, limit, offset):
+            return records[offset : offset + limit]
+
+    state = {
+        "tarefas_history_page": 2,
+        "tarefas_history_filters": tuple(sorted(filters.items())),
+    }
+    monkeypatch.setattr(ui.st, "session_state", state)
+
+    rows, page, has_next = ui._read_history_page(Repo(), 7, filters)
+
+    assert page == 1
+    assert [row["id"] for row in rows] == list(range(30, 60))
+    assert has_next is False
+
+
+def test_task_history_order_is_stable_and_owner_scoped(store):
+    repo = TarefasStore(store)
+    own = []
+    for index in range(31):
+        task = repo.create(1, {"titulo": f"Histórico próprio {index:02d}"})
+        own.append(repo.change_status(task["id"], 1, "CONCLUIDA")["id"])
+    for index in range(2):
+        task = repo.create(2, {"titulo": f"Histórico alheio {index:02d}"})
+        repo.change_status(task["id"], 2, "CONCLUIDA")
+    with store.connection() as connection:
+        connection.execute(
+            "UPDATE tarefas SET atualizado_em=? WHERE status='CONCLUIDA'",
+            ("2026-10-12T12:00:00-03:00",),
+        )
+
+    first = repo.list_history(1, limit=31, offset=0)[:30]
+    second = repo.list_history(1, limit=31, offset=30)[:30]
+    visible = [row["id"] for row in (*first, *second)]
+
+    assert visible == sorted(own, reverse=True)
+    assert len(visible) == len(set(visible)) == 31
+    assert all(row["owner_user_id"] == 1 for row in (*first, *second))
+
+
+def test_task_history_controls_open_return_and_empty_page(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    from database.access import AccessStore
+    from database.store import ROOT
+    from tests.access_testing import TEST_IDENTITY, enable_login
+
+    enable_login(monkeypatch, store)
+    owner = AccessStore(store).get_by_email(TEST_IDENTITY["email"])
+    repo = TarefasStore(store)
+    identifiers = []
+    for index in range(31):
+        task = repo.create(owner["id"], {"titulo": f"Histórico {index:02d}"})
+        identifiers.append(
+            repo.change_status(task["id"], owner["id"], "CONCLUIDA")["id"]
+        )
+    monkeypatch.setattr("database.store.Store", lambda: store)
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio(key="portal_module").set_value("Tarefas").run()
+
+    assert not app.exception
+    assert app.expander[0].label == "Tarefas concluídas e/ou canceladas"
+    assert app.button(key="tarefas_history_previous").disabled
+    assert not app.button(key="tarefas_history_next").disabled
+    assert len(_button_keys(app, "task_reopen_")) == 30
+
+    app = app.button(key="tarefas_history_next").click().run()
+    assert not app.exception
+    assert app.session_state["tarefas_history_page"] == 1
+    assert app.expander[0].proto.expanded is True
+    assert not app.button(key="tarefas_history_previous").disabled
+    assert app.button(key="tarefas_history_next").disabled
+    assert len(_button_keys(app, "task_reopen_")) == 1
+
+    oldest = identifiers[0]
+    app.session_state["tarefas_open_id"] = oldest
+    app = app.run()
+    assert app.session_state["tarefas_history_page"] == 1
+    app = app.button(key=f"tarefas_form_{oldest}cancel").click().run()
+    assert "tarefas_edit" not in app.session_state
+    assert app.session_state["tarefas_history_page"] == 1
+
+    app = app.button(key=f"task_reopen_{oldest}").click().run()
+    assert not app.exception
+    assert app.session_state["tarefas_history_page"] == 0
+    assert app.expander[0].proto.expanded is True
+    assert app.button(key="tarefas_history_previous").disabled
+    assert app.button(key="tarefas_history_next").disabled
 
 
 def _markdown_text(app):

@@ -2,6 +2,7 @@ from io import BytesIO
 import inspect
 import pytest
 from pypdf import PdfWriter
+from streamlit.testing.v1 import AppTest
 
 from database.access import AccessStore
 from database.ouvidoria import DOCUMENT_META, OuvidoriaStore
@@ -35,6 +36,9 @@ from services.ouvidoria import (
     update_action,
 )
 from tests.access_testing import seed_access
+
+
+_UI_HOLD = {}
 
 
 def _pdf():
@@ -582,3 +586,247 @@ def test_unprotocolled_project_from_ouvidoria_can_be_deleted(store):
     with pytest.raises(ValueError, match="não pode ser excluída"):
         delete_project(store, protocolled["id"], both)
     assert get(store, other["id"])["representacao_id"] == protocolled["id"]
+
+
+@pytest.mark.parametrize(
+    ("total", "visible", "has_next"),
+    ((0, 0, False), (1, 1, False), (25, 25, False), (26, 25, True)),
+)
+def test_ouvidoria_first_page_uses_lookahead(monkeypatch, total, visible, has_next):
+    import services.ouvidoria_ui as ui
+
+    records = [{"id": identifier} for identifier in range(total)]
+    calls = []
+
+    def list_page(_store, _filters, *, limit, offset):
+        calls.append((limit, offset))
+        return records[offset : offset + limit]
+
+    monkeypatch.setattr(ui.st, "session_state", {})
+    monkeypatch.setattr(ui, "list_records", list_page)
+
+    rows, page, found_next = ui._read_list_page(object(), {"pesquisa": None})
+
+    assert len(rows) == visible
+    assert page == 0
+    assert found_next is has_next
+    assert calls == [(26, 0)]
+
+
+def test_ouvidoria_pages_cover_fifty_one_without_duplicates(monkeypatch):
+    import services.ouvidoria_ui as ui
+
+    records = [{"id": identifier} for identifier in range(51)]
+
+    def list_page(_store, _filters, *, limit, offset):
+        return records[offset : offset + limit]
+
+    state = {}
+    monkeypatch.setattr(ui.st, "session_state", state)
+    monkeypatch.setattr(ui, "list_records", list_page)
+    visible = []
+    next_flags = []
+    for expected_page in range(3):
+        state["ouvidoria_page"] = expected_page
+        rows, page, has_next = ui._read_list_page(object(), {"situacao": None})
+        assert page == expected_page
+        visible.extend(row["id"] for row in rows)
+        next_flags.append(has_next)
+
+    assert visible == list(range(51))
+    assert len(visible) == len(set(visible))
+    assert next_flags == [True, True, False]
+
+
+@pytest.mark.parametrize(
+    "changed_filter",
+    (
+        "situacao",
+        "resultado",
+        "tipo",
+        "forma_recebimento",
+        "ano",
+        "classificacao_acesso",
+        "representado",
+        "pesquisa",
+        "procurador_responsavel_id",
+        "procurador_id",
+        "assessor_id",
+    ),
+)
+def test_each_ouvidoria_filter_change_resets_page(monkeypatch, changed_filter):
+    import services.ouvidoria_ui as ui
+
+    filters = {
+        "situacao": None,
+        "resultado": None,
+        "tipo": None,
+        "forma_recebimento": None,
+        "ano": None,
+        "classificacao_acesso": None,
+        "representado": "",
+        "pesquisa": "",
+        "procurador_responsavel_id": None,
+        "procurador_id": None,
+        "assessor_id": None,
+    }
+    state = {
+        "ouvidoria_page": 2,
+        "ouvidoria_page_filters": tuple(sorted(filters.items())),
+    }
+    filters[changed_filter] = "novo"
+    monkeypatch.setattr(ui.st, "session_state", state)
+    monkeypatch.setattr(ui, "list_records", lambda *_args, **_kwargs: [])
+
+    _rows, page, _has_next = ui._read_list_page(object(), filters)
+
+    assert page == 0
+    assert state["ouvidoria_page"] == 0
+
+
+def test_ouvidoria_empty_page_moves_back_after_record_change(monkeypatch):
+    import services.ouvidoria_ui as ui
+
+    records = [{"id": identifier} for identifier in range(50)]
+
+    def list_page(_store, _filters, *, limit, offset):
+        return records[offset : offset + limit]
+
+    state = {
+        "ouvidoria_page": 2,
+        "ouvidoria_page_filters": (("situacao", None),),
+    }
+    monkeypatch.setattr(ui.st, "session_state", state)
+    monkeypatch.setattr(ui, "list_records", list_page)
+
+    rows, page, has_next = ui._read_list_page(object(), {"situacao": None})
+
+    assert page == 1
+    assert [row["id"] for row in rows] == list(range(25, 50))
+    assert has_next is False
+    assert state["ouvidoria_page"] == 1
+
+
+def test_ouvidoria_filters_are_grouped_counted_and_cleared(store, monkeypatch):
+    import services.ouvidoria_ui as ui
+
+    principal = _principal(store, email="ouvi-filters@test.local")
+    calls = []
+
+    def list_page(_store, filters, *, limit, offset):
+        calls.append((dict(filters), limit, offset))
+        return []
+
+    monkeypatch.setattr(ui, "list_records", list_page)
+    _UI_HOLD.clear()
+    _UI_HOLD.update(ui=ui, store=store, principal=principal)
+
+    def page():
+        from tests.test_ouvidoria import _UI_HOLD
+
+        _UI_HOLD["ui"].render(_UI_HOLD["store"], _UI_HOLD["principal"])
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert not app.exception
+    assert app.expander[0].label == "Filtros avançados"
+    assert app.expander[0].proto.expanded is False
+    assert {widget.key for widget in app.text_input if widget.key in ui._LIST_FILTER_KEYS} == {
+        "ouvi_fq",
+        "ouvi_frep",
+    }
+    assert {
+        widget.key for widget in app.selectbox if widget.key in ui._LIST_FILTER_KEYS
+    } == {
+        "ouvi_fs",
+        "ouvi_fr",
+        "ouvi_ft",
+        "ouvi_ff",
+        "ouvi_fyear",
+        "ouvi_fc",
+        "ouvi_fresp",
+        "ouvi_fpart",
+        "ouvi_fass",
+    }
+
+    app = app.text_input(key="ouvi_fq").set_value("OUVI-2026").run()
+    assert not app.exception
+    assert calls[-1][0]["pesquisa"] == "OUVI-2026"
+    assert app.session_state["ouvidoria_page"] == 0
+    assert app.expander[0].label == "Filtros avançados"
+
+    app = app.selectbox(key="ouvi_fr").set_value("ARQUIVAMENTO").run()
+    assert not app.exception
+    assert calls[-1][0]["resultado"] == "ARQUIVAMENTO"
+    assert app.expander[0].label == "Filtros avançados · Filtros ativos (1)"
+
+    app = app.text_input(key="ouvi_frep").set_value("Município X").run()
+    assert not app.exception
+    assert calls[-1][0]["representado"] == "Município X"
+    assert app.expander[0].label == "Filtros avançados · Filtros ativos (2)"
+
+    app.session_state["ouvidoria_page"] = 3
+    app = app.button(key="ouvi_filters_clear").click().run()
+    assert not app.exception
+    assert app.session_state["ouvidoria_page"] == 0
+    assert app.text_input(key="ouvi_fq").value == ""
+    assert app.text_input(key="ouvi_frep").value == ""
+    assert all(
+        app.selectbox(key=key).value == ui._FILTER_ALL
+        for key in ui._LIST_FILTER_KEYS
+        if key not in {"ouvi_fq", "ouvi_frep"}
+    )
+    assert app.expander[0].label == "Filtros avançados"
+    assert all(value in (None, "") for value in calls[-1][0].values())
+    assert calls[-1][1:] == (26, 0)
+
+    filters_source = inspect.getsource(ui.render)
+    advanced_source = filters_source[
+        filters_source.index("with st.expander(advanced_label") : filters_source.index(
+            "filters = {"
+        )
+    ]
+    assert advanced_source.count("st.columns(3)") == 3
+    assert "st.columns(4)" not in advanced_source
+
+
+def test_ouvidoria_pagination_buttons_filters_and_detail_return(store):
+    import services.ouvidoria_ui as ui
+
+    principal = _principal(store, email="ouvi-pages@test.local")
+    payload, *_ = _payload(store)
+    identifiers = [
+        create(store, {**payload, "titulo": f"Notícia paginada {index:02d}"}, principal)[
+            "id"
+        ]
+        for index in range(26)
+    ]
+    _UI_HOLD.clear()
+    _UI_HOLD.update(ui=ui, store=store, principal=principal)
+
+    def page():
+        from tests.test_ouvidoria import _UI_HOLD
+
+        _UI_HOLD["ui"].render(_UI_HOLD["store"], _UI_HOLD["principal"])
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert not app.exception
+    assert app.button(key="ouvidoria_page_previous").disabled
+    assert not app.button(key="ouvidoria_page_next").disabled
+    assert len([button for button in app.button if button.key.startswith("ouvi_open_")]) == 25
+
+    app = app.button(key="ouvidoria_page_next").click().run()
+    assert not app.exception
+    assert app.session_state["ouvidoria_page"] == 1
+    assert not app.button(key="ouvidoria_page_previous").disabled
+    assert app.button(key="ouvidoria_page_next").disabled
+    open_buttons = [button for button in app.button if button.key.startswith("ouvi_open_")]
+    assert len(open_buttons) == 1
+    assert open_buttons[0].key == "ouvi_open_" + str(identifiers[0])
+
+    app = open_buttons[0].click().run()
+    assert app.session_state["ouvidoria_view"] == identifiers[0]
+    app = app.button(key="ouvi_dt_back").click().run()
+    assert not app.exception
+    assert app.session_state["ouvidoria_page"] == 1
+    assert not app.button(key="ouvidoria_page_previous").disabled
+    assert app.button(key="ouvidoria_page_next").disabled

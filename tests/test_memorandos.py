@@ -3,6 +3,7 @@ from io import BytesIO
 from pathlib import Path
 import hashlib
 import tempfile
+from types import SimpleNamespace
 
 import pytest
 from docx import Document
@@ -22,6 +23,9 @@ from services.memorandos import (
     signature_role,
 )
 from tests.test_postgresql import pg_store, pg_url  # noqa: F401
+
+
+_MEMO_UI_HOLD = {}
 
 
 def person(name, gender, registration, cargo="Analista", lotacao="Secretaria da 1ª Câmara"):
@@ -308,6 +312,130 @@ def test_draft_can_be_deleted_final_cannot(store):
         service.delete_draft(identifier)
 
 
+def test_draft_deletion_requires_per_record_confirmation_and_keeps_audit_alerts(
+    store, monkeypatch
+):
+    from database.audit import AuditStore
+    from services.access import resolve_principal
+    from services import memorandos_ui as ui
+    from tests.access_testing import TEST_IDENTITY
+
+    service = MemorandosStore(store)
+    principal = resolve_principal(store, TEST_IDENTITY)
+    first = service.save_draft(record(), actor_email="author@test")
+    second = service.save_draft(record(), actor_email="author@test")
+    state = {"_mpc_store": store}
+    invalidations = []
+    monkeypatch.setattr(ui, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(
+        "services.alerts.invalidate_alert_summary",
+        lambda: invalidations.append(True),
+    )
+
+    ui._request_draft_delete(first)
+    ui._request_draft_delete(second)
+    assert service.get(first)["id"] == first
+    assert service.get(second)["id"] == second
+
+    ui._cancel_draft_delete(first)
+    assert str(first) not in state["memo_draft_delete_confirmations"]
+    assert str(second) in state["memo_draft_delete_confirmations"]
+    assert service.get(first)["id"] == first
+
+    ui._confirm_draft_delete(service, principal, second)
+    with pytest.raises(ValueError, match="não encontrado"):
+        service.get(second)
+    assert service.get(first)["id"] == first
+    assert invalidations == [True]
+    assert state["memo_draft_delete_flash"] == "Rascunho excluído."
+    events = AuditStore(store).list_events({"modulo": "memorandos"}, limit=10)
+    assert any(
+        event["evento"] == "RASCUNHO_EXCLUIDO"
+        and event["entidade_id"] == second
+        for event in events
+    )
+
+
+def test_draft_deletion_confirmation_keeps_error_without_false_success(store, monkeypatch):
+    from services import memorandos_ui as ui
+    from services.access import resolve_principal
+    from tests.access_testing import TEST_IDENTITY
+
+    state = {}
+    monkeypatch.setattr(ui, "st", SimpleNamespace(session_state=state))
+
+    class FailingService:
+        def __init__(self):
+            self.store = store
+
+        def delete_draft(self, _identifier):
+            raise ValueError("Falha simulada.")
+
+    ui._request_draft_delete("draft-1")
+    ui._confirm_draft_delete(
+        FailingService(), resolve_principal(store, TEST_IDENTITY), "draft-1"
+    )
+
+    confirmation = state["memo_draft_delete_confirmations"]["draft-1"]
+    assert confirmation["error"] == "Falha simulada."
+    assert "memo_draft_delete_flash" not in state
+
+
+@pytest.mark.parametrize("failure", ("revoked", "inactive", "query_error"))
+def test_draft_delete_confirmation_rechecks_authorization_before_callback_mutation(
+    store, monkeypatch, failure
+):
+    from database.access import AccessStore
+    from database.audit import AuditStore
+    from services import memorandos_ui as ui
+    from services.access import resolve_principal
+    from tests.access_testing import seed_access
+
+    email = "memo.callback@test.local"
+    seed_access(
+        store, email=email, perfil="USUARIO", pode_memorandos=True,
+        pode_admin=False,
+    )
+    principal = resolve_principal(store, {"email": email})
+    service = MemorandosStore(store)
+    identifier = service.save_draft(record(), actor_email=email)
+    state = {"_mpc_store": store}
+    invalidations = []
+    monkeypatch.setattr(ui, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(
+        "services.alerts.invalidate_alert_summary",
+        lambda: invalidations.append(True),
+    )
+
+    ui._request_draft_delete(identifier)
+    assert service.get(identifier)["id"] == identifier
+    if failure == "query_error":
+        def unavailable(_self, _email):
+            raise RuntimeError("database unavailable")
+
+        monkeypatch.setattr(AccessStore, "authorization_version", unavailable)
+    else:
+        seed_access(
+            store, email=email, perfil="USUARIO",
+            pode_memorandos=failure != "revoked", ativo=failure != "inactive",
+            pode_admin=False,
+        )
+
+    ui._confirm_draft_delete(service, principal, identifier)
+
+    assert service.get(identifier)["id"] == identifier
+    error = state["memo_draft_delete_confirmations"][identifier]["error"]
+    assert error
+    assert "database unavailable" not in error
+    assert "memo_draft_delete_flash" not in state
+    assert invalidations == []
+    assert not any(
+        event["evento"] == "RASCUNHO_EXCLUIDO"
+        and event["entidade_id"] == identifier
+        for event in AuditStore(store).list_events({"modulo": "memorandos"}, limit=20)
+    )
+
+
 def test_list_filters_and_pagination(store):
     service = MemorandosStore(store)
     first = service.save_draft(record(), actor_email="author@test")
@@ -317,6 +445,231 @@ def test_list_filters_and_pagination(store):
     rows = service.list(search="Carla", limit=1, offset=0)
     assert len(rows) == 1 and "Carla" in rows[0]["cadeia"]
     assert service.get(first)["etapas"][0]["substituido"]["nome"] == "Ana"
+
+
+@pytest.mark.parametrize(
+    ("total", "visible", "has_next"),
+    ((0, 0, False), (1, 1, False), (30, 30, False), (31, 30, True)),
+)
+def test_memorandos_history_first_page_uses_lookahead(
+    monkeypatch, total, visible, has_next
+):
+    from services import memorandos_ui as ui
+
+    records = [{"id": str(identifier)} for identifier in range(total)]
+    calls = []
+
+    class Service:
+        def list(self, **kwargs):
+            calls.append(kwargs)
+            offset = kwargs["offset"]
+            return records[offset : offset + kwargs["limit"]]
+
+    monkeypatch.setattr(ui.st, "session_state", {})
+    rows, page, found_next = ui._read_history_page(Service(), {"search": ""})
+
+    assert len(rows) == visible
+    assert page == 0
+    assert found_next is has_next
+    assert calls == [{"search": "", "limit": 31, "offset": 0}]
+
+
+def test_memorandos_history_pages_cover_sixty_one_without_duplicates(monkeypatch):
+    from services import memorandos_ui as ui
+
+    records = [{"id": str(identifier)} for identifier in range(61)]
+
+    class Service:
+        def list(self, **kwargs):
+            offset = kwargs["offset"]
+            return records[offset : offset + kwargs["limit"]]
+
+    state = {}
+    monkeypatch.setattr(ui.st, "session_state", state)
+    visible = []
+    next_flags = []
+    for expected_page in range(3):
+        state[ui.HISTORY_PAGE_KEY] = expected_page
+        rows, page, has_next = ui._read_history_page(Service(), {"search": ""})
+        assert page == expected_page
+        visible.extend(row["id"] for row in rows)
+        next_flags.append(has_next)
+
+    assert visible == [str(identifier) for identifier in range(61)]
+    assert len(visible) == len(set(visible))
+    assert next_flags == [True, True, False]
+
+
+@pytest.mark.parametrize(
+    "changed_filter",
+    (
+        "status",
+        "situacao",
+        "search",
+        "server",
+        "cabinet",
+        "official_number",
+        "start",
+        "end",
+    ),
+)
+def test_each_memorandos_history_filter_change_resets_page(
+    monkeypatch, changed_filter
+):
+    from services import memorandos_ui as ui
+
+    filters = {
+        "status": None,
+        "situacao": None,
+        "search": "",
+        "server": "",
+        "cabinet": "",
+        "official_number": "",
+        "start": None,
+        "end": None,
+    }
+    state = {
+        ui.HISTORY_PAGE_KEY: 2,
+        ui.HISTORY_FILTERS_KEY: tuple(sorted(filters.items())),
+    }
+    filters[changed_filter] = "novo"
+
+    class Service:
+        def list(self, **_kwargs):
+            return []
+
+    monkeypatch.setattr(ui.st, "session_state", state)
+    _rows, page, _has_next = ui._read_history_page(Service(), filters)
+
+    assert page == 0
+    assert state[ui.HISTORY_PAGE_KEY] == 0
+
+
+def test_memorandos_history_empty_page_moves_back_after_mutation(monkeypatch):
+    from services import memorandos_ui as ui
+
+    records = [{"id": str(identifier)} for identifier in range(60)]
+
+    class Service:
+        def list(self, **kwargs):
+            offset = kwargs["offset"]
+            return records[offset : offset + kwargs["limit"]]
+
+    filters = {"search": ""}
+    state = {
+        ui.HISTORY_PAGE_KEY: 2,
+        ui.HISTORY_FILTERS_KEY: tuple(sorted(filters.items())),
+    }
+    monkeypatch.setattr(ui.st, "session_state", state)
+
+    rows, page, has_next = ui._read_history_page(Service(), filters)
+
+    assert page == 1
+    assert [row["id"] for row in rows] == [str(identifier) for identifier in range(30, 60)]
+    assert has_next is False
+    assert state[ui.HISTORY_PAGE_KEY] == 1
+
+
+def test_memorandos_history_buttons_filters_and_external_focus(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from services import memorandos_ui as ui
+
+    def make_row(identifier):
+        return {
+            "id": str(identifier),
+            "cadeia": f"Afastado {identifier} → Substituto {identifier}",
+            "situacao": "EM ANDAMENTO",
+            "status": "RASCUNHO",
+            "data_inicio": "2026-10-01",
+            "data_fim": "2026-10-31",
+            "gabinete_snapshot": "Gabinete",
+            "motivo": "Férias",
+            "numero_oficial": "",
+        }
+
+    records = [make_row(identifier) for identifier in range(31)]
+
+    class Service:
+        def __init__(self):
+            self.calls = []
+
+        def list(self, **kwargs):
+            self.calls.append(kwargs)
+            selected = records
+            if kwargs["search"]:
+                term = kwargs["search"].casefold()
+                selected = [row for row in selected if term in row["cadeia"].casefold()]
+            offset = kwargs["offset"]
+            return selected[offset : offset + kwargs["limit"]]
+
+        def get(self, identifier):
+            row = dict(records[int(identifier)])
+            row.update(
+                criado_por="teste@test.local",
+                criado_em="2026-10-01T10:00:00",
+                finalizado_em=None,
+                signatario_nome="Signatário",
+                signatario_cargo="Procurador",
+                etapas=[
+                    {
+                        "substituido": {"nome": f"Afastado {identifier}"},
+                        "substituto": {"nome": f"Substituto {identifier}"},
+                    }
+                ],
+            )
+            return row
+
+    service = Service()
+    monkeypatch.setattr(ui, "_details", lambda *_args: None)
+    _MEMO_UI_HOLD.clear()
+    _MEMO_UI_HOLD.update(ui=ui, service=service, principal=SimpleNamespace())
+
+    def page():
+        from tests.test_memorandos import _MEMO_UI_HOLD
+
+        _MEMO_UI_HOLD["ui"]._listing(
+            _MEMO_UI_HOLD["service"], _MEMO_UI_HOLD["principal"]
+        )
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert not app.exception
+    assert not any(field.label == "Página" for field in app.number_input)
+    previous = app.button(key="memorandos_history_previous")
+    following = app.button(key="memorandos_history_next")
+    assert previous.proto.type == "secondary"
+    assert following.proto.type == "secondary"
+    assert previous.disabled
+    assert not following.disabled
+    assert any(caption.value == "Página 1" for caption in app.caption)
+    assert service.calls[-1]["limit"] == 31
+    assert service.calls[-1]["offset"] == 0
+
+    app = app.button(key="memorandos_history_next").click().run()
+    assert not app.exception
+    assert app.session_state[ui.HISTORY_PAGE_KEY] == 1
+    assert not app.button(key="memorandos_history_previous").disabled
+    assert app.button(key="memorandos_history_next").disabled
+    assert any(caption.value == "Página 2" for caption in app.caption)
+    assert service.calls[-1]["offset"] == 30
+
+    app = app.text_input(key="memo_history_search").set_value("Afastado 0").run()
+    assert not app.exception
+    assert app.session_state[ui.HISTORY_PAGE_KEY] == 0
+    assert service.calls[-1]["search"] == "Afastado 0"
+    assert app.button(key="memorandos_history_previous").disabled
+
+    app = app.text_input(key="memo_history_search").set_value("").run()
+    app.session_state["pending_focus_memorando"] = "5"
+    app = app.run()
+    assert not app.exception
+    labels = [
+        expander.label
+        for expander in app.expander
+        if expander.label != "Filtros"
+    ]
+    assert labels.count("Afastado 5 → Substituto 5 · EM ANDAMENTO") == 1
+    assert app.session_state[ui.HISTORY_PAGE_KEY] == 0
+    assert service.calls[-1]["limit"] == 31
 
 
 def test_document_contains_institutional_fields():
@@ -1348,7 +1701,7 @@ def test_hard_delete_ui_is_admin_only():
     details = inspect.getsource(memorandos_ui._details)
     controls = inspect.getsource(memorandos_ui._hard_delete_controls)
     listing = inspect.getsource(memorandos_ui._listing)
-    assert "principal.administrator" in details
+    assert 'has_permission(principal, "admin")' in details
     assert "EXCLUIR" in controls
     assert "Confirmar exclusão definitiva" in controls
     assert "situacao" in listing

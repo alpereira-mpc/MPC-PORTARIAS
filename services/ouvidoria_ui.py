@@ -62,6 +62,100 @@ from services.ui_theme import (
 
 
 _FILTER_ALL = "__todas__"
+_PAGE_SIZE = 25
+_PAGE_KEY = "ouvidoria_page"
+_PAGE_FILTERS_KEY = "ouvidoria_page_filters"
+_LIST_FILTER_KEYS = (
+    "ouvi_fs",
+    "ouvi_fr",
+    "ouvi_ft",
+    "ouvi_ff",
+    "ouvi_fyear",
+    "ouvi_fc",
+    "ouvi_frep",
+    "ouvi_fq",
+    "ouvi_fresp",
+    "ouvi_fpart",
+    "ouvi_fass",
+)
+_ADVANCED_FILTER_KEYS = (
+    "ouvi_fr",
+    "ouvi_ft",
+    "ouvi_ff",
+    "ouvi_fyear",
+    "ouvi_fc",
+    "ouvi_frep",
+    "ouvi_fresp",
+    "ouvi_fpart",
+    "ouvi_fass",
+)
+
+
+def _has_filter_value(value):
+    if isinstance(value, str):
+        return bool(value.strip()) and value != _FILTER_ALL
+    return value is not None
+
+
+def _advanced_filter_count():
+    return sum(
+        _has_filter_value(st.session_state.get(key)) for key in _ADVANCED_FILTER_KEYS
+    )
+
+
+def _clear_list_filters():
+    for key in _LIST_FILTER_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state.pop("_ouvidoria_list_state", None)
+    st.session_state[_PAGE_KEY] = 0
+    st.session_state.pop(_PAGE_FILTERS_KEY, None)
+
+
+def _move_list_page(delta):
+    current = max(0, int(st.session_state.get(_PAGE_KEY, 0) or 0))
+    st.session_state[_PAGE_KEY] = max(0, current + delta)
+
+
+def _read_list_page(store, filters):
+    signature = tuple(sorted(filters.items()))
+    if st.session_state.get(_PAGE_FILTERS_KEY) != signature:
+        st.session_state[_PAGE_KEY] = 0
+        st.session_state[_PAGE_FILTERS_KEY] = signature
+    page = max(0, int(st.session_state.get(_PAGE_KEY, 0) or 0))
+
+    def read(current_page):
+        return list_records(
+            store,
+            filters,
+            limit=_PAGE_SIZE + 1,
+            offset=current_page * _PAGE_SIZE,
+        )
+
+    rows = read(page)
+    if page and not rows:
+        # A mutation may remove the only item on the last page. Recover without
+        # a COUNT query; also tolerate a stale page restored after inactivity.
+        page -= 1
+        rows = read(page)
+        if page and not rows:
+            page = 0
+            rows = read(page)
+        st.session_state[_PAGE_KEY] = page
+    return rows[:_PAGE_SIZE], page, len(rows) > _PAGE_SIZE
+
+
+def _restore_list_state():
+    for key, value in st.session_state.get("_ouvidoria_list_state", {}).items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def _remember_list_state():
+    st.session_state["_ouvidoria_list_state"] = {
+        key: st.session_state[key]
+        for key in (*_LIST_FILTER_KEYS, _PAGE_KEY, _PAGE_FILTERS_KEY)
+        if key in st.session_state
+    }
 
 
 def _detail_chrome(prefix):
@@ -786,50 +880,89 @@ def render(store, principal):
         else:
             _detail(store, principal, record)
             return
+    _restore_list_state()
     filter_mark()
     people, servers = _people_options(store)
-    a, b, c, d = st.columns(4)
-    with a:
-        situacao = _filter_select("Situação", SITUACOES, "Todas", "ouvi_fs")
-    with b:
-        resultado = _filter_select("Resultado", RESULTADOS, "Todos", "ouvi_fr")
-    with c:
-        tipo = _filter_select("Tipo", TIPOS, "Todos", "ouvi_ft")
-    with d:
-        forma = _filter_select("Recebimento", FORMAS, "Todas", "ouvi_ff")
-    e, f, g, h = st.columns(4)
-    year_options = {year: str(year) for year in range(date.today().year, 2023, -1)}
-    with e:
-        ano = _filter_select("Ano", year_options, "Todos", "ouvi_fyear")
-    with f:
-        classificacao = _filter_select("Classificação", CLASSIFICACOES, "Todas", "ouvi_fc")
-    representado = g.text_input("Representado", key="ouvi_frep")
-    pesquisa = h.text_input("Pesquisa / OUVI", key="ouvi_fq")
-    i, j, k = st.columns(3)
-    with i:
-        resp = _filter_select("Procurador responsável", people, "Todos", "ouvi_fresp")
-    with j:
-        part = _filter_select("Procurador participante", people, "Todos", "ouvi_fpart")
-    with k:
-        ass = _filter_select("Assessor", servers, "Todos", "ouvi_fass")
-    rows = list_records(
-        store,
-        {
-            "situacao": situacao,
-            "resultado": resultado,
-            "tipo": tipo,
-            "forma_recebimento": forma,
-            "ano": ano,
-            "classificacao_acesso": classificacao,
-            "representado": representado,
-            "pesquisa": pesquisa,
-            "procurador_responsavel_id": resp,
-            "procurador_id": part,
-            "assessor_id": ass,
-        },
+    advanced_count = _advanced_filter_count()
+    advanced_label = "Filtros avançados"
+    if advanced_count:
+        advanced_label += f" · Filtros ativos ({advanced_count})"
+
+    search_col, status_col, clear_col = st.columns(
+        [2, 1, 0.42], vertical_alignment="bottom"
     )
+    pesquisa = search_col.text_input("Pesquisa / OUVI", key="ouvi_fq")
+    with status_col:
+        situacao = _filter_select("Situação", SITUACOES, "Todas", "ouvi_fs")
+    clear_col.button(
+        "Limpar",
+        key="ouvi_filters_clear",
+        on_click=_clear_list_filters,
+        help="Limpar filtros da listagem",
+    )
+
+    with st.expander(advanced_label, expanded=False):
+        a, b, c = st.columns(3)
+        with a:
+            resultado = _filter_select("Resultado", RESULTADOS, "Todos", "ouvi_fr")
+        with b:
+            tipo = _filter_select("Tipo", TIPOS, "Todos", "ouvi_ft")
+        with c:
+            forma = _filter_select("Recebimento", FORMAS, "Todas", "ouvi_ff")
+        d, e, f = st.columns(3)
+        year_options = {
+            year: str(year) for year in range(date.today().year, 2023, -1)
+        }
+        with d:
+            ano = _filter_select("Ano", year_options, "Todos", "ouvi_fyear")
+        with e:
+            classificacao = _filter_select(
+                "Classificação", CLASSIFICACOES, "Todas", "ouvi_fc"
+            )
+        representado = f.text_input("Representado", key="ouvi_frep")
+        g, h, i = st.columns(3)
+        with g:
+            resp = _filter_select(
+                "Procurador responsável", people, "Todos", "ouvi_fresp"
+            )
+        with h:
+            part = _filter_select(
+                "Procurador participante", people, "Todos", "ouvi_fpart"
+            )
+        with i:
+            ass = _filter_select("Assessor", servers, "Todos", "ouvi_fass")
+    filters = {
+        "situacao": situacao,
+        "resultado": resultado,
+        "tipo": tipo,
+        "forma_recebimento": forma,
+        "ano": ano,
+        "classificacao_acesso": classificacao,
+        "representado": representado,
+        "pesquisa": pesquisa,
+        "procurador_responsavel_id": resp,
+        "procurador_id": part,
+        "assessor_id": ass,
+    }
+    rows, page, has_next = _read_list_page(store, filters)
+    _remember_list_state()
     if not rows:
         empty_state("Nenhuma notícia de fato encontrada.")
-        return
     for index, record in enumerate(rows):
         _card(record, index, people, servers)
+    previous, page_label, following = st.columns([1, 2, 1])
+    previous.button(
+        "Anterior",
+        disabled=page == 0,
+        key="ouvidoria_page_previous",
+        on_click=_move_list_page,
+        args=(-1,),
+    )
+    page_label.caption(f"Página {page + 1}", text_alignment="center")
+    following.button(
+        "Próxima",
+        disabled=not has_next,
+        key="ouvidoria_page_next",
+        on_click=_move_list_page,
+        args=(1,),
+    )

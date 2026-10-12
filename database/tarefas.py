@@ -217,7 +217,7 @@ class TarefasStore:
         if filters.get("prazo") == "atrasadas": clauses.append("t.prazo_data<?"); args.append(date.today().isoformat())
         if filters.get("prazo") == "hoje": clauses.append("t.prazo_data=?"); args.append(date.today().isoformat())
         where=" WHERE "+" AND ".join(clauses)
-        order="CASE WHEN t.prazo_data IS NOT NULL AND t.prazo_data<? THEN 0 ELSE 1 END, CASE t.prioridade WHEN 'URGENTE' THEN 0 WHEN 'ALTA' THEN 1 WHEN 'NORMAL' THEN 2 ELSE 3 END, CASE WHEN t.prazo_data IS NULL THEN 1 ELSE 0 END, t.prazo_data, t.criado_em DESC" if statuses==ACTIVE else "t.atualizado_em DESC"
+        order="CASE WHEN t.prazo_data IS NOT NULL AND t.prazo_data<? THEN 0 ELSE 1 END, CASE t.prioridade WHEN 'URGENTE' THEN 0 WHEN 'ALTA' THEN 1 WHEN 'NORMAL' THEN 2 ELSE 3 END, CASE WHEN t.prazo_data IS NULL THEN 1 ELSE 0 END, t.prazo_data, t.criado_em DESC" if statuses==ACTIVE else "t.atualizado_em DESC, t.id DESC"
         values=[*args]; values += [date.today().isoformat()] if statuses==ACTIVE else []
         with self.store.connection(read_only=True) as c:
             rows=c.execute("SELECT t.* FROM tarefas t"+where+" ORDER BY "+order+" LIMIT ? OFFSET ?",(*values,limit,offset)).fetchall()

@@ -2,7 +2,7 @@
 from datetime import date
 import hashlib
 import streamlit as st
-from services.access import has_permission, require_permission
+from services.access import authorization_scope, has_permission, require_permission
 from services.branding import module_title
 from services.date_format import format_date_br, format_datetime_br
 from services.ui_theme import badges, card_container, empty_state, filter_mark, guidance_note, render_record, status_tone
@@ -37,6 +37,39 @@ NAV_NEW = "Novo Memorando"
 NAV_HISTORY = "Histórico"
 NAV_BASE = "Base de Servidores"
 NAV_ONGOING_LEGACY = "Em andamento"
+HISTORY_PAGE_SIZE = 30
+HISTORY_PAGE_KEY = "memorandos_history_page"
+HISTORY_FILTERS_KEY = "memorandos_history_filters"
+
+
+def _move_history_page(delta):
+    current = max(0, int(st.session_state.get(HISTORY_PAGE_KEY, 0) or 0))
+    st.session_state[HISTORY_PAGE_KEY] = max(0, current + delta)
+
+
+def _read_history_page(service, filters):
+    signature = tuple(sorted(filters.items()))
+    if st.session_state.get(HISTORY_FILTERS_KEY) != signature:
+        st.session_state[HISTORY_FILTERS_KEY] = signature
+        st.session_state[HISTORY_PAGE_KEY] = 0
+    page = max(0, int(st.session_state.get(HISTORY_PAGE_KEY, 0) or 0))
+
+    def read(current_page):
+        return service.list(
+            **filters,
+            offset=current_page * HISTORY_PAGE_SIZE,
+            limit=HISTORY_PAGE_SIZE + 1,
+        )
+
+    rows = read(page)
+    if page and not rows:
+        page -= 1
+        rows = read(page)
+        if page and not rows:
+            page = 0
+            rows = read(page)
+        st.session_state[HISTORY_PAGE_KEY] = page
+    return rows[:HISTORY_PAGE_SIZE], page, len(rows) > HISTORY_PAGE_SIZE
 
 
 def _audit_memo(evento, acao, entidade_id=None, extra=None):
@@ -334,6 +367,47 @@ def _editor(service, store, principal):
     _documents(service, principal, record, identifier)
 
 
+def _draft_delete_confirmations():
+    confirmations = st.session_state.get("memo_draft_delete_confirmations")
+    return dict(confirmations) if isinstance(confirmations, dict) else {}
+
+
+def _request_draft_delete(identifier):
+    confirmations = _draft_delete_confirmations()
+    confirmations[str(identifier)] = {"error": None}
+    st.session_state["memo_draft_delete_confirmations"] = confirmations
+
+
+def _cancel_draft_delete(identifier):
+    confirmations = _draft_delete_confirmations()
+    confirmations.pop(str(identifier), None)
+    st.session_state["memo_draft_delete_confirmations"] = confirmations
+
+
+def _set_draft_delete_error(identifier, message):
+    confirmations = _draft_delete_confirmations()
+    confirmation = confirmations.get(str(identifier))
+    if confirmation is not None:
+        confirmations[str(identifier)] = {**confirmation, "error": message}
+        st.session_state["memo_draft_delete_confirmations"] = confirmations
+
+
+def _confirm_draft_delete(service, principal, identifier):
+    try:
+        with authorization_scope(service.store, principal) as current:
+            require_permission(current, "memorandos")
+        service.delete_draft(identifier)
+    except ValueError as exc:
+        _set_draft_delete_error(identifier, str(exc))
+    else:
+        _audit_memo("RASCUNHO_EXCLUIDO", "EXCLUIR", identifier)
+        from services.alerts import invalidate_alert_summary
+
+        invalidate_alert_summary()
+        _cancel_draft_delete(identifier)
+        st.session_state["memo_draft_delete_flash"] = "Rascunho excluído."
+
+
 def _details(service,row,principal):
     r=service.get(row["id"]); st.write("Cadeia: "+row["cadeia"]); st.write(f"Período: {format_date_br(r['data_inicio'])} a {format_date_br(r['data_fim'])} · {r['situacao']}")
     st.write("Gabinete: "+r["gabinete_snapshot"]); st.write("Signatário: "+r["signatario_nome"]+" — "+r["signatario_cargo"])
@@ -343,15 +417,34 @@ def _details(service,row,principal):
     source=service.file(row["id"], MIME_DOCX)
     if source: st.download_button("Baixar DOCX",source[1],source[0],MIME_DOCX,key="memo_docx_"+row["id"])
     if file: st.download_button("Baixar PDF",file[1],file[0],MIME_PDF,key="memo_file_"+row["id"])
-    if r["status"]=="RASCUNHO" and st.button("Excluir rascunho",key="memo_del_"+row["id"]):
-        try:
-            service.delete_draft(row["id"]); _audit_memo("RASCUNHO_EXCLUIDO","EXCLUIR",row["id"]); st.success("Rascunho excluído.");
-            from services.alerts import invalidate_alert_summary
-
-            invalidate_alert_summary()
-            st.rerun()
-        except ValueError as exc:
-            st.error(str(exc))
+    if r["status"]=="RASCUNHO":
+        confirmation = _draft_delete_confirmations().get(str(row["id"]))
+        if confirmation is None:
+            st.button(
+                "Excluir rascunho",
+                key="memo_del_"+row["id"],
+                on_click=_request_draft_delete,
+                args=(row["id"],),
+            )
+        else:
+            st.warning(
+                f"O rascunho {row['cadeia']} será excluído e o documento em elaboração será removido."
+            )
+            cancel, confirm = st.columns(2)
+            cancel.button(
+                "Cancelar",
+                key="memo_del_cancel_"+row["id"],
+                on_click=_cancel_draft_delete,
+                args=(row["id"],),
+            )
+            confirm.button(
+                "Confirmar exclusão",
+                key="memo_del_confirm_"+row["id"],
+                on_click=_confirm_draft_delete,
+                args=(service, principal, row["id"]),
+            )
+            if message := confirmation.get("error"):
+                st.error(message)
     if r["status"]=="FINALIZADO":
         number=st.text_input("Número oficial",value=r["numero_oficial"],key="memo_number_"+row["id"])
         if st.button("Salvar número oficial",key="memo_number_save_"+row["id"]):
@@ -366,6 +459,10 @@ def _clear_memo_ui_state(identifier=None):
     st.session_state.pop("pending_focus_memorando", None)
     st.session_state.pop("pending_open_memorando", None)
     st.session_state.pop("memo_hard_delete_id", None)
+    if identifier is None:
+        st.session_state.pop("memo_draft_delete_confirmations", None)
+    else:
+        _cancel_draft_delete(identifier)
     if not identifier or st.session_state.get("memo_engagement_open") == identifier:
         st.session_state.pop("memo_engagement_open", None)
     if not identifier:
@@ -450,6 +547,8 @@ def _hard_delete_controls(service, row, principal, record):
 def _listing(service, principal):
     if st.session_state.pop("memo_hard_delete_flash", None):
         st.success("Memorando excluído definitivamente.")
+    if message := st.session_state.pop("memo_draft_delete_flash", None):
+        st.success(message)
     focus = st.session_state.pop("pending_focus_memorando", None)
     focused = None
     if focus:
@@ -469,35 +568,45 @@ def _listing(service, principal):
     with st.expander("Filtros", expanded=True):
         filter_mark()
         a, b, c = st.columns(3)
-        search = a.text_input("Busca textual")
-        server = a.text_input("Servidor")
-        cabinet = b.text_input("Gabinete")
+        search = a.text_input("Busca textual", key="memo_history_search")
+        server = a.text_input("Servidor", key="memo_history_server")
+        cabinet = b.text_input("Gabinete", key="memo_history_cabinet")
         status = b.selectbox(
             "Status documental",
             [None, "RASCUNHO", "FINALIZADO", "CANCELADO"],
             format_func=lambda x: x or "Todos",
+            key="memo_history_status",
         )
         situacao = c.selectbox(
             "Situação",
             [None, "AGENDADA", "EM ANDAMENTO", "ENCERRADA", "CANCELADA"],
             format_func=lambda x: x or "Todas",
+            key="memo_history_situation",
         )
-        official = c.text_input("Número oficial")
-        start = a.date_input("Período a partir de", value=None, format="DD/MM/YYYY")
-        end = b.date_input("Período até", value=None, format="DD/MM/YYYY")
-    page = st.number_input("Página", min_value=1, value=1)
-    rows = service.list(
-        status=status,
-        situacao=situacao,
-        search=search,
-        server=server,
-        cabinet=cabinet,
-        official_number=official,
-        start=start.isoformat() if start else None,
-        end=end.isoformat() if end else None,
-        offset=(page - 1) * 30,
-        limit=30,
-    )
+        official = c.text_input("Número oficial", key="memo_history_official")
+        start = a.date_input(
+            "Período a partir de",
+            value=None,
+            format="DD/MM/YYYY",
+            key="memo_history_start",
+        )
+        end = b.date_input(
+            "Período até",
+            value=None,
+            format="DD/MM/YYYY",
+            key="memo_history_end",
+        )
+    filters = {
+        "status": status,
+        "situacao": situacao,
+        "search": search,
+        "server": server,
+        "cabinet": cabinet,
+        "official_number": official,
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat() if end else None,
+    }
+    rows, page, has_next = _read_history_page(service, filters)
     shown = set()
     if focused:
         shown.add(focused["id"])
@@ -532,6 +641,24 @@ def _listing(service, principal):
                     accent=accent,
                 )
                 _details(service, row, principal)
+    previous, page_label, following = st.columns([1, 2, 1])
+    previous.button(
+        "Anterior",
+        type="secondary",
+        disabled=page == 0,
+        key="memorandos_history_previous",
+        on_click=_move_history_page,
+        args=(-1,),
+    )
+    page_label.caption(f"Página {page + 1}", text_alignment="center")
+    following.button(
+        "Próxima",
+        type="secondary",
+        disabled=not has_next,
+        key="memorandos_history_next",
+        on_click=_move_history_page,
+        args=(1,),
+    )
 
 
 def _base(service,principal):

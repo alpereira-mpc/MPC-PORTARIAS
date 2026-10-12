@@ -619,6 +619,7 @@ def test_home_cards_render_in_authorized_active_first_order(store, monkeypatch):
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
+    assert "ATIVO" not in _visible_text(app)
     captions = [c.value for c in app.caption]
     labels = [
         "PORTARIAS",

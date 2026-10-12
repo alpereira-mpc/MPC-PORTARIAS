@@ -83,6 +83,9 @@ from services.ui_theme import (
 
 
 _FILTER_ALL = "__todas__"
+_PAGE_SIZE = 25
+_PAGE_KEY = "representacoes_page"
+_PAGE_FILTERS_KEY = "representacoes_page_filters"
 _LIST_FILTER_KEYS = (
     "rep_f_sit",
     "rep_f_fase",
@@ -120,6 +123,42 @@ def _advanced_filter_count():
 def _clear_list_filters():
     for key in _LIST_FILTER_KEYS:
         st.session_state.pop(key, None)
+    st.session_state[_PAGE_KEY] = 0
+    st.session_state.pop(_PAGE_FILTERS_KEY, None)
+
+
+def _move_list_page(delta):
+    current = max(0, int(st.session_state.get(_PAGE_KEY, 0) or 0))
+    st.session_state[_PAGE_KEY] = max(0, current + delta)
+
+
+def _read_list_page(store, filters):
+    signature = tuple(sorted(filters.items()))
+    if st.session_state.get(_PAGE_FILTERS_KEY) != signature:
+        st.session_state[_PAGE_KEY] = 0
+        st.session_state[_PAGE_FILTERS_KEY] = signature
+    page = max(0, int(st.session_state.get(_PAGE_KEY, 0) or 0))
+
+    def read(current_page):
+        return list_records(
+            store,
+            filters,
+            limit=_PAGE_SIZE + 1,
+            offset=current_page * _PAGE_SIZE,
+        )
+
+    rows = read(page)
+    if page and not rows:
+        # A deletion may remove the only record on the last page. Prefer the
+        # adjacent page; fall back to the first page if external changes made
+        # more than one saved page invalid, without issuing a COUNT query.
+        page -= 1
+        rows = read(page)
+        if page and not rows:
+            page = 0
+            rows = read(page)
+        st.session_state[_PAGE_KEY] = page
+    return rows[:_PAGE_SIZE], page, len(rows) > _PAGE_SIZE
 
 
 class _BadgeItem(tuple):
@@ -2028,14 +2067,29 @@ def render(store, principal):
                     ),
                 )
         filters = _filters()
+    rows, page, has_next = _read_list_page(store, filters)
     st.session_state["_representacoes_list_filters"] = {
         key: st.session_state[key]
-        for key in _LIST_FILTER_KEYS
+        for key in (*_LIST_FILTER_KEYS, _PAGE_KEY, _PAGE_FILTERS_KEY)
         if key in st.session_state
     }
-    rows = list_records(store, filters)
     if not rows:
         empty_state("Nenhum projeto de Representação encontrado.")
-        return
     for index, record in enumerate(rows):
         _card(record, index, procuradores_map, assessores_map)
+    previous, page_label, following = st.columns([1, 2, 1])
+    previous.button(
+        "Anterior",
+        disabled=page == 0,
+        key="representacoes_page_previous",
+        on_click=_move_list_page,
+        args=(-1,),
+    )
+    page_label.caption(f"Página {page + 1}", text_alignment="center")
+    following.button(
+        "Próxima",
+        disabled=not has_next,
+        key="representacoes_page_next",
+        on_click=_move_list_page,
+        args=(1,),
+    )

@@ -105,6 +105,146 @@ def test_internal_rerun_keeps_the_open_screen(monkeypatch):
     assert state["rep_form_3titulo"] == "minuta"
 
 
+def test_module_switch_clears_pending_delete_confirmations(monkeypatch):
+    state = {
+        PORTAL_LAST_MODULE: "Petições",
+        "portal_module": "Início",
+        "peticoes_remove_confirmations": {"101": {"peticao_id": 11}},
+    }
+    _enter(state, monkeypatch)
+    assert "peticoes_remove_confirmations" not in state
+
+    state = {
+        PORTAL_LAST_MODULE: "Memorandos",
+        "portal_module": "Início",
+        "memo_draft_delete_confirmations": {"draft-1": {"error": None}},
+    }
+    _enter(state, monkeypatch)
+    assert "memo_draft_delete_confirmations" not in state
+
+
+def test_task_history_page_is_restored_after_switching_modules(monkeypatch):
+    signature = (("pesquisa", "prazo"), ("prioridade", None), ("status", None))
+    state = {
+        PORTAL_LAST_MODULE: "Tarefas",
+        "portal_module": "Início",
+        "tarefas_history_q": "prazo",
+        "tarefas_history_page": 2,
+        "tarefas_history_filters": signature,
+    }
+    _enter(state, monkeypatch)
+    state.pop("tarefas_history_page")
+    state.pop("tarefas_history_filters")
+    state[PORTAL_LAST_MODULE] = "Início"
+    state["portal_module"] = "Tarefas"
+
+    _enter(state, monkeypatch)
+
+    assert state["tarefas_history_page"] == 2
+    assert state["tarefas_history_filters"] == signature
+
+
+def test_memorandos_history_page_is_restored_after_switching_modules(monkeypatch):
+    signature = (("search", "servidor"), ("status", None))
+    state = {
+        PORTAL_LAST_MODULE: "Memorandos",
+        "portal_module": "Início",
+        "memo_history_search": "servidor",
+        "memorandos_history_page": 2,
+        "memorandos_history_filters": signature,
+    }
+    _enter(state, monkeypatch)
+    state.pop("memo_history_search")
+    state.pop("memorandos_history_page")
+    state.pop("memorandos_history_filters")
+    state[PORTAL_LAST_MODULE] = "Início"
+    state["portal_module"] = "Memorandos"
+
+    _enter(state, monkeypatch)
+
+    assert state["memo_history_search"] == "servidor"
+    assert state["memorandos_history_page"] == 2
+    assert state["memorandos_history_filters"] == signature
+
+
+def test_oficios_listing_pages_are_restored_without_crossing_contexts(monkeypatch):
+    sent_signature = (("direction", "ENVIADO"), ("search", "ofício"))
+    received_signature = (("direction", "RECEBIDO"), ("search", "entrada"))
+    state = {
+        PORTAL_LAST_MODULE: "Ofícios",
+        "portal_module": "Início",
+        "oficio_list_sent_search": "ofício",
+        "oficio_list_sent_page": 2,
+        "oficio_list_sent_filters": sent_signature,
+        "oficio_list_received_search": "entrada",
+        "oficio_list_received_page": 1,
+        "oficio_list_received_filters": received_signature,
+    }
+    _enter(state, monkeypatch)
+    for key in (
+        "oficio_list_sent_search",
+        "oficio_list_sent_page",
+        "oficio_list_sent_filters",
+        "oficio_list_received_search",
+        "oficio_list_received_page",
+        "oficio_list_received_filters",
+    ):
+        state.pop(key)
+    state[PORTAL_LAST_MODULE] = "Início"
+    state["portal_module"] = "Ofícios"
+
+    _enter(state, monkeypatch)
+
+    assert state["oficio_list_sent_search"] == "ofício"
+    assert state["oficio_list_sent_page"] == 2
+    assert state["oficio_list_sent_filters"] == sent_signature
+    assert state["oficio_list_received_search"] == "entrada"
+    assert state["oficio_list_received_page"] == 1
+    assert state["oficio_list_received_filters"] == received_signature
+
+
+def test_representations_page_is_restored_after_switching_modules(monkeypatch):
+    signature = (("pesquisa", "tema"),)
+    state = {
+        PORTAL_LAST_MODULE: "Representações",
+        "portal_module": "Início",
+        "rep_f_q": "tema",
+        "representacoes_page": 2,
+        "representacoes_page_filters": signature,
+    }
+    _enter(state, monkeypatch)
+    state.pop("representacoes_page")
+    state.pop("representacoes_page_filters")
+    state[PORTAL_LAST_MODULE] = "Início"
+    state["portal_module"] = "Representações"
+
+    _enter(state, monkeypatch)
+
+    assert state["representacoes_page"] == 2
+    assert state["representacoes_page_filters"] == signature
+
+
+def test_ouvidoria_page_is_restored_after_switching_modules(monkeypatch):
+    signature = (("pesquisa", "tema"),)
+    state = {
+        PORTAL_LAST_MODULE: "Ouvidoria",
+        "portal_module": "Início",
+        "ouvi_fq": "tema",
+        "ouvidoria_page": 2,
+        "ouvidoria_page_filters": signature,
+    }
+    _enter(state, monkeypatch)
+    state.pop("ouvidoria_page")
+    state.pop("ouvidoria_page_filters")
+    state[PORTAL_LAST_MODULE] = "Início"
+    state["portal_module"] = "Ouvidoria"
+
+    _enter(state, monkeypatch)
+
+    assert state["ouvidoria_page"] == 2
+    assert state["ouvidoria_page_filters"] == signature
+
+
 def test_admin_scroll_is_requested_only_when_entering_module(monkeypatch):
     state = {
         PORTAL_LAST_MODULE: "Início",

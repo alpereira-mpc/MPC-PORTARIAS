@@ -105,6 +105,129 @@ def read_list(service, **kwargs):
     return cached_metadata(key, "list", tuple(sorted(kwargs.items())), service)
 
 
+_LIST_PAGE_SIZE = 50
+_LIST_CONTEXTS = ("overview", "sent", "received", "tracking")
+_LIST_FILTER_WIDGETS = (
+    "search",
+    "status",
+    "year",
+    "number",
+    "recipient",
+    "start",
+    "end",
+    "deadline",
+    "subject",
+    "direction",
+)
+
+
+def _listing_context(direction=None, tracking=False):
+    if tracking:
+        return "tracking"
+    if direction == "ENVIADO":
+        return "sent"
+    if direction == "RECEBIDO":
+        return "received"
+    return "overview"
+
+
+def _listing_state_key(context, name):
+    return f"oficio_list_{context}_{name}"
+
+
+def _clear_listing_state():
+    from portal import PORTAL_LISTING_STATE
+
+    if PORTAL_LISTING_STATE in st.session_state:
+        bucket = dict(st.session_state[PORTAL_LISTING_STATE] or {})
+        bucket.pop("Ofícios", None)
+        st.session_state[PORTAL_LISTING_STATE] = bucket
+    for context in _LIST_CONTEXTS:
+        for name in (*_LIST_FILTER_WIDGETS, "page", "filters"):
+            st.session_state.pop(_listing_state_key(context, name), None)
+    for key in (
+        "oficio_overview_query_active",
+        "oficio_overview_applied_filters",
+        "oficio_listing_gabinete_member",
+    ):
+        st.session_state.pop(key, None)
+
+
+def _ensure_listing_gabinete(member):
+    if st.session_state.get("oficio_listing_gabinete_member") != member:
+        _clear_listing_state()
+        st.session_state["oficio_listing_gabinete_member"] = member
+
+
+def _move_listing_page(context, delta):
+    key = _listing_state_key(context, "page")
+    current = max(0, int(st.session_state.get(key, 0) or 0))
+    st.session_state[key] = max(0, current + delta)
+
+
+def _listing_query(filters):
+    return {
+        key: value for key, value in filters.items() if key != "submitted"
+    }
+
+
+def _active_overview_query(filters):
+    current = _listing_query(filters)
+    if filters.get("submitted"):
+        st.session_state["oficio_overview_applied_filters"] = current
+        st.session_state["oficio_overview_query_active"] = True
+        st.session_state[_listing_state_key("overview", "page")] = 0
+        st.session_state.pop(_listing_state_key("overview", "filters"), None)
+    elif (
+        st.session_state.get("oficio_overview_query_active")
+        and st.session_state.get("oficio_overview_applied_filters") != current
+    ):
+        st.session_state["oficio_overview_query_active"] = False
+    if not st.session_state.get("oficio_overview_query_active"):
+        return None
+    return st.session_state.get("oficio_overview_applied_filters")
+
+
+def _read_listing_page(service, context, filters):
+    page_key = _listing_state_key(context, "page")
+    filters_key = _listing_state_key(context, "filters")
+    signature = tuple(sorted(filters.items()))
+    if st.session_state.get(filters_key) != signature:
+        st.session_state[filters_key] = signature
+        st.session_state[page_key] = 0
+    page = max(0, int(st.session_state.get(page_key, 0) or 0))
+
+    def read(current_page):
+        return read_list(
+            service,
+            direction=filters["direction"],
+            series=filters["series"],
+            member=filters["member"],
+            number=filters["number"],
+            year=filters["year"],
+            recipient=filters["recipient"],
+            subject=filters["subject"],
+            status=filters["status"],
+            start=filters["start"],
+            end=filters["end"],
+            search=filters["search"],
+            deadline=filters["deadline"],
+            attention_only=filters["tracking"],
+            offset=current_page * _LIST_PAGE_SIZE,
+            limit=_LIST_PAGE_SIZE + 1,
+        )
+
+    rows = read(page)
+    if page and not rows:
+        page -= 1
+        rows = read(page)
+        if page and not rows:
+            page = 0
+            rows = read(page)
+        st.session_state[page_key] = page
+    return rows[:_LIST_PAGE_SIZE], page, len(rows) > _LIST_PAGE_SIZE
+
+
 def read_overview(service, year):
     member = st.session_state.get("oficio_gabinete_member")
     if service.store.backend != "postgresql":
@@ -250,6 +373,7 @@ def reset_editor():
 
 def switch_gabinete(code=None, member=None):
     reset_editor()
+    _clear_listing_state()
     st.session_state["oficio_gabinete"] = code
     st.session_state["oficio_gabinete_member"] = member
     st.session_state["oficio_page"] = "Visão Geral"
@@ -1186,13 +1310,17 @@ def details(service, r, principal=None):
     else:
         _render_detail_more(service, r, principal)
     return
-def render_filters(*, direction=None, tracking=False, submit_label=None):
+def render_filters(
+    *, direction=None, tracking=False, submit_label=None, context=None
+):
     """Render the shared listing filters once, always initially collapsed."""
+    context = context or _listing_context(direction, tracking)
+    widget_key = lambda name: _listing_state_key(context, name)
     with st.expander("Filtros", expanded=False):
         filter_mark()
         a, b, c = st.columns(3)
         with a:
-            search = st.text_input("Pesquisa textual")
+            search = st.text_input("Pesquisa textual", key=widget_key("search"))
             member = st.session_state["oficio_gabinete_member"]
             series = None
         with b:
@@ -1200,24 +1328,44 @@ def render_filters(*, direction=None, tracking=False, submit_label=None):
                 "Status",
                 [None, *dict.fromkeys(SENT + RECEIVED)],
                 format_func=lambda x: x or "Todos",
+                key=widget_key("status"),
             )
-            year = st.number_input("Ano (0 = todos)", 0, 9999, 0)
-            number = st.number_input("Número oficial (0 = todos)", 0, value=0)
-            recipient = st.text_input("Destinatário")
+            year = st.number_input(
+                "Ano (0 = todos)", 0, 9999, 0, key=widget_key("year")
+            )
+            number = st.number_input(
+                "Número oficial (0 = todos)",
+                0,
+                value=0,
+                key=widget_key("number"),
+            )
+            recipient = st.text_input("Destinatário", key=widget_key("recipient"))
         with c:
-            start = st.date_input("Período inicial", value=None, format="DD/MM/YYYY")
-            end = st.date_input("Período final", value=None, format="DD/MM/YYYY")
+            start = st.date_input(
+                "Período inicial",
+                value=None,
+                format="DD/MM/YYYY",
+                key=widget_key("start"),
+            )
+            end = st.date_input(
+                "Período final",
+                value=None,
+                format="DD/MM/YYYY",
+                key=widget_key("end"),
+            )
             deadline = st.selectbox(
                 "Prazo do filtro",
                 [None, "Vencido", "Próximos 7 dias", "Com prazo"],
                 format_func=lambda x: x or "Todos",
+                key=widget_key("deadline"),
             )
-            subject = st.text_input("Assunto do filtro")
+            subject = st.text_input("Assunto do filtro", key=widget_key("subject"))
         if tracking:
             direction = st.selectbox(
                 "Direção",
                 [None, "ENVIADO", "RECEBIDO"],
                 format_func=lambda x: x or "Todas",
+                key=widget_key("direction"),
             )
         submitted = (
             st.button(submit_label, key="oficio_overview_search")
@@ -1278,29 +1426,16 @@ def listing(
     filters=None,
     detail_drawn=None,
     principal=None,
+    context=None,
 ):
-    filters = filters or render_filters(direction=direction, tracking=tracking)
-    page = st.number_input("Página", 1, value=1)
-    rows = read_list(
-        service,
-        direction=filters["direction"],
-        series=filters["series"],
-        member=filters["member"],
-        number=filters["number"],
-        year=filters["year"],
-        recipient=filters["recipient"],
-        subject=filters["subject"],
-        status=filters["status"],
-        start=filters["start"],
-        end=filters["end"],
-        search=filters["search"],
-        deadline=filters["deadline"],
-        attention_only=filters["tracking"],
-        offset=(page - 1) * 50,
+    context = context or _listing_context(direction, tracking)
+    filters = filters or render_filters(
+        direction=direction, tracking=tracking, context=context
     )
+    filters = _listing_query(filters)
+    rows, page, has_next = _read_listing_page(service, context, filters)
     if not rows:
         guidance_note("Nenhum ofício nesta página para os filtros selecionados.")
-        return
     drawn = detail_drawn if detail_drawn is not None else set()
     for index, r in enumerate(rows):
         attention_text = attention(r)
@@ -1354,6 +1489,24 @@ def listing(
             )
         if is_open:
             _details_if_open(service, r["id"], drawn, principal)
+    previous, page_label, following = st.columns([1, 2, 1])
+    previous.button(
+        "Anterior",
+        type="secondary",
+        disabled=page == 0,
+        key=_listing_state_key(context, "previous"),
+        on_click=_move_listing_page,
+        args=(context, -1),
+    )
+    page_label.caption(f"Página {page + 1}", text_alignment="center")
+    following.button(
+        "Próxima",
+        type="secondary",
+        disabled=not has_next,
+        key=_listing_state_key(context, "next"),
+        on_click=_move_listing_page,
+        args=(context, 1),
+    )
 
 
 def render(store=None, principal=None):
@@ -1459,9 +1612,10 @@ def render(store=None, principal=None):
         require_gabinete(principal, selected)
         office = offices[selected]
         st.session_state["oficio_gabinete_member"] = office["membro_id"]
+        _ensure_listing_gabinete(office["membro_id"])
         st.subheader(module_title("oficios", f"OFÍCIOS — GABINETE {selected}"))
         st.caption(office["nome"])
-        st.button("← Trocar gabinete", type="primary", on_click=switch_gabinete)
+        st.button("← Trocar gabinete", type="secondary", on_click=switch_gabinete)
         page = st.radio(
             "Ofícios",
             [
@@ -1499,15 +1653,19 @@ def render(store=None, principal=None):
                 with col:
                     kpi_mark(tone)
                     st.metric(title, value)
-            overview_filters = render_filters(submit_label="Consultar ofícios")
+            overview_filters = render_filters(
+                submit_label="Consultar ofícios", context="overview"
+            )
+            overview_query = _active_overview_query(overview_filters)
             detail_drawn = set()
-            if overview_filters["submitted"]:
+            if overview_query is not None:
                 listing(
                     service,
                     people,
-                    filters=overview_filters,
+                    filters=overview_query,
                     detail_drawn=detail_drawn,
                     principal=principal,
+                    context="overview",
                 )
             section_label("Últimas movimentações")
             for index, row in enumerate(read_list(service, limit=5)):

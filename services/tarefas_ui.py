@@ -46,6 +46,7 @@ REMINDER_TIMES = tuple(
     for minute in (0, 30)
 ) + ("23:00",)
 ACTIVE_PAGE_SIZE = 20
+HISTORY_PAGE_SIZE = 30
 AVISO_ANALISE_IA = (
     "Análise gerada por inteligência artificial a partir das tarefas ativas. "
     "Consulte os registros para conferência."
@@ -507,25 +508,71 @@ def _history_card(repo, store, principal, row, index=0):
                 controls[0].button(
                     "Reabrir",
                     key=f"task_reopen_{row['id']}",
-                    on_click=_reopen_task,
+                    on_click=_reopen_history_task,
                     args=(repo, store, principal, row["id"]),
                 )
             with controls[1].popover("Excluir"):
                 confirmed = st.checkbox(
                     "Confirmo a exclusão definitiva",
                     key=f"history_confirm_{row['id']}",
+                    on_change=_keep_history_open,
                 )
                 st.button(
                     "Excluir tarefa",
                     key=f"history_delete_{row['id']}",
                     disabled=not confirmed,
-                    on_click=_delete_task,
+                    on_click=_delete_history_task,
                     args=(repo, store, principal, row["id"]),
                 )
 
 
 def _move_page(key, delta):
     st.session_state[key] = max(0, st.session_state.get(key, 0) + delta)
+
+
+def _keep_history_open():
+    st.session_state["tarefas_history_expanded"] = True
+
+
+def _move_history_page(delta):
+    _move_page("tarefas_history_page", delta)
+    _keep_history_open()
+
+
+def _read_history_page(repo, owner_user_id, filters):
+    signature = tuple(sorted(filters.items()))
+    if st.session_state.get("tarefas_history_filters") != signature:
+        st.session_state["tarefas_history_filters"] = signature
+        st.session_state["tarefas_history_page"] = 0
+    page = max(0, int(st.session_state.get("tarefas_history_page", 0) or 0))
+
+    def read(current_page):
+        return repo.list_history(
+            owner_user_id,
+            filters,
+            limit=HISTORY_PAGE_SIZE + 1,
+            offset=current_page * HISTORY_PAGE_SIZE,
+        )
+
+    rows = read(page)
+    if page and not rows:
+        page -= 1
+        rows = read(page)
+        if page and not rows:
+            page = 0
+            rows = read(page)
+        st.session_state["tarefas_history_page"] = page
+    return rows[:HISTORY_PAGE_SIZE], page, len(rows) > HISTORY_PAGE_SIZE
+
+
+def _reopen_history_task(repo, store, principal, identifier):
+    _keep_history_open()
+    _reopen_task(repo, store, principal, identifier)
+
+
+def _delete_history_task(repo, store, principal, identifier):
+    _keep_history_open()
+    _delete_task(repo, store, principal, identifier)
 
 
 def apresentar_analise_tarefas(repo, principal):
@@ -680,37 +727,64 @@ def _task_history(repo, store, principal):
         "prioridade": st.session_state.get("tarefas_history_priority"),
         "status": st.session_state.get("tarefas_history_status"),
     }
-    history_rows = repo.list_history(principal.id, history_filters, limit=30)
+    history_rows, page, has_next = _read_history_page(
+        repo, principal.id, history_filters
+    )
     with st.expander(
-        f"Tarefas concluídas e/ou canceladas ({len(history_rows)})",
-        expanded=False,
+        "Tarefas concluídas e/ou canceladas",
+        expanded=st.session_state.get("tarefas_history_expanded", False),
     ):
         with st.container(border=True, key="tarefas_history_filters"):
             filter_mark()
             search_column, priority_column, status_column = st.columns([2.4, 1, 1])
-            search_column.text_input("Pesquisa", key="tarefas_history_q")
+            search_column.text_input(
+                "Pesquisa",
+                key="tarefas_history_q",
+                on_change=_keep_history_open,
+            )
             priority_column.selectbox(
                 "Prioridade",
                 [None, *PRIORITIES],
                 format_func=lambda value: PRIORITY_LABELS.get(value, "Todas"),
                 key="tarefas_history_priority",
+                on_change=_keep_history_open,
             )
             status_column.selectbox(
                 "Situação",
                 [None, *HISTORY],
                 format_func=lambda value: STATUS_LABELS.get(value, "Todas"),
                 key="tarefas_history_status",
+                on_change=_keep_history_open,
             )
         for index, row in enumerate(history_rows):
             _history_card(repo, store, principal, row, index)
         if not history_rows:
             empty_state("Nenhuma tarefa concluída ou cancelada.")
+        previous, page_label, following = st.columns([1, 2, 1])
+        previous.button(
+            "Anterior",
+            disabled=page == 0,
+            key="tarefas_history_previous",
+            on_click=_move_history_page,
+            args=(-1,),
+        )
+        page_label.caption(
+            f"Página {page + 1} · até {HISTORY_PAGE_SIZE} tarefas por página"
+        )
+        following.button(
+            "Próxima",
+            disabled=not has_next,
+            key="tarefas_history_next",
+            on_click=_move_history_page,
+            args=(1,),
+        )
 
 
 def render(store, principal):
     repo=TarefasStore(store)
     st.title(module_title("tarefas", "TAREFAS")); st.caption("Organização pessoal de demandas, prazos e prioridades")
-    if st.session_state.pop("tarefas_message",None): st.success("Alteração realizada.")
+    if message := st.session_state.pop("tarefas_message", None):
+        st.success(message)
     pending_ai_origin = st.session_state.pop("tarefas_ia_origem_pendente", None)
     if pending_ai_origin:
         _open_ai_suggestion(
