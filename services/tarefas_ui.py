@@ -160,6 +160,19 @@ def _open_ai_suggestion(suggestion, origin=None):
     st.session_state["tarefas_ia_open"] = False
 
 
+def _close_ai_creator():
+    st.session_state["tarefas_ia_open"] = False
+    st.session_state.pop("tarefas_ia_sugestao", None)
+
+
+def _show_saved_analysis():
+    st.session_state["tarefas_analise_ia_oculta"] = False
+
+
+def _hide_saved_analysis():
+    st.session_state["tarefas_analise_ia_oculta"] = True
+
+
 def _ai_task_creator():
     """On-demand PDF analysis. The uploaded bytes are never stored by the app."""
     if st.button("✨ Criar tarefa com IA", key="tarefas_ia_new"):
@@ -191,10 +204,11 @@ def _ai_task_creator():
                 else:
                     _open_ai_suggestion(suggestion)
                     st.rerun()
-        if right.button("Cancelar análise", key="tarefas_ia_cancel"):
-            st.session_state["tarefas_ia_open"] = False
-            st.session_state.pop("tarefas_ia_sugestao", None)
-            st.rerun()
+        right.button(
+            "Cancelar análise",
+            key="tarefas_ia_cancel",
+            on_click=_close_ai_creator,
+        )
 
 
 def _drop_reminder_slot(state_key, slot):
@@ -532,17 +546,21 @@ def apresentar_analise_tarefas(repo, principal):
         hidden = bool(st.session_state.get(hidden_key))
         analyze_requested = False
         if text and hidden:
-            if st.button("Exibir última análise", key="tarefas_analise_ia_show"):
-                st.session_state[hidden_key] = False
-                st.rerun()
+            st.button(
+                "Exibir última análise",
+                key="tarefas_analise_ia_show",
+                on_click=_show_saved_analysis,
+            )
         elif text:
             update_column, hide_column, _ = st.columns([1.35, 1.25, 3])
             analyze_requested = update_column.button(
                 "↻ Atualizar análise", key="tarefas_analise_ia_btn"
             )
-            if hide_column.button("Ocultar análise", key="tarefas_analise_ia_hide"):
-                st.session_state[hidden_key] = True
-                st.rerun()
+            hide_column.button(
+                "Ocultar análise",
+                key="tarefas_analise_ia_hide",
+                on_click=_hide_saved_analysis,
+            )
         else:
             analyze_requested = st.button(
                 "✨ Analisar com IA", key="tarefas_analise_ia_btn"

@@ -47,13 +47,63 @@ def test_module_fragment_rechecks_permission_before_render(monkeypatch):
     with pytest.raises(Stopped):
         render_fragment(
             lambda *_args: rendered.append(True),
-            SimpleNamespace(backend="sqlite"),
+            SimpleNamespace(backend="sqlite", begin_rerun=lambda: None),
             denied,
             "peticoes",
         )
 
     assert rendered == []
     assert errors == ["Acesso não autorizado a este módulo."]
+
+
+def test_full_portal_render_marks_current_principal_as_already_confirmed(monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    import portal
+    from services import access
+
+    confirmations = []
+    rendered = []
+    principal = SimpleNamespace(ativo=True)
+
+    @contextmanager
+    def authorization_scope(_store, received, *, confirmed=False):
+        confirmations.append(confirmed)
+        yield received
+
+    monkeypatch.setattr(access, "authorization_scope", authorization_scope)
+    monkeypatch.setattr(access, "require_permission", lambda current, _name: current)
+    monkeypatch.setattr(
+        portal,
+        "_render_module_fragment",
+        lambda renderer, store, current, permission: renderer(store, current),
+    )
+    portal._render_authorized_fragment(
+        lambda *_args: rendered.append(True), object(), principal, "agenda"
+    )
+
+    assert confirmations == [True]
+    assert rendered == [True]
+
+
+def test_portal_enables_postgres_rerun_cache_once(store, monkeypatch):
+    from tests.access_testing import enable_login
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    calls = []
+    original = store.begin_rerun
+
+    def begin_rerun():
+        calls.append(True)
+        return original()
+
+    monkeypatch.setattr(store, "begin_rerun", begin_rerun)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+
+    assert not app.exception
+    assert calls == [True]
 
 
 def test_portal_navigation_format_keeps_internal_values_and_uses_material_icons():

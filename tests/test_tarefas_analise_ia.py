@@ -165,6 +165,8 @@ def test_empty_active_list_does_not_call_gemini(store, monkeypatch):
 
 
 def test_successful_analysis_is_explicit_and_survives_reruns(store, monkeypatch):
+    import services.tarefas_ui as tarefas_ui
+
     repo = TarefasStore(store)
     principal = _principal()
     repo.create(
@@ -182,6 +184,14 @@ def test_successful_analysis_is_explicit_and_survives_reruns(store, monkeypatch)
         return "Briefing das tarefas ativas."
 
     monkeypatch.setattr(ai_service, "analisar_tarefas_ativas", analyze)
+    explicit_reruns = []
+    original_rerun = tarefas_ui.st.rerun
+
+    def record_rerun(*args, **kwargs):
+        explicit_reruns.append(kwargs)
+        return original_rerun(*args, **kwargs)
+
+    monkeypatch.setattr(tarefas_ui.st, "rerun", record_rerun)
     _AI_HOLD.clear()
     _AI_HOLD.update(repo=repo, principal=principal)
 
@@ -195,12 +205,14 @@ def test_successful_analysis_is_explicit_and_survives_reruns(store, monkeypatch)
     assert calls == []
     app.button(key="tarefas_analise_ia_btn").click().run()
     assert len(calls) == 1
+    assert len(explicit_reruns) == 1
     assert any("Briefing das tarefas ativas." in item.value for item in app.markdown)
     app.run()
     assert len(calls) == 1
     assert app.button(key="tarefas_analise_ia_btn").label == "↻ Atualizar análise"
     app.button(key="tarefas_analise_ia_hide").click().run()
     assert len(calls) == 1
+    assert len(explicit_reruns) == 1
     assert not any("Briefing das tarefas ativas." in item.value for item in app.markdown)
     assert app.button(key="tarefas_analise_ia_show").label == "Exibir última análise"
     app.run()
@@ -208,7 +220,34 @@ def test_successful_analysis_is_explicit_and_survives_reruns(store, monkeypatch)
     assert app.button(key="tarefas_analise_ia_show")
     app.button(key="tarefas_analise_ia_show").click().run()
     assert len(calls) == 1
+    assert len(explicit_reruns) == 1
     assert any("Briefing das tarefas ativas." in item.value for item in app.markdown)
+
+
+def test_cancel_ai_creator_relies_on_the_automatic_rerun(monkeypatch):
+    import services.tarefas_ui as tarefas_ui
+
+    explicit_reruns = []
+    monkeypatch.setattr(
+        tarefas_ui.st, "rerun", lambda *args, **kwargs: explicit_reruns.append(kwargs)
+    )
+
+    def page():
+        from services.tarefas_ui import _ai_task_creator
+
+        _ai_task_creator()
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key="tarefas_ia_new").click().run()
+    assert app.file_uploader(key="tarefas_ia_pdf")
+    app.session_state["tarefas_ia_sugestao"] = {"titulo": "Sugestão transitória"}
+
+    app.button(key="tarefas_ia_cancel").click().run()
+
+    assert explicit_reruns == []
+    assert app.session_state["tarefas_ia_open"] is False
+    assert "tarefas_ia_sugestao" not in app.session_state
+    assert not any(item.key == "tarefas_ia_pdf" for item in app.file_uploader)
 
 
 def test_ai_failure_never_writes_tasks(store, monkeypatch):

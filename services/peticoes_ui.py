@@ -298,9 +298,7 @@ def _render_editor(store, db, principal):
     if anteriores:
         st.caption("Histórico de resultados anteriores")
         _render_resultados_anteriores(anteriores)
-    if st.button("Cancelar", key="peticoes_edit_cancel"):
-        _close_editor()
-        st.rerun()
+    st.button("Cancelar", key="peticoes_edit_cancel", on_click=_close_editor)
 
 
 def _render_cadastro(store, principal):
@@ -415,6 +413,25 @@ def _registrar_andamento(store, principal, identifier, date_key, text_key, error
             if not total
             else f"Andamento registrado com sucesso. {total} documento(s) vinculado(s)."
         )
+
+
+def _remover_andamento(store, principal, progress_id, error_key):
+    try:
+        with authorization_scope(store, principal) as current:
+            require_permission(current, "peticoes")
+            principal = require_permission(
+                current, "peticoes_registrar_andamento"
+            )
+        remove_progress(
+            store,
+            progress_id,
+            "Exclusão registrada pelo usuário.",
+            principal,
+        )
+    except ValueError as exc:
+        st.session_state[error_key] = str(exc)
+    else:
+        st.session_state.pop(error_key, None)
 
 
 def _salvar_resultado(store, principal, identifier, key, error_key):
@@ -661,18 +678,21 @@ def _card(store, db, principal, record, index, *, acompanhar):
                                 "operacao": "solicitado",
                             },
                         )
-                if has_permission(
-                    principal, "peticoes_registrar_andamento"
-                ) and st.button(
-                    "Excluir logicamente", key=f"peticoes_remove_{item['id']}"
-                ):
-                    remove_progress(
-                        store,
-                        item["id"],
-                        "Exclusão registrada pelo usuário.",
-                        principal,
+                if has_permission(principal, "peticoes_registrar_andamento"):
+                    error_key = f"peticoes_remove_erro_{item['id']}"
+                    st.button(
+                        "Excluir logicamente",
+                        key=f"peticoes_remove_{item['id']}",
+                        on_click=_remover_andamento,
+                        args=(
+                            store,
+                            principal,
+                            item["id"],
+                            error_key,
+                        ),
                     )
-                    st.rerun()
+                    if message := st.session_state.get(error_key):
+                        st.error(message)
         if panel.get(f"p{identifier}"):
             document = db.document(identifier)
             if document:

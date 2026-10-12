@@ -34,6 +34,37 @@ def test_alert_summary_does_not_load_far_future_agenda(store):
     assert any(i.title == "Longe" for i in pending)
 
 
+def test_postgres_rerun_cache_reduces_duplicate_catalog_queries_without_server():
+    from contextlib import contextmanager
+
+    from database.store import Store
+
+    subject = Store.__new__(Store)
+    subject._postgres = object()
+    subject._read_cache = None
+    calls = []
+
+    class Connection:
+        def execute(self, statement):
+            calls.append(statement)
+            return [{"id": 1, "nome": "Procurador"}]
+
+    @contextmanager
+    def connection(**_kwargs):
+        yield Connection()
+
+    subject.connection = connection
+    subject.catalog("procuradores")
+    subject.catalog("procuradores")
+    assert len(calls) == 2
+
+    calls.clear()
+    subject.begin_rerun()
+    subject.catalog("procuradores")
+    subject.catalog("procuradores")
+    assert len(calls) == 1
+
+
 def test_collect_pending_reuses_one_read_connection(store):
     _prepare(store)
     sql = []

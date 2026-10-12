@@ -229,6 +229,9 @@ def _render_module_fragment(renderer, store, principal, permission):
         renderer(store, current)
 
     with phase("module_render"):
+        # A fragment rerun does not execute ``render_portal``. Reset the
+        # PostgreSQL catalogue cache here as well so reuse stays rerun-scoped.
+        store.begin_rerun()
         if getattr(store, "backend", None) == "postgresql":
             # A screen render is a bounded synchronous read scope. Repository
             # reads reuse it through PostgresBackend's ContextVar; a mutation
@@ -245,7 +248,7 @@ def _render_authorized_fragment(renderer, store, principal, permission):
     """Authorize once on a full run; the fragment revalidates on later reruns."""
     from services.access import authorization_scope, require_permission
 
-    with authorization_scope(store, principal) as current:
+    with authorization_scope(store, principal, confirmed=True) as current:
         current = require_permission(current, permission)
         _render_module_fragment(renderer, store, current, permission)
 
@@ -1098,6 +1101,7 @@ def render_portal():
     try:
         with phase("portal_store"):
             store = _application_store()
+            store.begin_rerun()
     except Exception:
         # logger.exception records the traceback only on the server. Do not
         # interpolate configuration or identity values into this message.

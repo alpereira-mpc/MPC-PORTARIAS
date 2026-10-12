@@ -182,6 +182,50 @@ def test_authorization_scope_reuses_one_check_and_unaffected_user_keeps_access(
     assert calls == ["nao.afetado@test.local"]
 
 
+def test_confirmed_scope_reuses_current_user_check_on_full_rerun(store, monkeypatch):
+    import streamlit as st
+
+    identity = {"email": "confirmado@test.local", "name": "Confirmado"}
+    identifier = AccessStore(store).save_user(
+        {
+            "nome": "Confirmado",
+            "email": identity["email"],
+            "perfil": "USUARIO",
+            "pode_agenda": True,
+        }
+    )
+    principal = resolve_principal(store, identity)
+    state = {
+        "_access_cache": {
+            "store_id": id(store),
+            "email": identity["email"],
+            "principal": principal,
+        }
+    }
+    monkeypatch.setattr(st, "session_state", state)
+    monkeypatch.setattr("services.access.oidc_identity", lambda: identity)
+    calls = []
+    original = AccessStore.authorization_version
+
+    def counted(self, email):
+        calls.append(email)
+        return original(self, email)
+
+    monkeypatch.setattr(AccessStore, "authorization_version", counted)
+    current = current_user(store)
+    with authorization_scope(store, current) as scoped:
+        assert scoped.id == identifier
+    assert calls == [identity["email"], identity["email"]]
+
+    calls.clear()
+    current = current_user(store)
+    with authorization_scope(store, current, confirmed=True) as scoped:
+        with authorization_scope(store, scoped) as nested:
+            assert nested.id == identifier
+            assert require_permission(nested, "agenda") is nested
+    assert calls == [identity["email"]]
+
+
 def test_authorization_lookup_failure_is_fail_closed(store, monkeypatch):
     identifier = AccessStore(store).save_user(
         {

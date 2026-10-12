@@ -130,7 +130,11 @@ def test_portal_module_fragment_opens_one_postgres_read_scope(monkeypatch):
         calls.append(read_only)
         yield object()
 
-    store = SimpleNamespace(backend="postgresql", connection=connection)
+    store = SimpleNamespace(
+        backend="postgresql",
+        connection=connection,
+        begin_rerun=lambda: calls.append("begin_rerun"),
+    )
     monkeypatch.setattr(portal, "phase", lambda _name: nullcontext())
 
     @contextmanager
@@ -146,7 +150,7 @@ def test_portal_module_fragment_opens_one_postgres_read_scope(monkeypatch):
         "tarefas",
     )
 
-    assert calls == [True, store]
+    assert calls == ["begin_rerun", True, store]
 
 
 def test_writer_keeps_lock_and_commit(backend):

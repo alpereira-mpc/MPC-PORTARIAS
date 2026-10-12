@@ -190,8 +190,13 @@ def confirm_principal(principal, store=None):
 
 
 @contextmanager
-def authorization_scope(store, principal):
-    """Confirm once and reuse the result during one module or fragment render."""
+def authorization_scope(store, principal, *, confirmed=False):
+    """Confirm once and reuse the result during one module or fragment render.
+
+    ``confirmed`` is reserved for a principal returned by ``current_user`` in
+    the same full portal rerun. Independent fragment reruns still confirm
+    against persistence before rendering.
+    """
     scoped = _AUTHORIZATION_SCOPE.get()
     source = unwrap_store(store)
     if (
@@ -202,6 +207,14 @@ def authorization_scope(store, principal):
         and scoped._store is source
     ):
         current = scoped
+    elif confirmed:
+        current = (
+            principal
+            if principal is not None
+            and principal.ativo
+            and principal._store is source
+            else None
+        )
     else:
         try:
             current = confirm_principal(principal, store)

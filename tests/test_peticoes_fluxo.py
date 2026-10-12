@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from database.peticoes import PeticoesStore
@@ -168,6 +169,128 @@ def test_reader_can_see_followup_but_cannot_register_progress(store):
     )
     app.radio(key="peticoes_secao").set_value("Cadastrar Petição").run()
     assert any("visualização" in item.value for item in app.info)
+
+
+def test_cancel_editor_relies_on_the_automatic_rerun(store, monkeypatch):
+    import services.peticoes_ui as ui
+    from services.peticoes import create
+
+    principal = _principal(store)
+    record = create(
+        store, _payload(store), principal, ("peticao.pdf", "application/pdf", _pdf())
+    )
+    explicit_reruns = []
+    monkeypatch.setattr(
+        ui.st, "rerun", lambda *args, **kwargs: explicit_reruns.append(kwargs)
+    )
+    _HOLD.update(store=store, principal=principal)
+
+    app = _open()
+    app.button(key=f"peticoes_edit_open_{record['id']}").click().run()
+    assert app.text_input(key="peticoes_edit_numero").value == "116439/26"
+
+    app.button(key="peticoes_edit_cancel").click().run()
+
+    assert explicit_reruns == []
+    assert "peticoes_edit_id" not in app.session_state
+    assert app.button(key=f"peticoes_edit_open_{record['id']}")
+
+
+def test_remove_progress_relies_on_the_automatic_rerun(store, monkeypatch):
+    import services.peticoes_ui as ui
+    from services.peticoes import add_progress, create
+
+    principal = _principal(store)
+    record = create(
+        store, _payload(store), principal, ("peticao.pdf", "application/pdf", _pdf())
+    )
+    progress_id = add_progress(
+        store, record["id"], "2026-09-30", "Andamento removível.", principal
+    )
+    explicit_reruns = []
+    monkeypatch.setattr(
+        ui.st, "rerun", lambda *args, **kwargs: explicit_reruns.append(kwargs)
+    )
+    _HOLD.update(store=store, principal=principal)
+
+    app = _open()
+    app.button(key=f"peticoes_hist_btn_{record['id']}").click().run()
+    assert app.button(key=f"peticoes_remove_{progress_id}")
+
+    app.button(key=f"peticoes_remove_{progress_id}").click().run()
+
+    assert explicit_reruns == []
+    remaining = PeticoesStore(store).progress(record["id"])
+    assert all(item["id"] != progress_id for item in remaining)
+    assert [item["descricao"] for item in remaining] == ["Petição protocolada."]
+    assert not any(
+        item.key == f"peticoes_remove_{progress_id}" for item in app.button
+    )
+    assert not any("Andamento removível." in item.value for item in app.markdown)
+
+
+@pytest.mark.parametrize(
+    "revoked_permission",
+    ("pode_peticoes", "pode_peticoes_registrar_andamento"),
+)
+def test_remove_progress_rechecks_revoked_permission_before_mutation(
+    store, revoked_permission
+):
+    from database.access import AccessStore
+    from services.peticoes import add_progress, create
+
+    admin = _principal(store)
+    record = create(
+        store, _payload(store), admin, ("peticao.pdf", "application/pdf", _pdf())
+    )
+    progress_id = add_progress(
+        store, record["id"], "2026-09-30", "Não deve ser excluído.", admin
+    )
+    user_id = seed_access(
+        store,
+        email="andamento.revogado@test.local",
+        nome="Andamento revogado",
+        perfil="USUARIO",
+        pode_portarias=False,
+        pode_agenda=False,
+        pode_oficios=False,
+        pode_admin=False,
+        pode_peticoes=True,
+        pode_peticoes_registrar_andamento=True,
+    )
+    principal = resolve_principal(
+        store, {"email": "andamento.revogado@test.local"}
+    )
+    _HOLD.update(store=store, principal=principal)
+
+    def guarded_page():
+        import streamlit as st
+        from tests.test_peticoes_fluxo import _page
+
+        try:
+            _page()
+        except ValueError as exc:
+            st.error(str(exc))
+
+    app = AppTest.from_function(guarded_page, default_timeout=30).run()
+    app.button(key=f"peticoes_hist_btn_{record['id']}").click().run()
+    assert app.button(key=f"peticoes_remove_{progress_id}")
+
+    access = AccessStore(store)
+    access.save_user(
+        {
+            **access.get(user_id),
+            revoked_permission: False,
+        },
+        user_id,
+    )
+    app.button(key=f"peticoes_remove_{progress_id}").click().run()
+
+    assert any(
+        item["id"] == progress_id
+        for item in PeticoesStore(store).progress(record["id"])
+    )
+    assert any("não autorizado" in item.value for item in app.error)
 
 
 def test_manual_registration_stores_one_request_block(store):
