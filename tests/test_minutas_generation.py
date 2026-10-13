@@ -13,6 +13,7 @@ from services.minutas_generation import (
     _canonical_process_key,
     _clean_text,
     _continuous_word_sequence,
+    _rag_query_plan,
     _rag_queries,
 )
 from services.minutas_extraction import EXTRACTOR_VERSION
@@ -1070,23 +1071,133 @@ def test_rag_queries_are_concise_and_built_from_irregularities_and_norms():
     analysis = {
         "irregularidades": [
             {
-                "id": f"IRR-{index}",
-                "apontamento": f"Irregularidade em contribuição previdenciária {index}",
-                "normas_mencionadas": [
-                    {"descricao": f"Art. {30 + index} da Lei 8.212/91"}
-                ],
-                "hipoteses_juridicas": ["Responsabilidade pelo recolhimento"],
-            }
-            for index in range(1, 6)
+                "id": "18.1",
+                "apontamento": "Ausência de recolhimento de contribuições previdenciárias",
+                "normas_mencionadas": [{"descricao": "Lei 8.212/91"}],
+                "hipoteses_juridicas": ["Responsabilidade previdenciária"],
+            },
+            {
+                "id": "18.2",
+                "apontamento": "Aplicação incorreta de recursos provenientes do FUNDEB",
+                "normas_mencionadas": [{"descricao": "Lei do FUNDEB"}],
+                "hipoteses_juridicas": ["Vinculação de recursos da educação básica"],
+            },
+            {
+                "id": "18.3",
+                "apontamento": "Despesa em desacordo com a legislação de licitação",
+                "normas_mencionadas": [{"descricao": "Lei 14.133/2021"}],
+                "hipoteses_juridicas": ["Procedimento licitatório"],
+            },
+            {
+                "id": "18.4",
+                "apontamento": "Ausência de comprovação documental",
+                "normas_mencionadas": [],
+                "hipoteses_juridicas": ["Parcelamento de débitos previdenciários"],
+            },
         ]
     }
 
-    queries = _rag_queries(analysis)
+    plan = _rag_query_plan(analysis)
+    queries = plan["consultas"]
 
-    assert len(queries) == 3
-    assert all(len(item["consulta"].split()) <= 7 for item in queries)
-    assert all("contribuição" in item["consulta"] for item in queries)
-    assert all(item["irregularidade_id"].startswith("IRR-") for item in queries)
+    assert len(queries) == 4
+    assert plan["materias_nao_pesquisadas"] == []
+    assert [item["irregularidade_id"] for item in queries] == [
+        "18.1", "18.2", "18.3", "18.4"
+    ]
+    assert [item["consulta_principal"] for item in queries] == [
+        "contribuição previdenciária",
+        "FUNDEB",
+        "licitação",
+        "parcelamento previdenciário",
+    ]
+    assert all(len(item["consulta_principal"].split()) <= 3 for item in queries)
+    assert all(item["consulta_alternativa"] for item in queries)
+    assert all(
+        generic not in _plain_query
+        for _plain_query in [item["consulta_principal"].casefold() for item in queries]
+        for generic in ("ausência", "incorreta", "desacordo", "recursos provenientes")
+    )
+
+
+def test_rag_uses_one_safe_alternative_when_specific_query_has_no_result():
+    target, history, other, rows = _scenario()
+    opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == history["id"] and row["papel"] == "parecer"
+    )
+    calls = []
+
+    def search(query, **_filters):
+        calls.append(query)
+        return {
+            "resultados": (
+                [_search_result(history, opinion)]
+                if query == "recolhimento previdenciário"
+                else []
+            )
+        }
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        analysis["irregularidades"][0]["apontamento"] = (
+            "Irregularidade previdenciária na página original: ausência de "
+            "recolhimento de contribuições previdenciárias"
+        )
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=analyze,
+        search=search,
+    )
+
+    recovery = service.analyze(target["id"])["recuperacao_juridica"]
+
+    assert calls == ["contribuição previdenciária", "recolhimento previdenciário"]
+    assert recovery["estado"] == "CONCLUIDA"
+    assert recovery["consultas_executadas"] == 2
+    assert [item["tipo"] for item in recovery["consultas"][0]["tentativas"]] == [
+        "principal", "alternativa"
+    ]
+    assert recovery["consultas"][0]["tentativas"][0]["resultados_retornados"] == 0
+    assert recovery["consultas"][0]["tentativas"][1]["resultados_retornados"] == 1
+
+
+def test_rag_balances_four_matters_and_limits_progressive_search_to_eight_calls():
+    target, history, other, rows = _scenario()
+    matters = (
+        "irregularidade previdenciária contribuição recolhimento",
+        "dívida ativa cobrança administrativa",
+        "crédito adicional autorização legislativa",
+        "regime próprio equilíbrio atuarial",
+        "execução fiscal prescrição intercorrente",
+        "responsabilidade fiscal disponibilidade caixa",
+    )
+    calls = []
+
+    def analyze(context):
+        analysis = _analysis_payload(context, count=len(matters))
+        for irregularity, matter in zip(analysis["irregularidades"], matters):
+            irregularity["apontamento"] = matter
+            irregularity["hipoteses_juridicas"] = [matter]
+            irregularity["normas_mencionadas"] = []
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=analyze,
+        search=lambda query, **_filters: calls.append(query) or {"resultados": []},
+    )
+
+    recovery = service.analyze(target["id"])["recuperacao_juridica"]
+
+    assert len(recovery["consultas"]) == 4
+    assert len(recovery["materias_nao_pesquisadas"]) == 2
+    assert recovery["consultas_executadas"] == 8
+    assert len(calls) == 8
+    assert all(len(query.split()) <= 3 for query in calls)
 
 
 def test_analysis_recovers_traced_legal_references_with_deduplication_and_limits():
@@ -1750,9 +1861,23 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
                     "consultas": [
                         {
                             "consulta": "contribuição previdenciária recolhimento",
+                            "consulta_principal": "contribuição previdenciária",
+                            "consulta_alternativa": "recolhimento previdenciário",
                             "irregularidade_id": "IRR-2",
                             "materia": "Contribuições previdenciárias",
                             "resultados_retornados": 0,
+                            "tentativas": [
+                                {
+                                    "tipo": "principal",
+                                    "consulta": "contribuição previdenciária",
+                                    "resultados_retornados": 0,
+                                },
+                                {
+                                    "tipo": "alternativa",
+                                    "consulta": "recolhimento previdenciário",
+                                    "resultados_retornados": 0,
+                                },
+                            ],
                             "descartados": {
                                 "barreira_documental": 0,
                                 "duplicacao": 0,
@@ -1762,6 +1887,7 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
                     ],
                     "trechos": [],
                     "resultados_retornados": 0,
+                    "consultas_executadas": 2,
                     "motivo_ausencia": (
                         "A pesquisa lexical não retornou ocorrências para as "
                         "consultas construídas."
@@ -1794,7 +1920,9 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
         + [item.value for item in app.info]
     )
     assert "Diagnóstico técnico do piloto" in [item.label for item in app.expander]
-    assert "contribuição previdenciária recolhimento" in diagnostic_text
+    assert "contribuição previdenciária" in diagnostic_text
+    assert "recolhimento previdenciário" in diagnostic_text
+    assert "Tentativa alternativa" in diagnostic_text
     assert "resultados retornados: 0" in diagnostic_text
     assert any(
         "Citação literal não localizada." in item.value for item in app.code

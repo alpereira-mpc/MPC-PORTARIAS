@@ -1121,12 +1121,22 @@ def _technical_diagnostics_panel(diagnostics, target_id):
         if not queries:
             st.info("Nenhuma consulta lexical foi construída nesta execução.")
         for index, query in enumerate(queries, 1):
-            st.markdown(f"{index}. `{query.get('consulta') or '—'}`")
+            primary = query.get("consulta_principal") or query.get("consulta") or "—"
+            alternative = query.get("consulta_alternativa") or ""
+            st.markdown(f"{index}. Principal: `{primary}`")
+            if alternative:
+                st.markdown(f"   Alternativa: `{alternative}`")
             st.caption(
                 f"Origem: irregularidade {query.get('irregularidade_id') or '—'} · "
                 f"matéria: {query.get('materia') or '—'} · resultados retornados: "
                 f"{query.get('resultados_retornados', 'não registrado')}"
             )
+            for attempt in query.get("tentativas") or ():
+                st.caption(
+                    f"Tentativa {attempt.get('tipo') or '—'}: "
+                    f"{attempt.get('resultados_retornados', 0)} resultado(s) · "
+                    f"consulta `{attempt.get('consulta') or '—'}`."
+                )
             discarded = query.get("descartados") or {}
             if discarded:
                 st.caption(
@@ -1135,11 +1145,23 @@ def _technical_diagnostics_panel(diagnostics, target_id):
                     f"{discarded.get('duplicacao', 0)}; sem trecho utilizável: "
                     f"{discarded.get('sem_trecho', 0)}."
                 )
+        omitted = recovery.get("materias_nao_pesquisadas") or ()
+        if omitted:
+            st.warning(
+                "Matérias não pesquisadas: "
+                + "; ".join(
+                    f"{item.get('irregularidade_id') or '—'} — "
+                    f"{item.get('materia') or 'sem descrição'} "
+                    f"({item.get('motivo') or 'limite'})"
+                    for item in omitted
+                )
+            )
         if recovery.get("motivo_ausencia"):
             st.info(recovery["motivo_ausencia"])
         selected = recovery.get("trechos") or ()
         st.caption(
             f"Resultados retornados: {recovery.get('resultados_retornados', 0)} · "
+            f"consultas executadas: {recovery.get('consultas_executadas', 0)} · "
             f"trechos selecionados: {len(selected)}. Não há descarte semântico "
             "adicional: a pertinência é o ranking lexical da pesquisa existente."
         )

@@ -18,7 +18,8 @@ HISTORICAL_TEST_PROCESS_KEYS = frozenset(
 )
 MAX_CONTEXT_BYTES = ai_service.MINUTA_MAX_CONTEXT_BYTES
 MAX_HISTORICAL_REFERENCES = 3
-MAX_RAG_QUERIES = 3
+MAX_RAG_QUERIES = 4
+MAX_RAG_SEARCH_CALLS = 8
 MAX_RAG_RESULTS_PER_QUERY = 4
 MAX_RAG_PASSAGES = 6
 MAX_RAG_PASSAGES_PER_OPINION = 2
@@ -59,19 +60,51 @@ _STOPWORDS = {
     "uma",
 }
 _RAG_GENERIC_TERMS = _STOPWORDS | {
+    "ausencia",
+    "incorreta",
+    "incorreto",
+    "desacordo",
+    "proveniente",
+    "provenientes",
+    "recurso",
+    "recursos",
     "analise",
     "apontamento",
     "auditoria",
+    "citada",
+    "comprovacao",
     "conclusao",
     "contas",
     "defesa",
     "documentado",
+    "documental",
     "fundamento",
     "hipotese",
     "irregularidade",
     "juridica",
+    "ministerial",
+    "norma",
+    "original",
+    "outro",
+    "pagina",
+    "relatorio",
+    "revisao",
+    "sujeita",
     "processo",
 }
+_RAG_CONCEPTS = (
+    (("parcelament", "previdenci"), "parcelamento previdenciário", "acordo parcelamento"),
+    (("parcelament",), "parcelamento", "acordo parcelamento"),
+    (("contribu", "previdenci"), "contribuição previdenciária", "recolhimento previdenciário"),
+    (("recolh", "previdenci"), "recolhimento previdenciário", "contribuição previdenciária"),
+    (("fundeb",), "FUNDEB", "fundo educação básica"),
+    (("licit",), "licitação", "procedimento licitatório"),
+    (("contrat",), "contratação pública", "contrato administrativo"),
+    (("pessoal",), "despesa pessoal", "limite pessoal"),
+    (("restos", "pagar"), "restos a pagar", "obrigações financeiras"),
+    (("controle", "intern"), "controle interno", "sistema controle interno"),
+    (("transpar",), "transparência pública", "publicidade administrativa"),
+)
 _MINISTERIAL_TREATMENTS = {
     "MANTIDA_REJEICAO",
     "ACOLHIDA",
@@ -139,52 +172,87 @@ def _terms(value):
     }
 
 
-def _rag_queries(analysis):
+def _rag_query_plan(analysis):
     queries = []
+    omitted = []
     seen = set()
     irregularities = analysis.get("irregularidades", []) if isinstance(analysis, dict) else []
     for irregularity in irregularities:
         if not isinstance(irregularity, dict):
             continue
         matter = str(irregularity.get("apontamento") or "").strip()
-        parts = [matter]
-        parts.extend(
+        identifier = str(irregularity.get("id") or "")
+        norm_parts = [
             str(item.get("descricao") or "")
             for item in irregularity.get("normas_mencionadas", [])
             if isinstance(item, dict)
-        )
-        parts.extend(
+        ]
+        hypothesis_parts = [
             str(item or "") for item in irregularity.get("hipoteses_juridicas", [])
-        )
-        tokens = []
-        normalized_tokens = set()
-        for token in re.findall(r"[0-9A-Za-zÀ-ÿº°./-]+", " ".join(parts)):
-            cleaned = token.strip("-./")
-            normalized = _plain(cleaned)
-            if (
-                len(normalized) < 2
-                or normalized in _RAG_GENERIC_TERMS
-                or normalized in normalized_tokens
-            ):
-                continue
-            normalized_tokens.add(normalized)
-            tokens.append(cleaned)
-            if len(tokens) >= 7:
+        ]
+        structured_text = " ".join(hypothesis_parts + norm_parts + [matter])
+        normalized_text = _plain(structured_text)
+        primary = alternative = ""
+        for stems, concept_query, concept_alternative in _RAG_CONCEPTS:
+            if all(stem in normalized_text for stem in stems):
+                primary = concept_query
+                alternative = concept_alternative
                 break
-        query = " ".join(tokens)
-        key = _normalized_support(query)
-        if len(query) >= 2 and key not in seen:
-            seen.add(key)
-            queries.append(
-                {
-                    "irregularidade_id": str(irregularity.get("id") or ""),
-                    "materia": matter or query,
-                    "consulta": query,
-                }
+        if not primary:
+            tokens = []
+            normalized_tokens = set()
+            for part in hypothesis_parts + norm_parts + [matter]:
+                for token in re.findall(r"[0-9A-Za-zÀ-ÿº°./-]+", part):
+                    cleaned = token.strip("-./")
+                    normalized = _plain(cleaned)
+                    if (
+                        len(normalized) < 4
+                        or normalized in _RAG_GENERIC_TERMS
+                        or normalized in normalized_tokens
+                        or normalized.isdigit()
+                    ):
+                        continue
+                    normalized_tokens.add(normalized)
+                    tokens.append(cleaned)
+                    if len(tokens) >= 3:
+                        break
+                if len(tokens) >= 3:
+                    break
+            primary = " ".join(tokens)
+            alternative = " ".join(tokens[:2]) if len(tokens) > 2 else ""
+        key = _normalized_support(primary)
+        if not key:
+            omitted.append(
+                {"irregularidade_id": identifier, "materia": matter, "motivo": "sem termos técnicos"}
             )
+            continue
+        if key in seen:
+            omitted.append(
+                {"irregularidade_id": identifier, "materia": matter, "motivo": "consulta equivalente já selecionada"}
+            )
+            continue
         if len(queries) >= MAX_RAG_QUERIES:
-            break
-    return queries
+            omitted.append(
+                {"irregularidade_id": identifier, "materia": matter, "motivo": "limite de matérias pesquisadas"}
+            )
+            continue
+        seen.add(key)
+        if _normalized_support(alternative) == key:
+            alternative = ""
+        queries.append(
+            {
+                "irregularidade_id": identifier,
+                "materia": matter or primary,
+                "consulta": primary,
+                "consulta_principal": primary,
+                "consulta_alternativa": alternative,
+            }
+        )
+    return {"consultas": queries, "materias_nao_pesquisadas": omitted}
+
+
+def _rag_queries(analysis):
+    return _rag_query_plan(analysis)["consultas"]
 
 
 _FINDING_HEADING = re.compile(
@@ -575,7 +643,9 @@ class MinutasGenerationService:
 
     def _recover_legal_references(self, target_reference_id, analysis):
         target = self.library.get(target_reference_id)
-        queries = _rag_queries(analysis)
+        plan = _rag_query_plan(analysis)
+        queries = plan["consultas"]
+        omitted_matters = plan["materias_nao_pesquisadas"]
         if not queries:
             return {
                 "estado": "SEM_CONSULTAS",
@@ -584,6 +654,8 @@ class MinutasGenerationService:
                 "pareceres": 0,
                 "resultados_retornados": 0,
                 "descartes": {},
+                "materias_nao_pesquisadas": omitted_matters,
+                "consultas_executadas": 0,
                 "motivo_ausencia": (
                     "A análise não produziu termos discriminativos para pesquisa."
                 ),
@@ -592,6 +664,7 @@ class MinutasGenerationService:
             {
                 **query,
                 "resultados_retornados": 0,
+                "tentativas": [],
                 "descartados": {
                     "barreira_documental": 0,
                     "duplicacao": 0,
@@ -614,78 +687,102 @@ class MinutasGenerationService:
             target_opinion.get("arquivo_sha256")
         } if target_opinion and target_opinion.get("arquivo_sha256") else set()
         candidates = {}
+        search_calls = 0
         try:
             for query in diagnostic_queries:
-                search_method = (
-                    self.search
-                    if callable(self.search)
-                    else self.search.search
-                )
-                response = search_method(
-                    query["consulta"],
-                    page_size=MAX_RAG_RESULTS_PER_QUERY,
-                    exclude_reference_id=str(target_reference_id),
-                    exclude_process_key=target.get("processo_chave"),
-                    exclude_paths=(target["parecer_path"],),
-                    exclude_hashes=excluded_hashes,
-                )
-                results = list(response.get("resultados", []))
-                query["resultados_retornados"] = len(results)
-                for item in results:
-                    source = allowed_by_path.get(item.get("arquivo_path"))
-                    if (
-                        source is None
-                        or str(source.get("referencia_id"))
-                        == str(target_reference_id)
-                        or source.get("arquivo_sha256")
-                        != item.get("sha256_registrado")
-                    ):
-                        query["descartados"]["barreira_documental"] += 1
-                        continue
-                    passage = str(
-                        item.get("contexto") or item.get("trecho") or ""
-                    ).replace("【", "").replace("】", "").strip()
-                    if not passage:
-                        query["descartados"]["sem_trecho"] += 1
-                        continue
-                    passage = passage[:MAX_RAG_PASSAGE_CHARS]
-                    fingerprint = sha256(
-                        _normalized_support(passage).encode("utf-8")
-                    ).hexdigest()
-                    existing = candidates.get(fingerprint)
-                    if existing:
-                        query["descartados"]["duplicacao"] += 1
-                        if query["materia"] not in existing["materias"]:
-                            existing["materias"].append(query["materia"])
-                        if (
-                            query["irregularidade_id"]
-                            and query["irregularidade_id"]
-                            not in existing["irregularidades_ids"]
-                        ):
-                            existing["irregularidades_ids"].append(
-                                query["irregularidade_id"]
-                            )
-                        existing["relevancia"] = max(
-                            existing["relevancia"], item["relevancia"]
-                        )
-                        continue
-                    candidates[fingerprint] = {
-                        "referencia_id": str(item["referencia_id"]),
-                        "processo": item["processo"],
-                        "documento": item["documento"],
-                        "arquivo_path": item["arquivo_path"],
-                        "sha256_registrado": item["sha256_registrado"],
-                        "fonte_versao": item["fonte_versao"],
-                        "procuradora": item["procuradora"],
-                        "pagina": item.get("pagina"),
-                        "trecho_literal": passage,
-                        "materias": [query["materia"]],
-                        "irregularidades_ids": [query["irregularidade_id"]]
-                        if query["irregularidade_id"]
-                        else [],
-                        "relevancia": float(item.get("relevancia") or 0),
-                        "natureza": "manifestação histórica não vinculante",
+                attempts = [("principal", query["consulta_principal"])]
+                if query.get("consulta_alternativa"):
+                    attempts.append(("alternativa", query["consulta_alternativa"]))
+                for attempt_type, expression in attempts:
+                    if search_calls >= MAX_RAG_SEARCH_CALLS:
+                        break
+                    attempt = {
+                        "tipo": attempt_type,
+                        "consulta": expression,
+                        "resultados_retornados": 0,
+                        "descartados": {
+                            "barreira_documental": 0,
+                            "duplicacao": 0,
+                            "sem_trecho": 0,
+                        },
                     }
+                    query["tentativas"].append(attempt)
+                    search_method = (
+                        self.search if callable(self.search) else self.search.search
+                    )
+                    response = search_method(
+                        expression,
+                        page_size=MAX_RAG_RESULTS_PER_QUERY,
+                        exclude_reference_id=str(target_reference_id),
+                        exclude_process_key=target.get("processo_chave"),
+                        exclude_paths=(target["parecer_path"],),
+                        exclude_hashes=excluded_hashes,
+                    )
+                    search_calls += 1
+                    results = list(response.get("resultados", []))
+                    attempt["resultados_retornados"] = len(results)
+                    eligible = False
+                    for item in results:
+                        source = allowed_by_path.get(item.get("arquivo_path"))
+                        if (
+                            source is None
+                            or str(source.get("referencia_id"))
+                            == str(target_reference_id)
+                            or source.get("arquivo_sha256")
+                            != item.get("sha256_registrado")
+                        ):
+                            attempt["descartados"]["barreira_documental"] += 1
+                            continue
+                        passage = str(
+                            item.get("contexto") or item.get("trecho") or ""
+                        ).replace("【", "").replace("】", "").strip()
+                        if not passage:
+                            attempt["descartados"]["sem_trecho"] += 1
+                            continue
+                        eligible = True
+                        passage = passage[:MAX_RAG_PASSAGE_CHARS]
+                        fingerprint = sha256(
+                            _normalized_support(passage).encode("utf-8")
+                        ).hexdigest()
+                        existing = candidates.get(fingerprint)
+                        if existing:
+                            attempt["descartados"]["duplicacao"] += 1
+                            if query["materia"] not in existing["materias"]:
+                                existing["materias"].append(query["materia"])
+                            if (
+                                query["irregularidade_id"]
+                                and query["irregularidade_id"]
+                                not in existing["irregularidades_ids"]
+                            ):
+                                existing["irregularidades_ids"].append(
+                                    query["irregularidade_id"]
+                                )
+                            existing["relevancia"] = max(
+                                existing["relevancia"], item["relevancia"]
+                            )
+                            continue
+                        candidates[fingerprint] = {
+                            "referencia_id": str(item["referencia_id"]),
+                            "processo": item["processo"],
+                            "documento": item["documento"],
+                            "arquivo_path": item["arquivo_path"],
+                            "sha256_registrado": item["sha256_registrado"],
+                            "fonte_versao": item["fonte_versao"],
+                            "procuradora": item["procuradora"],
+                            "pagina": item.get("pagina"),
+                            "trecho_literal": passage,
+                            "materias": [query["materia"]],
+                            "irregularidades_ids": [query["irregularidade_id"]]
+                            if query["irregularidade_id"]
+                            else [],
+                            "relevancia": float(item.get("relevancia") or 0),
+                            "natureza": "manifestação histórica não vinculante",
+                        }
+                    query["resultados_retornados"] += len(results)
+                    for key, value in attempt["descartados"].items():
+                        query["descartados"][key] += value
+                    if eligible:
+                        break
         except Exception:
             return {
                 "estado": "INDISPONIVEL",
@@ -696,6 +793,8 @@ class MinutasGenerationService:
                     item["resultados_retornados"] for item in diagnostic_queries
                 ),
                 "descartes": {},
+                "materias_nao_pesquisadas": omitted_matters,
+                "consultas_executadas": search_calls,
                 "motivo_ausencia": "A pesquisa jurídica ficou indisponível.",
                 "aviso": "Pesquisa jurídica indisponível nesta execução.",
             }
@@ -740,6 +839,8 @@ class MinutasGenerationService:
             "pareceres": len({item["referencia_id"] for item in selected}),
             "resultados_retornados": returned,
             "descartes": discards,
+            "materias_nao_pesquisadas": omitted_matters,
+            "consultas_executadas": search_calls,
             "motivo_ausencia": absence_reason,
         }
 
