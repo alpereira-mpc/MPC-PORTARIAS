@@ -942,6 +942,67 @@ def _library_tab(store, identity):
         )
 
 
+def _analysis_panel(analysis_result):
+    def source_suffix(item):
+        sources = item.get("fontes") or ()
+        if not sources:
+            return ""
+        labels = [
+            f"fonte {source['fonte_id']}, p. {source['pagina']}"
+            for source in sources
+        ]
+        return " _(" + "; ".join(labels) + ")_"
+
+    section_label("Etapa 1 — Análise probatória e jurídica")
+    analysis = analysis_result["analise"]
+    if analysis.get("resumo_processual"):
+        st.caption(analysis["resumo_processual"])
+    for index, irregularity in enumerate(analysis.get("irregularidades", ()), 1):
+        title = irregularity.get("apontamento") or f"Irregularidade {index}"
+        with st.expander(f"{index}. {title}"):
+            facts = irregularity.get("fatos_documentados") or ()
+            defenses = irregularity.get("argumentos_defesa") or ()
+            audit = irregularity.get("avaliacao_auditoria") or {}
+            if facts:
+                st.markdown("**Fatos documentados**")
+                st.markdown(
+                    "\n".join(
+                        f"- {item['descricao']}{source_suffix(item)}" for item in facts
+                    )
+                )
+            if defenses:
+                st.markdown("**Alegações da defesa**")
+                st.markdown(
+                    "\n".join(
+                        f"- {item['alegacao']} — comprovação: "
+                        f"{item['comprovacao_documental']}{source_suffix(item)}"
+                        for item in defenses
+                    )
+                )
+            st.markdown("**Conclusão da Auditoria após a defesa**")
+            st.markdown(
+                (audit.get("descricao") or "Não identificada nas fontes.")
+                + source_suffix(audit)
+            )
+            st.caption(
+                "Tratamento da defesa: "
+                + str(audit.get("tratamento_defesa") or "Não identificado")
+            )
+            attention = irregularity.get("pontos_controvertidos") or ()
+            if attention:
+                st.markdown("**Pontos que exigem atenção**")
+                st.markdown("\n".join(f"- {item}" for item in attention))
+    general_attention = analysis.get("pontos_atencao_gerais") or ()
+    if general_attention:
+        st.markdown("**Pontos gerais que exigem atenção**")
+        st.markdown("\n".join(f"- {item}" for item in general_attention))
+    st.caption(
+        f"Modelo: {analysis_result.get('modelo') or '—'} · "
+        f"Tokens: {analysis_result.get('tokens_total') or 'não informado'} · "
+        f"Duração: {analysis_result.get('duracao_ms', 0) / 1000:.1f} s"
+    )
+
+
 def _generator_tab(store, identity):
     st.subheader("Teste de Geração — Processo Histórico")
     st.caption(
@@ -997,26 +1058,57 @@ def _generator_tab(store, identity):
                 + "."
             )
 
+    analysis_key = f"minutas_generation_analysis_{target['id']}"
     result_key = f"minutas_generation_result_{target['id']}"
+    analysis = st.session_state.get(analysis_key)
     result = st.session_state.get(result_key)
-    if result and result.get("fontes_versao") != summary["fontes_versao"]:
+    sources_changed = any(
+        item and item.get("fontes_versao") != summary["fontes_versao"]
+        for item in (analysis, result)
+    )
+    if sources_changed or (result and not analysis):
+        st.session_state.pop(analysis_key, None)
         st.session_state.pop(result_key, None)
+        analysis = None
         result = None
         st.info(
-            "As fontes foram alteradas desde a geração anterior. "
-            "A minuta antiga foi retirada desta sessão."
+            "As fontes foram alteradas. A análise e a minuta anteriores foram "
+            "retiradas desta sessão."
         )
+
+    section_label("Etapa 1 — Analisar processo")
     if st.button(
-        "Gerar minuta com IA",
+        "Analisar fundamentos",
+        type="primary",
+        icon=":material/fact_check:",
+        key=f"minutas_analysis_submit_{target['id']}",
+        disabled=bool(summary["issues"]),
+    ):
+        st.session_state.pop(analysis_key, None)
+        st.session_state.pop(result_key, None)
+        try:
+            with st.spinner("Analisando fatos, defesa e conclusões da Auditoria..."):
+                st.session_state[analysis_key] = generator.analyze(target["id"])
+        except Exception as exc:
+            _error(exc)
+    analysis = st.session_state.get(analysis_key)
+    if analysis:
+        _analysis_panel(analysis)
+
+    section_label("Etapa 2 — Gerar minuta")
+    if st.button(
+        "Gerar minuta",
         type="primary",
         icon=":material/auto_awesome:",
         key=f"minutas_generation_submit_{target['id']}",
-        disabled=bool(summary["issues"]),
+        disabled=not analysis or bool(summary["issues"]),
     ):
         st.session_state.pop(result_key, None)
         try:
-            with st.spinner("Preparando o contexto e gerando a minuta..."):
-                st.session_state[result_key] = generator.generate(target["id"])
+            with st.spinner("Redigindo a minuta a partir da análise conferida..."):
+                st.session_state[result_key] = generator.generate(
+                    target["id"], analysis
+                )
         except Exception as exc:
             _error(exc)
 
@@ -1028,6 +1120,8 @@ def _generator_tab(store, identity):
         "sem caráter de manifestação oficial."
     )
     section_label("Minuta gerada")
+    for warning in result.get("advertencias_qualidade") or ():
+        st.warning(warning)
     with st.container(border=True):
         st.markdown(result["texto"])
     with st.expander("Copiar texto da minuta"):

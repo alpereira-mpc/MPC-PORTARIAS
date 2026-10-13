@@ -49,7 +49,13 @@ def _record(
 
 
 def _row(reference, role, text, *, path=None, file_hash=None, position=0):
-    file_path = path or f"{reference['id']}/{role}-{position}.pdf"
+    file_path = path or (
+        reference["auditoria_path"]
+        if role == "auditoria" and position == 0
+        else reference["parecer_path"]
+        if role == "parecer"
+        else f"{reference['id']}/{role}-{position}.pdf"
+    )
     return {
         "referencia_id": reference["id"],
         "papel": role,
@@ -61,7 +67,13 @@ def _row(reference, role, text, *, path=None, file_hash=None, position=0):
         "posicao": position,
         "procuradora": reference["procuradora"],
         "procuradora_chave": reference["procuradora_chave"],
-        "arquivo_nome": file_path.rsplit("/", 1)[-1],
+        "arquivo_nome": (
+            reference["auditoria_nome"]
+            if role == "auditoria" and position == 0
+            else reference["parecer_nome"]
+            if role == "parecer"
+            else file_path.rsplit("/", 1)[-1]
+        ),
         "arquivo_tamanho": 100,
         "arquivo_path": file_path,
         "arquivo_sha256": file_hash or (reference["id"] + role + str(position)),
@@ -169,6 +181,106 @@ def _scenario():
     return target, history, other, rows
 
 
+def _analysis_payload(context, *, count=1, treatment="REJEITADA"):
+    source = context["documentos_processo_alvo"][0]
+    unit = source["conteudo"][0]
+    page = unit.get("pagina", 0)
+    support = next(
+        line.strip() for line in unit["texto"].splitlines() if line.strip()
+    )
+    reference = {
+        "fonte_id": source["fonte_id"],
+        "pagina": page,
+        "trecho_suporte": support,
+    }
+    irregularities = []
+    for index in range(1, count + 1):
+        irregularities.append(
+            {
+                "id": f"IRR-{index}",
+                "apontamento": (
+                    "Irregularidade previdenciária na página original"
+                    if index == 1
+                    else f"Outro apontamento documentado {index}"
+                ),
+                "fatos_documentados": [
+                    {"descricao": f"Fato comprovado {index}", "fontes": [reference]}
+                ],
+                "normas_mencionadas": [
+                    {
+                        "descricao": "Norma citada no relatório",
+                        "origem": "AUDITORIA",
+                        "fontes": [reference],
+                    }
+                ],
+                "argumentos_defesa": [
+                    {
+                        "alegacao": "A defesa alegou ausência de dano.",
+                        "comprovacao_documental": "NÃO COMPROVADA",
+                        "fontes": [reference],
+                    }
+                ],
+                "avaliacao_auditoria": {
+                    "descricao": "A Auditoria rejeitou a justificativa defensiva.",
+                    "tratamento_defesa": treatment,
+                    "fontes": [reference],
+                },
+                "pontos_controvertidos": ["Extensão da consequência jurídica."],
+                "hipoteses_juridicas": ["Hipótese sujeita à revisão ministerial."],
+            }
+        )
+    return {
+        "resumo_processual": "Análise exclusiva dos documentos instrutórios.",
+        "irregularidades": irregularities,
+        "sem_irregularidades_identificadas": not irregularities,
+        "pontos_atencao_gerais": [],
+    }
+
+
+def _analysis_result(context, **changes):
+    result = {
+        "analise": _analysis_payload(context),
+        "modelo": "modelo-analise",
+        "duracao_ms": 10,
+        "tokens_entrada": 80,
+        "tokens_saida": 30,
+        "tokens_total": 110,
+    }
+    result.update(changes)
+    return result
+
+
+def _draft_structure(ids=("IRR-1",)):
+    return {
+        "identificacao_processual": "Processo TC 01653/26",
+        "ementa": "PRESTAÇÃO DE CONTAS. ANÁLISE DOCUMENTAL.",
+        "relatorio": "Relatório processual com referência à página 1.",
+        "fundamentacao_geral": "Fundamentação baseada nas fontes fornecidas.",
+        "topicos_irregularidades": [
+            {
+                "titulo": "Irregularidades relacionadas",
+                "irregularidades_ids": list(ids),
+                "texto": "A defesa foi confrontada com a conclusão da Auditoria.",
+            }
+        ],
+        "conclusao_pedidos": "Conclusão ministerial sujeita à revisão humana.",
+        "encerramento": "Documento experimental sem caráter oficial.",
+    }
+
+
+def _draft_result(_context, **changes):
+    result = {
+        "estrutura": _draft_structure(),
+        "modelo": "modelo-redacao",
+        "duracao_ms": 20,
+        "tokens_entrada": 100,
+        "tokens_saida": 40,
+        "tokens_total": 140,
+    }
+    result.update(changes)
+    return result
+
+
 @pytest.mark.parametrize(
     ("display", "stored_key"),
     (
@@ -260,32 +372,298 @@ def test_context_uses_target_instruction_and_excludes_contamination():
     assert library.repository.queries == [target["procuradora_chave"]]
 
 
-def test_generation_calls_shared_ai_once_and_returns_only_metrics_not_context():
-    target, history, other, rows = _scenario()
-    calls = []
+def test_reference_selection_combines_subtype_and_analysis_theme():
+    target, _history, _other, base_rows = _scenario()
+    same_subtype = _record(
+        "history-same-subtype",
+        "TC 01001/25",
+        "0100125",
+        subtype=target["subtipo"],
+    )
+    same_theme = _record(
+        "history-same-theme", "TC 01002/25", "0100225", subtype="Prefeitura"
+    )
+    unrelated = _record(
+        "history-unrelated", "TC 01003/25", "0100325", subtype="Prefeitura"
+    )
+    rows = [*base_rows[:3]]
+    rows.extend(
+        (
+            _row(same_subtype, "parecer", "Padrão de redação ministerial."),
+            _row(same_theme, "parecer", "Padrão jurídico da Procuradora."),
+            _row(
+                same_theme,
+                "auditoria",
+                "Irregularidade documentada sobre contribuição previdenciária.",
+            ),
+            _row(unrelated, "parecer", "Outro padrão de redação."),
+            _row(unrelated, "auditoria", "Aquisição de merenda por licitação."),
+        )
+    )
+    service = MinutasGenerationService(
+        Library([target, same_subtype, same_theme, unrelated], rows)
+    )
+    analysis_context = service.prepare_analysis_context(target["id"])["contexto"]
+    prepared = service.prepare_context(
+        target["id"], _analysis_payload(analysis_context)
+    )
 
-    def generate(context):
-        calls.append(context)
-        return {
-            "texto": "# PARECER\n\nMinuta estruturada.",
-            "modelo": "modelo-configurado",
-            "duracao_ms": 25,
-            "tokens_entrada": 100,
-            "tokens_saida": 40,
-            "tokens_total": 140,
-        }
+    assert [
+        item["processo"] for item in prepared["contexto"]["referencias_historicas"]
+    ] == [same_subtype["numero_processo"], same_theme["numero_processo"]]
+    assert prepared["relatorios_historicos"] == 1
+
+
+def test_historical_reference_requires_current_processed_linked_extraction():
+    target, outdated, other, rows = _scenario()
+    valid = _record(
+        "history-valid", "TC 01004/25", "0100425", subtype=target["subtipo"]
+    )
+    outdated_opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == outdated["id"] and row["papel"] == "parecer"
+    )
+    outdated_opinion["extrator_versao"] = "extrator-anterior"
+    rows.append(_row(valid, "parecer", "Referência histórica válida e processada."))
+    service = MinutasGenerationService(
+        Library([target, outdated, valid, other], rows)
+    )
+
+    prepared = service.prepare_context(target["id"])
+    selected = [
+        item["processo"] for item in prepared["contexto"]["referencias_historicas"]
+    ]
+
+    assert valid["numero_processo"] in selected
+    assert outdated["numero_processo"] not in selected
+
+
+def test_analysis_separates_defense_evidence_and_rejected_audit_conclusion():
+    target, history, other, rows = _scenario()
+
+    def analyze(context):
+        return _analysis_result(
+            context, analise=_analysis_payload(context, count=2, treatment="REJEITADA")
+        )
 
     service = MinutasGenerationService(
-        Library([target, history, other], rows), generate=generate
+        Library([target, history, other], rows), analyze=analyze
     )
-    result = service.generate(target["id"])
+    result = service.analyze(target["id"])["analise"]
 
-    assert len(calls) == 1
-    assert result["texto"].startswith("# PARECER")
-    assert result["modelo"] == "modelo-configurado"
+    assert len(result["irregularidades"]) == 2
+    for irregularity in result["irregularidades"]:
+        assert irregularity["fatos_documentados"][0]["descricao"].startswith("Fato")
+        assert irregularity["argumentos_defesa"][0]["alegacao"].startswith(
+            "A defesa alegou"
+        )
+        assert irregularity["argumentos_defesa"][0]["comprovacao_documental"] == (
+            "NÃO COMPROVADA"
+        )
+        assert irregularity["avaliacao_auditoria"]["tratamento_defesa"] == (
+            "REJEITADA"
+        )
+        assert irregularity["avaliacao_auditoria"]["fontes"][0]["pagina"] == 1
+
+
+def test_analysis_rejects_invented_source_or_page():
+    target, history, other, rows = _scenario()
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        analysis["irregularidades"][0]["fatos_documentados"][0]["fontes"] = [
+            {"fonte_id": "fonte-inexistente", "pagina": 999}
+        ]
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows), analyze=analyze
+    )
+
+    with pytest.raises(MinutasGenerationError, match="fonte ou página inexistente"):
+        service.analyze(target["id"])
+
+
+def test_analysis_rejects_existing_page_with_unverifiable_excerpt():
+    target, history, other, rows = _scenario()
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        analysis["irregularidades"][0]["fatos_documentados"][0]["fontes"][0][
+            "trecho_suporte"
+        ] = "Trecho inexistente apesar de a página ser válida."
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows), analyze=analyze
+    )
+
+    with pytest.raises(MinutasGenerationError, match="sem correspondência"):
+        service.analyze(target["id"])
+
+
+def test_analysis_accepts_verifiable_excerpt_with_conservative_normalization():
+    target, history, other, rows = _scenario()
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        analysis["irregularidades"][0]["fatos_documentados"][0]["fontes"][0][
+            "trecho_suporte"
+        ] = "IRREGULARIDADE   PREVIDENCIARIA\nNA PAGINA ORIGINAL."
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows), analyze=analyze
+    )
+
+    result = service.analyze(target["id"])
+    assert result["analise"]["irregularidades"][0]["fatos_documentados"]
+
+
+def test_analysis_rejects_defense_allegation_classified_as_documented_fact():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    text = (
+        "Irregularidade previdenciária na página original.\n"
+        "A defesa alegou ausência de dano."
+    )
+    audit["texto_integral"] = text
+    audit["unidades_json"] = json.dumps([{"pagina": 1, "texto": text}])
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        fact = analysis["irregularidades"][0]["fatos_documentados"][0]
+        fact["descricao"] = "Ausência de dano."
+        fact["fontes"][0]["trecho_suporte"] = "A defesa alegou ausência de dano."
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows), analyze=analyze
+    )
+
+    with pytest.raises(MinutasGenerationError, match="alegação defensiva como fato"):
+        service.analyze(target["id"])
+
+
+def test_analysis_rejects_omitted_identifiable_audit_finding():
+    target, history, other, rows = _scenario()
+
+    def analyze(context):
+        return _analysis_result(context, analise=_analysis_payload(context, count=0))
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows), analyze=analyze
+    )
+
+    with pytest.raises(MinutasGenerationError, match="omitido apontamentos"):
+        service.analyze(target["id"])
+
+
+def test_analysis_accepts_process_legitimately_without_identifiable_findings():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    text = "Não foram identificadas irregularidades na instrução."
+    audit["texto_integral"] = text
+    audit["unidades_json"] = json.dumps([{"pagina": 1, "texto": text}])
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=lambda context: _analysis_result(
+            context, analise=_analysis_payload(context, count=0)
+        ),
+    )
+
+    result = service.analyze(target["id"])
+    assert result["analise"]["irregularidades"] == []
+    assert result["analise"]["sem_irregularidades_identificadas"] is True
+
+
+def test_quality_checks_warn_without_changing_legal_conclusion():
+    target, history, other, rows = _scenario()
+
+    def generate(_context):
+        structure = _draft_structure(ids=())
+        structure["ementa"] = "CONTAS IRREGULARES."
+        structure["relatorio"] = "Valor de R$ 9.999,99 indicado na página 99."
+        structure["conclusao_pedidos"] = "Opina-se pela regularidade das contas."
+        return _draft_result(_context, estrutura=structure)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+    )
+    analyzed = service.analyze(target["id"])
+    result = service.generate(target["id"], analyzed)
+
+    warnings = "\n".join(result["advertencias_qualidade"])
+    assert "Possível omissão" in warnings
+    assert "R$ 9.999,99" in warnings
+    assert "página sem correspondência" in warnings
+    assert "inconsistência entre a ementa" in warnings
+    assert result["estrutura"]["conclusao_pedidos"] == (
+        "Opina-se pela regularidade das contas."
+    )
+
+
+def test_complete_generation_uses_one_analysis_and_one_drafting_call():
+    target, history, other, rows = _scenario()
+    analysis_calls = []
+    drafting_calls = []
+
+    def analyze(context):
+        analysis_calls.append(context)
+        return _analysis_result(context)
+
+    def generate(context):
+        drafting_calls.append(context)
+        return _draft_result(context)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows), analyze=analyze, generate=generate
+    )
+    analyzed = service.analyze(target["id"])
+    result = service.generate(target["id"], analyzed)
+
+    assert len(analysis_calls) == 1
+    assert len(drafting_calls) == 1
+    assert "referencias_historicas" not in analysis_calls[0]
+    assert drafting_calls[0]["analise_estruturada"] == analyzed["analise"]
+    assert "## Fundamentação" in result["texto"]
+    assert result["modelo"] == "modelo-redacao"
     assert "contexto" not in result
     assert result["fontes_alvo"] == 2
     assert any("TC 01653/26" in source for source in result["fontes_utilizadas"])
+
+
+def test_generation_revalidates_authorization_and_source_revision():
+    target, history, other, rows = _scenario()
+    library = Library([target, history, other], rows)
+    drafting_calls = []
+    service = MinutasGenerationService(
+        library,
+        analyze=_analysis_result,
+        generate=lambda context: drafting_calls.append(context),
+    )
+    analyzed = service.analyze(target["id"])
+
+    library.authorized = False
+    with pytest.raises(MinutasAccessDenied):
+        service.generate(target["id"], analyzed)
+    library.authorized = True
+
+    rows[0]["atualizado_em"] = "2026-10-13T11:00:00+00:00"
+    with pytest.raises(MinutasGenerationError, match="fontes foram alteradas"):
+        service.generate(target["id"], analyzed)
+    assert drafting_calls == []
 
 
 def test_context_limit_fails_without_cutting_target_or_calling_ai(monkeypatch):
@@ -295,13 +673,45 @@ def test_context_limit_fails_without_cutting_target_or_calling_ai(monkeypatch):
     calls = []
     monkeypatch.setattr(minutas_generation, "MAX_CONTEXT_BYTES", 100)
     service = MinutasGenerationService(
-        Library([target, history, other], rows), generate=calls.append
+        Library([target, history, other], rows), analyze=calls.append
     )
 
     with pytest.raises(MinutasGenerationError, match="essenciais"):
-        service.generate(target["id"])
+        service.analyze(target["id"])
 
     assert calls == []
+
+
+def test_context_budget_reserves_analysis_and_omits_optional_history(monkeypatch):
+    from services import minutas_generation
+
+    target, history, other, rows = _scenario()
+    service = MinutasGenerationService(Library([target, history, other], rows))
+    analysis_context = service.prepare_analysis_context(target["id"])["contexto"]
+    analysis = _analysis_payload(analysis_context)
+    without_analysis = service.prepare_context(target["id"])
+    with_analysis = service.prepare_context(target["id"], analysis)
+    essential_with_analysis = {
+        **with_analysis["contexto"],
+        "referencias_historicas": [],
+    }
+    limit = max(
+        without_analysis["contexto_bytes"],
+        minutas_generation._serialized_size(essential_with_analysis),
+    )
+    assert with_analysis["contexto_bytes"] > limit
+    monkeypatch.setattr(minutas_generation, "MAX_CONTEXT_BYTES", limit)
+
+    plain_limited = service.prepare_context(target["id"])
+    analyzed_limited = service.prepare_context(target["id"], analysis)
+
+    assert plain_limited["referencias_historicas"] == 1
+    assert analyzed_limited["referencias_historicas"] == 0
+    assert analyzed_limited["contexto"]["analise_estruturada"] == analysis
+    assert analyzed_limited["contexto_bytes"] <= limit
+    assert analyzed_limited["omitidas_por_limite"] == [
+        f"Parecer histórico {history['numero_processo']}"
+    ]
 
 
 def test_missing_processed_audit_and_unauthorized_access_fail_before_ai():
@@ -309,16 +719,16 @@ def test_missing_processed_audit_and_unauthorized_access_fail_before_ai():
     calls = []
     without_target = [row for row in rows if row["referencia_id"] != target["id"]]
     service = MinutasGenerationService(
-        Library([target, history, other], without_target), generate=calls.append
+        Library([target, history, other], without_target), analyze=calls.append
     )
     with pytest.raises(MinutasGenerationError, match="extração pendente"):
-        service.generate(target["id"])
+        service.analyze(target["id"])
 
     denied = MinutasGenerationService(
-        Library([target, history], rows, authorized=False), generate=calls.append
+        Library([target, history], rows, authorized=False), analyze=calls.append
     )
     with pytest.raises(MinutasAccessDenied):
-        denied.generate(target["id"])
+        denied.analyze(target["id"])
     assert calls == []
 
 
@@ -339,11 +749,11 @@ def test_invalid_or_outdated_instruction_blocks_generation(status, version, mess
     target_audit.update(status=status, extrator_versao=version)
     calls = []
     service = MinutasGenerationService(
-        Library([target, history, other], rows), generate=calls.append
+        Library([target, history, other], rows), analyze=calls.append
     )
 
     with pytest.raises(MinutasGenerationError, match=message):
-        service.generate(target["id"])
+        service.analyze(target["id"])
 
     assert calls == []
 
@@ -355,7 +765,9 @@ def test_shared_gemini_request_uses_models_limits_and_usage(monkeypatch):
             "candidates": [
                 {
                     "finishReason": "STOP",
-                    "content": {"parts": [{"text": "Minuta experimental."}]},
+                    "content": {
+                        "parts": [{"text": json.dumps(_draft_structure())}]
+                    },
                 }
             ],
             "usageMetadata": {
@@ -366,7 +778,7 @@ def test_shared_gemini_request_uses_models_limits_and_usage(monkeypatch):
         }
     ).encode()
 
-    def execute(builder, label, operacao):
+    def execute(builder, label, operacao, **_kwargs):
         request = builder("test-key", "modelo-em-uso")
         seen.update(
             payload=json.loads(request.data.decode()), label=label, operacao=operacao
@@ -382,7 +794,69 @@ def test_shared_gemini_request_uses_models_limits_and_usage(monkeypatch):
     assert ai_service.PROMPT_MINUTA_PARECER in sent
     assert "conteúdo" in sent
     assert result["modelo"] == "modelo-em-uso"
+    assert result["estrutura"]["conclusao_pedidos"]
     assert result["tokens_total"] == 28
+
+
+def test_analysis_request_uses_structured_schema_and_minutas_models(monkeypatch):
+    seen = {}
+    context = {
+        "documentos_processo_alvo": [
+            {
+                "fonte_id": "fonte-auditoria",
+                "conteudo": [{"pagina": 7, "texto": "Apontamento documentado."}],
+            }
+        ]
+    }
+    raw = json.dumps(
+        {
+            "candidates": [
+                {
+                    "finishReason": "STOP",
+                    "content": {
+                        "parts": [{"text": json.dumps(_analysis_payload(context))}]
+                    },
+                }
+            ],
+            "usageMetadata": {"totalTokenCount": 42},
+        }
+    ).encode()
+
+    def execute(builder, label, operacao, **kwargs):
+        request = builder("test-key", kwargs["primary_model"])
+        seen.update(
+            payload=json.loads(request.data.decode()),
+            label=label,
+            operacao=operacao,
+            kwargs=kwargs,
+        )
+        return raw, kwargs["primary_model"]
+
+    monkeypatch.setattr(
+        ai_service, "_minutas_models", lambda: ("modelo-minutas", "reserva-minutas")
+    )
+    monkeypatch.setattr(ai_service, "_executar", execute)
+    result = ai_service.analisar_fundamentos_minuta(context)
+
+    assert seen["operacao"] == "minutas_analise"
+    assert seen["kwargs"] == {
+        "primary_model": "modelo-minutas",
+        "fallback_model": "reserva-minutas",
+    }
+    config = seen["payload"]["generationConfig"]
+    assert config["maxOutputTokens"] == 8192
+    assert config["responseMimeType"] == "application/json"
+    assert config["responseSchema"]["required"] == [
+        "resumo_processual",
+        "irregularidades",
+        "sem_irregularidades_identificadas",
+        "pontos_atencao_gerais",
+    ]
+    assert result["analise"]["irregularidades"][0]["avaliacao_auditoria"][
+        "tratamento_defesa"
+    ] == "REJEITADA"
+    assert result["modelo"] == "modelo-minutas"
+    assert result["tokens_total"] == 42
 
 
 @pytest.mark.parametrize(
@@ -440,18 +914,22 @@ def test_generation_propagates_controlled_gemini_failure():
         raise ai_service.GeminiErro("O serviço de IA está indisponível no momento.")
 
     service = MinutasGenerationService(
-        Library([target, history, other], rows), generate=unavailable
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=unavailable,
     )
+    analyzed = service.analyze(target["id"])
 
     with pytest.raises(ai_service.GeminiErro, match="indisponível"):
-        service.generate(target["id"])
+        service.generate(target["id"], analyzed)
 
 
 def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch):
     from services import minutas_ia_ui
 
     target = _record(TARGET_ID, "TC 01653/26", HISTORICAL_TEST_PROCESS_KEY)
-    calls = []
+    analysis_calls = []
+    generation_calls = []
     revision = {"value": "revision-1"}
     summary_calls = []
 
@@ -471,8 +949,23 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
                 "fontes_versao": revision["value"],
             }
 
-        def generate(self, identifier):
-            calls.append(identifier)
+        def analyze(self, identifier):
+            analysis_calls.append(identifier)
+            return {
+                "analise": {
+                    "resumo_processual": "Resumo para conferência.",
+                    "irregularidades": [],
+                    "pontos_atencao_gerais": [],
+                },
+                "modelo": "modelo-analise",
+                "duracao_ms": 50,
+                "tokens_total": 20,
+                "fontes_versao": revision["value"],
+            }
+
+        def generate(self, identifier, analyzed):
+            assert analyzed["fontes_versao"] == revision["value"]
+            generation_calls.append(identifier)
             return {
                 "texto": "# MINUTA\n\nConteúdo para revisão.",
                 "modelo": "modelo-teste",
@@ -496,20 +989,27 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
         _generator_tab(None, {})
 
     app = AppTest.from_function(page, default_timeout=30).run()
-    assert calls == []
+    assert analysis_calls == []
+    assert generation_calls == []
     assert summary_calls == [TARGET_ID]
 
+    app.button(key=f"minutas_analysis_submit_{TARGET_ID}").click().run()
+    assert analysis_calls == [TARGET_ID]
+    assert generation_calls == []
+
     app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
-    assert calls == [TARGET_ID]
+    assert generation_calls == [TARGET_ID]
     assert any("Conteúdo para revisão" in item.value for item in app.markdown)
     assert any("Conteúdo para revisão" in item.value for item in app.code)
 
     app.run()
-    assert calls == [TARGET_ID]
+    assert analysis_calls == [TARGET_ID]
+    assert generation_calls == [TARGET_ID]
     assert any("Conteúdo para revisão" in item.value for item in app.markdown)
 
     revision["value"] = "revision-2"
     app.run()
-    assert calls == [TARGET_ID]
+    assert analysis_calls == [TARGET_ID]
+    assert generation_calls == [TARGET_ID]
     assert not any("Conteúdo para revisão" in item.value for item in app.markdown)
     assert any("fontes foram alteradas" in item.value for item in app.info)

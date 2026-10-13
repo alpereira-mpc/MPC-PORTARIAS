@@ -14,6 +14,7 @@ from services.minutas_library import MinutasValidationError, PROCURADORA
 HISTORICAL_TEST_PROCESS_KEY = "0165326"
 MAX_CONTEXT_BYTES = ai_service.MINUTA_MAX_CONTEXT_BYTES
 MAX_HISTORICAL_REFERENCES = 3
+MAX_HISTORICAL_AUDITS = 1
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
     re.compile(r"^(?:codigo|código)\s+verificador\s*[:#-]\s*\S+.*$"),
@@ -96,6 +97,62 @@ def _terms(value):
     }
 
 
+_FINDING_HEADING = re.compile(
+    r"^(?:(\d+(?:\.\d+)*)\s*[-–—.:)]?\s*)?"
+    r"(?:irregularidade|apontamento|achado|constatacao)\b"
+    r"(?:\s*(?:n[.oº°]*\s*)?(\d+(?:\.\d+)*))?"
+)
+_FINDING_GENERIC_TERMS = {
+    "achado",
+    "apontamento",
+    "auditoria",
+    "constatacao",
+    "irregularidade",
+    "original",
+    "pagina",
+}
+_DEFENSE_ALLEGATION = re.compile(
+    r"\b(?:a defesa|o gestor|o interessado|o responsavel)\s+"
+    r"(?:aduziu|afirmou|alegou|argumentou|informou|sustentou)\b"
+)
+_DOCUMENTED_CONFIRMATION = re.compile(
+    r"\b(?:a auditoria confirmou|documentos? comprovam|restou comprovad[oa])\b"
+)
+
+
+def _normalized_support(value):
+    return re.sub(r"\s+", " ", _plain(value)).strip()
+
+
+def _explicit_audit_findings(context):
+    findings = []
+    for source in context["documentos_processo_alvo"]:
+        if source.get("papel") != "auditoria":
+            continue
+        for unit in source.get("conteudo", ()):
+            for raw_line in str(unit.get("texto") or "").splitlines():
+                label = re.sub(r"\s+", " ", raw_line).strip()
+                normalized = _normalized_support(label)
+                if not normalized or re.search(
+                    r"\b(?:sem irregularidades|nao (?:foram )?"
+                    r"(?:identificad|constatad|encontrad)\w* irregularidades?)\b",
+                    normalized,
+                ):
+                    continue
+                match = _FINDING_HEADING.match(normalized)
+                if not match:
+                    continue
+                terms = _terms(normalized) - _FINDING_GENERIC_TERMS
+                findings.append(
+                    {
+                        "identificador": match.group(1) or match.group(2),
+                        "rotulo": label[:240],
+                        "termos": terms,
+                    }
+                )
+    return findings
+
+
 def _source_text(row):
     try:
         units = json.loads(row.get("unidades_json") or "[]")
@@ -130,11 +187,12 @@ def _serialized_size(value):
 
 
 class MinutasGenerationService:
-    """Build a bounded legal context and make one call through the shared AI layer."""
+    """Build bounded contexts for the two explicit Minutas AI stages."""
 
-    def __init__(self, library, generate=None):
+    def __init__(self, library, analyze=None, generate=None):
         self.library = library
         self.extractor = MinutasExtractionService(library)
+        self._analyze = analyze or ai_service.analisar_fundamentos_minuta
         self._generate = generate or ai_service.gerar_minuta_parecer
 
     def targets(self):
@@ -181,7 +239,9 @@ class MinutasGenerationService:
                 reason = "necessita atenção"
             elif extraction.get("extrator_versao") != EXTRACTOR_VERSION:
                 reason = "extração desatualizada"
-            elif extraction.get("arquivo_sha256") == "0" * 64:
+            elif not extraction.get("arquivo_sha256") or extraction.get(
+                "arquivo_sha256"
+            ) == "0" * 64:
                 reason = "extração inválida"
             elif int(extraction.get("arquivo_tamanho") or -1) != int(
                 document.get("tamanho") or 0
@@ -198,6 +258,9 @@ class MinutasGenerationService:
             and row.get("status") == "PROCESSADO"
             and row.get("extrator_versao") == EXTRACTOR_VERSION
             and str(row["referencia_id"]) in records
+            and self._valid_extraction_row(
+                row, records[str(row["referencia_id"])]
+            )
         }
         revision_payload = {
             "records": [
@@ -250,7 +313,35 @@ class MinutasGenerationService:
             "conteudo": content,
         }
 
-    def prepare_context(self, target_reference_id):
+    def _valid_extraction_row(self, row, record):
+        if str(row.get("referencia_id")) != str(record.get("id")):
+            return False
+        documents = {
+            document["path"]: document for document in self.extractor._documents(record)
+        }
+        document = documents.get(row.get("arquivo_path"))
+        if document is None:
+            return False
+        if (
+            row.get("status") != "PROCESSADO"
+            or row.get("extrator_versao") != EXTRACTOR_VERSION
+            or not row.get("arquivo_sha256")
+            or row.get("arquivo_sha256") == "0" * 64
+            or row.get("papel") != document["papel"]
+            or str(row.get("arquivo_nome") or "") != str(document["nome"])
+            or int(row.get("arquivo_tamanho") or -1)
+            != int(document.get("tamanho") or 0)
+        ):
+            return False
+        stored_document_id = row.get("documento_id")
+        registered_document_id = document.get("documento_id")
+        return not (
+            stored_document_id
+            and registered_document_id
+            and str(stored_document_id) != str(registered_document_id)
+        )
+
+    def _target_bundle(self, target_reference_id):
         self.library._authorize()
         target = self.library.get(target_reference_id)
         state = self._source_state(target)
@@ -273,6 +364,7 @@ class MinutasGenerationService:
                 row
                 for row in grouped.get(str(target_reference_id), [])
                 if row["papel"] in {"auditoria", "complementar"}
+                and self._valid_extraction_row(row, target)
             ),
             key=lambda row: (
                 0 if row["papel"] == "auditoria" else 1,
@@ -290,15 +382,55 @@ class MinutasGenerationService:
                 "O relatório da Auditoria de Taperoá não possui extração processada."
             )
 
+        return target, state, rows, grouped, target_sources
+
+    def prepare_analysis_context(self, target_reference_id):
+        target, state, _rows, _grouped, target_sources = self._target_bundle(
+            target_reference_id
+        )
+        context = {
+            "modo": "Análise probatória e jurídica do processo-alvo",
+            "processo_alvo": {
+                "procuradora": target["procuradora"],
+                "numero": target["numero_processo"],
+                "exercicio": int(target["exercicio"]),
+                "subtipo": target["subtipo"],
+                "parecer_definitivo_excluido": True,
+            },
+            "documentos_processo_alvo": target_sources,
+        }
+        if _serialized_size(context) > MAX_CONTEXT_BYTES:
+            raise MinutasGenerationError(
+                "Os documentos essenciais do processo-alvo excedem o limite de contexto."
+            )
+        return {
+            "contexto": context,
+            "fontes_versao": state["fontes_versao"],
+            "fontes_alvo": len(target_sources),
+        }
+
+    def prepare_context(self, target_reference_id, analysis=None):
+        target, state, _rows, grouped, target_sources = self._target_bundle(
+            target_reference_id
+        )
+        records = state["records"]
+
         target_text = "\n".join(
             unit["texto"] for source in target_sources for unit in source["conteudo"]
         )
+        analysis_text = json.dumps(analysis or {}, ensure_ascii=False)
         target_terms = _terms(target_text)
+        theme_terms = _terms(analysis_text) if analysis else target_terms
         candidates = []
         for reference_id, source_rows in grouped.items():
             if reference_id == str(target_reference_id):
                 continue
             record = records[reference_id]
+            source_rows = [
+                row
+                for row in source_rows
+                if self._valid_extraction_row(row, record)
+            ]
             opinions = [row for row in source_rows if row["papel"] == "parecer"]
             if not opinions:
                 continue
@@ -311,24 +443,37 @@ class MinutasGenerationService:
             comparison_text = "\n".join(
                 unit["texto"] for unit in comparison["conteudo"]
             )
-            similarity = len(target_terms & _terms(comparison_text))
+            comparison_terms = _terms(comparison_text)
             candidates.append(
                 {
                     "record": record,
                     "parecer": opinion,
                     "auditoria": audit,
-                    "similaridade_lexical": similarity,
+                    "pertinencia_tematica": len(theme_terms & comparison_terms),
+                    "similaridade_documental": len(target_terms & comparison_terms),
                 }
             )
         candidates.sort(
             key=lambda item: (
                 item["record"]["subtipo"] != target["subtipo"],
-                -item["similaridade_lexical"],
+                -item["pertinencia_tematica"],
+                -item["similaridade_documental"],
                 -int(item["record"]["exercicio"]),
                 item["record"]["numero_processo"],
             )
         )
-        candidates = candidates[:MAX_HISTORICAL_REFERENCES]
+        relevant_candidates = []
+        for candidate in candidates:
+            same_subtype = candidate["record"]["subtipo"] == target["subtipo"]
+            has_contextual_signal = bool(
+                candidate["pertinencia_tematica"]
+                or candidate["similaridade_documental"]
+            )
+            if not relevant_candidates or same_subtype or has_contextual_signal:
+                relevant_candidates.append(candidate)
+            if len(relevant_candidates) >= MAX_HISTORICAL_REFERENCES:
+                break
+        candidates = relevant_candidates
         if not candidates:
             raise MinutasGenerationError(
                 "Não há parecer histórico processado da Procuradora selecionada."
@@ -347,9 +492,11 @@ class MinutasGenerationService:
             "documentos_processo_alvo": target_sources,
             "referencias_historicas": [],
         }
+        if analysis is not None:
+            context["analise_estruturada"] = analysis
         if _serialized_size(context) > MAX_CONTEXT_BYTES:
             raise MinutasGenerationError(
-                "Os documentos essenciais do processo-alvo excedem o limite de contexto."
+                "Os documentos essenciais e a análise estruturada excedem o limite de contexto."
             )
 
         omitted = []
@@ -374,18 +521,23 @@ class MinutasGenerationService:
                 omitted.append(
                     f"Parecer histórico {candidate['record']['numero_processo']}"
                 )
-        if not context["referencias_historicas"]:
-            raise MinutasGenerationError(
-                "Os pareceres históricos excedem o limite seguro de contexto."
-            )
-
         selected_by_process = {
             item["processo"]: item for item in context["referencias_historicas"]
         }
+        historical_audits = 0
         for candidate in candidates:
             audit = candidate["auditoria"]
             reference = selected_by_process.get(candidate["record"]["numero_processo"])
-            if audit is None or reference is None:
+            if (
+                audit is None
+                or reference is None
+                or historical_audits >= MAX_HISTORICAL_AUDITS
+                or (
+                    candidate["pertinencia_tematica"] == 0
+                    and candidate["similaridade_documental"] == 0
+                    and candidate["record"]["subtipo"] != target["subtipo"]
+                )
+            ):
                 continue
             proposed_reference = {**reference, "relatorio_auditoria": audit}
             proposed_history = [
@@ -396,6 +548,7 @@ class MinutasGenerationService:
             if _serialized_size(proposed) <= MAX_CONTEXT_BYTES:
                 context = proposed
                 selected_by_process[reference["processo"]] = proposed_reference
+                historical_audits += 1
             else:
                 omitted.append(
                     f"Relatório histórico {candidate['record']['numero_processo']}"
@@ -429,16 +582,369 @@ class MinutasGenerationService:
             "fontes_utilizadas": used_sources,
         }
 
-    def generate(self, target_reference_id):
-        self.library._authorize()
-        prepared = self.prepare_context(target_reference_id)
-        generated = self._generate(prepared["contexto"])
-        if (
-            not isinstance(generated, dict)
-            or not str(generated.get("texto") or "").strip()
+    @staticmethod
+    def _source_page_texts(context):
+        sources = {}
+        for source in context["documentos_processo_alvo"]:
+            pages = defaultdict(list)
+            for unit in source["conteudo"]:
+                page = unit.get("pagina")
+                if not isinstance(page, int) or isinstance(page, bool):
+                    page = 0
+                pages[page].append(str(unit.get("texto") or ""))
+            sources[source["fonte_id"]] = {
+                page: "\n".join(parts) for page, parts in pages.items()
+            }
+        return sources
+
+    @staticmethod
+    def _source_pages(context):
+        return {
+            source_id: set(pages)
+            for source_id, pages in MinutasGenerationService._source_page_texts(
+                context
+            ).items()
+        }
+
+    @classmethod
+    def _validate_analysis(cls, analysis, context):
+        if not isinstance(analysis, dict):
+            raise MinutasGenerationError("A análise jurídica retornou estrutura inválida.")
+        irregularities = analysis.get("irregularidades")
+        no_findings = analysis.get("sem_irregularidades_identificadas")
+        if not isinstance(irregularities, list) or not isinstance(no_findings, bool):
+            raise MinutasGenerationError("A análise jurídica retornou estrutura inválida.")
+        if no_findings == bool(irregularities):
+            raise MinutasGenerationError(
+                "A análise jurídica retornou declaração contraditória de cobertura."
+            )
+        if not str(analysis.get("resumo_processual") or "").strip() or not isinstance(
+            analysis.get("pontos_atencao_gerais"), list
         ):
-            raise MinutasGenerationError("A IA não retornou uma minuta válida.")
+            raise MinutasGenerationError("A análise jurídica retornou estrutura incompleta.")
+        if any(
+            not isinstance(item, str) or not item.strip()
+            for item in analysis["pontos_atencao_gerais"]
+        ):
+            raise MinutasGenerationError("A análise jurídica retornou pontos de atenção inválidos.")
+        page_texts = cls._source_page_texts(context)
+
+        def validate_reference(reference):
+            if not isinstance(reference, dict):
+                raise MinutasGenerationError(
+                    "A análise jurídica retornou fonte inválida."
+                )
+            source_id = reference.get("fonte_id")
+            page = reference.get("pagina")
+            excerpt = reference.get("trecho_suporte")
+            if (
+                source_id not in page_texts
+                or not isinstance(page, int)
+                or isinstance(page, bool)
+                or page not in page_texts[source_id]
+            ):
+                raise MinutasGenerationError(
+                    "A análise jurídica citou fonte ou página inexistente."
+                )
+            if not isinstance(excerpt, str):
+                raise MinutasGenerationError(
+                    "A análise jurídica não apresentou trecho textual de suporte."
+                )
+            normalized_excerpt = _normalized_support(excerpt)
+            if not 8 <= len(normalized_excerpt) <= 500:
+                raise MinutasGenerationError(
+                    "A análise jurídica apresentou trecho de suporte inválido."
+                )
+            if normalized_excerpt not in _normalized_support(page_texts[source_id][page]):
+                raise MinutasGenerationError(
+                    "A análise jurídica apresentou trecho sem correspondência na página citada."
+                )
+            return normalized_excerpt
+
+        identifiers = set()
+        for index, irregularity in enumerate(irregularities, 1):
+            if not isinstance(irregularity, dict):
+                raise MinutasGenerationError(
+                    "A análise jurídica retornou irregularidade inválida."
+                )
+            identifier = str(irregularity.get("id") or "").strip()
+            pointing = str(irregularity.get("apontamento") or "").strip()
+            if not identifier or identifier in identifiers or not pointing:
+                raise MinutasGenerationError(
+                    "A análise jurídica não identificou corretamente as irregularidades."
+                )
+            identifiers.add(identifier)
+            for field in (
+                "fatos_documentados",
+                "normas_mencionadas",
+                "argumentos_defesa",
+                "pontos_controvertidos",
+                "hipoteses_juridicas",
+            ):
+                if not isinstance(irregularity.get(field), list):
+                    raise MinutasGenerationError(
+                        f"A irregularidade {index} retornou o campo {field} inválido."
+                    )
+            sourced_fields = (
+                ("fatos_documentados", ("descricao",)),
+                ("normas_mencionadas", ("descricao", "origem")),
+                ("argumentos_defesa", ("alegacao", "comprovacao_documental")),
+            )
+            for field, text_fields in sourced_fields:
+                for item in irregularity[field]:
+                    if not isinstance(item, dict) or not isinstance(
+                        item.get("fontes"), list
+                    ) or not item["fontes"]:
+                        raise MinutasGenerationError(
+                            f"A irregularidade {index} retornou evidência sem fonte válida."
+                        )
+                    if any(key not in item for key in text_fields) or not str(
+                        item.get(text_fields[0]) or ""
+                    ).strip():
+                        raise MinutasGenerationError(
+                            f"A irregularidade {index} retornou evidência incompleta."
+                        )
+                    supports = [
+                        validate_reference(reference) for reference in item["fontes"]
+                    ]
+                    if field == "fatos_documentados" and all(
+                        _DEFENSE_ALLEGATION.search(support)
+                        and not _DOCUMENTED_CONFIRMATION.search(support)
+                        for support in supports
+                    ):
+                        raise MinutasGenerationError(
+                            "A análise jurídica classificou alegação defensiva como fato "
+                            "documentado."
+                        )
+            for field in ("pontos_controvertidos", "hipoteses_juridicas"):
+                if any(
+                    not isinstance(item, str) or not item.strip()
+                    for item in irregularity[field]
+                ):
+                    raise MinutasGenerationError(
+                        f"A irregularidade {index} retornou análise jurídica inválida."
+                    )
+            audit = irregularity.get("avaliacao_auditoria")
+            if (
+                not isinstance(audit, dict)
+                or not str(audit.get("descricao") or "").strip()
+                or not isinstance(audit.get("fontes"), list)
+            ):
+                raise MinutasGenerationError(
+                    f"A irregularidade {index} não distingue a conclusão da Auditoria."
+                )
+            treatment = str(audit.get("tratamento_defesa") or "").upper()
+            if treatment not in {
+                "ACOLHIDA",
+                "REJEITADA",
+                "PARCIALMENTE_ACOLHIDA",
+                "NAO_IDENTIFICADO",
+            }:
+                raise MinutasGenerationError(
+                    f"A irregularidade {index} não classificou o tratamento da defesa."
+                )
+            if treatment != "NAO_IDENTIFICADO" and not audit["fontes"]:
+                raise MinutasGenerationError(
+                    f"A irregularidade {index} retornou conclusão técnica sem fonte."
+                )
+            for reference in audit["fontes"]:
+                validate_reference(reference)
+
+        findings = _explicit_audit_findings(context)
+        missing_findings = []
+        for finding in findings:
+            finding_id = finding["identificador"]
+            finding_terms = finding["termos"]
+            if not finding_id and not finding_terms:
+                continue
+            covered = False
+            for irregularity in irregularities:
+                searchable = _normalized_support(
+                    f"{irregularity['id']} {irregularity['apontamento']}"
+                )
+                if finding_id and re.search(
+                    rf"(?<!\d){re.escape(finding_id)}(?!\d)", searchable
+                ):
+                    covered = True
+                    break
+                if finding_terms & _terms(irregularity["apontamento"]):
+                    covered = True
+                    break
+            if not covered:
+                missing_findings.append(finding["rotulo"])
+        if missing_findings or (findings and no_findings):
+            labels = missing_findings or [item["rotulo"] for item in findings]
+            raise MinutasGenerationError(
+                "A análise pode ter omitido apontamentos identificáveis da Auditoria: "
+                + "; ".join(labels[:5])
+                + ". Confira a instrução."
+            )
+        return analysis
+
+    @staticmethod
+    def _validate_structure(structure):
+        required = (
+            "identificacao_processual",
+            "ementa",
+            "relatorio",
+            "fundamentacao_geral",
+            "conclusao_pedidos",
+            "encerramento",
+        )
+        if not isinstance(structure, dict) or any(
+            not str(structure.get(field) or "").strip() for field in required
+        ):
+            raise MinutasGenerationError(
+                "A IA não retornou todas as partes obrigatórias da minuta."
+            )
+        topics = structure.get("topicos_irregularidades")
+        if not isinstance(topics, list) or any(
+            not isinstance(topic, dict)
+            or not str(topic.get("titulo") or "").strip()
+            or not isinstance(topic.get("irregularidades_ids"), list)
+            or not str(topic.get("texto") or "").strip()
+            for topic in topics
+        ):
+            raise MinutasGenerationError(
+                "A IA não retornou fundamentação estruturada válida."
+            )
+        return structure
+
+    @staticmethod
+    def _structure_markdown(structure):
+        sections = [
+            structure["identificacao_processual"].strip(),
+            "## Ementa\n\n" + structure["ementa"].strip(),
+            "## Relatório\n\n" + structure["relatorio"].strip(),
+            "## Fundamentação\n\n" + structure["fundamentacao_geral"].strip(),
+        ]
+        for topic in structure["topicos_irregularidades"]:
+            if isinstance(topic, dict) and str(topic.get("texto") or "").strip():
+                sections.append(
+                    "### "
+                    + str(topic.get("titulo") or "Irregularidade").strip()
+                    + "\n\n"
+                    + str(topic["texto"]).strip()
+                )
+        sections.extend(
+            (
+                "## Conclusão e propostas de encaminhamento\n\n"
+                + structure["conclusao_pedidos"].strip(),
+                structure["encerramento"].strip(),
+            )
+        )
+        return "\n\n".join(sections)
+
+    @staticmethod
+    def _quality_warnings(structure, analysis, target_context):
+        warnings = []
+        covered = {
+            str(identifier)
+            for topic in structure.get("topicos_irregularidades", [])
+            if isinstance(topic, dict)
+            for identifier in topic.get("irregularidades_ids", [])
+        }
+        missing = [
+            item["id"]
+            for item in analysis.get("irregularidades", [])
+            if item["id"] not in covered
+        ]
+        if missing:
+            warnings.append(
+                "Possível omissão: irregularidades não vinculadas à fundamentação final: "
+                + ", ".join(missing)
+                + "."
+            )
+        text = MinutasGenerationService._structure_markdown(structure)
+        source_text = "\n".join(
+            unit["texto"]
+            for source in target_context["documentos_processo_alvo"]
+            for unit in source["conteudo"]
+        )
+        for amount in set(re.findall(r"R\$\s*[\d.]+(?:,\d{2})?", text)):
+            if re.sub(r"\s+", "", amount) not in re.sub(r"\s+", "", source_text):
+                warnings.append(
+                    f"Possível valor sem correspondência literal nas fontes: {amount}."
+                )
+        valid_pages = set().union(*MinutasGenerationService._source_pages(target_context).values())
+        for page in {
+            int(value)
+            for value in re.findall(r"(?:página|p\.)\s*(\d+)", text, re.IGNORECASE)
+        }:
+            if page not in valid_pages:
+                warnings.append(
+                    f"Possível citação de página sem correspondência nas fontes: {page}."
+                )
+        def declared_outcome(value):
+            normalized = _plain(value)
+            irregular = bool(re.search(r"\birregular(?:idade|es)?\b", normalized))
+            regular = bool(re.search(r"\bregular(?:idade|es)?\b", normalized))
+            if irregular and not regular:
+                return "irregular"
+            if regular and not irregular and "ressalva" not in normalized:
+                return "regular"
+            return None
+
+        foundation = "\n".join(
+            [structure["fundamentacao_geral"]]
+            + [
+                str(topic.get("texto") or "")
+                for topic in structure.get("topicos_irregularidades", [])
+                if isinstance(topic, dict)
+            ]
+        )
+        outcomes = [
+            declared_outcome(structure["ementa"]),
+            declared_outcome(foundation),
+            declared_outcome(structure["conclusao_pedidos"]),
+        ]
+        if "regular" in outcomes and "irregular" in outcomes:
+            warnings.append(
+                "Possível inconsistência entre a ementa, a fundamentação e a conclusão "
+                "quanto ao resultado."
+            )
+        return warnings
+
+    def analyze(self, target_reference_id):
+        self.library._authorize()
+        prepared = self.prepare_analysis_context(target_reference_id)
+        generated = self._analyze(prepared["contexto"])
+        if not isinstance(generated, dict):
+            raise MinutasGenerationError("A IA não retornou análise jurídica válida.")
+        analysis = self._validate_analysis(generated.get("analise"), prepared["contexto"])
         return {
             **generated,
+            "analise": analysis,
+            "fontes_versao": prepared["fontes_versao"],
+            "fontes_alvo": prepared["fontes_alvo"],
+        }
+
+    def generate(self, target_reference_id, analyzed):
+        self.library._authorize()
+        if not isinstance(analyzed, dict) or not isinstance(analyzed.get("analise"), dict):
+            raise MinutasGenerationError("Analise os fundamentos antes de gerar a minuta.")
+        prepared = self.prepare_context(target_reference_id, analyzed["analise"])
+        if analyzed.get("fontes_versao") != prepared["fontes_versao"]:
+            raise MinutasGenerationError(
+                "As fontes foram alteradas. Analise novamente os fundamentos."
+            )
+        self._validate_analysis(analyzed["analise"], prepared["contexto"])
+        request_context = prepared["contexto"]
+        if _serialized_size(request_context) > MAX_CONTEXT_BYTES:
+            raise MinutasGenerationError(
+                "A solicitação integral excede o limite seguro de contexto."
+            )
+        generated = self._generate(request_context)
+        if not isinstance(generated, dict):
+            raise MinutasGenerationError("A IA não retornou uma minuta válida.")
+        structure = self._validate_structure(generated.get("estrutura"))
+        warnings = self._quality_warnings(
+            structure, analyzed["analise"], prepared["contexto"]
+        )
+        return {
+            **generated,
+            "estrutura": structure,
+            "texto": self._structure_markdown(structure),
+            "advertencias_qualidade": warnings,
             **{key: value for key, value in prepared.items() if key != "contexto"},
         }
