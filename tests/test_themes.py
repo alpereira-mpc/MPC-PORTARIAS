@@ -175,23 +175,38 @@ def test_theme_selector_follows_account_in_footer_before_version():
     logout = source.index('key="portal_logout"')
     version = source.index('st.caption(f"Versão')
     assert brand < notifications < navigation < footer < account < logout < theme < version
-    assert "st.selectbox(" in source[theme:version]
-    assert '"Tema"' in source[theme:version]
+    assert "st.expander(" in source[theme:version]
+    assert "st.radio(" in source[theme:version]
+    assert "st.selectbox(" not in source[theme:version]
+    assert 'key=theme_key' in source[theme:version]
 
 
-@pytest.mark.parametrize("name", tuple(THEME_LABELS))
-def test_theme_dropdown_limits_its_scroll_viewport_only_while_open(name):
-    css = _css(name)
-    selector = (
-        'body:has(.st-key-portal_theme_control [role="combobox"]'
-        '[aria-expanded="true"]) [data-baseweb="popover"] '
-        '[data-testid="stSelectboxVirtualDropdown"] > div'
-    )
-    rule = css.split(selector + "{", 1)[1].split("}", 1)[0]
-    assert "max-height:max(1rem, calc(50dvh - 2rem))" in rule
-    assert "overflow-y:auto" in rule
-    assert "position:" not in rule
-    assert "transform:" not in rule
+def test_theme_control_has_no_floating_dropdown_override():
+    css = _css(DEFAULT_THEME)
+    assert "stSelectboxVirtualDropdown" not in css
+    assert "body:has(.st-key-portal_theme_control" not in css
+
+
+def test_theme_control_is_inline_radio_with_all_options(store, monkeypatch):
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+
+    assert not app.exception
+    selector = app.sidebar.radio(key="portal_theme_select_1")
+    assert selector.label == "Tema"
+    assert tuple(selector.options) == tuple(THEME_LABELS.values())
+    assert selector.value == DEFAULT_THEME
+    assert not any(item.label == "Tema" for item in app.sidebar.selectbox)
+
+    from inspect import getsource
+    from portal import render_portal
+
+    source = getsource(render_portal)
+    control = source[source.index('with st.container(key="portal_theme_control")') :]
+    assert "on_change=_change_theme" in control
+    assert 'args=(store, principal.id, identity["email"], theme_key)' in control
 
 
 def test_gold_palette_is_the_fallback():
@@ -338,7 +353,7 @@ def test_portal_theme_survives_navigation(store, monkeypatch, name):
     monkeypatch.setattr("database.store.Store", lambda: store)
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
-    selector = next(item for item in app.sidebar.selectbox if item.label == "Tema")
+    selector = app.sidebar.radio(key="portal_theme_select_1")
     if name != DEFAULT_THEME:
         selector.set_value(name).run()
     for module in (
@@ -355,15 +370,13 @@ def test_portal_theme_survives_navigation(store, monkeypatch, name):
         app.sidebar.radio(key="portal_module").set_value(module).run()
         assert not app.exception
         assert app.session_state["_portal_theme"]["name"] == name
-        selector = next(item for item in app.sidebar.selectbox if item.label == "Tema")
+        selector = app.sidebar.radio(key="portal_theme_select_1")
         assert selector.value == name
     assert AccessStore(store).get_theme_by_email("admin@test.local") == name
     reopened = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not reopened.exception
     assert reopened.session_state["_portal_theme"]["name"] == name
-    reopened_selector = next(
-        item for item in reopened.sidebar.selectbox if item.label == "Tema"
-    )
+    reopened_selector = reopened.sidebar.radio(key="portal_theme_select_1")
     assert reopened_selector.value == name
 
 
@@ -375,7 +388,7 @@ def test_saved_theme_loads_before_portal_render(store, monkeypatch):
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
     assert app.session_state["_portal_theme"]["name"] == "azul"
-    selector = next(item for item in app.sidebar.selectbox if item.label == "Tema")
+    selector = app.sidebar.radio(key="portal_theme_select_1")
     assert selector.value == "azul"
 
 
@@ -422,7 +435,7 @@ def test_failed_save_keeps_previous_theme(store, monkeypatch):
         raise OSError("Falha temporária")
 
     monkeypatch.setattr(AccessStore, "set_theme", unavailable)
-    selector = next(item for item in app.sidebar.selectbox if item.label == "Tema")
+    selector = app.sidebar.radio(key="portal_theme_select_1")
     selector.set_value("azul").run()
     assert not app.exception
     assert app.session_state["_portal_theme"]["name"] == DEFAULT_THEME

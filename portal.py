@@ -1293,14 +1293,19 @@ def render_portal():
                     if st.button("Sair", type="primary", key="portal_logout"):
                         _logout()
             with st.container(key="portal_theme_control"):
-                st.selectbox(
-                    "Tema",
-                    tuple(THEME_LABELS),
-                    format_func=THEME_LABELS.get,
-                    key=theme_key,
-                    on_change=_change_theme,
-                    args=(store, principal.id, identity["email"], theme_key),
-                )
+                with st.expander(
+                    f"Tema · {THEME_LABELS[active_theme]}",
+                    icon=":material/palette:",
+                ):
+                    st.radio(
+                        "Tema",
+                        tuple(THEME_LABELS),
+                        format_func=THEME_LABELS.get,
+                        key=theme_key,
+                        on_change=_change_theme,
+                        args=(store, principal.id, identity["email"], theme_key),
+                        label_visibility="collapsed",
+                    )
                 if message := st.session_state.pop("_portal_theme_error", None):
                     st.warning(message)
         st.caption(f"Versão {APP_VERSION}", text_alignment="right")

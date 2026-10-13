@@ -308,7 +308,7 @@ def test_portarias_sidebar_initializes_navigation_from_fresh_or_legacy_state(
     ]
     assert section.value == "Nova Portaria"
     assert not any(radio.key == "nav" for radio in app.sidebar.radio)
-    assert len([box for box in app.sidebar.selectbox if box.label == "Tema"]) == 1
+    assert app.sidebar.radio(key="portal_theme_select_1").label == "Tema"
     assert "Nova Portaria" in _visible_text(app)
 
     app.sidebar.radio(key="portal_module").set_value("Início").run()
@@ -912,7 +912,7 @@ def test_mobile_sidebar_collapses_only_after_an_effective_module_selection(
             assert app.radio(key="nav").value == "Histórico"
             assert app.sidebar.radio(key="portal_module").value == "Portarias"
 
-    theme = next(item for item in app.sidebar.selectbox if item.label == "Tema")
+    theme = app.sidebar.radio(key="portal_theme_select_1")
     theme.set_value("azul" if theme.value != "azul" else "verde").run()
     assert not app.exception
     assert _collapse_scripts(app) == []
