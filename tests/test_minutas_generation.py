@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -8,6 +9,7 @@ from services.minutas_generation import (
     HISTORICAL_TEST_PROCESS_KEY,
     MinutasGenerationError,
     MinutasGenerationService,
+    _canonical_process_key,
     _clean_text,
 )
 from services.minutas_extraction import EXTRACTOR_VERSION
@@ -165,6 +167,48 @@ def _scenario():
         _row(other, "parecer", "CONTEÚDO DE OUTRA PROCURADORA"),
     ]
     return target, history, other, rows
+
+
+@pytest.mark.parametrize(
+    ("display", "stored_key"),
+    (
+        ("01653/26", "0165326"),
+        ("TC 01653/26", "tc0165326"),
+        ("TC-01653/26", "tc0165326"),
+        ("Processo TC 01653/26", "processotc0165326"),
+    ),
+)
+def test_taperoa_equivalent_formats_are_found_and_accepted(display, stored_key):
+    target, history, other, rows = _scenario()
+    target.update(numero_processo=display, processo_chave=stored_key)
+    service = MinutasGenerationService(
+        Library([target, history, other], rows), generate=lambda _context: {}
+    )
+
+    assert service.targets() == [target]
+    assert service.prepare_context(target["id"])["contexto"]["processo_alvo"][
+        "numero"
+    ] == display
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "01654/26",
+        "01653/25",
+        "11653/26",
+        "01653260",
+        "TC 01653/26 adicional",
+    ),
+)
+def test_other_processes_are_strictly_rejected(value):
+    assert _canonical_process_key(value) != HISTORICAL_TEST_PROCESS_KEY
+    target = _record(TARGET_ID, value, re.sub(r"[^0-9a-z]", "", value.casefold()))
+    service = MinutasGenerationService(Library([target], []))
+
+    assert service.targets() == []
+    with pytest.raises(MinutasGenerationError, match="somente o processo histórico"):
+        service.prepare_context(target["id"])
 
 
 def test_clean_text_removes_only_specific_validation_lines():

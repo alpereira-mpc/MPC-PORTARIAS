@@ -11,7 +11,7 @@ from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionServ
 from services.minutas_library import MinutasValidationError, PROCURADORA
 
 
-HISTORICAL_TEST_PROCESS_KEY = "tc0165326"
+HISTORICAL_TEST_PROCESS_KEY = "0165326"
 MAX_CONTEXT_BYTES = ai_service.MINUTA_MAX_CONTEXT_BYTES
 MAX_HISTORICAL_REFERENCES = 3
 _VALIDATION_LINE_PATTERNS = (
@@ -70,6 +70,24 @@ def _clean_text(value):
     return "\n".join(lines).strip()
 
 
+def _canonical_process_key(value):
+    normalized = re.sub(r"\s+", " ", _plain(value)).strip()
+    normalized = re.sub(r"^processo\s*", "", normalized)
+    normalized = re.sub(r"^tc\s*[-:]?\s*", "", normalized)
+    if not re.fullmatch(r"\d{5}\s*/?\s*\d{2}", normalized):
+        return ""
+    return re.sub(r"\D", "", normalized)
+
+
+def _is_historical_test_process(record):
+    keys = {
+        key
+        for field in ("processo_chave", "numero_processo")
+        if (key := _canonical_process_key(record.get(field)))
+    }
+    return keys == {HISTORICAL_TEST_PROCESS_KEY}
+
+
 def _terms(value):
     return {
         token
@@ -124,12 +142,12 @@ class MinutasGenerationService:
             record
             for record in self.library.list()
             if record.get("procuradora") == PROCURADORA
-            and record.get("processo_chave") == HISTORICAL_TEST_PROCESS_KEY
+            and _is_historical_test_process(record)
         ]
 
     @staticmethod
     def _validate_target(target):
-        if target.get("processo_chave") != HISTORICAL_TEST_PROCESS_KEY:
+        if not _is_historical_test_process(target):
             raise MinutasGenerationError(
                 "Nesta fase, somente o processo histórico de Taperoá está habilitado."
             )
