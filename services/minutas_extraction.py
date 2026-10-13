@@ -221,6 +221,11 @@ def _plain_text(value):
     )
 
 
+def _text_fingerprint(value):
+    normalized = re.sub(r"\s+", " ", _plain_text(str(value or ""))).strip()
+    return sha256(normalized.encode("utf-8")).hexdigest() if normalized else ""
+
+
 def _is_non_substantive_line(line):
     normalized = re.sub(r"\s+", " ", _plain_text(line)).strip(" -–—|:;,.()[]")
     if not normalized:
@@ -473,10 +478,39 @@ class MinutasExtractionService:
         rows = self.repository.list_extractions_by_procuradora(
             target["procuradora_chave"]
         )
+        stored_target_opinion = self.repository.get_extraction(target["parecer_path"])
+        target_opinions = [
+            row
+            for row in rows
+            if str(row["referencia_id"]) == str(target_reference_id)
+            and (
+                row["papel"] == "parecer"
+                or row["arquivo_path"] == target["parecer_path"]
+            )
+        ]
+        if stored_target_opinion and not any(
+            row["arquivo_path"] == stored_target_opinion["arquivo_path"]
+            for row in target_opinions
+        ):
+            target_opinions.append(stored_target_opinion)
+        forbidden_paths = {target["parecer_path"]}
+        forbidden_hashes = {
+            row.get("arquivo_sha256")
+            for row in target_opinions
+            if row.get("arquivo_sha256")
+        }
+        forbidden_texts = {
+            fingerprint
+            for row in target_opinions
+            if (fingerprint := _text_fingerprint(row.get("texto_integral")))
+        }
         return [
             row
             for row in rows
-            if not (
+            if row["arquivo_path"] not in forbidden_paths
+            and row.get("arquivo_sha256") not in forbidden_hashes
+            and _text_fingerprint(row.get("texto_integral")) not in forbidden_texts
+            and not (
                 str(row["referencia_id"]) == str(target_reference_id)
                 and row["papel"] == "parecer"
             )

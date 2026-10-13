@@ -424,6 +424,17 @@ def test_context_is_isolated_by_prosecutor_and_excludes_target_opinion():
         _install_reference(repository, storage, reference)
         service.process_reference(reference["id"])
 
+    target_opinion = repository.extractions[target["parecer_path"]]
+    duplicate_path = same_office["auditoria_path"]
+    repository.extractions[duplicate_path].update(
+        arquivo_sha256=target_opinion["arquivo_sha256"],
+        texto_integral=target_opinion["texto_integral"],
+    )
+    repository.extractions[same_office["parecer_path"]].update(
+        arquivo_sha256="historical-opinion-unique-hash",
+        texto_integral="Parecer histórico autônomo e autorizado.",
+    )
+
     sources = service.context_sources(target["id"])
 
     assert all(item["procuradora"] == target["procuradora"] for item in sources)
@@ -431,6 +442,7 @@ def test_context_is_isolated_by_prosecutor_and_excludes_target_opinion():
         item["referencia_id"] == target["id"] and item["papel"] == "parecer"
         for item in sources
     )
+    assert not any(item["arquivo_path"] == duplicate_path for item in sources)
     assert any(item["referencia_id"] == same_office["id"] for item in sources)
 
 

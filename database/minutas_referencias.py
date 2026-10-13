@@ -19,6 +19,10 @@ EXTRACTION_COLUMNS = (
     "arquivo_sha256,extrator_versao,status,texto_integral,unidades_json,"
     "secoes_json,erro,processado_em,processado_por,atualizado_em"
 )
+EXTRACTION_INVENTORY_COLUMNS = (
+    "referencia_id,papel,tipo,posicao,arquivo_nome,arquivo_tamanho,arquivo_path,"
+    "arquivo_sha256,extrator_versao,status,erro,atualizado_em"
+)
 
 
 class MinutasReferenciasStore:
@@ -118,6 +122,17 @@ class MinutasReferenciasStore:
             rows = connection.execute(
                 f"SELECT {EXTRACTION_COLUMNS} FROM minutas_extracoes "
                 "WHERE procuradora_chave=? AND status='PROCESSADO' "
+                "ORDER BY referencia_id,papel,posicao,arquivo_path",
+                (procuradora_key,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_extraction_inventory_by_procuradora(self, procuradora_key):
+        """Return generation metadata without loading extracted legal text."""
+        with self.store.connection(read_only=True) as connection:
+            rows = connection.execute(
+                f"SELECT {EXTRACTION_INVENTORY_COLUMNS} FROM minutas_extracoes "
+                "WHERE procuradora_chave=? "
                 "ORDER BY referencia_id,papel,posicao,arquivo_path",
                 (procuradora_key,),
             ).fetchall()

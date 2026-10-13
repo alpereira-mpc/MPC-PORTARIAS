@@ -5,6 +5,8 @@ from datetime import date, datetime
 import streamlit as st
 
 from database.minutas_referencias import MinutasReferenciasStore
+from services.ai_service import GeminiErro, GeminiNaoConfigurada
+from services.minutas_generation import MinutasGenerationService
 from services.minutas_library import (
     COMPLEMENT_TYPES,
     MinutasAccessDenied,
@@ -48,6 +50,8 @@ def _error(exc):
             MinutasValidationError,
             MinutasExtractionError,
             StorageOperationError,
+            GeminiErro,
+            GeminiNaoConfigurada,
         ),
     ):
         st.error(str(exc))
@@ -938,6 +942,126 @@ def _library_tab(store, identity):
         )
 
 
+def _generator_tab(store, identity):
+    st.subheader("Teste de Geração — Processo Histórico")
+    st.caption(
+        "Primeiro motor experimental para Prestação de Contas Anual, "
+        "com revisão humana obrigatória."
+    )
+    service = _service(store, identity)
+    if service is None:
+        return
+    generator = MinutasGenerationService(service)
+    try:
+        targets = generator.targets()
+    except Exception as exc:
+        _error(exc)
+        return
+    if not targets:
+        empty_state(
+            "O processo histórico de Taperoá não está disponível nesta biblioteca."
+        )
+        return
+
+    st.text_input("Procuradora", value=PROCURADORA, disabled=True)
+    target = st.selectbox(
+        "Processo histórico",
+        targets,
+        format_func=lambda item: (
+            f"{item['numero_processo']} · {item['subtipo']} · "
+            f"Exercício {item['exercicio']}"
+        ),
+        key="minutas_generation_target",
+    )
+    try:
+        summary = generator.source_summary(target["id"])
+    except Exception as exc:
+        _error(exc)
+        return
+
+    with st.container(border=True):
+        st.markdown("**Fontes disponíveis para esta geração**")
+        st.caption(
+            f"Processo-alvo: {summary['fontes_alvo_previstas']} documento(s) "
+            f"instrutório(s) · Referências históricas processadas: "
+            f"{summary['referencias_historicas_disponiveis']}"
+        )
+        st.success(
+            "Barreira de contaminação ativa: o parecer definitivo de Taperoá, "
+            "seus hashes e duplicatas integrais foram excluídos no backend."
+        )
+        if summary["issues"]:
+            st.warning(
+                "Confira ou reprocesse antes de gerar: "
+                + "; ".join(summary["issues"])
+                + "."
+            )
+
+    result_key = f"minutas_generation_result_{target['id']}"
+    result = st.session_state.get(result_key)
+    if result and result.get("fontes_versao") != summary["fontes_versao"]:
+        st.session_state.pop(result_key, None)
+        result = None
+        st.info(
+            "As fontes foram alteradas desde a geração anterior. "
+            "A minuta antiga foi retirada desta sessão."
+        )
+    if st.button(
+        "Gerar minuta com IA",
+        type="primary",
+        icon=":material/auto_awesome:",
+        key=f"minutas_generation_submit_{target['id']}",
+        disabled=bool(summary["issues"]),
+    ):
+        st.session_state.pop(result_key, None)
+        try:
+            with st.spinner("Preparando o contexto e gerando a minuta..."):
+                st.session_state[result_key] = generator.generate(target["id"])
+        except Exception as exc:
+            _error(exc)
+
+    result = st.session_state.get(result_key)
+    if not result:
+        return
+    st.warning(
+        "Documento experimental sujeito à revisão humana — "
+        "sem caráter de manifestação oficial."
+    )
+    section_label("Minuta gerada")
+    with st.container(border=True):
+        st.markdown(result["texto"])
+    with st.expander("Copiar texto da minuta"):
+        st.code(
+            result["texto"],
+            language=None,
+            wrap_lines=True,
+            height=320,
+        )
+    with st.expander("Validação e fontes utilizadas"):
+        details = [
+            f"Modelo: {result.get('modelo') or '—'}",
+            f"Contexto: {result.get('contexto_bytes', 0):,} bytes".replace(",", "."),
+            f"Duração: {result.get('duracao_ms', 0) / 1000:.1f} s",
+            f"Documentos do processo-alvo: {result.get('fontes_alvo', 0)}",
+            f"Pareceres históricos: {result.get('referencias_historicas', 0)}",
+            "Fontes efetivamente utilizadas: "
+            + "; ".join(result.get("fontes_utilizadas") or ()),
+        ]
+        if result.get("omitidas_por_limite"):
+            details.append(
+                "Fontes integrais omitidas por limite: "
+                + "; ".join(result["omitidas_por_limite"])
+            )
+        if result.get("tokens_total") is not None:
+            details.append(
+                "Tokens informados pelo provedor: "
+                f"{result.get('tokens_entrada', 0)} entrada · "
+                f"{result.get('tokens_saida', 0)} saída · "
+                f"{result['tokens_total']} total"
+            )
+        st.caption("\n\n".join(details))
+
+
 def render(store, identity):
     st.title("Gerador de Minutas de Pareceres — Projeto-Piloto")
     render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
@@ -946,4 +1070,4 @@ def render(store, identity):
     with library:
         _library_tab(store, identity)
     with generator:
-        empty_state("A geração de minutas será implementada na Fase 3.")
+        _generator_tab(store, identity)
