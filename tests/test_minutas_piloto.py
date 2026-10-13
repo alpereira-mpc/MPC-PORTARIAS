@@ -67,13 +67,48 @@ def test_authorized_user_sees_and_opens_private_module(store, monkeypatch):
     assert not app.exception
     titles = [item.value for item in app.title]
     assert "Gerador de Minutas de Pareceres — Projeto-Piloto" in titles
-    visible = "\n".join(item.value for item in app.markdown)
-    assert "Elvira Samara" in visible
-    assert "Prefeitura" in visible
-    assert "Câmara Municipal" in visible
-    assert "Instituto/Autarquia" in visible
-    assert "Secretaria Municipal ou Estadual" in visible
-    assert "Prestações de Contas Anuais (PCA)" in [item.value for item in app.subheader]
+    captions = "\n".join(item.value for item in app.caption)
+    assert "Elvira Samara" in captions
+    assert [tab.label for tab in app.tabs] == [
+        "Biblioteca de Referências",
+        "Gerar Minuta",
+    ]
+    assert any("ainda não está configurada" in item.value for item in app.warning)
+
+
+def test_configured_library_shows_phase_2a_fields(store, monkeypatch):
+    from services import minutas_ia_ui
+    from services.minutas_library import SUBTIPOS
+
+    class Repository:
+        def __init__(self, _store):
+            pass
+
+        def list(self):
+            return []
+
+    class Storage:
+        @classmethod
+        def from_secrets(cls, _secrets):
+            return cls()
+
+    monkeypatch.setattr(minutas_ia_ui, "MinutasReferenciasStore", Repository)
+    monkeypatch.setattr(minutas_ia_ui, "SupabaseMinutasStorage", Storage)
+    secrets = {
+        "MINUTAS_PILOTO_ENABLED": True,
+        "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]],
+    }
+    app = _run_portal(store, monkeypatch, TEST_IDENTITY, secrets)
+    app.sidebar.radio(key="portal_module").set_value("Minutas IA").run()
+
+    assert not app.exception
+    assert [item.label for item in app.file_uploader] == [
+        "Relatório da Auditoria — PDF, até 10 MB *",
+        "Parecer definitivo — PDF ou DOCX, até 10 MB *",
+    ]
+    subtype = next(item for item in app.selectbox if item.label == "Subtipo de PCA *")
+    assert list(subtype.options) == list(SUBTIPOS)
+    assert any(item.label == "Cadastrar referência" for item in app.button)
 
 
 def test_unauthorized_user_cannot_see_or_force_private_module(store, monkeypatch):

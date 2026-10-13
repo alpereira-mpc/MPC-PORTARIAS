@@ -72,6 +72,7 @@ MODULE_LABELS = {
     "representacoes": "Representações",
     "peticoes": "Petições",
     "ouvidoria": "Ouvidoria",
+    "minutas_ia": "Minutas IA",
 }
 MODULE_KEYS = {
     "Portarias": "portarias",
@@ -86,6 +87,7 @@ MODULE_KEYS = {
     "Representações": "representacoes",
     "Petições": "peticoes",
     "Ouvidoria": "ouvidoria",
+    "Minutas IA": "minutas_ia",
 }
 ACTION_LABELS = {
     "ACESSO": "Login",

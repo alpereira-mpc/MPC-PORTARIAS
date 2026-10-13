@@ -1315,6 +1315,10 @@ def render_portal():
             st.session_state["memorando_form_active"] = False
         if selected != "Relatórios e Indicadores":
             st.session_state.pop("_tramita_previews", None)
+        if selected != "Minutas IA":
+            for key in tuple(st.session_state):
+                if str(key).startswith("minutas_download_"):
+                    st.session_state.pop(key, None)
     _emit_mobile_sidebar_collapse()
     render_institutional_header(home=selected == "Início")
     _emit_admin_scroll_top(selected)
@@ -1395,7 +1399,7 @@ def render_portal():
             from services.minutas_ia_ui import render
 
             with phase("module_render"):
-                render()
+                render(store, identity)
             st.stop()
         if selected == "Administração":
             from services.access_ui import render
