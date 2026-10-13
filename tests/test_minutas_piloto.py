@@ -142,6 +142,17 @@ def test_registered_reference_uses_compact_document_flow(store, monkeypatch):
         "tamanho": 300,
         "path": "referencias/analise-defesa.pdf",
     }
+    extraction = {
+        "arquivo_path": record["auditoria_path"],
+        "arquivo_nome": record["auditoria_nome"],
+        "arquivo_mime": record["auditoria_mime"],
+        "tipo": "Relatório da Auditoria",
+        "status": "PROCESSADO",
+        "texto_integral": "Texto integral da auditoria",
+        "unidades_json": '[{"pagina": 1, "texto": "Texto da página 1"}]',
+        "secoes_json": "[]",
+        "erro": "",
+    }
 
     class Repository:
         def __init__(self, _store):
@@ -155,6 +166,12 @@ def test_registered_reference_uses_compact_document_flow(store, monkeypatch):
 
         def list_documents(self, _identifier):
             return [document]
+
+        def list_extractions(self, _identifier):
+            return [extraction]
+
+        def get_extraction(self, path):
+            return extraction if path == extraction["arquivo_path"] else None
 
     class Storage:
         @classmethod
@@ -184,6 +201,20 @@ def test_registered_reference_uses_compact_document_flow(store, monkeypatch):
     assert "analise-defesa.pdf" in text
     assert "parecer.pdf" in text
     assert app.button(key=f"minutas_promote_open_{document['id']}")
+    captions = "\n".join(item.value for item in app.caption)
+    assert "Extração: Processado" in captions
+    assert "Extração: Pendente" in captions
+    assert app.button(key=f"minutas_extract_process_{record['id']}")
+
+    app.button(key=f"minutas_extract_view_open_{record['id']}_auditoria").click().run()
+
+    assert not app.exception
+    assert app.selectbox(key=f"minutas_extract_page_{record['id']}_auditoria")
+    assert any(
+        "Texto da página 1" in item.value for item in app.text_area
+    )
+    app.button(key=f"minutas_extract_view_close_{record['id']}_auditoria").click().run()
+    app.run()
 
     app.button(key=f"minutas_add_open_{record['id']}").click().run()
 

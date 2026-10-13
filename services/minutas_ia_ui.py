@@ -15,6 +15,10 @@ from services.minutas_library import (
     PROCURADORA,
     SUBTIPOS,
 )
+from services.minutas_extraction import (
+    MinutasExtractionError,
+    MinutasExtractionService,
+)
 from services.minutas_storage import (
     StorageConfigurationError,
     StorageOperationError,
@@ -42,6 +46,7 @@ def _error(exc):
             MinutasAccessDenied,
             MinutasDuplicateError,
             MinutasValidationError,
+            MinutasExtractionError,
             StorageOperationError,
         ),
     ):
@@ -170,6 +175,90 @@ def _finish_action(reference_id, level, message):
     st.rerun()
 
 
+def _extraction_label(extraction):
+    if not extraction:
+        return "Extração: Pendente"
+    if extraction["status"] == "PROCESSADO":
+        return "Extração: Processado"
+    return "Extração: Necessita atenção"
+
+
+def _extraction_actions(extractor, record, path, document_key, extraction):
+    if extraction and st.button(
+        "Visualizar texto extraído",
+        key=f"minutas_extract_view_open_{document_key}",
+        width="stretch",
+    ):
+        _show_panel("extraction", document_key, record["id"])
+    if extraction and st.button(
+        "Reprocessar extração",
+        key=f"minutas_extract_retry_{document_key}",
+        width="stretch",
+    ):
+        try:
+            extractor.reprocess_document(record["id"], path)
+        except Exception as exc:
+            _error(exc)
+        else:
+            _finish_action(record["id"], "success", "Documento reprocessado.")
+
+
+def _extraction_panel(extractor, record, path, document_key):
+    try:
+        extraction = extractor.view(record["id"], path)
+    except Exception as exc:
+        _error(exc)
+        return
+    with st.container(border=True):
+        st.markdown(f"**Texto extraído — {extraction['arquivo_nome']}**")
+        st.caption(
+            f"Origem: {extraction['tipo']} · {_extraction_label(extraction)}"
+        )
+        if extraction["erro"]:
+            st.warning(extraction["erro"])
+        if extraction["arquivo_mime"] == "application/pdf":
+            units = extraction["unidades"]
+            if units:
+                pages = [unit["pagina"] for unit in units]
+                page = st.selectbox(
+                    "Página de origem",
+                    pages,
+                    key=f"minutas_extract_page_{document_key}",
+                    on_change=_keep_reference_open,
+                    args=(record["id"],),
+                )
+                text = next(
+                    unit["texto"] for unit in units if unit["pagina"] == page
+                )
+                st.text_area(
+                    f"Conteúdo da página {page}",
+                    value=text,
+                    height=280,
+                    disabled=True,
+                    key=f"minutas_extract_text_{document_key}_{page}",
+                )
+        else:
+            st.caption("Documento DOCX: a origem é textual e não possui paginação.")
+            st.text_area(
+                "Conteúdo extraído",
+                value=extraction["texto_integral"],
+                height=280,
+                disabled=True,
+                key=f"minutas_extract_text_{document_key}",
+            )
+        if extraction["secoes"]:
+            names = ", ".join(
+                section["titulo_original"] for section in extraction["secoes"]
+            )
+            st.caption(f"Seções explicitamente reconhecidas: {names}")
+        if st.button(
+            "Fechar texto",
+            key=f"minutas_extract_view_close_{document_key}",
+        ):
+            _hide_panel(record["id"])
+            st.rerun()
+
+
 def _metadata_values(document, **changes):
     values = {
         "id": document["id"],
@@ -198,7 +287,9 @@ def _replace_document(service, record, kind, upload):
     _finish_action(record["id"], "success", "Arquivo substituído com sucesso.")
 
 
-def _main_document_actions(service, record, kind, accepted):
+def _main_document_actions(
+    service, extractor, record, kind, accepted, document_key, extraction
+):
     download_key = f"minutas_download_{record['id']}_{kind}"
     prepared = st.session_state.get(download_key)
     if prepared:
@@ -233,9 +324,19 @@ def _main_document_actions(service, record, kind, accepted):
         width="stretch",
     ):
         _replace_document(service, record, kind, replacement)
+    _extraction_actions(
+        extractor,
+        record,
+        record[f"{kind}_path"],
+        document_key,
+        extraction,
+    )
 
 
-def _main_document_row(service, record, kind, position_label, type_label):
+def _main_document_row(
+    service, extractor, record, kind, position_label, type_label, extraction
+):
+    document_key = f"{record['id']}_{kind}"
     with st.container(border=True):
         order, details, actions = st.columns(
             [1.1, 4.8, 1.35], vertical_alignment="center"
@@ -243,11 +344,24 @@ def _main_document_row(service, record, kind, position_label, type_label):
         order.caption(position_label)
         details.markdown(f"**{record[f'{kind}_nome']}**")
         details.caption(
-            f"{type_label} · {record[f'{kind}_tamanho']:,} bytes"
+            f"{type_label} · {record[f'{kind}_tamanho']:,} bytes · "
+            f"{_extraction_label(extraction)}"
         )
         with actions.popover("Ações", icon=":material/more_vert:"):
             accepted = ["pdf"] if kind == "auditoria" else ["pdf", "docx"]
-            _main_document_actions(service, record, kind, accepted)
+            _main_document_actions(
+                service,
+                extractor,
+                record,
+                kind,
+                accepted,
+                document_key,
+                extraction,
+            )
+    if _panel_is("extraction", document_key):
+        _extraction_panel(
+            extractor, record, record[f"{kind}_path"], document_key
+        )
 
 
 def _add_document_panel(service, record, documents):
@@ -558,7 +672,9 @@ def _promote_document_panel(service, record, document):
             st.rerun()
 
 
-def _complement_actions(service, record, documents, document, index):
+def _complement_actions(
+    service, extractor, record, documents, document, index, extraction
+):
     download_key = f"minutas_download_complement_{document['id']}"
     prepared = st.session_state.get(download_key)
     if prepared:
@@ -620,9 +736,18 @@ def _complement_actions(service, record, documents, document, index):
         width="stretch",
     ):
         _show_panel("delete", document["id"], record["id"])
+    _extraction_actions(
+        extractor,
+        record,
+        document["path"],
+        document["id"],
+        extraction,
+    )
 
 
-def _complement_document_row(service, record, documents, document, index):
+def _complement_document_row(
+    service, extractor, record, documents, document, index, extraction
+):
     document_date = _document_date(document.get("data_documento"))
     date_text = (
         f"Data informada: {document_date.strftime('%d/%m/%Y')}"
@@ -637,18 +762,28 @@ def _complement_document_row(service, record, documents, document, index):
         details.markdown(f"**{document['nome']}**")
         details.caption(
             f"{document['tipo']} · Ordem processual definida pelo administrador · "
-            f"{date_text}"
+            f"{date_text} · {_extraction_label(extraction)}"
         )
         if document.get("descricao"):
             details.caption(document["descricao"])
         with actions.popover("Ações", icon=":material/more_vert:"):
-            _complement_actions(service, record, documents, document, index)
+            _complement_actions(
+                service,
+                extractor,
+                record,
+                documents,
+                document,
+                index,
+                extraction,
+            )
     if _panel_is("edit", document["id"]):
         _edit_document_panel(service, record, documents, document)
     elif _panel_is("promote", document["id"]):
         _promote_document_panel(service, record, document)
     elif _panel_is("delete", document["id"]):
         _delete_document_panel(service, record, document)
+    elif _panel_is("extraction", document["id"]):
+        _extraction_panel(extractor, record, document["path"], document["id"])
 
 
 def _delete_reference_panel(service, record):
@@ -688,7 +823,7 @@ def _delete_reference_panel(service, record):
             st.rerun()
 
 
-def _reference_card(service, record, expanded=False):
+def _reference_card(service, extractor, record, expanded=False):
     title = f"Processo {record['numero_processo']} · Exercício {record['exercicio']}"
     with st.expander(title, expanded=expanded):
         header, reference_actions = st.columns(
@@ -706,33 +841,67 @@ def _reference_card(service, record, expanded=False):
         section_label("Documentos do Processo")
         try:
             documents = service.list_documents(record["id"])
+            extractions = extractor.statuses(record["id"])
         except Exception as exc:
             _error(exc)
             return
-        if st.button(
-            "+ Adicionar documento",
-            key=f"minutas_add_open_{record['id']}",
+        add_column, process_column = st.columns(2)
+        if add_column.button(
+            "+ Adicionar documento", key=f"minutas_add_open_{record['id']}"
         ):
             _show_panel("add", record["id"], record["id"])
+        if process_column.button(
+            "Processar documentos",
+            key=f"minutas_extract_process_{record['id']}",
+            icon=":material/document_search:",
+        ):
+            try:
+                with st.spinner("Extraindo os documentos localmente..."):
+                    results = extractor.process_reference(record["id"])
+            except Exception as exc:
+                _error(exc)
+            else:
+                attention = sum(
+                    result["status"] == "ATENCAO" for result in results
+                )
+                message = "Documentos processados."
+                level = "success"
+                if attention:
+                    message = (
+                        f"Processamento concluído; {attention} documento(s) "
+                        "necessita(m) atenção."
+                    )
+                    level = "warning"
+                _finish_action(record["id"], level, message)
         if _panel_is("add", record["id"]):
             _add_document_panel(service, record, documents)
         _main_document_row(
             service,
+            extractor,
             record,
             "auditoria",
             "Início",
             "Relatório da Auditoria · Relatório principal",
+            extractions.get(record["auditoria_path"]),
         )
         for index, document in enumerate(documents):
             _complement_document_row(
-                service, record, documents, document, index
+                service,
+                extractor,
+                record,
+                documents,
+                document,
+                index,
+                extractions.get(document["path"]),
             )
         _main_document_row(
             service,
+            extractor,
             record,
             "parecer",
             "Conclusão",
             "Parecer definitivo",
+            extractions.get(record["parecer_path"]),
         )
         if _panel_is("delete_reference", record["id"]):
             _delete_reference_panel(service, record)
@@ -759,9 +928,13 @@ def _library_tab(store, identity):
         empty_state("Nenhuma referência cadastrada.")
         return
     keep_open = st.session_state.pop("minutas_keep_open", None)
+    extractor = MinutasExtractionService(service)
     for record in records:
         _reference_card(
-            service, record, expanded=str(record["id"]) == str(keep_open)
+            service,
+            extractor,
+            record,
+            expanded=str(record["id"]) == str(keep_open),
         )
 
 

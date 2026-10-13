@@ -47,6 +47,7 @@ class FakeRepository:
     def __init__(self, events=None):
         self.records = {}
         self.documents = {}
+        self.extractions = {}
         self.events = events if events is not None else []
         self.fail_create = False
         self.fail_replace = False
@@ -117,6 +118,10 @@ class FakeRepository:
                 raise RuntimeError("document unavailable")
             document.update(deepcopy(values))
             document["atualizado_por"] = actor
+            if extraction := self.extractions.get(document["path"]):
+                extraction["tipo"] = values["tipo"]
+                extraction["posicao"] = values["posicao"]
+                extraction["documento_id"] = values["id"]
         return self.list_documents(reference_id)
 
     def delete_document(self, identifier, reference_id):
@@ -125,6 +130,7 @@ class FakeRepository:
             raise RuntimeError("database unavailable")
         if self.documents[identifier]["referencia_id"] != reference_id:
             raise RuntimeError("document unavailable")
+        self.extractions.pop(self.documents[identifier]["path"], None)
         del self.documents[identifier]
 
     def promote_document(self, reference_id, document_id, displaced, actor):
@@ -151,6 +157,20 @@ class FakeRepository:
         }
         for field in ("nome", "mime", "tamanho", "path"):
             reference[f"auditoria_{field}"] = selected[field]
+        if extraction := self.extractions.get(selected["path"]):
+            extraction.update(
+                documento_id=None,
+                papel="auditoria",
+                tipo="Relatório da Auditoria",
+                posicao=0,
+            )
+        if extraction := self.extractions.get(old_audit["path"]):
+            extraction.update(
+                documento_id=displaced["id"],
+                papel="complementar",
+                tipo=displaced["tipo"],
+                posicao=displaced["posicao"],
+            )
         reference["atualizado_por"] = actor
         return deepcopy(reference), self.list_documents(reference_id)
 
@@ -159,10 +179,12 @@ class FakeRepository:
         if self.fail_replace:
             raise RuntimeError("database unavailable")
         record = self.records[identifier]
+        old_path = record[f"{kind}_path"]
         for field in ("name", "mime", "size", "path"):
             column = {"name": "nome", "size": "tamanho"}.get(field, field)
             record[f"{kind}_{column}"] = document[field]
         record["atualizado_por"] = actor
+        self.extractions.pop(old_path, None)
         return deepcopy(record)
 
     def delete(self, identifier):
@@ -173,6 +195,11 @@ class FakeRepository:
         self.documents = {
             key: value
             for key, value in self.documents.items()
+            if value["referencia_id"] != identifier
+        }
+        self.extractions = {
+            key: value
+            for key, value in self.extractions.items()
             if value["referencia_id"] != identifier
         }
 
@@ -380,7 +407,10 @@ def test_adding_complement_preserves_all_existing_references_and_main_documents(
 
     assert repository.records == records_before
     assert len(service.list()) == 4
-    assert all(storage.objects[path] == value for path, value in main_objects_before.items())
+    assert all(
+        storage.objects[path] == value
+        for path, value in main_objects_before.items()
+    )
 
 
 @pytest.mark.parametrize(
@@ -536,6 +566,73 @@ def test_failed_sedh_reorganization_preserves_metadata_and_storage():
     assert repository.records == records_before
     assert repository.documents == documents_before
     assert storage.objects == objects_before
+
+
+def test_extractions_follow_reclassification_promotion_replacement_and_deletion():
+    repository = FakeRepository()
+    storage = FakeStorage()
+    service = _service(repository, storage)
+    created = _create(service, "TC 02650/25")
+    original = _add_complement(service, created["id"], position=1)
+    cota = _add_complement(
+        service,
+        created["id"],
+        position=2,
+        document_type="Cota Ministerial",
+        name="cota.pdf",
+    )
+    for path, values in (
+        (
+            created["auditoria_path"],
+            {"documento_id": None, "papel": "auditoria", "posicao": 0},
+        ),
+        (
+            original["path"],
+            {"documento_id": original["id"], "papel": "complementar", "posicao": 1},
+        ),
+        (
+            cota["path"],
+            {"documento_id": cota["id"], "papel": "complementar", "posicao": 2},
+        ),
+    ):
+        repository.extractions[path] = {
+            "referencia_id": created["id"],
+            "tipo": "Cota Ministerial",
+            **values,
+        }
+
+    service.update_documents(
+        created["id"],
+        [
+            {**original, "posicao": 3},
+            {**cota, "posicao": 1},
+        ],
+    )
+    assert repository.extractions[cota["path"]]["posicao"] == 1
+
+    service.promote_document_to_primary(
+        created["id"],
+        original["id"],
+        {
+            "tipo": "Relatório de Complementação de Instrução",
+            "descricao": "",
+            "posicao": 3,
+            "data_documento": None,
+        },
+        confirmed=True,
+    )
+    assert repository.extractions[original["path"]]["papel"] == "auditoria"
+    assert repository.extractions[created["auditoria_path"]]["papel"] == (
+        "complementar"
+    )
+
+    service.replace(
+        created["id"], "auditoria", ("auditoria-nova.pdf", _pdf(b"new"))
+    )
+    assert original["path"] not in repository.extractions
+
+    service.delete_document(created["id"], cota["id"], confirmed=True)
+    assert cota["path"] not in repository.extractions
 
 
 def test_duplicate_and_invalid_files_are_rejected_before_upload():
