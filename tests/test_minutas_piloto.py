@@ -71,6 +71,7 @@ def test_authorized_user_sees_and_opens_private_module(store, monkeypatch):
     assert "Elvira Samara" in captions
     assert [tab.label for tab in app.tabs] == [
         "Biblioteca de Referências",
+        "Pesquisa Jurídica",
         "Gerar Minuta",
     ]
     assert any("ainda não está configurada" in item.value for item in app.warning)

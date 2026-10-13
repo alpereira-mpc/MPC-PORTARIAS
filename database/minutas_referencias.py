@@ -138,6 +138,86 @@ class MinutasReferenciasStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def search_opinions(
+        self,
+        query,
+        procuradora_key,
+        extractor_version,
+        *,
+        year=None,
+        subtype=None,
+        limit=10,
+        offset=0,
+    ):
+        """Search current, linked opinion pages with PostgreSQL Portuguese FTS."""
+        clauses = [
+            "e.papel='parecer'",
+            "e.status='PROCESSADO'",
+            "e.extrator_versao=?",
+            "e.procuradora_chave=?",
+            "r.procuradora_chave=?",
+            "e.procuradora_chave=r.procuradora_chave",
+            "e.referencia_id=r.id",
+            "e.arquivo_path=r.parecer_path",
+            "e.arquivo_nome=r.parecer_nome",
+            "e.arquivo_mime=r.parecer_mime",
+            "e.arquivo_tamanho=r.parecer_tamanho",
+            # Validate only the recorded identifier format; search never downloads
+            # Storage bytes and therefore does not attest cryptographic integrity.
+            "length(e.arquivo_sha256)=64",
+            "e.arquivo_sha256<>repeat('0',64)",
+            "to_tsvector('portuguese',COALESCE(e.texto_integral,'')) @@ q.terms",
+        ]
+        parameters = [
+            query,
+            query,
+            extractor_version,
+            procuradora_key,
+            procuradora_key,
+        ]
+        if year is not None:
+            clauses.append("r.exercicio=?")
+            parameters.append(year)
+        if subtype is not None:
+            clauses.append("r.subtipo=?")
+            parameters.append(subtype)
+        sql = (
+            "WITH search_query AS ("
+            "SELECT ?::text AS raw,websearch_to_tsquery('portuguese',?) AS terms"
+            "),eligible AS ("
+            "SELECT e.id,e.referencia_id,e.arquivo_nome,e.arquivo_path,"
+            "e.arquivo_sha256,e.extrator_versao,e.atualizado_em,e.unidades_json,"
+            "r.procuradora,r.numero_processo,r.exercicio,r.subtipo "
+            "FROM minutas_extracoes e JOIN minutas_referencias r ON r.id=e.referencia_id "
+            "CROSS JOIN search_query q WHERE "
+            + " AND ".join(clauses)
+            + ") SELECT d.referencia_id,d.id AS documento_id,d.procuradora,"
+            "d.numero_processo,d.exercicio,d.subtipo,d.arquivo_nome,d.arquivo_path,"
+            "d.arquivo_sha256,d.extrator_versao,d.atualizado_em,"
+            "CASE WHEN COALESCE(unit->>'pagina','')~'^[0-9]+$' "
+            "THEN (unit->>'pagina')::integer ELSE NULL END AS pagina,"
+            "COALESCE(unit->>'ordem','') AS localizacao,"
+            "ts_headline('portuguese',unit->>'texto',q.terms,"
+            "'StartSel=【,StopSel=】,MaxWords=55,MinWords=25,ShortWord=3') AS trecho,"
+            "ts_headline('portuguese',unit->>'texto',q.terms,"
+            "'StartSel=【,StopSel=】,MaxWords=180,MinWords=80,ShortWord=3,"
+            "MaxFragments=2') AS contexto,"
+            "(ts_rank_cd(to_tsvector('portuguese',unit->>'texto'),q.terms)+"
+            "CASE WHEN POSITION(LOWER(q.raw) IN LOWER(unit->>'texto'))>0 "
+            "THEN 1.0 ELSE 0.0 END) AS relevancia "
+            "FROM eligible d CROSS JOIN search_query q CROSS JOIN LATERAL "
+            "jsonb_array_elements(CASE WHEN jsonb_typeof(d.unidades_json::jsonb)='array' "
+            "THEN d.unidades_json::jsonb ELSE '[]'::jsonb END) unit "
+            "WHERE COALESCE(unit->>'texto','')<>'' AND "
+            "to_tsvector('portuguese',unit->>'texto')@@q.terms "
+            "ORDER BY relevancia DESC,d.exercicio DESC,d.numero_processo,"
+            "pagina NULLS LAST,d.id LIMIT ? OFFSET ?"
+        )
+        parameters.extend((limit + 1, offset))
+        with self.store.connection(read_only=True) as connection:
+            rows = connection.execute(sql, tuple(parameters)).fetchall()
+        return [dict(row) for row in rows]
+
     def upsert_extraction(self, record):
         columns = EXTRACTION_COLUMNS.split(",")
         assignments = ",".join(

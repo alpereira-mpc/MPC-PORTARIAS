@@ -17,6 +17,7 @@ from services.minutas_library import (
     PROCURADORA,
     SUBTIPOS,
 )
+from services.minutas_search import MinutasSearchService, SEARCH_NATURE
 from services.minutas_extraction import (
     MinutasExtractionError,
     MinutasExtractionService,
@@ -1188,12 +1189,152 @@ def _generator_tab(store, identity):
         st.caption("\n\n".join(details))
 
 
+def _search_tab(store, identity):
+    st.subheader("Pesquisa Jurídica")
+    st.caption(
+        "Localize trechos de pareceres definitivos históricos. Os resultados são "
+        "passagens documentais, não entendimentos consolidados."
+    )
+    library = _service(store, identity)
+    if library is None:
+        return
+    search_service = MinutasSearchService(library)
+    with st.form("minutas_legal_search_form"):
+        query = st.text_input(
+            "Pesquisar pareceres",
+            placeholder="Ex.: contribuição previdenciária, art. 37, prescrição",
+        )
+        filters = st.columns(4)
+        with filters[0]:
+            st.text_input("Procuradora", value=PROCURADORA, disabled=True)
+        with filters[1]:
+            st.text_input("Natureza", value=SEARCH_NATURE, disabled=True)
+        with filters[2]:
+            year = st.text_input("Exercício", placeholder="Todos")
+        with filters[3]:
+            subtype = st.selectbox("Subtipo", ("Todos", *SUBTIPOS))
+        submitted = st.form_submit_button(
+            "Pesquisar", type="primary", icon=":material/search:"
+        )
+
+    def execute(page):
+        criteria = {
+            "query": query,
+            "year": year or None,
+            "subtype": None if subtype == "Todos" else subtype,
+        }
+        try:
+            with st.spinner("Pesquisando pareceres processados..."):
+                result = search_service.search(**criteria, page=page)
+        except Exception as exc:
+            _error(exc)
+            return
+        st.session_state["minutas_legal_search"] = {
+            "criteria": criteria,
+            "result": result,
+        }
+
+    if submitted:
+        execute(1)
+
+    stored = st.session_state.get("minutas_legal_search")
+    if not stored:
+        return
+    result = stored["result"]
+    results = result["resultados"]
+    if not results:
+        empty_state("Nenhum trecho de parecer definitivo corresponde à pesquisa.")
+        return
+
+    st.caption(
+        f"Página {result['pagina']} · resultados ordenados por relevância textual"
+    )
+    for index, item in enumerate(results):
+        location = (
+            f"Página {item['pagina']}"
+            if item.get("pagina") is not None
+            else "Localização sem número de página"
+        )
+        with st.container(border=True):
+            st.markdown(f"**Processo {item['processo']}** · {item['subtipo']}")
+            st.caption(
+                f"{item['procuradora']} · Exercício {item['exercicio']} · "
+                f"{item['documento']} · {location}"
+            )
+            st.write(item["trecho"])
+            st.caption(
+                item["criterio_recuperacao"]
+                + " · Trecho de parecer histórico; requer leitura no contexto."
+            )
+            with st.expander("Consultar mais contexto"):
+                st.code(item["contexto"], language=None, wrap_lines=True, height=260)
+            download_key = (
+                f"minutas_search_download_{item['referencia_id']}_{index}"
+            )
+            if prepared := st.session_state.get(download_key):
+                st.download_button(
+                    "Baixar parecer original",
+                    data=prepared["content"],
+                    file_name=prepared["name"],
+                    mime=prepared["mime"],
+                    key=download_key + "_button",
+                    icon=":material/download:",
+                )
+            elif st.button(
+                "Preparar parecer original",
+                key=download_key + "_prepare",
+                icon=":material/description:",
+            ):
+                try:
+                    document = search_service.download_opinion(item["referencia_id"])
+                    st.session_state[download_key] = {
+                        "name": document.name,
+                        "mime": document.mime,
+                        "content": document.content,
+                    }
+                    st.rerun()
+                except Exception as exc:
+                    _error(exc)
+
+    navigation = st.columns(2)
+    if navigation[0].button(
+        "Anterior",
+        disabled=not result["tem_anterior"],
+        key="minutas_search_previous",
+    ):
+        criteria = stored["criteria"]
+        query, year, subtype = (
+            criteria["query"],
+            criteria["year"] or "",
+            criteria["subtype"] or "Todos",
+        )
+        execute(result["pagina"] - 1)
+        st.rerun()
+    if navigation[1].button(
+        "Próxima",
+        disabled=not result["tem_proxima"],
+        key="minutas_search_next",
+    ):
+        criteria = stored["criteria"]
+        query, year, subtype = (
+            criteria["query"],
+            criteria["year"] or "",
+            criteria["subtype"] or "Todos",
+        )
+        execute(result["pagina"] + 1)
+        st.rerun()
+
+
 def render(store, identity):
     st.title("Gerador de Minutas de Pareceres — Projeto-Piloto")
     render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
     st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
-    library, generator = st.tabs(["Biblioteca de Referências", "Gerar Minuta"])
+    library, search, generator = st.tabs(
+        ["Biblioteca de Referências", "Pesquisa Jurídica", "Gerar Minuta"]
+    )
     with library:
         _library_tab(store, identity)
+    with search:
+        _search_tab(store, identity)
     with generator:
         _generator_tab(store, identity)
