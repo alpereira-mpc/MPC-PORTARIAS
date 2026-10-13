@@ -187,6 +187,27 @@ def test_theme_control_has_no_floating_dropdown_override():
     assert "body:has(.st-key-portal_theme_control" not in css
 
 
+@pytest.mark.parametrize("name", tuple(THEME_LABELS))
+def test_theme_control_visuals_are_scoped_and_use_theme_tokens(name):
+    css = _css(name)
+    start = css.index(
+        'section[data-testid="stSidebar"] '
+        '[class*="st-key-portal_theme_control"] [data-testid="stExpander"]'
+    )
+    block = css[start : css.index('[data-testid="stDataFrame"]', start)]
+    assert 'summary::before' in block
+    assert 'content:"Tema"' in block
+    assert 'summary::after' in block
+    assert 'min-height:42px' in block
+    assert 'min-height:40px' in block
+    assert 'width:100%' in block
+    assert 'background:var(--mpc-expander)' in block
+    assert 'border:1px solid var(--mpc-control-border)' in block
+    assert 'outline:2px solid var(--mpc-brand-dark)' in block
+    assert 'rgba(' in block
+    assert 'background:#' not in block
+
+
 def test_theme_control_is_inline_radio_with_all_options(store, monkeypatch):
     enable_login(monkeypatch, store)
     monkeypatch.setattr("database.store.Store", lambda: store)

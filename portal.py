@@ -1293,10 +1293,7 @@ def render_portal():
                     if st.button("Sair", type="primary", key="portal_logout"):
                         _logout()
             with st.container(key="portal_theme_control"):
-                with st.expander(
-                    f"Tema · {THEME_LABELS[active_theme]}",
-                    icon=":material/palette:",
-                ):
+                with st.expander(THEME_LABELS[active_theme]):
                     st.radio(
                         "Tema",
                         tuple(THEME_LABELS),

@@ -809,6 +809,136 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpa
 background:var(--mpc-expander) !important;
 background-color:var(--mpc-expander) !important;
 }}
+/* Compact inline theme chooser. Keep the native details/radio semantics and
+   isolate the visual treatment from every other expander and radio. */
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"]{{
+background:transparent !important;
+border:0 !important;
+border-radius:0 !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] details{{
+background:transparent !important;
+border:1px solid var(--mpc-control-border) !important;
+border-radius:10px !important;
+box-shadow:none !important;
+overflow:hidden;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary{{
+display:flex !important;
+align-items:center;
+gap:.55rem;
+box-sizing:border-box;
+min-height:42px;
+padding:0 12px !important;
+list-style:none;
+background:var(--mpc-expander) !important;
+border:0 !important;
+color:var(--mpc-text) !important;
+font-weight:500;
+white-space:nowrap;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary::-webkit-details-marker{{
+display:none;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary :is([data-testid="stIconMaterial"], [data-testid="stExpanderIcon"]){{
+display:none !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary::before{{
+content:"Tema";
+color:var(--mpc-text-2);
+font-size:.9rem;
+font-weight:500;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary::after{{
+content:"";
+inline-size:6px;
+block-size:6px;
+flex:0 0 6px;
+border-right:1.5px solid var(--mpc-text-2);
+border-bottom:1.5px solid var(--mpc-text-2);
+transform:rotate(45deg) translateY(-2px);
+transition:transform .15s ease;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] details[open] > summary::after{{
+transform:rotate(225deg) translate(-1px,-1px);
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary > span{{
+display:flex !important;
+align-items:center;
+justify-content:flex-end;
+min-width:0;
+flex:1 1 auto;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"],
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary p{{
+margin:0;
+color:var(--mpc-text) !important;
+font-size:.9rem;
+font-weight:600;
+line-height:1.2;
+white-space:nowrap;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary:hover{{
+background:var(--mpc-expander-hover) !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] summary:focus-visible{{
+outline:2px solid var(--mpc-brand-dark);
+outline-offset:-2px;
+background:var(--mpc-expander-hover) !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] details[open] > summary,
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] details[open] > summary:hover,
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] details[open] > summary:active{{
+background:var(--mpc-expander) !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] [data-testid="stExpanderDetails"],
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stVerticalBlock"]{{
+box-sizing:border-box;
+padding:.25rem .4rem .45rem !important;
+background:transparent !important;
+background-color:transparent !important;
+border-top:0 !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stRadio"]{{
+width:100%;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [class*="st-key-portal_theme_select_"]{{
+width:100% !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stRadio"] [role="radiogroup"]{{
+gap:2px;
+align-items:stretch;
+width:100%;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]){{
+display:flex;
+align-items:center;
+box-sizing:border-box;
+width:100%;
+min-height:40px;
+margin:0;
+padding:7px 9px;
+border:0;
+border-radius:7px;
+background:transparent !important;
+box-shadow:none !important;
+color:var(--mpc-text);
+font-size:.9rem;
+font-weight:500;
+cursor:pointer;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]):hover{{
+background:rgba({primary_rgb},.06) !important;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]):is(:has(input:checked), [data-selected]){{
+background:rgba({primary_rgb},.10) !important;
+color:var(--mpc-brand-dark);
+font-weight:600;
+}}
+section[data-testid="stSidebar"] [class*="st-key-portal_theme_control"] [data-testid="stRadio"] :is(label[data-baseweb="radio"], label[data-testid="stRadioOption"]):is(:has(input:focus-visible), [data-focus-visible]){{
+outline:2px solid var(--mpc-brand-dark);
+outline-offset:-2px;
+}}
 [data-testid="stDataFrame"],[data-testid="stDataFrameResizable"]{{
 border:1px solid var(--mpc-themed-table-border);
 border-radius:var(--mpc-radius);
