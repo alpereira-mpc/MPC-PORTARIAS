@@ -50,6 +50,26 @@ _STOPWORDS = {
     "um",
     "uma",
 }
+_MINISTERIAL_TREATMENTS = {
+    "MANTIDA_REJEICAO",
+    "ACOLHIDA",
+    "PARCIALMENTE_ACOLHIDA",
+    "NAO_APLICAVEL",
+}
+_CURE_STATES = {"NAO_ALEGADO", "ALEGADO_NAO_COMPROVADO", "COMPROVADO"}
+_SPECIFIC_LEGAL_DIVERGENCE = re.compile(
+    r"\b(?:(?:art(?:igo)?\.?|lei|decreto|resolucao|sumula)\s*(?:n[.º°o]\s*)?\d+|"
+    r"prescricao\s+(?:quinquenal|trienal|bienal)|competencia\s+(?:material|temporal))\b"
+)
+_SPECIFIC_PROBATIVE_DIVERGENCE = re.compile(
+    r"\b(?:comprova|comprovou|demonstra|demonstrou|atesta|atestou|registra|registrou)\b"
+    r".*\b(?:recolhimento|pagamento|calculo|prazo|data|valor)\b"
+)
+_CATEGORICAL_CURE = re.compile(
+    r"\b(?:irregularidade|falha|vicio|pendencia)\w*\s+"
+    r"(?:(?:foi|foram|esta|estao|restou|restaram|considera-se|consideram-se)\s+)?"
+    r"(?:sanad[ao]s?|regularizad[ao]s?|corrigid[ao]s?|superad[ao]s?)\b"
+)
 
 
 class MinutasGenerationError(MinutasValidationError):
@@ -164,6 +184,17 @@ def _continuous_word_sequence(excerpt, page_text):
         (True, "")
         if verified
         else (False, "trecho não localizado na página indicada")
+    )
+
+
+def _specific_divergence_ground(value):
+    normalized = _normalized_support(value)
+    return bool(
+        normalized
+        and (
+            _SPECIFIC_LEGAL_DIVERGENCE.search(normalized)
+            or _SPECIFIC_PROBATIVE_DIVERGENCE.search(normalized)
+        )
     )
 
 
@@ -908,16 +939,73 @@ class MinutasGenerationService:
                 "A IA não retornou todas as partes obrigatórias da minuta."
             )
         topics = structure.get("topicos_irregularidades")
+        requests = structure.get("pedidos")
+        if not isinstance(requests, list) or not requests or any(
+            not str(request or "").strip() for request in requests
+        ):
+            raise MinutasGenerationError(
+                "A IA não retornou pedidos estruturados válidos."
+            )
         if not isinstance(topics, list) or any(
             not isinstance(topic, dict)
             or not str(topic.get("titulo") or "").strip()
             or not isinstance(topic.get("irregularidades_ids"), list)
+            or not isinstance(topic.get("avaliacoes_irregularidades"), list)
             or not str(topic.get("texto") or "").strip()
             for topic in topics
         ):
             raise MinutasGenerationError(
                 "A IA não retornou fundamentação estruturada válida."
             )
+        for topic in topics:
+            identifiers = topic["irregularidades_ids"]
+            assessments = topic["avaliacoes_irregularidades"]
+            assessment_ids = [
+                assessment.get("irregularidade_id")
+                for assessment in assessments
+                if isinstance(assessment, dict)
+            ]
+            if (
+                any(
+                    not isinstance(identifier, str) or not identifier.strip()
+                    for identifier in identifiers
+                )
+                or any(
+                    not isinstance(identifier, str) or not identifier.strip()
+                    for identifier in assessment_ids
+                )
+                or len(set(identifiers)) != len(identifiers)
+                or len(assessment_ids) != len(identifiers)
+                or set(assessment_ids) != set(identifiers)
+            ):
+                raise MinutasGenerationError(
+                    "A IA não vinculou corretamente as avaliações às irregularidades."
+                )
+            for assessment in assessments:
+                if (
+                    not isinstance(assessment, dict)
+                    or not str(assessment.get("irregularidade_id") or "").strip()
+                    or assessment.get("tratamento_ministerial_defesa")
+                    not in _MINISTERIAL_TREATMENTS
+                    or not isinstance(assessment.get("fundamentos_divergencia"), list)
+                    or any(
+                        not str(ground or "").strip()
+                        for ground in assessment.get("fundamentos_divergencia", [])
+                    )
+                    or assessment.get("estado_saneamento") not in _CURE_STATES
+                    or not isinstance(assessment.get("fontes_saneamento"), list)
+                    or any(
+                        not isinstance(source, dict)
+                        or not str(source.get("fonte_id") or "").strip()
+                        or not isinstance(source.get("pagina"), int)
+                        or isinstance(source.get("pagina"), bool)
+                        or not isinstance(source.get("trecho_suporte"), str)
+                        for source in assessment.get("fontes_saneamento", [])
+                    )
+                ):
+                    raise MinutasGenerationError(
+                        "A IA não retornou avaliações ministeriais estruturadas válidas."
+                    )
         return structure
 
     @staticmethod
@@ -936,10 +1024,25 @@ class MinutasGenerationService:
                     + "\n\n"
                     + str(topic["texto"]).strip()
                 )
+        request_texts = [request.strip() for request in structure["pedidos"]]
+        request_keys = {_normalized_support(request) for request in request_texts}
+        conclusion_lines = []
+        for line in structure["conclusao_pedidos"].strip().splitlines():
+            unnumbered = re.sub(r"^\s*(?:\d+[.)]|[-*])\s*", "", line)
+            if _normalized_support(unnumbered) not in request_keys:
+                conclusion_lines.append(line)
+        conclusion = "\n".join(conclusion_lines).strip()
+        if structure["pedidos"]:
+            numbered_requests = "\n".join(
+                f"{index}. {request.strip()}"
+                for index, request in enumerate(structure["pedidos"], start=1)
+            )
+            conclusion = "\n\n".join(
+                part for part in (conclusion, numbered_requests) if part
+            )
         sections.extend(
             (
-                "## Conclusão e propostas de encaminhamento\n\n"
-                + structure["conclusao_pedidos"].strip(),
+                "## Conclusão e propostas de encaminhamento\n\n" + conclusion,
                 structure["encerramento"].strip(),
             )
         )
@@ -948,6 +1051,13 @@ class MinutasGenerationService:
     @staticmethod
     def _quality_warnings(structure, analysis, target_context):
         warnings = []
+        assessments = {
+            str(assessment.get("irregularidade_id") or ""): assessment
+            for topic in structure.get("topicos_irregularidades", [])
+            if isinstance(topic, dict)
+            for assessment in topic.get("avaliacoes_irregularidades", [])
+            if isinstance(assessment, dict)
+        }
         covered = {
             str(identifier)
             for topic in structure.get("topicos_irregularidades", [])
@@ -965,6 +1075,91 @@ class MinutasGenerationService:
                 + ", ".join(missing)
                 + "."
             )
+        missing_assessments = [
+            item["id"]
+            for item in analysis.get("irregularidades", [])
+            if item["id"] not in assessments
+        ]
+        if missing_assessments:
+            warnings.append(
+                "Possível omissão: irregularidades sem avaliação ministerial estruturada: "
+                + ", ".join(missing_assessments)
+                + "."
+            )
+        page_texts = MinutasGenerationService._source_page_texts(target_context)
+        source_pages = {
+            source_id: set(pages) for source_id, pages in page_texts.items()
+        }
+        for irregularity in analysis.get("irregularidades", []):
+            assessment = assessments.get(irregularity["id"])
+            if not assessment:
+                continue
+            audit_treatment = irregularity.get("avaliacao_auditoria", {}).get(
+                "tratamento_defesa"
+            )
+            ministry_treatment = assessment.get("tratamento_ministerial_defesa")
+            if audit_treatment == "REJEITADA" and ministry_treatment in {
+                "ACOLHIDA", "PARCIALMENTE_ACOLHIDA"
+            }:
+                grounds = assessment.get("fundamentos_divergencia", [])
+                has_specific_ground = any(
+                    _specific_divergence_ground(ground) for ground in grounds
+                )
+                if not has_specific_ground:
+                    warnings.append(
+                        f"Divergência da Auditoria sem fundamento jurídico ou "
+                        f"probatório específico: {irregularity['id']}."
+                    )
+            cure_sources = assessment.get("fontes_saneamento", [])
+            verified_cure_source = False
+            for source in cure_sources:
+                if not isinstance(source, dict):
+                    continue
+                source_id = source.get("fonte_id")
+                page = source.get("pagina")
+                excerpt = source.get("trecho_suporte")
+                if page not in page_texts.get(source_id, {}):
+                    continue
+                verified, _reason = _continuous_word_sequence(
+                    excerpt, page_texts[source_id][page]
+                )
+                if verified:
+                    verified_cure_source = True
+                    break
+            topic_text = "\n".join(
+                str(topic.get("texto") or "")
+                for topic in structure.get("topicos_irregularidades", [])
+                if isinstance(topic, dict)
+                and irregularity["id"] in topic.get("irregularidades_ids", [])
+            )
+            categorical_cure = bool(_CATEGORICAL_CURE.search(_plain(topic_text)))
+            cure_claim = (
+                assessment.get("estado_saneamento") == "COMPROVADO"
+                or categorical_cure
+            )
+            specific_probative_ground = any(
+                _specific_divergence_ground(ground)
+                for ground in assessment.get("fundamentos_divergencia", [])
+            )
+            unsupported_cure = cure_claim and (
+                not verified_cure_source
+                or (
+                    audit_treatment == "REJEITADA"
+                    and not specific_probative_ground
+                )
+            )
+            if unsupported_cure:
+                if audit_treatment == "REJEITADA":
+                    warnings.append(
+                        "Saneamento afirmado apesar da manutenção da irregularidade "
+                        "pela Auditoria, sem justificativa probatória textual verificável: "
+                        f"{irregularity['id']}."
+                    )
+                else:
+                    warnings.append(
+                        "Afirmação categórica de saneamento sem suporte textual "
+                        f"verificável: {irregularity['id']}."
+                    )
         text = MinutasGenerationService._structure_markdown(structure)
         source_text = "\n".join(
             unit["texto"]
@@ -976,7 +1171,7 @@ class MinutasGenerationService:
                 warnings.append(
                     f"Possível valor sem correspondência literal nas fontes: {amount}."
                 )
-        valid_pages = set().union(*MinutasGenerationService._source_pages(target_context).values())
+        valid_pages = set().union(*source_pages.values())
         for page in {
             int(value)
             for value in re.findall(r"(?:página|p\.)\s*(\d+)", text, re.IGNORECASE)

@@ -252,21 +252,42 @@ def _analysis_result(context, **changes):
     return result
 
 
-def _draft_structure(ids=("IRR-1",)):
+def _draft_structure(
+    ids=("IRR-1",),
+    *,
+    ministerial_treatment="MANTIDA_REJEICAO",
+    divergence_grounds=(),
+    cure_state="ALEGADO_NAO_COMPROVADO",
+    cure_sources=(),
+):
     return {
         "identificacao_processual": "Processo TC 01653/26",
         "ementa": "PRESTAÇÃO DE CONTAS. ANÁLISE DOCUMENTAL.",
-        "relatorio": "Relatório processual com referência à página 1.",
+        "relatorio": (
+            "Relatório processual com referência à página 1. "
+            "É o relatório. Passo a opinar."
+        ),
         "fundamentacao_geral": "Fundamentação baseada nas fontes fornecidas.",
         "topicos_irregularidades": [
             {
                 "titulo": "Irregularidades relacionadas",
                 "irregularidades_ids": list(ids),
+                "avaliacoes_irregularidades": [
+                    {
+                        "irregularidade_id": identifier,
+                        "tratamento_ministerial_defesa": ministerial_treatment,
+                        "fundamentos_divergencia": list(divergence_grounds),
+                        "estado_saneamento": cure_state,
+                        "fontes_saneamento": list(cure_sources),
+                    }
+                    for identifier in ids
+                ],
                 "texto": "A defesa foi confrontada com a conclusão da Auditoria.",
             }
         ],
         "conclusao_pedidos": "Conclusão ministerial sujeita à revisão humana.",
-        "encerramento": "Documento experimental sem caráter oficial.",
+        "pedidos": ["Submeta-se a minuta à revisão jurídica humana."],
+        "encerramento": "É o Parecer. Documento experimental sem caráter oficial.",
     }
 
 
@@ -742,6 +763,157 @@ def test_quality_checks_warn_without_changing_legal_conclusion():
     assert result["estrutura"]["conclusao_pedidos"] == (
         "Opina-se pela regularidade das contas."
     )
+
+
+def test_rejected_defense_with_only_generic_divergence_is_warned():
+    target, history, other, rows = _scenario()
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=lambda context: _draft_result(
+            context,
+            estrutura=_draft_structure(
+                ministerial_treatment="ACOLHIDA",
+                divergence_grounds=(
+                    "Aplicam-se proporcionalidade e ausência de dolo, conforme os "
+                    "documentos juntados na página 1.",
+                ),
+            ),
+        ),
+    )
+
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert any(
+        "Divergência da Auditoria sem fundamento" in warning
+        for warning in result["advertencias_qualidade"]
+    )
+
+
+def test_rejected_defense_with_specific_divergence_is_not_warned():
+    target, history, other, rows = _scenario()
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=lambda context: _draft_result(
+            context,
+            estrutura=_draft_structure(
+                ministerial_treatment="PARCIALMENTE_ACOLHIDA",
+                divergence_grounds=(
+                    "O comprovante da página 1 demonstra o recolhimento no prazo.",
+                ),
+            ),
+        ),
+    )
+
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert not any(
+        "Divergência da Auditoria sem fundamento" in warning
+        for warning in result["advertencias_qualidade"]
+    )
+
+
+def test_categorical_cure_with_insufficient_documents_is_warned():
+    target, history, other, rows = _scenario()
+
+    def generate(context):
+        structure = _draft_structure(cure_state="ALEGADO_NAO_COMPROVADO")
+        structure["topicos_irregularidades"][0]["texto"] = (
+            "A irregularidade foi sanada após a juntada anunciada pela defesa."
+        )
+        return _draft_result(context, estrutura=structure)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+    )
+
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert any(
+        "sem justificativa probatória textual verificável" in warning
+        for warning in result["advertencias_qualidade"]
+    )
+
+
+def test_existing_document_and_page_without_cure_excerpt_is_warned():
+    target, history, other, rows = _scenario()
+
+    def generate(context):
+        source = context["documentos_processo_alvo"][0]
+        page = source["conteudo"][0].get("pagina", 0)
+        structure = _draft_structure(
+            cure_state="COMPROVADO",
+            cure_sources=(
+                {
+                    "fonte_id": source["fonte_id"],
+                    "pagina": page,
+                    "trecho_suporte": "Regularização inexistente no conteúdo da página.",
+                },
+            ),
+        )
+        structure["topicos_irregularidades"][0]["texto"] = (
+            "A irregularidade foi sanada."
+        )
+        return _draft_result(context, estrutura=structure)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+    )
+
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert any(
+        "sem justificativa probatória textual verificável" in warning
+        for warning in result["advertencias_qualidade"]
+    )
+
+
+def test_coherent_draft_renders_numbered_requests_and_closing():
+    target, history, other, rows = _scenario()
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+    )
+
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert "1. Submeta-se a minuta à revisão jurídica humana." in result["texto"]
+    assert "É o Parecer." in result["texto"]
+    assert not any(
+        "inconsistência entre a ementa" in warning
+        for warning in result["advertencias_qualidade"]
+    )
+
+
+def test_duplicate_request_line_is_rendered_only_in_numbered_requests():
+    target, history, other, rows = _scenario()
+
+    def generate(context):
+        structure = _draft_structure()
+        request = structure["pedidos"][0]
+        structure["conclusao_pedidos"] = (
+            "Diante da fundamentação exposta, propõem-se os encaminhamentos:\n"
+            f"1. {request}"
+        )
+        return _draft_result(context, estrutura=structure)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+    )
+
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    request = result["estrutura"]["pedidos"][0]
+    assert result["texto"].count(request) == 1
+    assert "1. " + request in result["texto"]
 
 
 def test_complete_generation_uses_one_analysis_and_one_drafting_call():
