@@ -127,6 +127,7 @@ def test_portal_navigation_format_keeps_internal_values_and_uses_material_icons(
         "Representações": "gavel",
         "Petições": "article",
         "Ouvidoria": "forum",
+        "Minutas IA": "auto_awesome",
         "Administração": "manage_accounts",
     }
 

@@ -47,6 +47,7 @@ PORTAL_NAVIGATION_ICONS = {
     "Representações": MODULE_ICONS["representacoes"],
     "Petições": MODULE_ICONS["peticoes"],
     "Ouvidoria": MODULE_ICONS["ouvidoria"],
+    "Minutas IA": "auto_awesome",
     "Administração": MODULE_ICONS["admin"],
 }
 # Set only from the module radio (or the sidebar logo when it actually
@@ -1239,6 +1240,10 @@ def render_portal():
         options.append("Petições")
     if has_permission(principal, "ouvidoria"):
         options.append("Ouvidoria")
+    from services.minutas_piloto import can_access_minutas_piloto
+
+    if can_access_minutas_piloto(identity):
+        options.append("Minutas IA")
     if has_permission(principal, "admin"):
         options.append("Administração")
     enter_portal_module(options)
@@ -1382,6 +1387,15 @@ def render_portal():
             from services.ouvidoria_ui import render
 
             _render_authorized_fragment(render, store, principal, "ouvidoria")
+            st.stop()
+        if selected == "Minutas IA":
+            if not can_access_minutas_piloto(identity):
+                st.error("Acesso não autorizado a este módulo.")
+                st.stop()
+            from services.minutas_ia_ui import render
+
+            with phase("module_render"):
+                render()
             st.stop()
         if selected == "Administração":
             from services.access_ui import render
