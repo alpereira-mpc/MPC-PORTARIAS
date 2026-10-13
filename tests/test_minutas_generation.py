@@ -11,6 +11,7 @@ from services.minutas_generation import (
     MinutasGenerationService,
     _canonical_process_key,
     _clean_text,
+    _continuous_word_sequence,
 )
 from services.minutas_extraction import EXTRACTOR_VERSION
 from services.minutas_library import MinutasAccessDenied
@@ -193,6 +194,7 @@ def _analysis_payload(context, *, count=1, treatment="REJEITADA"):
         "pagina": page,
         "trecho_suporte": support,
     }
+    cited = lambda: dict(reference)
     irregularities = []
     for index in range(1, count + 1):
         irregularities.append(
@@ -204,26 +206,26 @@ def _analysis_payload(context, *, count=1, treatment="REJEITADA"):
                     else f"Outro apontamento documentado {index}"
                 ),
                 "fatos_documentados": [
-                    {"descricao": f"Fato comprovado {index}", "fontes": [reference]}
+                    {"descricao": f"Fato comprovado {index}", "fontes": [cited()]}
                 ],
                 "normas_mencionadas": [
                     {
                         "descricao": "Norma citada no relatório",
                         "origem": "AUDITORIA",
-                        "fontes": [reference],
+                        "fontes": [cited()],
                     }
                 ],
                 "argumentos_defesa": [
                     {
                         "alegacao": "A defesa alegou ausência de dano.",
                         "comprovacao_documental": "NÃO COMPROVADA",
-                        "fontes": [reference],
+                        "fontes": [cited()],
                     }
                 ],
                 "avaliacao_auditoria": {
                     "descricao": "A Auditoria rejeitou a justificativa defensiva.",
                     "tratamento_defesa": treatment,
-                    "fontes": [reference],
+                    "fontes": [cited()],
                 },
                 "pontos_controvertidos": ["Extensão da consequência jurídica."],
                 "hipoteses_juridicas": ["Hipótese sujeita à revisão ministerial."],
@@ -347,6 +349,43 @@ def test_clean_text_removes_only_specific_validation_lines():
     assert "Sistema de Tramitação" not in cleaned
 
 
+@pytest.mark.parametrize(
+    ("excerpt", "page_text"),
+    (
+        (
+            "As contribuições previdenciárias foram recolhidas.",
+            "As contribuições previdenciárias foram recolhidas.",
+        ),
+        (
+            "“AS CONTRIBUICOES”,   PREVIDENCIARIAS foram recolhidas!",
+            "As contribuições previdenciárias foram recolhidas.",
+        ),
+        (
+            "As contribuições previdenciárias foram recolhidas",
+            "As contri-\nbuições previ-\r\ndenciárias foram recolhidas.",
+        ),
+        (
+            "O oficio final foi apresentado",
+            "O oﬁcio ﬁnal foi apresentado.",
+        ),
+    ),
+)
+def test_evidence_matching_accepts_literal_word_sequences_with_pdf_artifacts(
+    excerpt, page_text
+):
+    assert _continuous_word_sequence(excerpt, page_text) == (True, "")
+
+
+def test_evidence_matching_rejects_paraphrase_without_literal_sequence():
+    verified, reason = _continuous_word_sequence(
+        "Os recolhimentos previdenciários estavam integralmente regulares.",
+        "As contribuições previdenciárias foram recolhidas parcialmente.",
+    )
+
+    assert verified is False
+    assert reason == "trecho não localizado na página indicada"
+
+
 def test_context_uses_target_instruction_and_excludes_contamination():
     target, history, other, rows = _scenario()
     library = Library([target, history, other], rows)
@@ -467,7 +506,7 @@ def test_analysis_separates_defense_evidence_and_rejected_audit_conclusion():
         assert irregularity["avaliacao_auditoria"]["fontes"][0]["pagina"] == 1
 
 
-def test_analysis_rejects_invented_source_or_page():
+def test_analysis_marks_invented_source_or_page_as_unverified():
     target, history, other, rows = _scenario()
 
     def analyze(context):
@@ -481,11 +520,14 @@ def test_analysis_rejects_invented_source_or_page():
         Library([target, history, other], rows), analyze=analyze
     )
 
-    with pytest.raises(MinutasGenerationError, match="fonte ou página inexistente"):
-        service.analyze(target["id"])
+    result = service.analyze(target["id"])
+    fact = result["analise"]["irregularidades"][0]["fatos_documentados"][0]
+    assert fact["estado_conferencia"] == "NAO_VERIFICADA"
+    assert result["suficiente_para_geracao"] is False
+    assert result["pendencias_conferencia"][0]["natureza"] == "fonte não localizada"
 
 
-def test_analysis_rejects_existing_page_with_unverifiable_excerpt():
+def test_analysis_marks_existing_page_with_unverifiable_excerpt():
     target, history, other, rows = _scenario()
 
     def analyze(context):
@@ -499,8 +541,18 @@ def test_analysis_rejects_existing_page_with_unverifiable_excerpt():
         Library([target, history, other], rows), analyze=analyze
     )
 
-    with pytest.raises(MinutasGenerationError, match="sem correspondência"):
-        service.analyze(target["id"])
+    result = service.analyze(target["id"])
+    fact = result["analise"]["irregularidades"][0]["fatos_documentados"][0]
+    assert fact["estado_conferencia"] == "NAO_VERIFICADA"
+    assert result["suficiente_para_geracao"] is False
+    assert result["pendencias_conferencia"][0] == {
+        "irregularidade": "IRR-1",
+        "categoria": "Fato documentado",
+        "documento": "auditoria.pdf",
+        "pagina": 1,
+        "natureza": "trecho não localizado na página indicada",
+        "bloqueante": True,
+    }
 
 
 def test_analysis_accepts_verifiable_excerpt_with_conservative_normalization():
@@ -510,7 +562,7 @@ def test_analysis_accepts_verifiable_excerpt_with_conservative_normalization():
         analysis = _analysis_payload(context)
         analysis["irregularidades"][0]["fatos_documentados"][0]["fontes"][0][
             "trecho_suporte"
-        ] = "IRREGULARIDADE   PREVIDENCIARIA\nNA PAGINA ORIGINAL."
+        ] = "“IRREGULARIDADE,   PREVIDENCIARIA” —\nNA PAGINA ORIGINAL!"
         return _analysis_result(context, analise=analysis)
 
     service = MinutasGenerationService(
@@ -518,10 +570,48 @@ def test_analysis_accepts_verifiable_excerpt_with_conservative_normalization():
     )
 
     result = service.analyze(target["id"])
-    assert result["analise"]["irregularidades"][0]["fatos_documentados"]
+    fact = result["analise"]["irregularidades"][0]["fatos_documentados"][0]
+    assert fact["estado_conferencia"] == "VERIFICADA"
+    assert fact["fontes"][0]["verificado"] is True
+    assert result["suficiente_para_geracao"] is True
 
 
-def test_analysis_rejects_defense_allegation_classified_as_documented_fact():
+def test_analysis_marks_excerpt_copied_from_another_page():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    first_page = "Irregularidade previdenciária na página original."
+    second_page = "A contribuição de março não foi recolhida."
+    audit["texto_integral"] = first_page + "\n" + second_page
+    audit["unidades_json"] = json.dumps(
+        [
+            {"pagina": 1, "texto": first_page},
+            {"pagina": 2, "texto": second_page},
+        ]
+    )
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        analysis["irregularidades"][0]["fatos_documentados"][0]["fontes"][0][
+            "trecho_suporte"
+        ] = second_page
+        return _analysis_result(context, analise=analysis)
+
+    result = MinutasGenerationService(
+        Library([target, history, other], rows), analyze=analyze
+    ).analyze(target["id"])
+
+    assert result["suficiente_para_geracao"] is False
+    assert result["pendencias_conferencia"][0]["pagina"] == 1
+    assert result["pendencias_conferencia"][0]["natureza"] == (
+        "trecho não localizado na página indicada"
+    )
+
+
+def test_analysis_marks_defense_allegation_classified_as_documented_fact():
     target, history, other, rows = _scenario()
     audit = next(
         row
@@ -546,8 +636,48 @@ def test_analysis_rejects_defense_allegation_classified_as_documented_fact():
         Library([target, history, other], rows), analyze=analyze
     )
 
-    with pytest.raises(MinutasGenerationError, match="alegação defensiva como fato"):
-        service.analyze(target["id"])
+    result = service.analyze(target["id"])
+    fact = result["analise"]["irregularidades"][0]["fatos_documentados"][0]
+    assert fact["fontes"][0]["verificado"] is True
+    assert fact["estado_conferencia"] == "NAO_VERIFICADA"
+    assert result["suficiente_para_geracao"] is False
+    assert any(
+        item["natureza"] == "alegação defensiva classificada como fato"
+        for item in result["pendencias_conferencia"]
+    )
+
+
+def test_multiple_irregularities_preserve_analysis_and_block_unsupported_drafting():
+    target, history, other, rows = _scenario()
+    drafting_calls = []
+
+    def analyze(context):
+        analysis = _analysis_payload(context, count=2)
+        second_fact = analysis["irregularidades"][1]["fatos_documentados"][0]
+        second_fact["fontes"][0]["trecho_suporte"] = "Fato inexistente nesta página."
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=analyze,
+        generate=lambda context: drafting_calls.append(context),
+    )
+    result = service.analyze(target["id"])
+    irregularities = result["analise"]["irregularidades"]
+
+    assert irregularities[0]["fatos_documentados"][0]["estado_conferencia"] == (
+        "VERIFICADA"
+    )
+    assert irregularities[1]["fatos_documentados"][0]["estado_conferencia"] == (
+        "NAO_VERIFICADA"
+    )
+    assert result["suficiente_para_geracao"] is False
+    with pytest.raises(
+        MinutasGenerationError,
+        match=r"IRR-2.*Fato documentado.*auditoria\.pdf, p\. 1.*não localizado",
+    ):
+        service.generate(target["id"], result)
+    assert drafting_calls == []
 
 
 def test_analysis_rejects_omitted_identifiable_audit_finding():
@@ -960,6 +1090,8 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
                 "modelo": "modelo-analise",
                 "duracao_ms": 50,
                 "tokens_total": 20,
+                "suficiente_para_geracao": True,
+                "pendencias_conferencia": [],
                 "fontes_versao": revision["value"],
             }
 
@@ -1013,3 +1145,70 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     assert generation_calls == [TARGET_ID]
     assert not any("Conteúdo para revisão" in item.value for item in app.markdown)
     assert any("fontes foram alteradas" in item.value for item in app.info)
+
+
+def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
+    from services import minutas_ia_ui
+
+    target = _record(TARGET_ID, "TC 01653/26", HISTORICAL_TEST_PROCESS_KEY)
+    generation_calls = []
+    issue = {
+        "irregularidade": "IRR-2",
+        "categoria": "Fato documentado",
+        "documento": "auditoria.pdf",
+        "pagina": 4,
+        "natureza": "trecho não localizado na página indicada",
+        "bloqueante": True,
+    }
+
+    class Generator:
+        def __init__(self, _library):
+            pass
+
+        def targets(self):
+            return [target]
+
+        def source_summary(self, _identifier):
+            return {
+                "fontes_alvo_previstas": 1,
+                "referencias_historicas_disponiveis": 1,
+                "issues": [],
+                "fontes_versao": "revision-pending",
+            }
+
+        def analyze(self, _identifier):
+            return {
+                "analise": {
+                    "resumo_processual": "Análise preservada para conferência.",
+                    "irregularidades": [],
+                    "pontos_atencao_gerais": [],
+                },
+                "modelo": "modelo-analise",
+                "duracao_ms": 50,
+                "tokens_total": 20,
+                "suficiente_para_geracao": False,
+                "pendencias_conferencia": [issue],
+                "fontes_versao": "revision-pending",
+            }
+
+        def generate(self, *_args):
+            generation_calls.append(True)
+
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args: object())
+    monkeypatch.setattr(minutas_ia_ui, "MinutasGenerationService", Generator)
+    _UI_HOLD.clear()
+
+    def page():
+        from services.minutas_ia_ui import _generator_tab
+
+        _generator_tab(None, {})
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key=f"minutas_analysis_submit_{TARGET_ID}").click().run()
+
+    warning_text = "\n".join(item.value for item in app.warning)
+    assert "IRR-2" in warning_text
+    assert "auditoria.pdf, p. 4" in warning_text
+    assert "trecho não localizado" in warning_text
+    assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is True
+    assert generation_calls == []

@@ -118,10 +118,53 @@ _DEFENSE_ALLEGATION = re.compile(
 _DOCUMENTED_CONFIRMATION = re.compile(
     r"\b(?:a auditoria confirmou|documentos? comprovam|restou comprovad[oa])\b"
 )
+_PDF_LIGATURES = str.maketrans(
+    {
+        "ﬀ": "ff",
+        "ﬁ": "fi",
+        "ﬂ": "fl",
+        "ﬃ": "ffi",
+        "ﬄ": "ffl",
+        "ﬅ": "st",
+        "ﬆ": "st",
+    }
+)
 
 
 def _normalized_support(value):
     return re.sub(r"\s+", " ", _plain(value)).strip()
+
+
+def _evidence_words(value):
+    text = unicodedata.normalize("NFKC", str(value or "")).translate(_PDF_LIGATURES)
+    text = text.replace("\u00ad", "").replace("\u200b", "")
+    text = re.sub(
+        r"(?<=\w)[\-‐‑][^\S\r\n]*(?:\r\n|\r|\n)\s*(?=\w)",
+        "",
+        text,
+    )
+    return re.findall(r"[a-z0-9]+", _plain(text))
+
+
+def _continuous_word_sequence(excerpt, page_text):
+    excerpt_words = _evidence_words(excerpt)
+    if (
+        len(excerpt_words) < 2
+        or sum(len(word) for word in excerpt_words) < 8
+        or len(excerpt_words) > 100
+    ):
+        return False, "trecho ausente ou curto demais"
+    page_words = _evidence_words(page_text)
+    width = len(excerpt_words)
+    verified = any(
+        page_words[index : index + width] == excerpt_words
+        for index in range(len(page_words) - width + 1)
+    )
+    return (
+        (True, "")
+        if verified
+        else (False, "trecho não localizado na página indicada")
+    )
 
 
 def _explicit_audit_findings(context):
@@ -628,8 +671,13 @@ class MinutasGenerationService:
         ):
             raise MinutasGenerationError("A análise jurídica retornou pontos de atenção inválidos.")
         page_texts = cls._source_page_texts(context)
+        source_names = {
+            source["fonte_id"]: source.get("arquivo") or source["fonte_id"]
+            for source in context["documentos_processo_alvo"]
+        }
+        pending = []
 
-        def validate_reference(reference):
+        def verify_reference(reference):
             if not isinstance(reference, dict):
                 raise MinutasGenerationError(
                     "A análise jurídica retornou fonte inválida."
@@ -637,29 +685,71 @@ class MinutasGenerationService:
             source_id = reference.get("fonte_id")
             page = reference.get("pagina")
             excerpt = reference.get("trecho_suporte")
-            if (
-                source_id not in page_texts
-                or not isinstance(page, int)
-                or isinstance(page, bool)
-                or page not in page_texts[source_id]
-            ):
-                raise MinutasGenerationError(
-                    "A análise jurídica citou fonte ou página inexistente."
+            reason = ""
+            if source_id not in page_texts:
+                reason = "fonte não localizada"
+            elif not isinstance(page, int) or isinstance(page, bool):
+                reason = "página inválida"
+            elif page not in page_texts[source_id]:
+                reason = "página não localizada na fonte indicada"
+            elif not isinstance(excerpt, str) or not excerpt.strip():
+                reason = "trecho de suporte ausente"
+            else:
+                verified, reason = _continuous_word_sequence(
+                    excerpt, page_texts[source_id][page]
                 )
-            if not isinstance(excerpt, str):
-                raise MinutasGenerationError(
-                    "A análise jurídica não apresentou trecho textual de suporte."
+                if verified:
+                    reason = ""
+            reference["verificado"] = not reason
+            if reason:
+                reference["falha_verificacao"] = reason
+            else:
+                reference.pop("falha_verificacao", None)
+            return {
+                "verificado": not reason,
+                "motivo": reason,
+                "documento": source_names.get(source_id, str(source_id or "não informado")),
+                "pagina": page if isinstance(page, int) and not isinstance(page, bool) else None,
+                "trecho": _normalized_support(excerpt) if isinstance(excerpt, str) else "",
+            }
+
+        def check_sources(sources, irregularity_id, category):
+            results = [verify_reference(reference) for reference in sources]
+            has_verified = any(result["verificado"] for result in results)
+            if not results:
+                results = [
+                    {
+                        "verificado": False,
+                        "motivo": "nenhum trecho de suporte informado",
+                        "documento": "não informado",
+                        "pagina": None,
+                        "trecho": "",
+                    }
+                ]
+            for result in results:
+                if result["verificado"]:
+                    continue
+                pending.append(
+                    {
+                        "irregularidade": irregularity_id,
+                        "categoria": category,
+                        "documento": result["documento"],
+                        "pagina": result["pagina"],
+                        "natureza": result["motivo"],
+                        "bloqueante": not has_verified,
+                    }
                 )
-            normalized_excerpt = _normalized_support(excerpt)
-            if not 8 <= len(normalized_excerpt) <= 500:
-                raise MinutasGenerationError(
-                    "A análise jurídica apresentou trecho de suporte inválido."
-                )
-            if normalized_excerpt not in _normalized_support(page_texts[source_id][page]):
-                raise MinutasGenerationError(
-                    "A análise jurídica apresentou trecho sem correspondência na página citada."
-                )
-            return normalized_excerpt
+            state = (
+                "VERIFICADA"
+                if results and all(result["verificado"] for result in results)
+                else "PARCIALMENTE_VERIFICADA"
+                if has_verified
+                else "NAO_VERIFICADA"
+            )
+            verified_supports = [
+                result["trecho"] for result in results if result["verificado"]
+            ]
+            return state, verified_supports
 
         identifiers = set()
         for index, irregularity in enumerate(irregularities, 1):
@@ -686,17 +776,21 @@ class MinutasGenerationService:
                         f"A irregularidade {index} retornou o campo {field} inválido."
                     )
             sourced_fields = (
-                ("fatos_documentados", ("descricao",)),
-                ("normas_mencionadas", ("descricao", "origem")),
-                ("argumentos_defesa", ("alegacao", "comprovacao_documental")),
+                ("fatos_documentados", ("descricao",), "Fato documentado"),
+                ("normas_mencionadas", ("descricao", "origem"), "Norma mencionada"),
+                (
+                    "argumentos_defesa",
+                    ("alegacao", "comprovacao_documental"),
+                    "Alegação defensiva",
+                ),
             )
-            for field, text_fields in sourced_fields:
+            for field, text_fields, category in sourced_fields:
                 for item in irregularity[field]:
                     if not isinstance(item, dict) or not isinstance(
                         item.get("fontes"), list
-                    ) or not item["fontes"]:
+                    ):
                         raise MinutasGenerationError(
-                            f"A irregularidade {index} retornou evidência sem fonte válida."
+                            f"A irregularidade {index} retornou evidência inválida."
                         )
                     if any(key not in item for key in text_fields) or not str(
                         item.get(text_fields[0]) or ""
@@ -704,17 +798,27 @@ class MinutasGenerationService:
                         raise MinutasGenerationError(
                             f"A irregularidade {index} retornou evidência incompleta."
                         )
-                    supports = [
-                        validate_reference(reference) for reference in item["fontes"]
-                    ]
-                    if field == "fatos_documentados" and all(
+                    state, supports = check_sources(
+                        item["fontes"], identifier, category
+                    )
+                    item["estado_conferencia"] = state
+                    if field == "fatos_documentados" and supports and all(
                         _DEFENSE_ALLEGATION.search(support)
                         and not _DOCUMENTED_CONFIRMATION.search(support)
                         for support in supports
                     ):
-                        raise MinutasGenerationError(
-                            "A análise jurídica classificou alegação defensiva como fato "
-                            "documentado."
+                        item["estado_conferencia"] = "NAO_VERIFICADA"
+                        pending.append(
+                            {
+                                "irregularidade": identifier,
+                                "categoria": category,
+                                "documento": source_names.get(
+                                    item["fontes"][0].get("fonte_id"), "não informado"
+                                ),
+                                "pagina": item["fontes"][0].get("pagina"),
+                                "natureza": "alegação defensiva classificada como fato",
+                                "bloqueante": True,
+                            }
                         )
             for field in ("pontos_controvertidos", "hipoteses_juridicas"):
                 if any(
@@ -743,12 +847,12 @@ class MinutasGenerationService:
                 raise MinutasGenerationError(
                     f"A irregularidade {index} não classificou o tratamento da defesa."
                 )
-            if treatment != "NAO_IDENTIFICADO" and not audit["fontes"]:
-                raise MinutasGenerationError(
-                    f"A irregularidade {index} retornou conclusão técnica sem fonte."
+            if treatment == "NAO_IDENTIFICADO" and not audit["fontes"]:
+                audit["estado_conferencia"] = "NAO_APLICAVEL"
+            else:
+                audit["estado_conferencia"], _supports = check_sources(
+                    audit["fontes"], identifier, "Conclusão da Auditoria"
                 )
-            for reference in audit["fontes"]:
-                validate_reference(reference)
 
         findings = _explicit_audit_findings(context)
         missing_findings = []
@@ -779,6 +883,12 @@ class MinutasGenerationService:
                 + "; ".join(labels[:5])
                 + ". Confira a instrução."
             )
+        blocking = [item for item in pending if item["bloqueante"]]
+        analysis["conferencia_documental"] = {
+            "estado": "PENDENTE" if pending else "VERIFICADA",
+            "suficiente_para_geracao": not blocking,
+            "pendencias": pending,
+        }
         return analysis
 
     @staticmethod
@@ -912,9 +1022,12 @@ class MinutasGenerationService:
         if not isinstance(generated, dict):
             raise MinutasGenerationError("A IA não retornou análise jurídica válida.")
         analysis = self._validate_analysis(generated.get("analise"), prepared["contexto"])
+        conference = analysis["conferencia_documental"]
         return {
             **generated,
             "analise": analysis,
+            "suficiente_para_geracao": conference["suficiente_para_geracao"],
+            "pendencias_conferencia": conference["pendencias"],
             "fontes_versao": prepared["fontes_versao"],
             "fontes_alvo": prepared["fontes_alvo"],
         }
@@ -928,7 +1041,27 @@ class MinutasGenerationService:
             raise MinutasGenerationError(
                 "As fontes foram alteradas. Analise novamente os fundamentos."
             )
-        self._validate_analysis(analyzed["analise"], prepared["contexto"])
+        analysis = self._validate_analysis(
+            analyzed["analise"], prepared["contexto"]
+        )
+        conference = analysis["conferencia_documental"]
+        if not conference["suficiente_para_geracao"]:
+            details = []
+            for issue in (
+                item for item in conference["pendencias"] if item["bloqueante"]
+            ):
+                location = issue["documento"]
+                if issue["pagina"] is not None:
+                    location += f", p. {issue['pagina']}"
+                details.append(
+                    f"{issue['irregularidade']} — {issue['categoria']} — "
+                    f"{location}: {issue['natureza']}"
+                )
+            raise MinutasGenerationError(
+                "Confira as evidências antes de gerar a minuta: "
+                + "; ".join(details[:3])
+                + "."
+            )
         request_context = prepared["contexto"]
         if _serialized_size(request_context) > MAX_CONTEXT_BYTES:
             raise MinutasGenerationError(

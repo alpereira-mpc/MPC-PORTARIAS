@@ -949,6 +949,7 @@ def _analysis_panel(analysis_result):
             return ""
         labels = [
             f"fonte {source['fonte_id']}, p. {source['pagina']}"
+            + (" — não verificado" if source.get("verificado") is False else "")
             for source in sources
         ]
         return " _(" + "; ".join(labels) + ")_"
@@ -996,6 +997,18 @@ def _analysis_panel(analysis_result):
     if general_attention:
         st.markdown("**Pontos gerais que exigem atenção**")
         st.markdown("\n".join(f"- {item}" for item in general_attention))
+    pending = analysis_result.get("pendencias_conferencia") or ()
+    if pending:
+        lines = []
+        for issue in pending[:5]:
+            location = issue["documento"]
+            if issue.get("pagina") is not None:
+                location += f", p. {issue['pagina']}"
+            lines.append(
+                f"- {issue['irregularidade']} · {issue['categoria']} · "
+                f"{location}: {issue['natureza']}"
+            )
+        st.warning("Conferência documental pendente:\n\n" + "\n".join(lines))
     st.caption(
         f"Modelo: {analysis_result.get('modelo') or '—'} · "
         f"Tokens: {analysis_result.get('tokens_total') or 'não informado'} · "
@@ -1096,12 +1109,19 @@ def _generator_tab(store, identity):
         _analysis_panel(analysis)
 
     section_label("Etapa 2 — Gerar minuta")
+    analysis_ready = bool(
+        analysis and analysis.get("suficiente_para_geracao") is True
+    )
+    if analysis and not analysis_ready:
+        st.caption(
+            "A geração está bloqueada até que as evidências indicadas sejam conferidas."
+        )
     if st.button(
         "Gerar minuta",
         type="primary",
         icon=":material/auto_awesome:",
         key=f"minutas_generation_submit_{target['id']}",
-        disabled=not analysis or bool(summary["issues"]),
+        disabled=not analysis_ready or bool(summary["issues"]),
     ):
         st.session_state.pop(result_key, None)
         try:
