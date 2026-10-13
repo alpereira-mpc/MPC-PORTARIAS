@@ -106,12 +106,13 @@ def test_configured_library_shows_phase_2a_fields(store, monkeypatch):
         "Relatório da Auditoria — PDF, até 10 MB *",
         "Parecer definitivo — PDF ou DOCX, até 10 MB *",
     ]
+    assert all(item.proto.max_upload_size_mb == 10 for item in app.file_uploader)
     subtype = next(item for item in app.selectbox if item.label == "Subtipo de PCA *")
     assert list(subtype.options) == list(SUBTIPOS)
     assert any(item.label == "Cadastrar referência" for item in app.button)
 
 
-def test_registered_reference_renders_complement_section(store, monkeypatch):
+def test_registered_reference_uses_compact_document_flow(store, monkeypatch):
     from services import minutas_ia_ui
 
     record = {
@@ -129,6 +130,18 @@ def test_registered_reference_renders_complement_section(store, monkeypatch):
         "parecer_tamanho": 200,
         "parecer_path": "referencias/parecer.pdf",
     }
+    document = {
+        "id": "22222222-2222-2222-2222-222222222222",
+        "referencia_id": record["id"],
+        "tipo": "Relatório de Análise de Defesa",
+        "descricao": "",
+        "posicao": 7,
+        "data_documento": None,
+        "nome": "analise-defesa.pdf",
+        "mime": "application/pdf",
+        "tamanho": 300,
+        "path": "referencias/analise-defesa.pdf",
+    }
 
     class Repository:
         def __init__(self, _store):
@@ -141,7 +154,7 @@ def test_registered_reference_renders_complement_section(store, monkeypatch):
             return record if identifier == record["id"] else None
 
         def list_documents(self, _identifier):
-            return []
+            return [document]
 
     class Storage:
         @classmethod
@@ -158,12 +171,98 @@ def test_registered_reference_renders_complement_section(store, monkeypatch):
     app.sidebar.radio(key="portal_module").set_value("Minutas IA").run()
 
     assert not app.exception
-    labels = [item.label for item in app.file_uploader]
-    assert "Documento — PDF ou DOCX, até 10 MB *" in labels
-    assert any(item.label == "Adicionar documento" for item in app.button)
-    assert any(
-        "Nenhum documento complementar" in item.value for item in app.markdown
+    assert app.button(key=f"minutas_add_open_{record['id']}").label == (
+        "+ Adicionar documento"
     )
+    assert not any(
+        item.key == f"minutas_add_file_{record['id']}"
+        for item in app.file_uploader
+    )
+    assert all(item.proto.max_upload_size_mb == 10 for item in app.file_uploader)
+    text = "\n".join(item.value for item in app.markdown)
+    assert "auditoria.pdf" in text
+    assert "analise-defesa.pdf" in text
+    assert "parecer.pdf" in text
+    assert app.button(key=f"minutas_promote_open_{document['id']}")
+
+    app.button(key=f"minutas_add_open_{record['id']}").click().run()
+
+    assert not app.exception
+    complement_uploader = app.file_uploader(
+        key=f"minutas_add_file_{record['id']}"
+    )
+    assert complement_uploader.proto.max_upload_size_mb == 10
+    assert not any(
+        item.key == f"minutas_add_date_{record['id']}" for item in app.date_input
+    )
+    assert not any(
+        item.label == "Posição cronológica *" for item in app.number_input
+    )
+    assert any(
+        "Classificação selecionada" in item.value for item in app.caption
+    )
+
+    app.checkbox(key=f"minutas_add_known_date_{record['id']}").check().run()
+
+    assert app.date_input(key=f"minutas_add_date_{record['id']}")
+    assert app.session_state["minutas_active_panel"] == f"add:{record['id']}"
+    process_expander = next(
+        item for item in app.expander if "TC 00001/24" in item.label
+    )
+    assert process_expander.proto.expanded is True
+
+    app.button(key=f"minutas_add_cancel_{record['id']}").click().run()
+    app.run()
+
+    assert not app.exception
+    assert "minutas_active_panel" not in app.session_state
+    assert not any(
+        item.key == f"minutas_add_file_{record['id']}"
+        for item in app.file_uploader
+    )
+
+    app.button(key=f"minutas_edit_open_{document['id']}").click().run()
+
+    assert not app.exception
+    assert app.selectbox(key=f"minutas_edit_type_{document['id']}")
+    assert any(
+        "Classificação selecionada" in item.value for item in app.caption
+    )
+    assert not any(
+        item.key == f"minutas_edit_date_{document['id']}"
+        for item in app.date_input
+    )
+    app.button(key=f"minutas_edit_cancel_{document['id']}").click().run()
+    app.run()
+
+    app.button(key=f"minutas_promote_open_{document['id']}").click().run()
+
+    assert not app.exception
+    assert app.checkbox(key=f"minutas_promote_confirm_{document['id']}")
+    assert "SEDH" not in (ROOT / "services" / "minutas_ia_ui.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_compact_order_controls_preserve_preexisting_position_gaps():
+    from services.minutas_ia_ui import _reordered_values
+
+    documents = [
+        {
+            "id": f"document-{index}",
+            "tipo": "Cota Ministerial",
+            "descricao": "",
+            "posicao": position,
+            "data_documento": None,
+        }
+        for index, position in enumerate((2, 7, 11))
+    ]
+
+    moved = _reordered_values(documents, 2, -1)
+
+    assert [item["posicao"] for item in moved] == [2, 11, 7]
+    assert sorted(item["posicao"] for item in moved) == [2, 7, 11]
+    assert _reordered_values(documents, 0, -1) is None
 
 
 def test_unauthorized_user_cannot_see_or_force_private_module(store, monkeypatch):
