@@ -6,9 +6,10 @@ import pytest
 from docx import Document
 from pypdf import PdfWriter
 
-from database.minutas_referencias import COLUMNS
+from database.minutas_referencias import COLUMNS, COMPLEMENT_COLUMNS
 from database.store import ROOT
 from services.minutas_library import (
+    COMPLEMENT_TYPES,
     MinutasAccessDenied,
     MinutasDuplicateError,
     MinutasLibraryService,
@@ -45,10 +46,14 @@ def _docx():
 class FakeRepository:
     def __init__(self, events=None):
         self.records = {}
+        self.documents = {}
         self.events = events if events is not None else []
         self.fail_create = False
         self.fail_replace = False
         self.fail_delete = False
+        self.fail_document_create = False
+        self.fail_document_delete = False
+        self.fail_promote = False
 
     def get_by_process(self, procuradora_key, process_key):
         return next(
@@ -75,6 +80,80 @@ class FakeRepository:
     def list(self):
         return [deepcopy(record) for record in self.records.values()]
 
+    def create_document(self, record):
+        self.events.append(("db_document_create", record["id"]))
+        if self.fail_document_create:
+            raise RuntimeError("database unavailable")
+        if any(
+            item["referencia_id"] == record["referencia_id"]
+            and item["posicao"] == record["posicao"]
+            for item in self.documents.values()
+        ):
+            raise RuntimeError("unique position")
+        self.documents[record["id"]] = deepcopy(record)
+        return deepcopy(record)
+
+    def get_document(self, identifier):
+        document = self.documents.get(identifier)
+        return deepcopy(document) if document else None
+
+    def list_documents(self, reference_id):
+        return sorted(
+            (
+                deepcopy(document)
+                for document in self.documents.values()
+                if document["referencia_id"] == reference_id
+            ),
+            key=lambda document: (document["posicao"], document["id"]),
+        )
+
+    def update_documents(self, reference_id, documents, actor):
+        positions = [item["posicao"] for item in documents]
+        if len(positions) != len(set(positions)):
+            raise RuntimeError("unique position")
+        for values in documents:
+            document = self.documents[values["id"]]
+            if document["referencia_id"] != reference_id:
+                raise RuntimeError("document unavailable")
+            document.update(deepcopy(values))
+            document["atualizado_por"] = actor
+        return self.list_documents(reference_id)
+
+    def delete_document(self, identifier, reference_id):
+        self.events.append(("db_document_delete", identifier))
+        if self.fail_document_delete:
+            raise RuntimeError("database unavailable")
+        if self.documents[identifier]["referencia_id"] != reference_id:
+            raise RuntimeError("document unavailable")
+        del self.documents[identifier]
+
+    def promote_document(self, reference_id, document_id, displaced, actor):
+        self.events.append(("db_promote", document_id))
+        if self.fail_promote:
+            raise RuntimeError("database unavailable")
+        selected = deepcopy(self.documents[document_id])
+        reference = self.records[reference_id]
+        old_audit = {
+            "nome": reference["auditoria_nome"],
+            "mime": reference["auditoria_mime"],
+            "tamanho": reference["auditoria_tamanho"],
+            "path": reference["auditoria_path"],
+        }
+        del self.documents[document_id]
+        self.documents[displaced["id"]] = {
+            **deepcopy(displaced),
+            "referencia_id": reference_id,
+            **old_audit,
+            "criado_em": "now",
+            "criado_por": actor,
+            "atualizado_em": "now",
+            "atualizado_por": actor,
+        }
+        for field in ("nome", "mime", "tamanho", "path"):
+            reference[f"auditoria_{field}"] = selected[field]
+        reference["atualizado_por"] = actor
+        return deepcopy(reference), self.list_documents(reference_id)
+
     def replace_document(self, identifier, kind, document, actor):
         self.events.append(("db_replace", document["path"]))
         if self.fail_replace:
@@ -91,6 +170,11 @@ class FakeRepository:
         if self.fail_delete:
             raise RuntimeError("database unavailable")
         del self.records[identifier]
+        self.documents = {
+            key: value
+            for key, value in self.documents.items()
+            if value["referencia_id"] != identifier
+        }
 
 
 class FakeStorage:
@@ -149,6 +233,27 @@ def _create(service, process="TC 00001/24"):
     )
 
 
+def _add_complement(
+    service,
+    reference_id,
+    position=1,
+    document_type="Relatório de Análise de Defesa",
+    name="complementar.pdf",
+    content=None,
+    description="",
+):
+    return service.add_document(
+        reference_id,
+        {
+            "tipo": document_type,
+            "descricao": description,
+            "posicao": position,
+            "data_documento": None,
+        },
+        (name, content or _pdf(name.encode("ascii", errors="ignore"))),
+    )
+
+
 def test_repository_columns_match_idempotent_postgresql_schema():
     sql = (ROOT / "database" / "minutas_referencias.sql").read_text(
         encoding="utf-8"
@@ -163,6 +268,39 @@ def test_repository_columns_match_idempotent_postgresql_schema():
     assert declared == COLUMNS.split(",")
     assert "criado_em TEXT NOT NULL" in table
     assert "atualizado_em TEXT NOT NULL" in table
+
+
+def test_complement_repository_columns_match_additive_schema():
+    sql = (ROOT / "database" / "minutas_documentos_complementares.sql").read_text(
+        encoding="utf-8"
+    )
+    table = sql.split("CREATE TABLE IF NOT EXISTS", 1)[1].split(
+        "CREATE INDEX", 1
+    )[0]
+    declared = re.findall(
+        r"^    ([a-z_]+)\s+(?:UUID|TEXT|INTEGER|BIGINT|DATE)\b",
+        table,
+        re.MULTILINE,
+    )
+
+    assert declared == COMPLEMENT_COLUMNS.split(",")
+    assert "REFERENCES mpc_portarias.minutas_referencias(id)" in table
+    assert "DEFERRABLE INITIALLY DEFERRED" in table
+    assert re.search(
+        r"ALTER TABLE mpc_portarias\.minutas_documentos_complementares\s+"
+        r"ENABLE ROW LEVEL SECURITY;",
+        sql,
+        re.IGNORECASE,
+    )
+    assert re.search(
+        r"REVOKE ALL ON mpc_portarias\.minutas_documentos_complementares\s+"
+        r"FROM PUBLIC, anon, authenticated;",
+        sql,
+        re.IGNORECASE,
+    )
+    assert not re.search(
+        r"^\s*(?:UPDATE|DELETE|INSERT)\s", sql, re.IGNORECASE | re.MULTILINE
+    )
 
 
 def test_complete_registration_listing_and_document_recovery():
@@ -180,6 +318,224 @@ def test_complete_registration_listing_and_document_recovery():
     assert audit.content.startswith(b"%PDF-")
     assert opinion.content.startswith(b"%PDF-")
     assert len(storage.objects) == 2
+
+
+def test_multiple_complements_are_ordered_downloadable_and_reclassified():
+    service = _service()
+    created = _create(service)
+    second = _add_complement(
+        service,
+        created["id"],
+        position=2,
+        document_type="Cota Ministerial",
+        name="cota.docx",
+        content=_docx(),
+    )
+    first = _add_complement(service, created["id"], position=1)
+
+    assert [item["id"] for item in service.list_documents(created["id"])] == [
+        first["id"],
+        second["id"],
+    ]
+    assert service.download_document(created["id"], second["id"]).content.startswith(
+        b"PK"
+    )
+
+    updated = service.update_documents(
+        created["id"],
+        [
+            {
+                "id": first["id"],
+                "tipo": "Cota Ministerial",
+                "descricao": "",
+                "posicao": 2,
+                "data_documento": "2025-03-02",
+            },
+            {
+                "id": second["id"],
+                "tipo": COMPLEMENT_TYPES[-1],
+                "descricao": "Manifestação da unidade técnica",
+                "posicao": 1,
+                "data_documento": None,
+            },
+        ],
+    )
+
+    assert [item["id"] for item in updated] == [second["id"], first["id"]]
+    assert updated[0]["descricao"] == "Manifestação da unidade técnica"
+    assert updated[1]["data_documento"] == "2025-03-02"
+
+
+def test_adding_complement_preserves_all_existing_references_and_main_documents():
+    repository = FakeRepository()
+    storage = FakeStorage()
+    service = _service(repository, storage)
+    references = [
+        _create(service, f"TC 0000{number}/24") for number in range(1, 5)
+    ]
+    records_before = deepcopy(repository.records)
+    main_objects_before = deepcopy(storage.objects)
+
+    _add_complement(service, references[2]["id"])
+
+    assert repository.records == records_before
+    assert len(service.list()) == 4
+    assert all(storage.objects[path] == value for path, value in main_objects_before.items())
+
+
+@pytest.mark.parametrize(
+    "upload,message",
+    (
+        (("vazio.pdf", b""), "1 byte"),
+        (("grande.pdf", b"%PDF-" + b"x" * MAX_FILE), "10 MB"),
+        (("texto.txt", b"texto"), "PDF e DOCX"),
+        (("falso.pdf", b"invalid content"), "PDF inválido"),
+    ),
+)
+def test_invalid_complements_are_rejected_before_storage(upload, message):
+    repository = FakeRepository()
+    storage = FakeStorage()
+    service = _service(repository, storage)
+    created = _create(service)
+    storage.events.clear()
+
+    with pytest.raises(MinutasValidationError, match=message):
+        service.add_document(
+            created["id"],
+            {
+                "tipo": "Cota Ministerial",
+                "descricao": "",
+                "posicao": 1,
+                "data_documento": None,
+            },
+            upload,
+        )
+
+    assert storage.events == []
+
+
+def test_other_complement_requires_description_and_positions_are_unique():
+    service = _service()
+    created = _create(service)
+    with pytest.raises(MinutasValidationError, match="descrição"):
+        _add_complement(
+            service,
+            created["id"],
+            document_type=COMPLEMENT_TYPES[-1],
+        )
+    first = _add_complement(service, created["id"])
+    second = _add_complement(service, created["id"], position=2, name="cota.pdf")
+    with pytest.raises(MinutasValidationError, match="distinta"):
+        service.update_documents(
+            created["id"],
+            [
+                {**first, "posicao": 1},
+                {**second, "posicao": 1},
+            ],
+        )
+
+
+def test_complement_delete_requires_confirmation_and_restores_on_db_failure():
+    repository = FakeRepository()
+    storage = FakeStorage()
+    service = _service(repository, storage)
+    created = _create(service)
+    document = _add_complement(service, created["id"])
+    before = deepcopy(storage.objects)
+
+    with pytest.raises(MinutasValidationError, match="Confirme"):
+        service.delete_document(created["id"], document["id"])
+    repository.fail_document_delete = True
+    with pytest.raises(RuntimeError, match="database"):
+        service.delete_document(created["id"], document["id"], confirmed=True)
+    assert storage.objects == before
+    assert repository.get_document(document["id"]) == document
+
+    repository.fail_document_delete = False
+    service.delete_document(created["id"], document["id"], confirmed=True)
+    assert repository.get_document(document["id"]) is None
+    assert document["path"] not in storage.objects
+
+
+def test_complement_database_create_failure_removes_uploaded_object():
+    repository = FakeRepository()
+    storage = FakeStorage()
+    service = _service(repository, storage)
+    created = _create(service)
+    before = deepcopy(storage.objects)
+    repository.fail_document_create = True
+
+    with pytest.raises(RuntimeError, match="database"):
+        _add_complement(service, created["id"])
+
+    assert storage.objects == before
+    assert repository.documents == {}
+
+
+def test_sedh_reorganization_is_atomic_and_does_not_move_storage_objects():
+    repository = FakeRepository()
+    storage = FakeStorage()
+    service = _service(repository, storage)
+    created = _create(service, "TC 02650/25")
+    old_main_path = created["auditoria_path"]
+    original = _add_complement(service, created["id"], position=1)
+    cota = _add_complement(
+        service,
+        created["id"],
+        position=2,
+        document_type="Cota Ministerial",
+        name="cota.pdf",
+    )
+    objects_before = deepcopy(storage.objects)
+    storage.events.clear()
+
+    reference, documents = service.promote_document_to_primary(
+        created["id"],
+        original["id"],
+        {
+            "tipo": "Relatório de Complementação de Instrução",
+            "descricao": "",
+            "posicao": 3,
+            "data_documento": None,
+        },
+        confirmed=True,
+    )
+
+    assert reference["auditoria_path"] == original["path"]
+    assert [item["posicao"] for item in documents] == [2, 3]
+    assert documents[0]["id"] == cota["id"]
+    assert documents[1]["path"] == old_main_path
+    assert storage.objects == objects_before
+    assert storage.events == []
+
+
+def test_failed_sedh_reorganization_preserves_metadata_and_storage():
+    repository = FakeRepository()
+    storage = FakeStorage()
+    service = _service(repository, storage)
+    created = _create(service, "TC 02650/25")
+    original = _add_complement(service, created["id"])
+    records_before = deepcopy(repository.records)
+    documents_before = deepcopy(repository.documents)
+    objects_before = deepcopy(storage.objects)
+    repository.fail_promote = True
+
+    with pytest.raises(RuntimeError, match="database"):
+        service.promote_document_to_primary(
+            created["id"],
+            original["id"],
+            {
+                "tipo": "Relatório de Complementação de Instrução",
+                "descricao": "",
+                "posicao": 3,
+                "data_documento": None,
+            },
+            confirmed=True,
+        )
+
+    assert repository.records == records_before
+    assert repository.documents == documents_before
+    assert storage.objects == objects_before
 
 
 def test_duplicate_and_invalid_files_are_rejected_before_upload():
@@ -315,6 +671,28 @@ def test_failed_database_delete_restores_private_objects():
     assert repository.get(created["id"]) == created
 
 
+def test_reference_delete_includes_complements_and_restores_all_on_failure():
+    repository = FakeRepository()
+    storage = FakeStorage()
+    service = _service(repository, storage)
+    created = _create(service)
+    document = _add_complement(service, created["id"])
+    before = deepcopy(storage.objects)
+    repository.fail_delete = True
+
+    with pytest.raises(RuntimeError, match="database"):
+        service.delete(created["id"], confirmed=True)
+
+    assert storage.objects == before
+    assert repository.get_document(document["id"]) == document
+
+    repository.fail_delete = False
+    service.delete(created["id"], confirmed=True)
+    assert repository.get(created["id"]) is None
+    assert repository.get_document(document["id"]) is None
+    assert storage.objects == {}
+
+
 def test_partial_storage_delete_restores_already_removed_object():
     repository = FakeRepository()
     storage = FakeStorage()
@@ -331,7 +709,22 @@ def test_partial_storage_delete_restores_already_removed_object():
     assert repository.get(created["id"]) == created
 
 
-@pytest.mark.parametrize("operation", ("list", "get", "download", "replace", "delete"))
+@pytest.mark.parametrize(
+    "operation",
+    (
+        "list",
+        "get",
+        "download",
+        "replace",
+        "delete",
+        "list_documents",
+        "add_document",
+        "download_document",
+        "update_documents",
+        "delete_document",
+        "promote_document_to_primary",
+    ),
+)
 def test_direct_service_calls_deny_unauthorized_identity(operation):
     repository = FakeRepository()
     storage = FakeStorage()
@@ -343,6 +736,31 @@ def test_direct_service_calls_deny_unauthorized_identity(operation):
         "download": ("record", "auditoria"),
         "replace": ("record", "auditoria", ("file.pdf", _pdf())),
         "delete": ("record", True),
+        "list_documents": ("record",),
+        "add_document": (
+            "record",
+            {
+                "tipo": "Cota Ministerial",
+                "descricao": "",
+                "posicao": 1,
+                "data_documento": None,
+            },
+            ("file.pdf", _pdf()),
+        ),
+        "download_document": ("record", "document"),
+        "update_documents": ("record", []),
+        "delete_document": ("record", "document", True),
+        "promote_document_to_primary": (
+            "record",
+            "document",
+            {
+                "tipo": "Relatório de Complementação de Instrução",
+                "descricao": "",
+                "posicao": 1,
+                "data_documento": None,
+            },
+            True,
+        ),
     }
 
     with pytest.raises(MinutasAccessDenied):

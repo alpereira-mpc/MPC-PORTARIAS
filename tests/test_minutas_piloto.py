@@ -111,6 +111,61 @@ def test_configured_library_shows_phase_2a_fields(store, monkeypatch):
     assert any(item.label == "Cadastrar referência" for item in app.button)
 
 
+def test_registered_reference_renders_complement_section(store, monkeypatch):
+    from services import minutas_ia_ui
+
+    record = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "procuradora": "Elvira Samara",
+        "numero_processo": "TC 00001/24",
+        "exercicio": 2024,
+        "subtipo": "Prefeitura",
+        "auditoria_nome": "auditoria.pdf",
+        "auditoria_mime": "application/pdf",
+        "auditoria_tamanho": 100,
+        "auditoria_path": "referencias/auditoria.pdf",
+        "parecer_nome": "parecer.pdf",
+        "parecer_mime": "application/pdf",
+        "parecer_tamanho": 200,
+        "parecer_path": "referencias/parecer.pdf",
+    }
+
+    class Repository:
+        def __init__(self, _store):
+            pass
+
+        def list(self):
+            return [record]
+
+        def get(self, identifier):
+            return record if identifier == record["id"] else None
+
+        def list_documents(self, _identifier):
+            return []
+
+    class Storage:
+        @classmethod
+        def from_secrets(cls, _secrets):
+            return cls()
+
+    monkeypatch.setattr(minutas_ia_ui, "MinutasReferenciasStore", Repository)
+    monkeypatch.setattr(minutas_ia_ui, "SupabaseMinutasStorage", Storage)
+    secrets = {
+        "MINUTAS_PILOTO_ENABLED": True,
+        "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]],
+    }
+    app = _run_portal(store, monkeypatch, TEST_IDENTITY, secrets)
+    app.sidebar.radio(key="portal_module").set_value("Minutas IA").run()
+
+    assert not app.exception
+    labels = [item.label for item in app.file_uploader]
+    assert "Documento — PDF ou DOCX, até 10 MB *" in labels
+    assert any(item.label == "Adicionar documento" for item in app.button)
+    assert any(
+        "Nenhum documento complementar" in item.value for item in app.markdown
+    )
+
+
 def test_unauthorized_user_cannot_see_or_force_private_module(store, monkeypatch):
     identity = {**TEST_IDENTITY, "email": "outro@test.local", "name": "Outro usuário"}
     seed_access(store, email=identity["email"], nome=identity["name"])

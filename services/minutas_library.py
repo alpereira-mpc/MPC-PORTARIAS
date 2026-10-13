@@ -1,7 +1,7 @@
 """Authorized orchestration for the Minutas IA reference library."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import PurePath
 import re
 import uuid
@@ -20,6 +20,13 @@ SUBTIPOS = (
     "Secretaria Municipal ou Estadual",
 )
 DOCUMENT_KINDS = ("auditoria", "parecer")
+COMPLEMENT_TYPES = (
+    "Relatório de Análise de Defesa",
+    "Relatório de Complementação de Instrução",
+    "Cota Ministerial",
+    "Outros relatórios ou manifestações processuais",
+)
+OTHER_COMPLEMENT_TYPE = "Outros relatórios ou manifestações processuais"
 
 
 class MinutasAccessDenied(PermissionError):
@@ -74,6 +81,43 @@ def _validate_file(kind, upload):
     if kind == "auditoria" and mime != "application/pdf":
         raise MinutasValidationError("O Relatório da Auditoria deve ser PDF.")
     return {"name": safe_name, "mime": mime, "size": len(content), "content": content}
+
+
+def _validate_complement_metadata(values):
+    document_type = values.get("tipo")
+    if document_type not in COMPLEMENT_TYPES:
+        raise MinutasValidationError("Tipo de documento complementar inválido.")
+    description = " ".join(str(values.get("descricao") or "").strip().split())
+    if document_type == OTHER_COMPLEMENT_TYPE and not description:
+        raise MinutasValidationError(
+            "Informe uma descrição para outros relatórios ou manifestações."
+        )
+    try:
+        position = int(values.get("posicao"))
+    except (TypeError, ValueError) as exc:
+        raise MinutasValidationError("Informe uma posição cronológica válida.") from exc
+    if position < 1:
+        raise MinutasValidationError("Informe uma posição cronológica válida.")
+    document_date = values.get("data_documento")
+    if document_date in (None, ""):
+        normalized_date = None
+    else:
+        try:
+            if isinstance(document_date, datetime):
+                document_date = document_date.date()
+            normalized_date = (
+                document_date.isoformat()
+                if isinstance(document_date, date)
+                else date.fromisoformat(str(document_date)).isoformat()
+            )
+        except (TypeError, ValueError) as exc:
+            raise MinutasValidationError("Informe uma data válida.") from exc
+    return {
+        "tipo": document_type,
+        "descricao": description,
+        "posicao": position,
+        "data_documento": normalized_date,
+    }
 
 
 class MinutasLibraryService:
@@ -173,6 +217,128 @@ class MinutasLibraryService:
         content = self.storage.download(record[f"{kind}_path"])
         return Download(record[f"{kind}_nome"], record[f"{kind}_mime"], content)
 
+    def list_documents(self, identifier):
+        self._authorize()
+        self.get(identifier)
+        return self.repository.list_documents(identifier)
+
+    def add_document(self, identifier, values, upload):
+        actor = self._authorize()
+        self.get(identifier)
+        metadata = _validate_complement_metadata(values)
+        if upload is None:
+            raise MinutasValidationError("Selecione o documento complementar.")
+        document = _validate_file("parecer", upload)
+        document["path"] = self._path(identifier, "complementares", document["name"])
+        try:
+            self.storage.upload(
+                document["path"], document["content"], document["mime"]
+            )
+        except Exception:
+            try:
+                self.storage.delete(document["path"])
+            except Exception:
+                pass
+            raise
+        stamp = now()
+        record = {
+            "id": str(uuid.uuid4()),
+            "referencia_id": identifier,
+            **metadata,
+            "nome": document["name"],
+            "mime": document["mime"],
+            "tamanho": document["size"],
+            "path": document["path"],
+            "criado_em": stamp,
+            "criado_por": actor,
+            "atualizado_em": stamp,
+            "atualizado_por": actor,
+        }
+        try:
+            return self.repository.create_document(record)
+        except Exception as exc:
+            try:
+                self.storage.delete(document["path"])
+            except Exception:
+                pass
+            if "unique" in str(exc).casefold():
+                raise MinutasValidationError(
+                    "Já existe um documento nessa posição cronológica."
+                ) from exc
+            raise
+
+    def download_document(self, identifier, document_id):
+        self._authorize()
+        self.get(identifier)
+        document = self.repository.get_document(document_id)
+        if not document or str(document["referencia_id"]) != str(identifier):
+            raise MinutasValidationError("Documento complementar não encontrado.")
+        content = self.storage.download(document["path"])
+        return Download(document["nome"], document["mime"], content)
+
+    def update_documents(self, identifier, documents):
+        actor = self._authorize()
+        self.get(identifier)
+        current = self.repository.list_documents(identifier)
+        current_ids = {str(document["id"]) for document in current}
+        submitted_ids = {str(document.get("id")) for document in documents}
+        if current_ids != submitted_ids or len(documents) != len(current_ids):
+            raise MinutasValidationError("A relação de documentos foi alterada.")
+        normalized = []
+        for document in documents:
+            normalized.append(
+                {"id": str(document["id"]), **_validate_complement_metadata(document)}
+            )
+        positions = [document["posicao"] for document in normalized]
+        if len(positions) != len(set(positions)):
+            raise MinutasValidationError(
+                "Cada documento deve ter uma posição cronológica distinta."
+            )
+        return self.repository.update_documents(identifier, normalized, actor)
+
+    def delete_document(self, identifier, document_id, confirmed=False):
+        self._authorize()
+        if confirmed is not True:
+            raise MinutasValidationError("Confirme a exclusão do documento.")
+        self.get(identifier)
+        document = self.repository.get_document(document_id)
+        if not document or str(document["referencia_id"]) != str(identifier):
+            raise MinutasValidationError("Documento complementar não encontrado.")
+        snapshot = self.storage.download(document["path"])
+        try:
+            self.storage.delete(document["path"])
+            self.repository.delete_document(document_id, identifier)
+        except Exception:
+            try:
+                self.storage.upload(document["path"], snapshot, document["mime"])
+            except Exception:
+                pass
+            raise
+
+    def promote_document_to_primary(
+        self, identifier, document_id, displaced_values, confirmed=False
+    ):
+        actor = self._authorize()
+        if confirmed is not True:
+            raise MinutasValidationError("Confirme a reorganização dos documentos.")
+        self.get(identifier)
+        selected = self.repository.get_document(document_id)
+        if not selected or str(selected["referencia_id"]) != str(identifier):
+            raise MinutasValidationError("Documento complementar não encontrado.")
+        if selected["tipo"] != "Relatório de Análise de Defesa":
+            raise MinutasValidationError(
+                "Selecione o Relatório de Análise de Defesa original."
+            )
+        if selected["mime"] != "application/pdf":
+            raise MinutasValidationError("O Relatório da Auditoria deve ser PDF.")
+        displaced = {
+            "id": str(uuid.uuid4()),
+            **_validate_complement_metadata(displaced_values),
+        }
+        return self.repository.promote_document(
+            identifier, document_id, displaced, actor
+        )
+
     def replace(self, identifier, kind, upload):
         actor = self._authorize()
         if kind not in DOCUMENT_KINDS:
@@ -214,24 +380,31 @@ class MinutasLibraryService:
         if confirmed is not True:
             raise MinutasValidationError("Confirme a exclusão da referência.")
         record = self.get(identifier)
-        snapshots = {
-            kind: self.storage.download(record[f"{kind}_path"])
+        complementary = self.repository.list_documents(identifier)
+        stored = [
+            {
+                "path": record[f"{kind}_path"],
+                "mime": record[f"{kind}_mime"],
+            }
             for kind in DOCUMENT_KINDS
+        ] + [
+            {"path": document["path"], "mime": document["mime"]}
+            for document in complementary
+        ]
+        snapshots = {
+            item["path"]: self.storage.download(item["path"]) for item in stored
         }
         removed = []
         try:
-            for kind in DOCUMENT_KINDS:
-                path = record[f"{kind}_path"]
-                removed.append(kind)
-                self.storage.delete(path)
+            for item in stored:
+                removed.append(item)
+                self.storage.delete(item["path"])
             self.repository.delete(identifier)
         except Exception:
-            for kind in removed:
+            for item in removed:
                 try:
                     self.storage.upload(
-                        record[f"{kind}_path"],
-                        snapshots[kind],
-                        record[f"{kind}_mime"],
+                        item["path"], snapshots[item["path"]], item["mime"]
                     )
                 except Exception:
                     pass
