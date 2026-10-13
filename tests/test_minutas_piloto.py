@@ -149,7 +149,9 @@ def test_registered_reference_uses_compact_document_flow(store, monkeypatch):
         "tipo": "Relatório da Auditoria",
         "status": "PROCESSADO",
         "texto_integral": "Texto integral da auditoria",
-        "unidades_json": '[{"pagina": 1, "texto": "Texto da página 1"}]',
+        "unidades_json": (
+            '[{"pagina": 1, "texto": "Texto da página 1\\nSegunda linha"}]'
+        ),
         "secoes_json": "[]",
         "erro": "",
     }
@@ -210,9 +212,13 @@ def test_registered_reference_uses_compact_document_flow(store, monkeypatch):
 
     assert not app.exception
     assert app.selectbox(key=f"minutas_extract_page_{record['id']}_auditoria")
-    assert any(
-        "Texto da página 1" in item.value for item in app.text_area
+    extracted_text = next(
+        item for item in app.code if "Texto da página 1" in item.value
     )
+    assert extracted_text.value == "Texto da página 1\nSegunda linha"
+    assert extracted_text.proto.language == "plaintext"
+    assert extracted_text.proto.wrap_lines is True
+    assert not app.text_area
     app.button(key=f"minutas_extract_view_close_{record['id']}_auditoria").click().run()
     app.run()
 

@@ -230,21 +230,21 @@ def _extraction_panel(extractor, record, path, document_key):
                 text = next(
                     unit["texto"] for unit in units if unit["pagina"] == page
                 )
-                st.text_area(
-                    f"Conteúdo da página {page}",
-                    value=text,
+                st.markdown(f"**Conteúdo da página {page}**")
+                st.code(
+                    text,
+                    language=None,
+                    wrap_lines=True,
                     height=280,
-                    disabled=True,
-                    key=f"minutas_extract_text_{document_key}_{page}",
                 )
         else:
             st.caption("Documento DOCX: a origem é textual e não possui paginação.")
-            st.text_area(
-                "Conteúdo extraído",
-                value=extraction["texto_integral"],
+            st.markdown("**Conteúdo extraído**")
+            st.code(
+                extraction["texto_integral"],
+                language=None,
+                wrap_lines=True,
                 height=280,
-                disabled=True,
-                key=f"minutas_extract_text_{document_key}",
             )
         if extraction["secoes"]:
             names = ", ".join(
