@@ -7,6 +7,7 @@ from streamlit.testing.v1 import AppTest
 from services import ai_service
 from services.minutas_generation import (
     HISTORICAL_TEST_PROCESS_KEY,
+    HISTORICAL_TEST_PROCESS_KEYS,
     MinutasGenerationError,
     MinutasGenerationService,
     _canonical_process_key,
@@ -320,7 +321,7 @@ def test_taperoa_equivalent_formats_are_found_and_accepted(display, stored_key):
         Library([target, history, other], rows), generate=lambda _context: {}
     )
 
-    assert service.targets() == [target]
+    assert target in service.targets()
     assert service.prepare_context(target["id"])["contexto"]["processo_alvo"][
         "numero"
     ] == display
@@ -342,8 +343,25 @@ def test_other_processes_are_strictly_rejected(value):
     service = MinutasGenerationService(Library([target], []))
 
     assert service.targets() == []
-    with pytest.raises(MinutasGenerationError, match="somente o processo histórico"):
+    with pytest.raises(MinutasGenerationError, match="não está habilitado"):
         service.prepare_context(target["id"])
+
+
+@pytest.mark.parametrize(
+    ("display", "stored_key"),
+    (
+        ("01653/26", "tc0165326"),
+        ("TC 02720/25", "0272025"),
+        ("TC-01499/26", "tc0149926"),
+        ("Processo TC 02650/25", "processotc0265025"),
+    ),
+)
+def test_all_cross_validation_processes_are_canonically_enabled(display, stored_key):
+    target = _record("enabled", display, stored_key)
+    service = MinutasGenerationService(Library([target], []))
+
+    assert _canonical_process_key(display) in HISTORICAL_TEST_PROCESS_KEYS
+    assert service.targets() == [target]
 
 
 def test_clean_text_removes_only_specific_validation_lines():
@@ -432,19 +450,124 @@ def test_context_uses_target_instruction_and_excludes_contamination():
     assert library.repository.queries == [target["procuradora_chave"]]
 
 
+@pytest.mark.parametrize(
+    "target_key", sorted(HISTORICAL_TEST_PROCESS_KEYS)
+)
+def test_each_cross_validation_target_excludes_its_opinion_and_preserves_chronology(
+    target_key,
+):
+    process_numbers = {
+        "0165326": "TC 01653/26",
+        "0272025": "TC 02720/25",
+        "0149926": "TC 01499/26",
+        "0265025": "TC 02650/25",
+    }
+    records = [
+        _record(f"process-{key}", number, key)
+        for key, number in process_numbers.items()
+    ]
+    rows = []
+    for record in records:
+        rows.extend(
+            (
+                _row(record, "auditoria", f"Auditoria {record['numero_processo']}"),
+                _row(
+                    record,
+                    "complementar",
+                    f"Primeira etapa complementar {record['numero_processo']}",
+                    position=1,
+                ),
+                _row(
+                    record,
+                    "complementar",
+                    f"Segunda etapa complementar {record['numero_processo']}",
+                    position=2,
+                ),
+                _row(
+                    record,
+                    "parecer",
+                    f"Parecer reservado {record['numero_processo']}",
+                    file_hash=f"opinion-{_canonical_process_key(record['numero_processo'])}",
+                ),
+            )
+        )
+    target = next(
+        record
+        for record in records
+        if _canonical_process_key(record["numero_processo"]) == target_key
+    )
+    target_opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "parecer"
+    )
+    duplicate_record = next(record for record in records if record is not target)
+    duplicate_opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == duplicate_record["id"]
+        and row["papel"] == "parecer"
+    )
+    duplicate_opinion.update(
+        arquivo_sha256=target_opinion["arquivo_sha256"],
+        texto_integral=target_opinion["texto_integral"],
+        unidades_json=target_opinion["unidades_json"],
+    )
+    library = Library(records, rows)
+    service = MinutasGenerationService(library)
+
+    analysis_context = service.prepare_analysis_context(target["id"])["contexto"]
+    drafting = service.prepare_context(target["id"])
+    serialized_analysis = json.dumps(analysis_context, ensure_ascii=False)
+    serialized_drafting = json.dumps(drafting["contexto"], ensure_ascii=False)
+    target_sources = drafting["contexto"]["documentos_processo_alvo"]
+    historical_processes = {
+        item["processo"]
+        for item in drafting["contexto"]["referencias_historicas"]
+    }
+
+    assert {
+        _canonical_process_key(record["numero_processo"])
+        for record in service.targets()
+    } == HISTORICAL_TEST_PROCESS_KEYS
+    assert drafting["contexto"]["processo_alvo"]["numero"] == target["numero_processo"]
+    assert [source["papel"] for source in target_sources] == [
+        "auditoria", "complementar", "complementar"
+    ]
+    assert [source["ordem_processual"] for source in target_sources] == [0, 1, 2]
+    assert [source["etapa_processual"] for source in target_sources] == [
+        "Relatório da Auditoria",
+        "Relatório de Análise de Defesa",
+        "Relatório de Análise de Defesa",
+    ]
+    assert target_opinion["texto_integral"] not in serialized_analysis
+    assert target_opinion["texto_integral"] not in serialized_drafting
+    assert target["numero_processo"] not in historical_processes
+    assert duplicate_record["numero_processo"] not in historical_processes
+    assert historical_processes == {
+        record["numero_processo"]
+        for record in records
+        if record["id"] not in {target["id"], duplicate_record["id"]}
+    }
+    assert all(
+        set(reference) == {"processo", "exercicio", "subtipo", "uso", "parecer"}
+        for reference in drafting["contexto"]["referencias_historicas"]
+    )
+
+
 def test_reference_selection_combines_subtype_and_analysis_theme():
     target, _history, _other, base_rows = _scenario()
     same_subtype = _record(
         "history-same-subtype",
-        "TC 01001/25",
-        "0100125",
+        "TC 01499/26",
+        "0149926",
         subtype=target["subtipo"],
     )
     same_theme = _record(
-        "history-same-theme", "TC 01002/25", "0100225", subtype="Prefeitura"
+        "history-same-theme", "TC 02650/25", "0265025", subtype="Prefeitura"
     )
     unrelated = _record(
-        "history-unrelated", "TC 01003/25", "0100325", subtype="Prefeitura"
+        "history-unrelated", "TC 02720/25", "0272025", subtype="Prefeitura"
     )
     rows = [*base_rows[:3]]
     rows.extend(
@@ -471,13 +594,13 @@ def test_reference_selection_combines_subtype_and_analysis_theme():
     assert [
         item["processo"] for item in prepared["contexto"]["referencias_historicas"]
     ] == [same_subtype["numero_processo"], same_theme["numero_processo"]]
-    assert prepared["relatorios_historicos"] == 1
+    assert prepared["relatorios_historicos"] == 0
 
 
 def test_historical_reference_requires_current_processed_linked_extraction():
     target, outdated, other, rows = _scenario()
     valid = _record(
-        "history-valid", "TC 01004/25", "0100425", subtype=target["subtipo"]
+        "history-valid", "TC 01499/26", "0149926", subtype=target["subtipo"]
     )
     outdated_opinion = next(
         row
@@ -1281,6 +1404,9 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
                 "fontes_versao": revision["value"],
                 "fontes_utilizadas": ["TC 01653/26 — Relatório da Auditoria"],
                 "omitidas_por_limite": [],
+                "advertencias_qualidade": [
+                    "Divergência jurídica sujeita à revisão humana."
+                ],
             }
 
     monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args: object())
@@ -1305,6 +1431,13 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     assert generation_calls == [TARGET_ID]
     assert any("Conteúdo para revisão" in item.value for item in app.markdown)
     assert any("Conteúdo para revisão" in item.value for item in app.code)
+    assert any(
+        "Geração concluída, com insuficiência jurídica potencial" in item.value
+        for item in app.warning
+    )
+    assert any(
+        "Divergência jurídica sujeita" in item.value for item in app.warning
+    )
 
     app.run()
     assert analysis_calls == [TARGET_ID]

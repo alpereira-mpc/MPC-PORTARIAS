@@ -12,9 +12,11 @@ from services.minutas_library import MinutasValidationError, PROCURADORA
 
 
 HISTORICAL_TEST_PROCESS_KEY = "0165326"
+HISTORICAL_TEST_PROCESS_KEYS = frozenset(
+    {HISTORICAL_TEST_PROCESS_KEY, "0272025", "0149926", "0265025"}
+)
 MAX_CONTEXT_BYTES = ai_service.MINUTA_MAX_CONTEXT_BYTES
 MAX_HISTORICAL_REFERENCES = 3
-MAX_HISTORICAL_AUDITS = 1
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
     re.compile(r"^(?:codigo|código)\s+verificador\s*[:#-]\s*\S+.*$"),
@@ -106,7 +108,7 @@ def _is_historical_test_process(record):
         for field in ("processo_chave", "numero_processo")
         if (key := _canonical_process_key(record.get(field)))
     }
-    return keys == {HISTORICAL_TEST_PROCESS_KEY}
+    return len(keys) == 1 and keys.issubset(HISTORICAL_TEST_PROCESS_KEYS)
 
 
 def _terms(value):
@@ -281,7 +283,7 @@ class MinutasGenerationService:
     def _validate_target(target):
         if not _is_historical_test_process(target):
             raise MinutasGenerationError(
-                "Nesta fase, somente o processo histórico de Taperoá está habilitado."
+                "O processo selecionado não está habilitado para a validação cruzada."
             )
         if target.get("procuradora") != PROCURADORA:
             raise MinutasGenerationError("Procuradora não autorizada para este teste.")
@@ -292,12 +294,20 @@ class MinutasGenerationService:
             record
             for record in self.library.list()
             if record.get("procuradora_chave") == target["procuradora_chave"]
+            and _is_historical_test_process(record)
         ]
         records = {str(record["id"]): record for record in records_list}
         inventory = self.library.repository.list_extraction_inventory_by_procuradora(
             target["procuradora_chave"]
         )
         by_path = {row["arquivo_path"]: row for row in inventory}
+        target_opinion_hashes = {
+            str(row.get("arquivo_sha256"))
+            for row in inventory
+            if str(row.get("referencia_id")) == str(target["id"])
+            and row.get("papel") == "parecer"
+            and row.get("arquivo_sha256")
+        }
         required = [
             document
             for document in self.extractor._documents(target)
@@ -331,6 +341,7 @@ class MinutasGenerationService:
             and row.get("papel") == "parecer"
             and row.get("status") == "PROCESSADO"
             and row.get("extrator_versao") == EXTRACTOR_VERSION
+            and str(row.get("arquivo_sha256") or "") not in target_opinion_hashes
             and str(row["referencia_id"]) in records
             and self._valid_extraction_row(
                 row, records[str(row["referencia_id"])]
@@ -362,13 +373,18 @@ class MinutasGenerationService:
             "fontes_alvo_previstas": len(required),
             "referencias_historicas_disponiveis": len(historical_ids),
             "fontes_versao": revision,
+            "_parecer_alvo_hashes": target_opinion_hashes,
         }
 
     def source_summary(self, target_reference_id):
         self.library._authorize()
         target = self.library.get(target_reference_id)
         state = self._source_state(target)
-        return {key: value for key, value in state.items() if key != "records"}
+        return {
+            key: value
+            for key, value in state.items()
+            if key != "records" and not key.startswith("_")
+        }
 
     def _source(self, row, record):
         content = _source_text(row)
@@ -384,6 +400,8 @@ class MinutasGenerationService:
             "papel": row["papel"],
             "tipo": row["tipo"],
             "arquivo": row["arquivo_nome"],
+            "ordem_processual": int(row.get("posicao") or 0),
+            "etapa_processual": row["tipo"],
             "conteudo": content,
         }
 
@@ -438,6 +456,8 @@ class MinutasGenerationService:
                 row
                 for row in grouped.get(str(target_reference_id), [])
                 if row["papel"] in {"auditoria", "complementar"}
+                and str(row.get("arquivo_sha256") or "")
+                not in state["_parecer_alvo_hashes"]
                 and self._valid_extraction_row(row, target)
             ),
             key=lambda row: (
@@ -453,7 +473,8 @@ class MinutasGenerationService:
         ]
         if not any(source["papel"] == "auditoria" for source in target_sources):
             raise MinutasGenerationError(
-                "O relatório da Auditoria de Taperoá não possui extração processada."
+                "O relatório da Auditoria do processo selecionado não possui "
+                "extração processada."
             )
 
         return target, state, rows, grouped, target_sources
@@ -497,13 +518,18 @@ class MinutasGenerationService:
         theme_terms = _terms(analysis_text) if analysis else target_terms
         candidates = []
         for reference_id, source_rows in grouped.items():
-            if reference_id == str(target_reference_id):
+            if (
+                reference_id == str(target_reference_id)
+                or reference_id not in records
+            ):
                 continue
             record = records[reference_id]
             source_rows = [
                 row
                 for row in source_rows
                 if self._valid_extraction_row(row, record)
+                and str(row.get("arquivo_sha256") or "")
+                not in state["_parecer_alvo_hashes"]
             ]
             opinions = [row for row in source_rows if row["papel"] == "parecer"]
             if not opinions:
@@ -595,39 +621,6 @@ class MinutasGenerationService:
                 omitted.append(
                     f"Parecer histórico {candidate['record']['numero_processo']}"
                 )
-        selected_by_process = {
-            item["processo"]: item for item in context["referencias_historicas"]
-        }
-        historical_audits = 0
-        for candidate in candidates:
-            audit = candidate["auditoria"]
-            reference = selected_by_process.get(candidate["record"]["numero_processo"])
-            if (
-                audit is None
-                or reference is None
-                or historical_audits >= MAX_HISTORICAL_AUDITS
-                or (
-                    candidate["pertinencia_tematica"] == 0
-                    and candidate["similaridade_documental"] == 0
-                    and candidate["record"]["subtipo"] != target["subtipo"]
-                )
-            ):
-                continue
-            proposed_reference = {**reference, "relatorio_auditoria": audit}
-            proposed_history = [
-                proposed_reference if item is reference else item
-                for item in context["referencias_historicas"]
-            ]
-            proposed = {**context, "referencias_historicas": proposed_history}
-            if _serialized_size(proposed) <= MAX_CONTEXT_BYTES:
-                context = proposed
-                selected_by_process[reference["processo"]] = proposed_reference
-                historical_audits += 1
-            else:
-                omitted.append(
-                    f"Relatório histórico {candidate['record']['numero_processo']}"
-                )
-
         context_bytes = _serialized_size(context)
         used_sources = [
             f"{source['processo']} — {source['tipo']} ({source['arquivo']})"
@@ -638,19 +631,12 @@ class MinutasGenerationService:
             used_sources.append(
                 f"{reference['processo']} — {opinion['tipo']} ({opinion['arquivo']})"
             )
-            if audit := reference.get("relatorio_auditoria"):
-                used_sources.append(
-                    f"{reference['processo']} — {audit['tipo']} ({audit['arquivo']})"
-                )
         return {
             "contexto": context,
             "contexto_bytes": context_bytes,
             "fontes_alvo": len(target_sources),
             "referencias_historicas": len(context["referencias_historicas"]),
-            "relatorios_historicos": sum(
-                "relatorio_auditoria" in item
-                for item in context["referencias_historicas"]
-            ),
+            "relatorios_historicos": 0,
             "omitidas_por_limite": omitted,
             "fontes_versao": state["fontes_versao"],
             "fontes_utilizadas": used_sources,

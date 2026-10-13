@@ -1033,7 +1033,8 @@ def _generator_tab(store, identity):
         return
     if not targets:
         empty_state(
-            "O processo histórico de Taperoá não está disponível nesta biblioteca."
+            "Nenhum dos processos habilitados para validação cruzada está "
+            "disponível nesta biblioteca."
         )
         return
 
@@ -1061,7 +1062,7 @@ def _generator_tab(store, identity):
             f"{summary['referencias_historicas_disponiveis']}"
         )
         st.success(
-            "Barreira de contaminação ativa: o parecer definitivo de Taperoá, "
+            "Barreira de contaminação ativa: o parecer definitivo do processo-alvo, "
             "seus hashes e duplicatas integrais foram excluídos no backend."
         )
         if summary["issues"]:
@@ -1140,7 +1141,18 @@ def _generator_tab(store, identity):
         "sem caráter de manifestação oficial."
     )
     section_label("Minuta gerada")
-    for warning in result.get("advertencias_qualidade") or ():
+    quality_warnings = result.get("advertencias_qualidade") or ()
+    if quality_warnings:
+        st.warning(
+            "Geração concluída, com insuficiência jurídica potencial detectada "
+            "para revisão humana."
+        )
+    else:
+        st.success(
+            "Geração concluída sem advertências determinísticas de insuficiência "
+            "jurídica. A revisão humana permanece obrigatória."
+        )
+    for warning in quality_warnings:
         st.warning(warning)
     with st.container(border=True):
         st.markdown(result["texto"])
