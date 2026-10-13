@@ -776,6 +776,10 @@ def test_analysis_marks_excerpt_copied_from_another_page():
     assert result["pendencias_conferencia"][0]["natureza"] == (
         "trecho não localizado na página indicada"
     )
+    diagnostic = result["diagnostico_conferencia"][0]
+    assert diagnostic["trecho_suporte"] == second_page
+    assert diagnostic["texto_pagina"] == first_page
+    assert diagnostic["correspondencias_em_outras_paginas"] == [2]
 
 
 def test_analysis_marks_defense_allegation_classified_as_documented_fact():
@@ -1136,6 +1140,8 @@ def test_analysis_recovers_traced_legal_references_with_deduplication_and_limits
     assert recovery["estado"] == "CONCLUIDA"
     assert recovery["pareceres"] == 1
     assert len(recovery["trechos"]) == 2
+    assert recovery["resultados_retornados"] > len(recovery["trechos"])
+    assert recovery["descartes"]["duplicacao"] > 0
     assert all(item["pagina"] in {1, 2} for item in recovery["trechos"])
     assert all(len(item["trecho_literal"]) <= 1600 for item in recovery["trechos"])
     assert calls and len(calls) <= 3
@@ -1172,6 +1178,9 @@ def test_rag_excludes_text_equivalent_target_opinion_with_different_binary_hash(
 
     assert analyzed["recuperacao_juridica"]["estado"] == "SEM_RESULTADOS"
     assert analyzed["recuperacao_juridica"]["trechos"] == []
+    assert "barreiras documentais" in (
+        analyzed["recuperacao_juridica"]["motivo_ausencia"]
+    )
     assert target_opinion["texto_integral"] not in json.dumps(
         analyzed, ensure_ascii=False
     )
@@ -1248,6 +1257,7 @@ def test_generation_continues_when_legal_search_finds_no_precedent():
     result = service.generate(target["id"], analyzed, use_rag=True)
 
     assert analyzed["recuperacao_juridica"]["estado"] == "SEM_RESULTADOS"
+    assert "lexical" in analyzed["recuperacao_juridica"]["motivo_ausencia"]
     assert result["referencias_juridicas_enviadas"] == 0
     assert result["texto"]
 
@@ -1296,6 +1306,8 @@ def test_generation_revalidates_authorization_and_source_revision():
     library.authorized = False
     with pytest.raises(MinutasAccessDenied):
         service.generate(target["id"], analyzed)
+    with pytest.raises(MinutasAccessDenied):
+        service.pilot_diagnostics(target["id"], analyzed)
     library.authorized = True
 
     rows[0]["atualizado_em"] = "2026-10-13T11:00:00+00:00"
@@ -1603,6 +1615,9 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
                 "fontes_versao": revision["value"],
             }
 
+        def pilot_diagnostics(self, _identifier, _analyzed):
+            return {"disponivel": False}
+
         def generate(self, identifier, analyzed, use_rag=True):
             assert analyzed["fontes_versao"] == revision["value"]
             generation_calls.append((identifier, use_rag))
@@ -1639,6 +1654,10 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     app.button(key=f"minutas_analysis_submit_{TARGET_ID}").click().run()
     assert analysis_calls == [TARGET_ID]
     assert generation_calls == []
+    assert any(
+        "Execute novamente Analisar fundamentos" in item.value
+        for item in app.info
+    )
 
     app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
     assert generation_calls == [(TARGET_ID, True)]
@@ -1709,6 +1728,47 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
                 "fontes_versao": "revision-pending",
             }
 
+        def pilot_diagnostics(self, identifier, _analyzed):
+            assert identifier == TARGET_ID
+            return {
+                "disponivel": True,
+                "conferencia_documental": [
+                    {
+                        "irregularidade": "IRR-2",
+                        "campo": "Fato documentado",
+                        "documento": "auditoria.pdf",
+                        "pagina": 4,
+                        "trecho_suporte": "Citação literal não localizada.",
+                        "texto_pagina": "Texto integral extraído da página quatro.",
+                        "correspondencias_em_outras_paginas": [5],
+                        "motivo": "trecho não localizado na página indicada",
+                        "bloqueante": True,
+                    }
+                ],
+                "recuperacao_juridica": {
+                    "estado": "SEM_RESULTADOS",
+                    "consultas": [
+                        {
+                            "consulta": "contribuição previdenciária recolhimento",
+                            "irregularidade_id": "IRR-2",
+                            "materia": "Contribuições previdenciárias",
+                            "resultados_retornados": 0,
+                            "descartados": {
+                                "barreira_documental": 0,
+                                "duplicacao": 0,
+                                "sem_trecho": 0,
+                            },
+                        }
+                    ],
+                    "trechos": [],
+                    "resultados_retornados": 0,
+                    "motivo_ausencia": (
+                        "A pesquisa lexical não retornou ocorrências para as "
+                        "consultas construídas."
+                    ),
+                },
+            }
+
         def generate(self, *_args):
             generation_calls.append(True)
 
@@ -1728,5 +1788,21 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
     assert "IRR-2" in warning_text
     assert "auditoria.pdf, p. 4" in warning_text
     assert "trecho não localizado" in warning_text
+    diagnostic_text = "\n".join(
+        [item.value for item in app.markdown]
+        + [item.value for item in app.caption]
+        + [item.value for item in app.info]
+    )
+    assert "Diagnóstico técnico do piloto" in [item.label for item in app.expander]
+    assert "contribuição previdenciária recolhimento" in diagnostic_text
+    assert "resultados retornados: 0" in diagnostic_text
+    assert any(
+        "Citação literal não localizada." in item.value for item in app.code
+    )
+    assert any(
+        "Texto integral extraído da página quatro." in item.value
+        for item in app.code
+    )
+    assert any("página(s) 5" in item.value for item in app.warning)
     assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is True
     assert generation_calls == []

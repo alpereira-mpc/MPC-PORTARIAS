@@ -582,7 +582,24 @@ class MinutasGenerationService:
                 "consultas": [],
                 "trechos": [],
                 "pareceres": 0,
+                "resultados_retornados": 0,
+                "descartes": {},
+                "motivo_ausencia": (
+                    "A análise não produziu termos discriminativos para pesquisa."
+                ),
             }
+        diagnostic_queries = [
+            {
+                **query,
+                "resultados_retornados": 0,
+                "descartados": {
+                    "barreira_documental": 0,
+                    "duplicacao": 0,
+                    "sem_trecho": 0,
+                },
+            }
+            for query in queries
+        ]
         allowed_rows = self.extractor.context_sources(target_reference_id)
         allowed_by_path = {
             row["arquivo_path"]: row
@@ -598,7 +615,7 @@ class MinutasGenerationService:
         } if target_opinion and target_opinion.get("arquivo_sha256") else set()
         candidates = {}
         try:
-            for query in queries:
+            for query in diagnostic_queries:
                 search_method = (
                     self.search
                     if callable(self.search)
@@ -612,7 +629,9 @@ class MinutasGenerationService:
                     exclude_paths=(target["parecer_path"],),
                     exclude_hashes=excluded_hashes,
                 )
-                for item in response.get("resultados", []):
+                results = list(response.get("resultados", []))
+                query["resultados_retornados"] = len(results)
+                for item in results:
                     source = allowed_by_path.get(item.get("arquivo_path"))
                     if (
                         source is None
@@ -621,11 +640,13 @@ class MinutasGenerationService:
                         or source.get("arquivo_sha256")
                         != item.get("sha256_registrado")
                     ):
+                        query["descartados"]["barreira_documental"] += 1
                         continue
                     passage = str(
                         item.get("contexto") or item.get("trecho") or ""
                     ).replace("【", "").replace("】", "").strip()
                     if not passage:
+                        query["descartados"]["sem_trecho"] += 1
                         continue
                     passage = passage[:MAX_RAG_PASSAGE_CHARS]
                     fingerprint = sha256(
@@ -633,6 +654,7 @@ class MinutasGenerationService:
                     ).hexdigest()
                     existing = candidates.get(fingerprint)
                     if existing:
+                        query["descartados"]["duplicacao"] += 1
                         if query["materia"] not in existing["materias"]:
                             existing["materias"].append(query["materia"])
                         if (
@@ -664,13 +686,18 @@ class MinutasGenerationService:
                         "relevancia": float(item.get("relevancia") or 0),
                         "natureza": "manifestação histórica não vinculante",
                     }
-        except Exception as exc:
+        except Exception:
             return {
                 "estado": "INDISPONIVEL",
-                "consultas": queries,
+                "consultas": diagnostic_queries,
                 "trechos": [],
                 "pareceres": 0,
-                "aviso": f"Pesquisa jurídica indisponível: {exc}",
+                "resultados_retornados": sum(
+                    item["resultados_retornados"] for item in diagnostic_queries
+                ),
+                "descartes": {},
+                "motivo_ausencia": "A pesquisa jurídica ficou indisponível.",
+                "aviso": "Pesquisa jurídica indisponível nesta execução.",
             }
 
         selected = []
@@ -684,11 +711,36 @@ class MinutasGenerationService:
             per_opinion[candidate["referencia_id"]] += 1
             if len(selected) >= MAX_RAG_PASSAGES:
                 break
+        returned = sum(
+            item["resultados_retornados"] for item in diagnostic_queries
+        )
+        discards = {
+            key: sum(item["descartados"][key] for item in diagnostic_queries)
+            for key in ("barreira_documental", "duplicacao", "sem_trecho")
+        }
+        if selected:
+            absence_reason = ""
+        elif returned == 0:
+            absence_reason = (
+                "A pesquisa lexical não retornou ocorrências para as consultas construídas."
+            )
+        elif discards["barreira_documental"] == returned:
+            absence_reason = (
+                "As ocorrências retornadas foram excluídas pelas barreiras documentais."
+            )
+        else:
+            absence_reason = (
+                "Nenhuma ocorrência retornada permaneceu elegível após deduplicação "
+                "e validação documental."
+            )
         return {
             "estado": "CONCLUIDA" if selected else "SEM_RESULTADOS",
-            "consultas": queries,
+            "consultas": diagnostic_queries,
             "trechos": selected,
             "pareceres": len({item["referencia_id"] for item in selected}),
+            "resultados_retornados": returned,
+            "descartes": discards,
+            "motivo_ausencia": absence_reason,
         }
 
     def _validated_legal_references(self, target_reference_id, references):
@@ -1170,6 +1222,89 @@ class MinutasGenerationService:
         }
         return analysis
 
+    @classmethod
+    def _conference_diagnostics(cls, analysis, context):
+        page_texts = cls._source_page_texts(context)
+        source_names = {
+            source["fonte_id"]: source.get("arquivo") or source["fonte_id"]
+            for source in context["documentos_processo_alvo"]
+        }
+        references = defaultdict(list)
+        category_fields = (
+            ("fatos_documentados", "Fato documentado"),
+            ("normas_mencionadas", "Norma mencionada"),
+            ("argumentos_defesa", "Alegação defensiva"),
+        )
+        for irregularity in analysis.get("irregularidades", ()):
+            identifier = str(irregularity.get("id") or "")
+            for field, category in category_fields:
+                for item in irregularity.get(field, ()):
+                    references[(identifier, category)].extend(item.get("fontes") or ())
+            audit = irregularity.get("avaliacao_auditoria") or {}
+            references[(identifier, "Conclusão da Auditoria")].extend(
+                audit.get("fontes") or ()
+            )
+
+        diagnostics = []
+        conference = analysis.get("conferencia_documental") or {}
+        for issue in conference.get("pendencias", ()):
+            candidates = references.get(
+                (str(issue.get("irregularidade") or ""), issue.get("categoria")),
+                (),
+            )
+            reference = next(
+                (
+                    item
+                    for item in candidates
+                    if item.get("falha_verificacao") == issue.get("natureza")
+                ),
+                candidates[0] if candidates else {},
+            )
+            source_id = reference.get("fonte_id")
+            page = reference.get("pagina")
+            excerpt = str(reference.get("trecho_suporte") or "")
+            indicated_text = page_texts.get(source_id, {}).get(page, "")
+            other_pages = []
+            if excerpt:
+                for candidate_page, text in page_texts.get(source_id, {}).items():
+                    if candidate_page == page:
+                        continue
+                    verified, _reason = _continuous_word_sequence(excerpt, text)
+                    if verified:
+                        other_pages.append(candidate_page)
+            diagnostics.append(
+                {
+                    "irregularidade": issue.get("irregularidade"),
+                    "campo": issue.get("categoria"),
+                    "documento": source_names.get(
+                        source_id, issue.get("documento") or "não informado"
+                    ),
+                    "pagina": page if page is not None else issue.get("pagina"),
+                    "trecho_suporte": excerpt,
+                    "texto_pagina": indicated_text,
+                    "correspondencias_em_outras_paginas": sorted(other_pages),
+                    "motivo": issue.get("natureza"),
+                    "bloqueante": bool(issue.get("bloqueante")),
+                }
+            )
+        return diagnostics
+
+    def pilot_diagnostics(self, target_reference_id, analyzed):
+        self.library._authorize()
+        target = self.library.get(target_reference_id)
+        self._validate_target(target)
+        if not isinstance(analyzed, dict):
+            return {"disponivel": False}
+        conference = analyzed.get("diagnostico_conferencia")
+        recovery = analyzed.get("recuperacao_juridica")
+        if conference is None or recovery is None:
+            return {"disponivel": False}
+        return {
+            "disponivel": True,
+            "conferencia_documental": conference,
+            "recuperacao_juridica": recovery,
+        }
+
     @staticmethod
     def _validate_structure(structure):
         required = (
@@ -1466,6 +1601,9 @@ class MinutasGenerationService:
             raise MinutasGenerationError("A IA não retornou análise jurídica válida.")
         analysis = self._validate_analysis(generated.get("analise"), prepared["contexto"])
         conference = analysis["conferencia_documental"]
+        conference_diagnostics = self._conference_diagnostics(
+            analysis, prepared["contexto"]
+        )
         legal_recovery = self._recover_legal_references(
             target_reference_id, analysis
         )
@@ -1476,6 +1614,7 @@ class MinutasGenerationService:
             "pendencias_conferencia": conference["pendencias"],
             "fontes_versao": prepared["fontes_versao"],
             "fontes_alvo": prepared["fontes_alvo"],
+            "diagnostico_conferencia": conference_diagnostics,
             "recuperacao_juridica": legal_recovery,
         }
 

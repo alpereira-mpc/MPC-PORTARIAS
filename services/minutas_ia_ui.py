@@ -1056,6 +1056,107 @@ def _legal_references_panel(analysis_result):
             )
 
 
+def _technical_diagnostics_panel(diagnostics, target_id):
+    with st.expander("Diagnóstico técnico do piloto"):
+        if not diagnostics or not diagnostics.get("disponivel"):
+            st.info(
+                "O diagnóstico não está disponível nesta sessão. Execute novamente "
+                "Analisar fundamentos."
+            )
+            return
+
+        st.caption(
+            "Informações efêmeras da execução atual. Este painel não altera nem "
+            "dispensa as verificações documentais."
+        )
+        conference = diagnostics.get("conferencia_documental") or ()
+        st.markdown("**Conferência documental**")
+        if not conference:
+            st.success("Nenhuma advertência documental foi registrada nesta análise.")
+        for index, issue in enumerate(conference, 1):
+            page = (
+                f"página {issue['pagina']}"
+                if issue.get("pagina") is not None
+                else "página não informada"
+            )
+            st.markdown(
+                f"**{issue.get('irregularidade') or '—'} — "
+                f"{issue.get('campo') or 'Campo não informado'}**"
+            )
+            st.caption(
+                f"{issue.get('documento') or 'Documento não informado'} · {page} · "
+                f"{issue.get('motivo') or 'motivo não informado'}"
+            )
+            st.markdown("Trecho literal fornecido pelo Gemini:")
+            st.code(
+                issue.get("trecho_suporte") or "(trecho não informado)",
+                language=None,
+                wrap_lines=True,
+            )
+            other_pages = issue.get("correspondencias_em_outras_paginas") or ()
+            if other_pages:
+                st.warning(
+                    "Correspondência textual localizada também na(s) página(s) "
+                    + ", ".join(str(item) for item in other_pages)
+                    + ". A página indicada não foi corrigida automaticamente."
+                )
+            page_text = str(issue.get("texto_pagina") or "")
+            st.markdown("Texto extraído da página indicada:")
+            preview = page_text[:4000]
+            st.code(
+                preview or "(texto da página indisponível)",
+                language=None,
+                wrap_lines=True,
+                height=260,
+            )
+            if len(page_text) > len(preview) and st.checkbox(
+                "Mostrar conteúdo integral desta página",
+                key=f"minutas_diagnostic_full_page_{target_id}_{index}",
+            ):
+                st.code(page_text, language=None, wrap_lines=True, height=420)
+
+        recovery = diagnostics.get("recuperacao_juridica") or {}
+        st.markdown("**Recuperação RAG**")
+        queries = recovery.get("consultas") or ()
+        if not queries:
+            st.info("Nenhuma consulta lexical foi construída nesta execução.")
+        for index, query in enumerate(queries, 1):
+            st.markdown(f"{index}. `{query.get('consulta') or '—'}`")
+            st.caption(
+                f"Origem: irregularidade {query.get('irregularidade_id') or '—'} · "
+                f"matéria: {query.get('materia') or '—'} · resultados retornados: "
+                f"{query.get('resultados_retornados', 'não registrado')}"
+            )
+            discarded = query.get("descartados") or {}
+            if discarded:
+                st.caption(
+                    "Descartados — barreira documental: "
+                    f"{discarded.get('barreira_documental', 0)}; duplicação: "
+                    f"{discarded.get('duplicacao', 0)}; sem trecho utilizável: "
+                    f"{discarded.get('sem_trecho', 0)}."
+                )
+        if recovery.get("motivo_ausencia"):
+            st.info(recovery["motivo_ausencia"])
+        selected = recovery.get("trechos") or ()
+        st.caption(
+            f"Resultados retornados: {recovery.get('resultados_retornados', 0)} · "
+            f"trechos selecionados: {len(selected)}. Não há descarte semântico "
+            "adicional: a pertinência é o ranking lexical da pesquisa existente."
+        )
+        for index, item in enumerate(selected, 1):
+            st.markdown(
+                f"Trecho selecionado {index}: processo {item.get('processo') or '—'}, "
+                f"{item.get('documento') or 'documento não informado'}, "
+                f"p. {item.get('pagina') or 'não identificada'}"
+            )
+            st.code(
+                item.get("trecho_literal") or "(trecho indisponível)",
+                language=None,
+                wrap_lines=True,
+                height=180,
+            )
+
+
 def _generator_tab(store, identity):
     st.subheader("Teste de Geração — Processo Histórico")
     st.caption(
@@ -1149,6 +1250,12 @@ def _generator_tab(store, identity):
     if analysis:
         _analysis_panel(analysis)
         _legal_references_panel(analysis)
+        try:
+            diagnostics = generator.pilot_diagnostics(target["id"], analysis)
+        except Exception as exc:
+            _error(exc)
+        else:
+            _technical_diagnostics_panel(diagnostics, target["id"])
 
     section_label("Etapa 2 — Gerar minuta")
     use_rag = st.checkbox(
