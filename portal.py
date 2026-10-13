@@ -1250,17 +1250,6 @@ def render_portal():
         active_theme = _active_theme(identity)
         if st.session_state.get(theme_key) != active_theme:
             st.session_state[theme_key] = active_theme
-        with st.container(key="portal_theme_control"):
-            st.selectbox(
-                "Tema",
-                tuple(THEME_LABELS),
-                format_func=THEME_LABELS.get,
-                key=theme_key,
-                on_change=_change_theme,
-                args=(store, principal.id, identity["email"], theme_key),
-            )
-            if message := st.session_state.pop("_portal_theme_error", None):
-                st.warning(message)
         render_sidebar_brand(on_click=open_home)
         from services.alerts import can_view_alertas
         from services.alerts_ui import render_bell
@@ -1303,6 +1292,17 @@ def render_portal():
                 ):
                     if st.button("Sair", type="primary", key="portal_logout"):
                         _logout()
+            with st.container(key="portal_theme_control"):
+                st.selectbox(
+                    "Tema",
+                    tuple(THEME_LABELS),
+                    format_func=THEME_LABELS.get,
+                    key=theme_key,
+                    on_change=_change_theme,
+                    args=(store, principal.id, identity["email"], theme_key),
+                )
+                if message := st.session_state.pop("_portal_theme_error", None):
+                    st.warning(message)
         st.caption(f"Versão {APP_VERSION}", text_alignment="right")
         if selected != "Memorandos":
             st.session_state["memorando_form_active"] = False

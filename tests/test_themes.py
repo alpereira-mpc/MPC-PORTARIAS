@@ -161,7 +161,7 @@ def test_theme_labels_are_official_and_legacy_keys_keep_their_palettes():
     assert "format_func=THEME_LABELS.get" in source
 
 
-def test_theme_selector_precedes_navigation_and_account_remains_in_footer():
+def test_theme_selector_follows_account_in_footer_before_version():
     from inspect import getsource
     from portal import render_portal
 
@@ -171,12 +171,27 @@ def test_theme_selector_precedes_navigation_and_account_remains_in_footer():
     notifications = source.index('with st.container(key="portal_notifications")')
     navigation = source.index('with st.container(key="portal_navigation_menu")')
     footer = source.index('with st.container(key="portal_theme_footer")')
-    assert theme < brand < notifications < navigation < footer
-    assert "st.selectbox(" in source[theme:navigation]
-    assert '"Tema"' in source[theme:navigation]
-    assert 'key="portal_user_area"' in source[footer:]
-    assert 'key="portal_logout"' in source[footer:]
-    assert 'st.selectbox(' not in source[footer:]
+    account = source.index('key="portal_user_area"')
+    logout = source.index('key="portal_logout"')
+    version = source.index('st.caption(f"Versão')
+    assert brand < notifications < navigation < footer < account < logout < theme < version
+    assert "st.selectbox(" in source[theme:version]
+    assert '"Tema"' in source[theme:version]
+
+
+@pytest.mark.parametrize("name", tuple(THEME_LABELS))
+def test_theme_dropdown_limits_its_scroll_viewport_only_while_open(name):
+    css = _css(name)
+    selector = (
+        'body:has(.st-key-portal_theme_control [role="combobox"]'
+        '[aria-expanded="true"]) [data-baseweb="popover"] '
+        '[data-testid="stSelectboxVirtualDropdown"] > div'
+    )
+    rule = css.split(selector + "{", 1)[1].split("}", 1)[0]
+    assert "max-height:max(1rem, calc(50dvh - 2rem))" in rule
+    assert "overflow-y:auto" in rule
+    assert "position:" not in rule
+    assert "transform:" not in rule
 
 
 def test_gold_palette_is_the_fallback():

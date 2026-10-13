@@ -254,6 +254,13 @@ flex-shrink:0;
 section[data-testid="stSidebar"] [class*="st-key-portal_theme_footer"]{{
 padding-top:.35rem;
 }}
+/* BaseWeb mounts the list under body, outside the sidebar. Scope this fallback
+   to the open theme widget and constrain the virtual list's scroll viewport,
+   not its items. Native flipping stays enabled even on very short windows. */
+body:has(.st-key-portal_theme_control [role="combobox"][aria-expanded="true"]) [data-baseweb="popover"] [data-testid="stSelectboxVirtualDropdown"] > div{{
+max-height:max(1rem, calc(50dvh - 2rem));
+overflow-y:auto !important;
+}}
 section[data-testid="stSidebar"] [class*="st-key-portal_theme_footer"] [data-testid="stCaption"]{{
 text-align:center;
 }}
