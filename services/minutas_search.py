@@ -40,6 +40,10 @@ class MinutasSearchService:
         year=None,
         nature=SEARCH_NATURE,
         subtype=None,
+        exclude_reference_id=None,
+        exclude_process_key=None,
+        exclude_paths=(),
+        exclude_hashes=(),
         page=1,
         page_size=DEFAULT_PAGE_SIZE,
     ):
@@ -70,6 +74,10 @@ class MinutasSearchService:
             EXTRACTOR_VERSION,
             year=year,
             subtype=subtype or None,
+            exclude_reference_id=exclude_reference_id,
+            exclude_process_key=exclude_process_key,
+            exclude_paths=tuple(exclude_paths),
+            exclude_hashes=tuple(exclude_hashes),
             limit=page_size,
             offset=(page - 1) * page_size,
         )

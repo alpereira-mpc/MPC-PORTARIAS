@@ -13,6 +13,7 @@ from services.minutas_generation import (
     _canonical_process_key,
     _clean_text,
     _continuous_word_sequence,
+    _rag_queries,
 )
 from services.minutas_extraction import EXTRACTOR_VERSION
 from services.minutas_library import MinutasAccessDenied
@@ -303,6 +304,28 @@ def _draft_result(_context, **changes):
     }
     result.update(changes)
     return result
+
+
+def _search_result(reference, row, *, context=None, page=1, relevance=1.0):
+    return {
+        "referencia_id": reference["id"],
+        "documento_id": f"extraction-{reference['id']}",
+        "procuradora": reference["procuradora"],
+        "processo": reference["numero_processo"],
+        "exercicio": reference["exercicio"],
+        "natureza": "Prestação de Contas Anual",
+        "subtipo": reference["subtipo"],
+        "documento": row["arquivo_nome"],
+        "arquivo_path": row["arquivo_path"],
+        "pagina": page,
+        "localizacao": None,
+        "trecho": "【Fundamentação】 previdenciária histórica.",
+        "contexto": context or "Fundamentação previdenciária histórica pertinente.",
+        "relevancia": relevance,
+        "criterio_recuperacao": "Expressão pesquisada",
+        "sha256_registrado": row["arquivo_sha256"],
+        "fonte_versao": "source-version",
+    }
 
 
 @pytest.mark.parametrize(
@@ -1039,6 +1062,196 @@ def test_duplicate_request_line_is_rendered_only_in_numbered_requests():
     assert "1. " + request in result["texto"]
 
 
+def test_rag_queries_are_concise_and_built_from_irregularities_and_norms():
+    analysis = {
+        "irregularidades": [
+            {
+                "id": f"IRR-{index}",
+                "apontamento": f"Irregularidade em contribuição previdenciária {index}",
+                "normas_mencionadas": [
+                    {"descricao": f"Art. {30 + index} da Lei 8.212/91"}
+                ],
+                "hipoteses_juridicas": ["Responsabilidade pelo recolhimento"],
+            }
+            for index in range(1, 6)
+        ]
+    }
+
+    queries = _rag_queries(analysis)
+
+    assert len(queries) == 3
+    assert all(len(item["consulta"].split()) <= 7 for item in queries)
+    assert all("contribuição" in item["consulta"] for item in queries)
+    assert all(item["irregularidade_id"].startswith("IRR-") for item in queries)
+
+
+def test_analysis_recovers_traced_legal_references_with_deduplication_and_limits():
+    target, history, other, rows = _scenario()
+    opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == history["id"] and row["papel"] == "parecer"
+    )
+    calls = []
+
+    def search(query, **filters):
+        calls.append((query, filters))
+        return {
+            "resultados": [
+                _search_result(history, opinion, context="Fundamento histórico comum."),
+                _search_result(
+                    history,
+                    opinion,
+                    context="  FUNDAMENTO   histórico comum. ",
+                    relevance=0.9,
+                ),
+                _search_result(
+                    history,
+                    opinion,
+                    context="Segundo fundamento complementar. " + "x" * 2000,
+                    page=2,
+                    relevance=0.8,
+                ),
+                _search_result(
+                    history,
+                    opinion,
+                    context="Terceiro fundamento do mesmo parecer.",
+                    page=3,
+                    relevance=0.7,
+                ),
+            ]
+        }
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=lambda context: _analysis_result(
+            context, analise=_analysis_payload(context, count=2)
+        ),
+        search=search,
+    )
+
+    analyzed = service.analyze(target["id"])
+    recovery = analyzed["recuperacao_juridica"]
+
+    assert recovery["estado"] == "CONCLUIDA"
+    assert recovery["pareceres"] == 1
+    assert len(recovery["trechos"]) == 2
+    assert all(item["pagina"] in {1, 2} for item in recovery["trechos"])
+    assert all(len(item["trecho_literal"]) <= 1600 for item in recovery["trechos"])
+    assert calls and len(calls) <= 3
+    assert all(call[1]["exclude_reference_id"] == target["id"] for call in calls)
+    assert all(target["parecer_path"] in call[1]["exclude_paths"] for call in calls)
+
+
+def test_rag_excludes_text_equivalent_target_opinion_with_different_binary_hash():
+    target, history, other, rows = _scenario()
+    target_opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "parecer"
+    )
+    historical_opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == history["id"] and row["papel"] == "parecer"
+    )
+    historical_opinion.update(
+        arquivo_sha256="different-binary-hash",
+        texto_integral="  segredo   do parecer-alvo  ",
+    )
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        search=lambda *_args, **_kwargs: {
+            "resultados": [_search_result(history, historical_opinion)]
+        },
+    )
+
+    analyzed = service.analyze(target["id"])
+
+    assert analyzed["recuperacao_juridica"]["estado"] == "SEM_RESULTADOS"
+    assert analyzed["recuperacao_juridica"]["trechos"] == []
+    assert target_opinion["texto_integral"] not in json.dumps(
+        analyzed, ensure_ascii=False
+    )
+
+
+def test_rag_rejects_search_results_from_another_prosecutor():
+    target, history, other, rows = _scenario()
+    other_opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == other["id"] and row["papel"] == "parecer"
+    )
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        search=lambda *_args, **_kwargs: {
+            "resultados": [_search_result(other, other_opinion)]
+        },
+    )
+
+    analyzed = service.analyze(target["id"])
+
+    assert analyzed["recuperacao_juridica"]["estado"] == "SEM_RESULTADOS"
+    assert analyzed["recuperacao_juridica"]["trechos"] == []
+
+
+def test_generation_can_compare_rag_enabled_and_disabled_without_changing_analysis():
+    target, history, other, rows = _scenario()
+    opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == history["id"] and row["papel"] == "parecer"
+    )
+    drafting_contexts = []
+
+    def generate(context):
+        drafting_contexts.append(context)
+        return _draft_result(context)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+        search=lambda *_args, **_kwargs: {
+            "resultados": [_search_result(history, opinion)]
+        },
+    )
+    analyzed = service.analyze(target["id"])
+    analysis_snapshot = json.dumps(analyzed["analise"], sort_keys=True)
+
+    with_rag = service.generate(target["id"], analyzed, use_rag=True)
+    without_rag = service.generate(target["id"], analyzed, use_rag=False)
+
+    assert "referencias_juridicas_recuperadas" in drafting_contexts[0]
+    assert drafting_contexts[0]["referencias_juridicas_recuperadas"]
+    assert "referencias_juridicas_recuperadas" not in drafting_contexts[1]
+    assert with_rag["referencias_juridicas_enviadas"] == 1
+    assert without_rag["referencias_juridicas_enviadas"] == 0
+    assert with_rag["rag_ativo"] is True
+    assert without_rag["rag_ativo"] is False
+    assert json.dumps(analyzed["analise"], sort_keys=True) == analysis_snapshot
+
+
+def test_generation_continues_when_legal_search_finds_no_precedent():
+    target, history, other, rows = _scenario()
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+        search=lambda *_args, **_kwargs: {"resultados": []},
+    )
+
+    analyzed = service.analyze(target["id"])
+    result = service.generate(target["id"], analyzed, use_rag=True)
+
+    assert analyzed["recuperacao_juridica"]["estado"] == "SEM_RESULTADOS"
+    assert result["referencias_juridicas_enviadas"] == 0
+    assert result["texto"]
+
+
 def test_complete_generation_uses_one_analysis_and_one_drafting_call():
     target, history, other, rows = _scenario()
     analysis_calls = []
@@ -1390,9 +1603,9 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
                 "fontes_versao": revision["value"],
             }
 
-        def generate(self, identifier, analyzed):
+        def generate(self, identifier, analyzed, use_rag=True):
             assert analyzed["fontes_versao"] == revision["value"]
-            generation_calls.append(identifier)
+            generation_calls.append((identifier, use_rag))
             return {
                 "texto": "# MINUTA\n\nConteúdo para revisão.",
                 "modelo": "modelo-teste",
@@ -1428,7 +1641,7 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     assert generation_calls == []
 
     app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
-    assert generation_calls == [TARGET_ID]
+    assert generation_calls == [(TARGET_ID, True)]
     assert any("Conteúdo para revisão" in item.value for item in app.markdown)
     assert any("Conteúdo para revisão" in item.value for item in app.code)
     assert any(
@@ -1441,13 +1654,13 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
 
     app.run()
     assert analysis_calls == [TARGET_ID]
-    assert generation_calls == [TARGET_ID]
+    assert generation_calls == [(TARGET_ID, True)]
     assert any("Conteúdo para revisão" in item.value for item in app.markdown)
 
     revision["value"] = "revision-2"
     app.run()
     assert analysis_calls == [TARGET_ID]
-    assert generation_calls == [TARGET_ID]
+    assert generation_calls == [(TARGET_ID, True)]
     assert not any("Conteúdo para revisão" in item.value for item in app.markdown)
     assert any("fontes foram alteradas" in item.value for item in app.info)
 

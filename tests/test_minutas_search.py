@@ -206,6 +206,10 @@ def test_postgresql_query_filters_valid_opinions_and_blocks_cross_prosecutor_lin
         EXTRACTOR_VERSION,
         year=2025,
         subtype="Prefeitura",
+        exclude_reference_id="target-reference",
+        exclude_process_key="0165326",
+        exclude_paths=("target/parecer.pdf",),
+        exclude_hashes=("a" * 64,),
         limit=10,
         offset=0,
     )
@@ -224,6 +228,10 @@ def test_postgresql_query_filters_valid_opinions_and_blocks_cross_prosecutor_lin
     assert "e.arquivo_mime=r.parecer_mime" in sql
     assert "e.arquivo_tamanho=r.parecer_tamanho" in sql
     assert "e.arquivo_sha256<>repeat('0',64)" in sql
+    assert "e.referencia_id<>?" in sql
+    assert "r.processo_chave<>?" in sql
+    assert "e.arquivo_path<>?" in sql
+    assert "e.arquivo_sha256<>?" in sql
     assert "LIMIT ? OFFSET ?" in sql
     assert store.connection_instance.parameters[3:5] == (
         PROCURADORA.casefold(),

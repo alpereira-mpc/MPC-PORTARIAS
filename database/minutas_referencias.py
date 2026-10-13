@@ -146,6 +146,10 @@ class MinutasReferenciasStore:
         *,
         year=None,
         subtype=None,
+        exclude_reference_id=None,
+        exclude_process_key=None,
+        exclude_paths=(),
+        exclude_hashes=(),
         limit=10,
         offset=0,
     ):
@@ -181,6 +185,18 @@ class MinutasReferenciasStore:
         if subtype is not None:
             clauses.append("r.subtipo=?")
             parameters.append(subtype)
+        if exclude_reference_id is not None:
+            clauses.append("e.referencia_id<>?")
+            parameters.append(exclude_reference_id)
+        if exclude_process_key is not None:
+            clauses.append("r.processo_chave<>?")
+            parameters.append(exclude_process_key)
+        for path in sorted(set(exclude_paths)):
+            clauses.append("e.arquivo_path<>?")
+            parameters.append(path)
+        for digest in sorted(set(exclude_hashes)):
+            clauses.append("e.arquivo_sha256<>?")
+            parameters.append(digest)
         sql = (
             "WITH search_query AS ("
             "SELECT ?::text AS raw,websearch_to_tsquery('portuguese',?) AS terms"

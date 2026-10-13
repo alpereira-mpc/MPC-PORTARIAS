@@ -9,6 +9,7 @@ import unicodedata
 from services import ai_service
 from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionService
 from services.minutas_library import MinutasValidationError, PROCURADORA
+from services.minutas_search import MinutasSearchService
 
 
 HISTORICAL_TEST_PROCESS_KEY = "0165326"
@@ -17,6 +18,11 @@ HISTORICAL_TEST_PROCESS_KEYS = frozenset(
 )
 MAX_CONTEXT_BYTES = ai_service.MINUTA_MAX_CONTEXT_BYTES
 MAX_HISTORICAL_REFERENCES = 3
+MAX_RAG_QUERIES = 3
+MAX_RAG_RESULTS_PER_QUERY = 4
+MAX_RAG_PASSAGES = 6
+MAX_RAG_PASSAGES_PER_OPINION = 2
+MAX_RAG_PASSAGE_CHARS = 1600
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
     re.compile(r"^(?:codigo|código)\s+verificador\s*[:#-]\s*\S+.*$"),
@@ -51,6 +57,20 @@ _STOPWORDS = {
     "se",
     "um",
     "uma",
+}
+_RAG_GENERIC_TERMS = _STOPWORDS | {
+    "analise",
+    "apontamento",
+    "auditoria",
+    "conclusao",
+    "contas",
+    "defesa",
+    "documentado",
+    "fundamento",
+    "hipotese",
+    "irregularidade",
+    "juridica",
+    "processo",
 }
 _MINISTERIAL_TREATMENTS = {
     "MANTIDA_REJEICAO",
@@ -117,6 +137,54 @@ def _terms(value):
         for token in re.findall(r"[a-z0-9]{4,}", _plain(value))
         if token not in _STOPWORDS
     }
+
+
+def _rag_queries(analysis):
+    queries = []
+    seen = set()
+    irregularities = analysis.get("irregularidades", []) if isinstance(analysis, dict) else []
+    for irregularity in irregularities:
+        if not isinstance(irregularity, dict):
+            continue
+        matter = str(irregularity.get("apontamento") or "").strip()
+        parts = [matter]
+        parts.extend(
+            str(item.get("descricao") or "")
+            for item in irregularity.get("normas_mencionadas", [])
+            if isinstance(item, dict)
+        )
+        parts.extend(
+            str(item or "") for item in irregularity.get("hipoteses_juridicas", [])
+        )
+        tokens = []
+        normalized_tokens = set()
+        for token in re.findall(r"[0-9A-Za-zÀ-ÿº°./-]+", " ".join(parts)):
+            cleaned = token.strip("-./")
+            normalized = _plain(cleaned)
+            if (
+                len(normalized) < 2
+                or normalized in _RAG_GENERIC_TERMS
+                or normalized in normalized_tokens
+            ):
+                continue
+            normalized_tokens.add(normalized)
+            tokens.append(cleaned)
+            if len(tokens) >= 7:
+                break
+        query = " ".join(tokens)
+        key = _normalized_support(query)
+        if len(query) >= 2 and key not in seen:
+            seen.add(key)
+            queries.append(
+                {
+                    "irregularidade_id": str(irregularity.get("id") or ""),
+                    "materia": matter or query,
+                    "consulta": query,
+                }
+            )
+        if len(queries) >= MAX_RAG_QUERIES:
+            break
+    return queries
 
 
 _FINDING_HEADING = re.compile(
@@ -265,9 +333,10 @@ def _serialized_size(value):
 class MinutasGenerationService:
     """Build bounded contexts for the two explicit Minutas AI stages."""
 
-    def __init__(self, library, analyze=None, generate=None):
+    def __init__(self, library, analyze=None, generate=None, search=None):
         self.library = library
         self.extractor = MinutasExtractionService(library)
+        self.search = search or MinutasSearchService(library)
         self._analyze = analyze or ai_service.analisar_fundamentos_minuta
         self._generate = generate or ai_service.gerar_minuta_parecer
 
@@ -504,11 +573,179 @@ class MinutasGenerationService:
             "fontes_alvo": len(target_sources),
         }
 
-    def prepare_context(self, target_reference_id, analysis=None):
+    def _recover_legal_references(self, target_reference_id, analysis):
+        target = self.library.get(target_reference_id)
+        queries = _rag_queries(analysis)
+        if not queries:
+            return {
+                "estado": "SEM_CONSULTAS",
+                "consultas": [],
+                "trechos": [],
+                "pareceres": 0,
+            }
+        allowed_rows = self.extractor.context_sources(target_reference_id)
+        allowed_by_path = {
+            row["arquivo_path"]: row
+            for row in allowed_rows
+            if row.get("papel") == "parecer"
+            and row.get("procuradora_chave") == target["procuradora_chave"]
+        }
+        target_opinion = self.library.repository.get_extraction(
+            target["parecer_path"]
+        )
+        excluded_hashes = {
+            target_opinion.get("arquivo_sha256")
+        } if target_opinion and target_opinion.get("arquivo_sha256") else set()
+        candidates = {}
+        try:
+            for query in queries:
+                search_method = (
+                    self.search
+                    if callable(self.search)
+                    else self.search.search
+                )
+                response = search_method(
+                    query["consulta"],
+                    page_size=MAX_RAG_RESULTS_PER_QUERY,
+                    exclude_reference_id=str(target_reference_id),
+                    exclude_process_key=target.get("processo_chave"),
+                    exclude_paths=(target["parecer_path"],),
+                    exclude_hashes=excluded_hashes,
+                )
+                for item in response.get("resultados", []):
+                    source = allowed_by_path.get(item.get("arquivo_path"))
+                    if (
+                        source is None
+                        or str(source.get("referencia_id"))
+                        == str(target_reference_id)
+                        or source.get("arquivo_sha256")
+                        != item.get("sha256_registrado")
+                    ):
+                        continue
+                    passage = str(
+                        item.get("contexto") or item.get("trecho") or ""
+                    ).replace("【", "").replace("】", "").strip()
+                    if not passage:
+                        continue
+                    passage = passage[:MAX_RAG_PASSAGE_CHARS]
+                    fingerprint = sha256(
+                        _normalized_support(passage).encode("utf-8")
+                    ).hexdigest()
+                    existing = candidates.get(fingerprint)
+                    if existing:
+                        if query["materia"] not in existing["materias"]:
+                            existing["materias"].append(query["materia"])
+                        if (
+                            query["irregularidade_id"]
+                            and query["irregularidade_id"]
+                            not in existing["irregularidades_ids"]
+                        ):
+                            existing["irregularidades_ids"].append(
+                                query["irregularidade_id"]
+                            )
+                        existing["relevancia"] = max(
+                            existing["relevancia"], item["relevancia"]
+                        )
+                        continue
+                    candidates[fingerprint] = {
+                        "referencia_id": str(item["referencia_id"]),
+                        "processo": item["processo"],
+                        "documento": item["documento"],
+                        "arquivo_path": item["arquivo_path"],
+                        "sha256_registrado": item["sha256_registrado"],
+                        "fonte_versao": item["fonte_versao"],
+                        "procuradora": item["procuradora"],
+                        "pagina": item.get("pagina"),
+                        "trecho_literal": passage,
+                        "materias": [query["materia"]],
+                        "irregularidades_ids": [query["irregularidade_id"]]
+                        if query["irregularidade_id"]
+                        else [],
+                        "relevancia": float(item.get("relevancia") or 0),
+                        "natureza": "manifestação histórica não vinculante",
+                    }
+        except Exception as exc:
+            return {
+                "estado": "INDISPONIVEL",
+                "consultas": queries,
+                "trechos": [],
+                "pareceres": 0,
+                "aviso": f"Pesquisa jurídica indisponível: {exc}",
+            }
+
+        selected = []
+        per_opinion = defaultdict(int)
+        for candidate in sorted(
+            candidates.values(), key=lambda item: -item["relevancia"]
+        ):
+            if per_opinion[candidate["referencia_id"]] >= MAX_RAG_PASSAGES_PER_OPINION:
+                continue
+            selected.append(candidate)
+            per_opinion[candidate["referencia_id"]] += 1
+            if len(selected) >= MAX_RAG_PASSAGES:
+                break
+        return {
+            "estado": "CONCLUIDA" if selected else "SEM_RESULTADOS",
+            "consultas": queries,
+            "trechos": selected,
+            "pareceres": len({item["referencia_id"] for item in selected}),
+        }
+
+    def _validated_legal_references(self, target_reference_id, references):
+        target = self.library.get(target_reference_id)
+        allowed = {
+            row["arquivo_path"]: row
+            for row in self.extractor.context_sources(target_reference_id)
+            if row.get("papel") == "parecer"
+        }
+        validated = []
+        seen = set()
+        per_opinion = defaultdict(int)
+        for item in references or ():
+            if not isinstance(item, dict):
+                continue
+            source = allowed.get(item.get("arquivo_path"))
+            passage = str(item.get("trecho_literal") or "").strip()
+            fingerprint = _normalized_support(passage)
+            if (
+                source is None
+                or not passage
+                or fingerprint in seen
+                or str(source.get("referencia_id")) == str(target_reference_id)
+                or _canonical_process_key(item.get("processo"))
+                == _canonical_process_key(target.get("numero_processo"))
+                or source.get("procuradora_chave") != target["procuradora_chave"]
+                or source.get("arquivo_sha256") != item.get("sha256_registrado")
+                or per_opinion[str(source["referencia_id"])]
+                >= MAX_RAG_PASSAGES_PER_OPINION
+            ):
+                continue
+            seen.add(fingerprint)
+            per_opinion[str(source["referencia_id"])] += 1
+            validated.append(item)
+            if len(validated) >= MAX_RAG_PASSAGES:
+                break
+        return validated
+
+    def prepare_context(
+        self,
+        target_reference_id,
+        analysis=None,
+        legal_references=(),
+        use_rag=False,
+    ):
         target, state, _rows, grouped, target_sources = self._target_bundle(
             target_reference_id
         )
         records = state["records"]
+        recovered_count = len(legal_references or ())
+        validated_legal_references = (
+            self._validated_legal_references(
+                target_reference_id, legal_references
+            )
+            if use_rag
+            else []
+        )
 
         target_text = "\n".join(
             unit["texto"] for source in target_sources for unit in source["conteudo"]
@@ -594,12 +831,28 @@ class MinutasGenerationService:
         }
         if analysis is not None:
             context["analise_estruturada"] = analysis
+        if use_rag:
+            context["referencias_juridicas_recuperadas"] = list(
+                validated_legal_references
+            )
+            context["orientacao_referencias_juridicas"] = (
+                "Manifestações históricas não vinculantes; não são fatos do processo-alvo."
+            )
+        omitted = []
+        while (
+            _serialized_size(context) > MAX_CONTEXT_BYTES
+            and context.get("referencias_juridicas_recuperadas")
+        ):
+            removed = context["referencias_juridicas_recuperadas"].pop()
+            omitted.append(
+                f"Trecho jurídico {removed['processo']}, p. "
+                f"{removed.get('pagina') or 'não identificada'}"
+            )
         if _serialized_size(context) > MAX_CONTEXT_BYTES:
             raise MinutasGenerationError(
                 "Os documentos essenciais e a análise estruturada excedem o limite de contexto."
             )
 
-        omitted = []
         for candidate in candidates:
             reference = {
                 "processo": candidate["record"]["numero_processo"],
@@ -631,12 +884,21 @@ class MinutasGenerationService:
             used_sources.append(
                 f"{reference['processo']} — {opinion['tipo']} ({opinion['arquivo']})"
             )
+        legal_sources = [
+            f"{item['processo']} — {item['documento']}, p. "
+            f"{item.get('pagina') or 'não identificada'}"
+            for item in context.get("referencias_juridicas_recuperadas", [])
+        ]
         return {
             "contexto": context,
             "contexto_bytes": context_bytes,
             "fontes_alvo": len(target_sources),
             "referencias_historicas": len(context["referencias_historicas"]),
             "relatorios_historicos": 0,
+            "rag_ativo": bool(use_rag),
+            "referencias_juridicas_recuperadas": recovered_count,
+            "referencias_juridicas_enviadas": len(legal_sources),
+            "fontes_juridicas_enviadas": legal_sources,
             "omitidas_por_limite": omitted,
             "fontes_versao": state["fontes_versao"],
             "fontes_utilizadas": used_sources,
@@ -1204,6 +1466,9 @@ class MinutasGenerationService:
             raise MinutasGenerationError("A IA não retornou análise jurídica válida.")
         analysis = self._validate_analysis(generated.get("analise"), prepared["contexto"])
         conference = analysis["conferencia_documental"]
+        legal_recovery = self._recover_legal_references(
+            target_reference_id, analysis
+        )
         return {
             **generated,
             "analise": analysis,
@@ -1211,13 +1476,20 @@ class MinutasGenerationService:
             "pendencias_conferencia": conference["pendencias"],
             "fontes_versao": prepared["fontes_versao"],
             "fontes_alvo": prepared["fontes_alvo"],
+            "recuperacao_juridica": legal_recovery,
         }
 
-    def generate(self, target_reference_id, analyzed):
+    def generate(self, target_reference_id, analyzed, use_rag=True):
         self.library._authorize()
         if not isinstance(analyzed, dict) or not isinstance(analyzed.get("analise"), dict):
             raise MinutasGenerationError("Analise os fundamentos antes de gerar a minuta.")
-        prepared = self.prepare_context(target_reference_id, analyzed["analise"])
+        recovery = analyzed.get("recuperacao_juridica") or {}
+        prepared = self.prepare_context(
+            target_reference_id,
+            analyzed["analise"],
+            recovery.get("trechos", ()),
+            use_rag=bool(use_rag),
+        )
         if analyzed.get("fontes_versao") != prepared["fontes_versao"]:
             raise MinutasGenerationError(
                 "As fontes foram alteradas. Analise novamente os fundamentos."

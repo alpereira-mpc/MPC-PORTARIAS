@@ -1017,6 +1017,45 @@ def _analysis_panel(analysis_result):
     )
 
 
+def _legal_references_panel(analysis_result):
+    recovery = analysis_result.get("recuperacao_juridica") or {}
+    section_label("Referências jurídicas recuperadas")
+    if recovery.get("estado") == "INDISPONIVEL":
+        st.warning(
+            recovery.get("aviso")
+            or "A pesquisa jurídica ficou indisponível; a geração poderá continuar."
+        )
+        return
+    passages = recovery.get("trechos") or ()
+    if not passages:
+        st.info(
+            "Nenhuma referência histórica pertinente foi localizada. A geração "
+            "poderá continuar sem recuperação jurídica."
+        )
+        return
+    st.caption(
+        f"{recovery.get('pareceres', 0)} parecer(es) · "
+        f"{len(passages)} trecho(s) recuperado(s). A inclusão no Gemini depende "
+        "da opção escolhida na etapa de geração."
+    )
+    for index, item in enumerate(passages, 1):
+        pages = (
+            f"p. {item['pagina']}"
+            if item.get("pagina") is not None
+            else "página não identificada"
+        )
+        matters = "; ".join(item.get("materias") or ())
+        with st.expander(
+            f"{index}. Processo {item['processo']} · {pages} · {matters}"
+        ):
+            st.caption(
+                f"{item['documento']} · manifestação histórica não vinculante"
+            )
+            st.code(
+                item["trecho_literal"], language=None, wrap_lines=True, height=220
+            )
+
+
 def _generator_tab(store, identity):
     st.subheader("Teste de Geração — Processo Histórico")
     st.caption(
@@ -1109,8 +1148,18 @@ def _generator_tab(store, identity):
     analysis = st.session_state.get(analysis_key)
     if analysis:
         _analysis_panel(analysis)
+        _legal_references_panel(analysis)
 
     section_label("Etapa 2 — Gerar minuta")
+    use_rag = st.checkbox(
+        "Usar referências jurídicas recuperadas nesta geração",
+        value=True,
+        key=f"minutas_generation_use_rag_{target['id']}",
+        help=(
+            "Desative para comparar com o comportamento anterior. A análise "
+            "probatória e os demais controles permanecem iguais."
+        ),
+    )
     analysis_ready = bool(
         analysis and analysis.get("suficiente_para_geracao") is True
     )
@@ -1129,7 +1178,7 @@ def _generator_tab(store, identity):
         try:
             with st.spinner("Redigindo a minuta a partir da análise conferida..."):
                 st.session_state[result_key] = generator.generate(
-                    target["id"], analysis
+                    target["id"], analysis, use_rag=use_rag
                 )
         except Exception as exc:
             _error(exc)
@@ -1171,9 +1220,19 @@ def _generator_tab(store, identity):
             f"Duração: {result.get('duracao_ms', 0) / 1000:.1f} s",
             f"Documentos do processo-alvo: {result.get('fontes_alvo', 0)}",
             f"Pareceres históricos: {result.get('referencias_historicas', 0)}",
+            "Recuperação jurídica: "
+            + ("ativada" if result.get("rag_ativo") else "desativada"),
+            f"Trechos recuperados: "
+            f"{result.get('referencias_juridicas_recuperadas', 0)} · "
+            f"enviados ao Gemini: {result.get('referencias_juridicas_enviadas', 0)}",
             "Fontes efetivamente utilizadas: "
             + "; ".join(result.get("fontes_utilizadas") or ()),
         ]
+        if result.get("fontes_juridicas_enviadas"):
+            details.append(
+                "Referências jurídicas enviadas: "
+                + "; ".join(result["fontes_juridicas_enviadas"])
+            )
         if result.get("omitidas_por_limite"):
             details.append(
                 "Fontes integrais omitidas por limite: "
