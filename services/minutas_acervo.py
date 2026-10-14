@@ -8,7 +8,7 @@ import logging
 
 from database.store import now
 from database.minutas_especialidades import MinutasSpecialtiesStore
-from services.minutas_specialties import PROSECUTOR_KEY, CLASSES, scope, suggest, fingerprint
+from services.minutas_specialties import PROSECUTOR_KEY, CLASSES, plain, scope, suggest, fingerprint
 from services.minutas_library import MinutasValidationError, _validate_file, _normalize_process, _validate_year
 
 
@@ -44,6 +44,106 @@ def identify_process_keys(name="", text=""):
 
 def display_process_key(key):
     return key[:5] + "/" + key[5:] if re.fullmatch(r"\d{7}", key or "") else ""
+
+
+_HEADER_LINE = (
+    ("processo", re.compile(r"(?i)^processo(?:\s+tc|\s+n[º°o.]*)?\s*:\s*(.*)$")),
+    ("processo", re.compile(r"(?i)^processo(?:\s+(?:tc|n[º°o.]*))+\s*:?\s*(\d[\d.]{2,14}\s*/\s*\d{2,4})\s*$")),
+    ("subcategoria", re.compile(r"(?i)^subcategoria\s*:\s*(.*)$")),
+    ("jurisdicionado", re.compile(r"(?i)^(?:jurisdicionado|origem|entidade(?:\s+fiscalizada)?)\s*:\s*(.*)$")),
+    ("responsavel", re.compile(r"(?i)^respons[aá]vel(?:es)?\s*:\s*(.*)$")),
+    ("relator", re.compile(r"(?i)^relator(?:es)?\s*:\s*(.*)$")),
+    ("auditor", re.compile(r"(?i)^auditor(?:es)?(?:\s+de\s+contas)?\s*:\s*(.*)$")),
+    ("assunto", re.compile(r"(?i)^assunto\s*:\s*(.*)$")),
+    ("exercicio", re.compile(r"(?i)^exerc[ií]cio(?:\s+das\s+contas|\s+financeiro)?\s*:\s*(.*)$")),
+)
+_PROCESS_VALUE = re.compile(r"(\d{1,3}(?:\.\d{3})+|\d{4,6})\s*/\s*(\d{2}|\d{4})")
+
+
+def _header_label(line):
+    for name, pattern in _HEADER_LINE:
+        match = pattern.match(line)
+        if match:
+            return name, (match.group(1) or "").strip()
+    return "", ""
+
+
+def normalize_process_token(raw):
+    """02.434/2025 e 02281/26 viram a chave de cinco dígitos e ano de dois."""
+    text = " ".join(str(raw or "").strip().split())
+    if not text or len(text) > 24:
+        return ""
+    match = _PROCESS_VALUE.fullmatch(text)
+    if not match:
+        return ""
+    number = match.group(1).replace(".", "")
+    year = match.group(2)
+    if len(year) == 4:
+        if not year.startswith("20"):
+            return ""
+        year = year[2:]
+    if not number.isdigit() or not 1 <= len(number) <= 5:
+        return ""
+    return number.zfill(5) + year
+
+
+def _exercise_value(raw):
+    text = str(raw or "").strip().rstrip(".")
+    return int(text) if re.fullmatch(r"20\d{2}", text) else None
+
+
+def _same_text(left, right):
+    return re.sub(r"\s+", " ", plain(left)).strip() == re.sub(r"\s+", " ", plain(right)).strip()
+
+
+def _class_from_subcategory(raw):
+    if re.search(r"(?i)\bpca\b|presta[cç][aã]o de contas", str(raw or "")):
+        return "PCA"
+    return ""
+
+
+def parse_report_header(text):
+    """Tabela de identificação das primeiras linhas. Jurisdicionado é a origem."""
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in str(text or "").splitlines()]
+    lines = [line for line in lines if line][:40]
+    found = {}
+    index = 0
+    while index < len(lines):
+        label, value = _header_label(lines[index])
+        if not label:
+            index += 1
+            continue
+        if not value and index + 1 < len(lines) and not _header_label(lines[index + 1])[0]:
+            parts = [lines[index + 1]]
+            index += 1
+            while label == "jurisdicionado" and index + 1 < len(lines) and len(parts) < 3:
+                if _header_label(lines[index + 1])[0] or len(lines[index + 1]) > 120:
+                    break
+                parts.append(lines[index + 1])
+                index += 1
+            value = " ".join(parts).strip()
+        if label not in found and value:
+            found[label] = value
+        if {"processo", "jurisdicionado", "exercicio"} <= set(found):
+            break
+        index += 1
+    key = normalize_process_token(found.get("processo", ""))
+    return {
+        "processo": display_process_key(key),
+        "processo_chave": key,
+        "processo_original": found.get("processo", ""),
+        "exercicio": _exercise_value(found.get("exercicio", "")),
+        "origem": found.get("jurisdicionado", "").strip(),
+        "classe": _class_from_subcategory(found.get("subcategoria", "")),
+        "subcategoria": found.get("subcategoria", ""),
+    }
+
+
+def _header_text(extracted):
+    units = extracted.get("unidades") or []
+    pages = [unit for unit in units if unit.get("pagina") in (1, 2)]
+    chosen = pages or units[:6]
+    return "\n".join(str(unit.get("texto") or "") for unit in chosen)
 
 
 def inventory(snapshot):
@@ -181,49 +281,77 @@ class MinutasAcervoService:
             raise MinutasValidationError("Finalidade documental inválida.")
         file = _validate_file("auditoria" if role == "auditoria" else "parecer", (name, content))
         extracted = extract_content(content, file["mime"], "complementar" if role == "modelo" else role)
-        text = extracted["texto_integral"]
-        name_keys, text_keys, years = identify_process_keys(name, text)
+        header = parse_report_header(_header_text(extracted))
+        name_keys = identify_process_keys(name, "")[0]
+        filename_key = next(iter(name_keys)) if len(name_keys) == 1 else ""
         warnings = []
+        if len(name_keys) > 1:
+            filename_key = ""
+            warnings.append("O nome do arquivo contém mais de um número de processo. Use o cabeçalho ou selecione o processo.")
+        processo = header["processo"]
+        fonte = "cabeçalho" if processo else ""
+        if not processo and filename_key:
+            processo = display_process_key(filename_key)
+            fonte = "nome do arquivo"
+            warnings.append("O processo foi lido do nome do arquivo porque o cabeçalho não trouxe um número seguro. Confira o exercício e a origem.")
+        name_conflict = bool(header["processo"] and filename_key and header["processo_chave"] != filename_key)
+        if name_conflict:
+            warnings.append(
+                f"Cabeçalho: processo {header['processo']}. Nome do arquivo: processo {display_process_key(filename_key)}. "
+                "Confirme qual processo recebe o relatório."
+            )
         recovered = None
-        if name_keys and text_keys and name_keys != text_keys:
-            warnings.append("O número extraído do nome do arquivo diverge do texto do documento. Confira antes de cadastrar.")
-        elif len(name_keys | text_keys) > 1:
-            warnings.append("Há mais de um número de processo no documento; selecione o processo já cadastrado.")
-        elif len(name_keys | text_keys) == 1 and specialty:
-            recovered = self.find_active_process(specialty, next(iter(name_keys | text_keys)))
-        processo = ""
-        exercicio = int(next(iter(years))) if len(years) == 1 else None
-        origem = ""
-        classe = ""
-        referencia_id = None
-        suggestion = "Necessita conferência"
-        if recovered:
+        if specialty and not name_conflict and (header["processo_chave"] or (fonte == "nome do arquivo" and filename_key)):
+            recovered = self.find_active_process(specialty, header["processo_chave"] or filename_key)
+        conflito = name_conflict
+        if recovered and header["exercicio"] is not None and int(recovered.get("exercicio") or 0) != header["exercicio"]:
+            warnings.append(
+                f"Exercício do cabeçalho: {header['exercicio']}. Exercício cadastrado: {recovered.get('exercicio')}. "
+                "O cadastro existente não será alterado; confirme a vinculação."
+            )
+            conflito = True
+        if recovered and header["origem"] and not _same_text(header["origem"], recovered.get("origem") or ""):
+            warnings.append(
+                f"Jurisdicionado do relatório: {header['origem']}. Origem cadastrada: {recovered.get('origem') or '—'}. "
+                "O cadastro existente não será alterado; confirme a vinculação."
+            )
+            conflito = True
+        if recovered and header["classe"] and recovered.get("classe") and header["classe"] != recovered.get("classe"):
+            warnings.append(
+                f"Classe do cabeçalho: {header['classe']}. Classe cadastrada: {recovered.get('classe')}. "
+                "O cadastro existente não será alterado; confirme a vinculação."
+            )
+            conflito = True
+        if recovered and not conflito:
             processo = recovered.get("numero_processo") or display_process_key(
                 stable_process_key(recovered.get("processo_chave")))
-            exercicio = int(recovered["exercicio"]) if recovered.get("exercicio") not in (None, "") else exercicio
-            origem = recovered.get("origem") or ""
-            classe = recovered.get("classe") or ""
+            exercicio = int(recovered["exercicio"]) if recovered.get("exercicio") not in (None, "") else header["exercicio"]
+            origem = recovered.get("origem") or header["origem"]
+            classe = recovered.get("classe") or header["classe"]
             referencia_id = str(recovered["id"])
-            if years and exercicio not in years:
-                warnings.append(
-                    "O exercício indicado no documento diverge do cadastro. "
-                    "Confira o exercício das contas; o ano da numeração do processo não foi utilizado."
-                )
+            suggestion = "Processo identificado no acervo — relatório será adicionado ao processo existente."
         else:
-            if len(name_keys) == 1 and (not text_keys or name_keys == text_keys):
-                processo = display_process_key(next(iter(name_keys)))
-            elif len(text_keys) == 1 and not name_keys:
-                processo = display_process_key(next(iter(text_keys)))
-            classified = suggest({"id": "preview", "procuradora_chave": PROSECUTOR_KEY},
-                [{"referencia_id": "preview", "procuradora_chave": PROSECUTOR_KEY, "texto_integral": text}])
-            origem = classified.get("entidade") or ""
-            suggestion = classified.get("especialidade_id") or classified.get("motivo") or ""
-        if recovered:
-            suggestion = "Processo já cadastrado — dados recuperados do acervo"
+            exercicio = header["exercicio"]
+            origem = header["origem"]
+            classe = header["classe"]
+            referencia_id = None
+            if header["processo"]:
+                suggestion = "Dados extraídos do cabeçalho do relatório."
+            elif fonte == "nome do arquivo":
+                suggestion = "Processo identificado pelo nome do arquivo."
+            elif role == "parecer":
+                classified = suggest({"id": "preview", "procuradora_chave": PROSECUTOR_KEY},
+                    [{"referencia_id": "preview", "procuradora_chave": PROSECUTOR_KEY,
+                      "texto_integral": extracted.get("texto_integral") or ""}])
+                origem = origem or classified.get("entidade") or ""
+                suggestion = classified.get("especialidade_id") or "Preencha processo, exercício e origem."
+            else:
+                suggestion = "Preencha processo, exercício e origem."
         return {"nome": name, "sha256": sha256(content).hexdigest(),
                 "processo": processo, "exercicio": exercicio, "origem": origem, "classe": classe,
-                "referencia_id": referencia_id, "recuperado": bool(recovered),
-                "advertencias": warnings, "sugestao": suggestion, "status": extracted["status"]}
+                "fonte": fonte, "referencia_id": referencia_id, "recuperado": bool(recovered and not conflito),
+                "conflito": conflito, "advertencias": warnings, "sugestao": suggestion,
+                "status": extracted["status"]}
 
     def _upload_existing(self, c, specialty, key, year, digest, name, confirm_version):
         """Checks only metadata; reused before upload and inside the short transaction."""
@@ -294,6 +422,9 @@ class MinutasAcervoService:
             existing, duplicate, unhashed = self._upload_existing(c, *parameters)
         if duplicate:
             return {"estado": "DUPLICADO", "referencia_id": str(existing["id"])}
+        requested = str(values.get("referencia_id") or "").strip()
+        if requested and (not existing or str(existing["id"]) != requested):
+            raise MinutasValidationError("O processo confirmado não corresponde ao registro selecionado.")
         # Toda I/O de Storage ocorre fora da transação de escrita compartilhada.
         legacy_hashes = {p: sha256(self.library.storage.download(p)).hexdigest() for p in unhashed}
         if digest in legacy_hashes.values():
@@ -314,6 +445,8 @@ class MinutasAcervoService:
                     return {"estado": "DUPLICADO", "referencia_id": str(record["id"])}
                 if set(current_unhashed) - set(legacy_hashes) or (record or {}).get("_same_name"):
                     raise MinutasValidationError("Acervo alterado durante o upload; confira os documentos e tente novamente.")
+                if requested and (not record or str(record["id"]) != requested):
+                    raise MinutasValidationError("O processo confirmado não corresponde ao registro selecionado.")
                 if not record:
                     identifier = str(uuid.uuid4())
                     stamp = now()

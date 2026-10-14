@@ -15,6 +15,7 @@ from database.minutas_especialidades import MinutasSpecialtiesStore
 from database.minutas_referencias import MinutasReferenciasStore, COLUMNS, COMPLEMENT_COLUMNS, EXTRACTION_COLUMNS
 from services.minutas_acervo import (
     MinutasAcervoService, display_process_key, identify_process_keys, inventory, migration_plan,
+    parse_report_header,
 )
 from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionService
 from services.minutas_library import MinutasLibraryService, MinutasAccessDenied, MinutasValidationError
@@ -602,20 +603,20 @@ def test_audit_report_preview_recovers_active_process_and_ignores_legacy(separat
     assert recovered["recuperado"] and recovered["referencia_id"] == ids["02119/26"] != hidden["id"]
     assert recovered["origem"] == "Instituto de Previdência do Município de Sertãozinho"
     assert recovered["exercicio"] == 2024
-    assert "dados recuperados do acervo" in recovered["sugestao"]
+    assert "relatório será adicionado ao processo existente" in recovered["sugestao"].casefold()
+    assert not any("dados insuficientes" in item.casefold() or "diverge do texto" in item.casefold() for item in recovered["advertencias"])
     wrong_year = admin.preview_upload(
         "proc_02674_25_relatorio_de_analise_defesa.pdf",
         _text_pdf("Relatório de Análise de Defesa\nProcesso nº 02674/25\nExercício: 2026"),
         "complementar", RPPS)
-    assert wrong_year["recuperado"] and wrong_year["exercicio"] == 2023
-    assert wrong_year["origem"] == "Instituto de Previdência do Município de Dona Inês"
-    assert any("exercício" in item.casefold() for item in wrong_year["advertencias"])
+    assert not wrong_year["recuperado"] and wrong_year["conflito"] and wrong_year["exercicio"] == 2026
+    assert any("2026" in item and "2023" in item for item in wrong_year["advertencias"])
     conflict = admin.preview_upload(
         "proc_02119_26_relatorio_de_analise_defesa.pdf",
         _text_pdf("Processo TC nº 02119/20"),
         "auditoria", RPPS)
-    assert not conflict["recuperado"] and not conflict["processo"]
-    assert any("diverge" in item.casefold() for item in conflict["advertencias"])
+    assert not conflict["recuperado"] and conflict["conflito"] and conflict["processo"] == "02119/20"
+    assert any("02119/26" in item and "02119/20" in item for item in conflict["advertencias"])
     missing = admin.preview_upload("sem_numero.pdf", _text_pdf("Relatório sem identificação"), "auditoria", RPPS)
     assert not missing["recuperado"] and not missing["processo"]
     batch = [
@@ -640,6 +641,134 @@ def test_audit_report_preview_recovers_active_process_and_ignores_legacy(separat
     assert not isolated["recuperado"]
     with store.connection() as c:
         assert c.execute("SELECT acervo FROM minutas_referencias WHERE id=?", (hidden["id"],)).fetchone()["acervo"] == "legado"
+
+
+def test_report_header_reads_tce_table_and_links_the_existing_opinion(separated):
+    same_line = parse_report_header(
+        "Processo TC: 02.434/2025\n"
+        "Subcategoria: Prestação de Contas Anual - PCA\n"
+        "Jurisdicionado: Instituto de Previdência do Município de Sertãozinho\n"
+        "Responsável: Maria da Silva\n"
+        "Exercício: 2024\n"
+        "O corpo cita o processo 01653/26 e o TC 02674/25.\n"
+        "Processo nº 09999/20 foi mencionado na defesa."
+    )
+    assert same_line["processo"] == "02434/25" and same_line["exercicio"] == 2024 and same_line["classe"] == "PCA"
+    assert same_line["origem"] == "Instituto de Previdência do Município de Sertãozinho"
+    assert "Maria" not in same_line["origem"]
+    split = parse_report_header(
+        "Processo nº:\n02281/26\n"
+        "Subcategoria:\nPCA - Prestação de Contas Anuais\n"
+        "Jurisdicionado:\nInstituto de Prev. e Assistência do Município de Jacaraú\n"
+        "Exercício:\n2025\n"
+    )
+    assert split["processo"] == "02281/26" and split["exercicio"] == 2025
+    assert split["origem"] == "Instituto de Prev. e Assistência do Município de Jacaraú"
+    assert parse_report_header("Responsável: Instituto de Previdência\nRelator: Fulano")["origem"] == ""
+    store, storage = separated
+    admin = MinutasAcervoService(library(store, storage))
+    opinion = (
+        "EMENTA: Prestação de contas anuais.\n"
+        "O processo foi instruído pela Auditoria e houve manifestação da defesa.\n"
+        "Passo à análise ministerial dos documentos e das normas aplicáveis.\n"
+        "Ante o exposto, opino pela regularidade com ressalvas das contas.\n"
+        "É o parecer."
+    )
+    cases = (
+        ("02434/25", 2024, "Instituto de Previdência do Município de Sertãozinho",
+         "Processo TC:\n02.434/2025\nSubcategoria:\nPrestação de Contas Anual - PCA\n"
+         "Jurisdicionado:\nInstituto de Previdência do Município de Sertãozinho\n"
+         "Responsável:\nGestor do Instituto\nExercício:\n2024\n"
+         "A defesa cita o processo 01653/26 apenas como precedente."),
+        ("02281/26", 2025, "Instituto de Prev. e Assistência do Município de Jacaraú",
+         "Processo nº: 02281/26\nSubcategoria: PCA - Prestação de Contas Anuais\n"
+         "Jurisdicionado: Instituto de Prev. e Assistência do Município de Jacaraú\n"
+         "Exercício: 2025\n"),
+    )
+    ids = {}
+    for number, year, origin, _header in cases:
+        created = admin.add_file(RPPS, {"numero_processo": number, "exercicio": year, "classe": "PCA",
+            "origem": origin, "fundamento": "Conferido"},
+            (f"parecer_{number.replace('/', '_')}.pdf", _text_pdf(opinion)), role="parecer")
+        ids[number] = created["referencia_id"]
+    reports = []
+    for number, year, origin, header in cases:
+        preview = admin.preview_upload(f"relatorio_{number.replace('/', '_')}.pdf", _text_pdf(header), "auditoria", RPPS)
+        reports.append(preview)
+        assert preview["recuperado"] and preview["referencia_id"] == ids[number]
+        assert preview["processo"].endswith(number) and preview["exercicio"] == year and preview["origem"] == origin
+        assert preview["classe"] == "PCA"
+        assert "dados insuficientes" not in preview["sugestao"].casefold()
+        assert not any("diverge do texto" in item.casefold() for item in preview["advertencias"])
+    divergent = admin.preview_upload("relatorio_02434_25.pdf", _text_pdf(
+        "Processo TC: 02.434/2025\nJurisdicionado: Instituto de Previdência do Município de Sertãozinho\nExercício: 2020\n"),
+        "auditoria", RPPS)
+    assert divergent["conflito"] and not divergent["recuperado"] and divergent["exercicio"] == 2020
+    assert any("2020" in item and "2024" in item for item in divergent["advertencias"])
+    attached = admin.add_file(RPPS, {"numero_processo": "02434/25", "exercicio": 2024, "classe": "PCA",
+        "origem": reports[0]["origem"], "fundamento": "Conferido", "referencia_id": ids["02434/25"]},
+        ("relatorio_sertaozinho.pdf", _text_pdf(cases[0][3])), role="auditoria")
+    assert attached["referencia_id"] == ids["02434/25"]
+    with store.connection() as c:
+        row = c.execute("SELECT entidade FROM minutas_classificacoes WHERE referencia_id=?", (ids["02434/25"],)).fetchone()
+        count = c.execute("SELECT COUNT(*) AS n FROM minutas_referencias WHERE processo_chave='0243425'").fetchone()["n"]
+    assert row["entidade"] == "Instituto de Previdência do Município de Sertãozinho" and count == 1
+
+
+def test_report_link_widgets_show_recovered_metadata_and_follow_the_selection(separated, monkeypatch):
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+    from services import minutas_ia_ui, ai_service
+    store, storage = separated
+    admin = MinutasAcervoService(library(store, storage))
+    opinion = (
+        "EMENTA: Prestação de contas anuais.\n"
+        "O processo foi instruído pela Auditoria e houve manifestação da defesa.\n"
+        "Passo à análise ministerial dos documentos e das normas aplicáveis.\n"
+        "Ante o exposto, opino pela regularidade com ressalvas das contas.\n"
+        "É o parecer."
+    )
+    sertaozinho = admin.add_file(RPPS, {"numero_processo": "02434/25", "exercicio": 2024, "classe": "PCA",
+        "origem": "Instituto de Previdência do Município de Sertãozinho", "fundamento": "Conferido"},
+        ("parecer_sertaozinho.pdf", _text_pdf(opinion)), role="parecer")
+    jacarau = admin.add_file(RPPS, {"numero_processo": "02281/26", "exercicio": 2025, "classe": "PCA",
+        "origem": "Instituto de Prev. e Assistência do Município de Jacaraú", "fundamento": "Conferido"},
+        ("parecer_jacarau.pdf", _text_pdf(opinion)), role="parecer")
+    monkeypatch.setattr(ai_service, "analisar_fundamentos_minuta", lambda *a, **k: (_ for _ in ()).throw(AssertionError("IA")))
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *args, administrative=False:
+        library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
+    def page():
+        from services.minutas_ia_ui import render
+        from tests.access_testing import TEST_IDENTITY
+        render(None, TEST_IDENTITY)
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.radio(key="minutas_acervo_mode").set_value("Adicionar documentos").run()
+    app.selectbox(key="minutas_upload_role_" + RPPS).set_value("auditoria").run()
+    header = (
+        "Processo TC: 02.434/2025\nSubcategoria: Prestação de Contas Anual - PCA\n"
+        "Jurisdicionado: Instituto de Previdência do Município de Sertãozinho\n"
+        "Responsável: Gestor\nExercício: 2024\n"
+        "A análise menciona o processo 01653/26 somente como precedente."
+    )
+    app.file_uploader(key="minutas_uploads_" + RPPS).set_value([
+        ("relatorio_sertaozinho.pdf", _text_pdf(header), "application/pdf"),
+    ]).run()
+    app.button(key="minutas_preview_" + RPPS).click().run()
+    assert not app.exception
+    text = " ".join(item.value for item in (*app.caption, *app.markdown))
+    assert "relatório será adicionado ao processo existente" in text.casefold()
+    assert "02434/25" in text and "2024" in text
+    assert "Instituto de Previdência do Município de Sertãozinho" in text
+    assert "Dados insuficientes" not in text and "diverge do texto" not in text
+    link = next(item for item in app.selectbox if str(getattr(item, "key", "")).startswith("minutas_batch_link_"))
+    link.set_value(jacarau["referencia_id"]).run()
+    text = " ".join(item.value for item in (*app.caption, *app.markdown))
+    assert "02281/26" in text and "Instituto de Prev. e Assistência do Município de Jacaraú" in text
+    assert "2025" in text
+    app.run()
+    text = " ".join(item.value for item in (*app.caption, *app.markdown))
+    assert "02281/26" in text and sertaozinho["referencia_id"] != jacarau["referencia_id"]
+    assert len(admin.repository.list_records(RPPS)) == 2
 
 
 def test_bulk_upload_same_content_cannot_create_another_process(environment):

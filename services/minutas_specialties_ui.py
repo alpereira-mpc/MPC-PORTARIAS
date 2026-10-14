@@ -235,59 +235,92 @@ def _uploads(admin, library, profile):
                 previews.append({"nome": upload.name, "erro": str(exc)})
         saved = {"signature": signature, "previews": previews}
         st.session_state[preview_key] = saved
+        for index, item in enumerate(previews):
+            link_key = f"minutas_batch_link_{signature}_{index}"
+            default = "" if item.get("conflito") else str(item.get("referencia_id") or "")
+            st.session_state[link_key] = default
+            st.session_state[f"minutas_batch_process_{signature}_{index}"] = item.get("processo") or ""
+            st.session_state[f"minutas_batch_origin_{signature}_{index}"] = item.get("origem") or ""
+            year_key = f"minutas_batch_year_{signature}_{index}"
+            if item.get("exercicio"):
+                st.session_state[year_key] = int(item["exercicio"])
+            else:
+                st.session_state.pop(year_key, None)
     if saved.get("signature") != signature:
         st.info("Identifique os dados antes de confirmar o lote.")
         return
+    linkable = role in ("auditoria", "complementar")
+    existing_by_id = {str(row["id"]): row for row in admin.repository.list_records(profile["id"], limit=100)} if linkable else {}
+    prepared = []
+    for index, item in enumerate(saved["previews"]):
+        st.write(item["nome"])
+        if item.get("erro"):
+            st.warning(item["erro"])
+            prepared.append({"item": item, "chosen": None})
+            continue
+        for warning in item.get("advertencias") or []:
+            st.warning(warning)
+        linked = ""
+        if existing_by_id:
+            options = [""] + list(existing_by_id)
+            link_key = f"minutas_batch_link_{signature}_{index}"
+            if st.session_state.get(link_key) not in options:
+                st.session_state[link_key] = ""
+            linked = st.selectbox(
+                "Vincular a processo já cadastrado",
+                options,
+                format_func=lambda key, rows=existing_by_id: (
+                    "Informar manualmente"
+                    if not key
+                    else f"{rows[key]['numero_processo']} · exercício {rows[key].get('exercicio') or '—'} · {rows[key].get('origem') or 'origem a conferir'}"
+                ),
+                key=link_key,
+            )
+        chosen = existing_by_id.get(linked)
+        if chosen:
+            st.caption("Processo identificado no acervo — relatório será adicionado ao processo existente.")
+            render_record(
+                str(chosen.get("numero_processo") or "Processo"),
+                secondary=chosen.get("origem") or "Origem a conferir",
+                meta=f"Exercício das contas {chosen.get('exercicio') or '—'} · {CLASSES.get(chosen.get('classe') or '', chosen.get('classe') or 'Classe a conferir')}",
+                accent="brand",
+                boxed=True,
+            )
+        else:
+            st.caption(item.get("sugestao") or "Preencha processo, exercício e origem.")
+            if item.get("fonte") == "nome do arquivo":
+                st.caption("A origem desta identificação é o nome do arquivo.")
+            if item.get("classe"):
+                st.caption("Classe processual: " + CLASSES.get(item["classe"], item["classe"]))
+        prepared.append({"item": item, "chosen": chosen})
     with st.form("minutas_batch_" + profile["id"]):
         formal = profile["grupo"]
         if formal == "TEMATICO":
             formal = st.selectbox("Classe processual efetiva do lote", list(CLASSES), format_func=CLASSES.get)
         values = []
-        existing = []
-        if role in ("auditoria", "complementar"):
-            existing = admin.repository.list_records(profile["id"], limit=100)
-            existing_by_id = {str(row["id"]): row for row in existing}
-        else:
-            existing_by_id = {}
-        for index, item in enumerate(saved["previews"]):
-            st.write(item["nome"])
+        for index, row in enumerate(prepared):
+            item, chosen = row["item"], row["chosen"]
             if item.get("erro"):
-                st.warning(item["erro"])
-            for warning in item.get("advertencias") or []:
-                st.warning(warning)
-            if item.get("recuperado"):
-                st.caption("Processo já cadastrado — dados recuperados do acervo")
-            else:
-                st.caption("Identificação documental: " + item.get("sugestao", "Necessita conferência"))
-            linked = ""
-            if existing:
-                options = [""] + list(existing_by_id)
-                initial = str(item.get("referencia_id") or "")
-                linked = st.selectbox(
-                    "Processo já cadastrado na especialidade",
-                    options,
-                    index=options.index(initial) if initial in options else 0,
-                    format_func=lambda key: (
-                        "Usar a identificação acima"
-                        if not key
-                        else f"{existing_by_id[key]['numero_processo']} · exercício {existing_by_id[key].get('exercicio') or '—'} · {existing_by_id[key].get('origem') or 'origem a conferir'}"
-                    ),
-                    key=f"minutas_batch_link_{signature}_{index}",
-                )
+                values.append(None)
+                continue
+            if chosen:
+                values.append({"numero_processo": chosen.get("numero_processo") or "", "exercicio": chosen.get("exercicio"),
+                    "origem": chosen.get("origem") or "", "classe": chosen.get("classe") or formal,
+                    "referencia_id": str(chosen["id"])})
+                continue
+            st.write(item["nome"])
             fields = st.columns(3)
-            process = fields[0].text_input("Processo TC", value=item.get("processo", ""), key=f"minutas_batch_process_{signature}_{index}")
-            year = fields[1].number_input("Exercício das contas", 1900, date.today().year + 1, item.get("exercicio") or date.today().year,
-                                         key=f"minutas_batch_year_{signature}_{index}")
-            entity = fields[2].text_input("Origem", value=item.get("origem", ""), key=f"minutas_batch_origin_{signature}_{index}")
-            if linked:
-                chosen = existing_by_id[linked]
-                process = chosen.get("numero_processo") or process
-                year = chosen.get("exercicio") or year
-                entity = chosen.get("origem") or entity
-                formal_row = chosen.get("classe") or formal
+            process_key = f"minutas_batch_process_{signature}_{index}"
+            year_key = f"minutas_batch_year_{signature}_{index}"
+            origin_key = f"minutas_batch_origin_{signature}_{index}"
+            process = fields[0].text_input("Processo TC", key=process_key)
+            if year_key in st.session_state:
+                year = fields[1].number_input("Exercício das contas", 1900, date.today().year + 1, step=1, key=year_key)
             else:
-                formal_row = item.get("classe") or formal
-            values.append({"numero_processo": process, "exercicio": year, "origem": entity, "classe": formal_row})
+                year = fields[1].number_input("Exercício das contas", min_value=1900, max_value=date.today().year + 1, value=None, step=1, key=year_key)
+            entity = fields[2].text_input("Origem", key=origin_key)
+            values.append({"numero_processo": process, "exercicio": year, "origem": entity,
+                "classe": item.get("classe") or formal, "referencia_id": ""})
         reason = st.text_input("Fundamento / conferência da classificação do lote")
         versions = st.checkbox("Preservar como nova versão quando o nome já existir")
         confirmed = st.form_submit_button("Confirmar cadastro e processamento local", type="primary")
@@ -295,6 +328,10 @@ def _uploads(admin, library, profile):
         progress = st.progress(0)
         details = []
         for index, (upload, metadata) in enumerate(zip(uploads, values)):
+            if not metadata:
+                details.append({"nome": upload.name, "falha": "Identificação inválida."})
+                progress.progress((index + 1) / len(uploads))
+                continue
             metadata["fundamento"] = reason
             try:
                 result = admin.add_file(profile["id"], metadata, (upload.name, upload.getvalue()), role=role, confirm_version=versions)
