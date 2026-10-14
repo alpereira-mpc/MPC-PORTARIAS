@@ -1092,6 +1092,13 @@ def _technical_diagnostics_panel(diagnostics, target_id):
                 f"{issue.get('documento') or 'Documento não informado'} · {page} · "
                 f"{issue.get('motivo') or 'motivo não informado'}"
             )
+            if issue.get("pagina_corrigida_automaticamente"):
+                st.success(
+                    "Página corrigida automaticamente de "
+                    f"{issue.get('pagina_original')} para "
+                    f"{issue.get('pagina_corrigida')} após correspondência literal "
+                    "única no mesmo documento."
+                )
             st.markdown("Trecho literal fornecido pelo Gemini:")
             st.code(
                 issue.get("trecho_suporte") or "(trecho não informado)",
@@ -1106,7 +1113,11 @@ def _technical_diagnostics_panel(diagnostics, target_id):
                     + ". A página indicada não foi corrigida automaticamente."
                 )
             page_text = str(issue.get("texto_pagina") or "")
-            st.markdown("Texto extraído da página indicada:")
+            st.markdown(
+                "Texto extraído da página validada:"
+                if issue.get("pagina_corrigida_automaticamente")
+                else "Texto extraído da página indicada:"
+            )
             preview = page_text[:4000]
             st.code(
                 preview or "(texto da página indisponível)",

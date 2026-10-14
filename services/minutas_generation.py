@@ -464,6 +464,15 @@ def _continuous_word_sequence(excerpt, page_text):
     )
 
 
+def _literal_page_matches(excerpt, pages):
+    matches = []
+    for page, page_text in pages.items():
+        verified, _reason = _continuous_word_sequence(excerpt, page_text)
+        if verified:
+            matches.append(page)
+    return sorted(matches)
+
+
 def _specific_divergence_ground(value):
     normalized = _normalized_support(value)
     return bool(
@@ -1279,15 +1288,30 @@ class MinutasGenerationService:
                 reason = "fonte não localizada"
             elif not isinstance(page, int) or isinstance(page, bool):
                 reason = "página inválida"
-            elif page not in page_texts[source_id]:
-                reason = "página não localizada na fonte indicada"
             elif not isinstance(excerpt, str) or not excerpt.strip():
                 reason = "trecho de suporte ausente"
+            elif page not in page_texts[source_id]:
+                reason = "página não localizada na fonte indicada"
             else:
                 verified, reason = _continuous_word_sequence(
                     excerpt, page_texts[source_id][page]
                 )
                 if verified:
+                    reason = ""
+            if reason in {
+                "página não localizada na fonte indicada",
+                "trecho não localizado na página indicada",
+            }:
+                matches = _literal_page_matches(excerpt, page_texts[source_id])
+                if len(matches) == 1:
+                    corrected_page = matches[0]
+                    reference["pagina_original"] = page
+                    reference["pagina"] = corrected_page
+                    reference["pagina_corrigida_automaticamente"] = True
+                    reference["criterio_correcao_pagina"] = (
+                        "correspondência literal normalizada única no mesmo documento"
+                    )
+                    page = corrected_page
                     reason = ""
             reference["verificado"] = not reason
             if reason:
@@ -1299,6 +1323,10 @@ class MinutasGenerationService:
                 "motivo": reason,
                 "documento": source_names.get(source_id, str(source_id or "não informado")),
                 "pagina": page if isinstance(page, int) and not isinstance(page, bool) else None,
+                "pagina_original": reference.get("pagina_original"),
+                "pagina_corrigida_automaticamente": bool(
+                    reference.get("pagina_corrigida_automaticamente")
+                ),
                 "trecho": _normalized_support(excerpt) if isinstance(excerpt, str) else "",
             }
 
@@ -1545,6 +1573,50 @@ class MinutasGenerationService:
                     "bloqueante": bool(issue.get("bloqueante")),
                 }
             )
+        recorded_corrections = set()
+        for (identifier, category), candidates in references.items():
+            for reference in candidates:
+                if not reference.get("pagina_corrigida_automaticamente"):
+                    continue
+                source_id = reference.get("fonte_id")
+                original_page = reference.get("pagina_original")
+                corrected_page = reference.get("pagina")
+                correction_key = (
+                    identifier,
+                    category,
+                    source_id,
+                    original_page,
+                    corrected_page,
+                    str(reference.get("trecho_suporte") or ""),
+                )
+                if correction_key in recorded_corrections:
+                    continue
+                recorded_corrections.add(correction_key)
+                diagnostics.append(
+                    {
+                        "irregularidade": identifier,
+                        "campo": category,
+                        "documento": source_names.get(
+                            source_id, str(source_id or "não informado")
+                        ),
+                        "pagina": corrected_page,
+                        "pagina_original": original_page,
+                        "pagina_corrigida": corrected_page,
+                        "pagina_corrigida_automaticamente": True,
+                        "trecho_suporte": str(
+                            reference.get("trecho_suporte") or ""
+                        ),
+                        "texto_pagina": page_texts.get(source_id, {}).get(
+                            corrected_page, ""
+                        ),
+                        "texto_pagina_original": page_texts.get(source_id, {}).get(
+                            original_page, ""
+                        ),
+                        "correspondencias_em_outras_paginas": [],
+                        "motivo": reference.get("criterio_correcao_pagina"),
+                        "bloqueante": False,
+                    }
+                )
         return diagnostics
 
     def pilot_diagnostics(self, target_reference_id, analyzed):

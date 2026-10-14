@@ -742,10 +742,15 @@ def test_analysis_accepts_verifiable_excerpt_with_conservative_normalization():
     fact = result["analise"]["irregularidades"][0]["fatos_documentados"][0]
     assert fact["estado_conferencia"] == "VERIFICADA"
     assert fact["fontes"][0]["verificado"] is True
+    assert "pagina_original" not in fact["fontes"][0]
+    assert "pagina_corrigida_automaticamente" not in fact["fontes"][0]
     assert result["suficiente_para_geracao"] is True
 
 
-def test_analysis_marks_excerpt_copied_from_another_page():
+@pytest.mark.parametrize("indicated_page", (1, 99))
+def test_analysis_corrects_unique_literal_excerpt_copied_from_another_page(
+    indicated_page,
+):
     target, history, other, rows = _scenario()
     audit = next(
         row
@@ -764,24 +769,133 @@ def test_analysis_marks_excerpt_copied_from_another_page():
 
     def analyze(context):
         analysis = _analysis_payload(context)
-        analysis["irregularidades"][0]["fatos_documentados"][0]["fontes"][0][
+        reference = analysis["irregularidades"][0]["avaliacao_auditoria"]["fontes"][
+            0
+        ]
+        reference["pagina"] = indicated_page
+        reference["trecho_suporte"] = second_page
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows), analyze=analyze
+    )
+    result = service.analyze(target["id"])
+
+    reference = result["analise"]["irregularidades"][0]["avaliacao_auditoria"][
+        "fontes"
+    ][0]
+
+    assert result["suficiente_para_geracao"] is True
+    assert result["pendencias_conferencia"] == []
+    assert reference["pagina"] == 2
+    assert reference["pagina_original"] == indicated_page
+    assert reference["pagina_corrigida_automaticamente"] is True
+    assert reference["trecho_suporte"] == second_page
+    assert reference["verificado"] is True
+    diagnostic = result["diagnostico_conferencia"][0]
+    assert diagnostic["campo"] == "Conclusão da Auditoria"
+    assert diagnostic["trecho_suporte"] == second_page
+    assert diagnostic["pagina_original"] == indicated_page
+    assert diagnostic["pagina_corrigida"] == 2
+    assert diagnostic["pagina_corrigida_automaticamente"] is True
+    assert diagnostic["texto_pagina"] == second_page
+    assert diagnostic["texto_pagina_original"] == (
+        first_page if indicated_page == 1 else ""
+    )
+    assert diagnostic["bloqueante"] is False
+
+    revalidated = MinutasGenerationService._validate_analysis(
+        result["analise"], service.prepare_analysis_context(target["id"])["contexto"]
+    )
+    revalidated_reference = revalidated["irregularidades"][0][
+        "avaliacao_auditoria"
+    ]["fontes"][0]
+    assert revalidated_reference["pagina"] == 2
+    assert revalidated_reference["pagina_original"] == indicated_page
+    assert revalidated_reference["pagina_corrigida_automaticamente"] is True
+
+
+def test_analysis_keeps_block_when_literal_excerpt_matches_multiple_pages():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    first_page = "Irregularidade previdenciária na página original."
+    repeated = "A contribuição de março não foi recolhida."
+    audit["texto_integral"] = "\n".join((first_page, repeated, repeated))
+    audit["unidades_json"] = json.dumps(
+        [
+            {"pagina": 1, "texto": first_page},
+            {"pagina": 2, "texto": repeated},
+            {"pagina": 3, "texto": repeated},
+        ]
+    )
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        analysis["irregularidades"][0]["avaliacao_auditoria"]["fontes"][0][
             "trecho_suporte"
-        ] = second_page
+        ] = repeated
         return _analysis_result(context, analise=analysis)
 
     result = MinutasGenerationService(
         Library([target, history, other], rows), analyze=analyze
     ).analyze(target["id"])
+    reference = result["analise"]["irregularidades"][0]["avaliacao_auditoria"][
+        "fontes"
+    ][0]
 
     assert result["suficiente_para_geracao"] is False
-    assert result["pendencias_conferencia"][0]["pagina"] == 1
+    assert reference["pagina"] == 1
+    assert "pagina_original" not in reference
+    assert "pagina_corrigida_automaticamente" not in reference
     assert result["pendencias_conferencia"][0]["natureza"] == (
         "trecho não localizado na página indicada"
     )
     diagnostic = result["diagnostico_conferencia"][0]
-    assert diagnostic["trecho_suporte"] == second_page
-    assert diagnostic["texto_pagina"] == first_page
-    assert diagnostic["correspondencias_em_outras_paginas"] == [2]
+    assert diagnostic["correspondencias_em_outras_paginas"] == [2, 3]
+    assert diagnostic["bloqueante"] is True
+
+
+@pytest.mark.parametrize(
+    ("context_field", "source_id"),
+    (
+        ("documentos_outra_procuradora", "fonte-outra-procuradora"),
+        ("referencias_juridicas_recuperadas", "fonte-rag-historica"),
+    ),
+)
+def test_analysis_never_uses_unauthorized_or_rag_documents_as_factual_support(
+    context_field, source_id
+):
+    target, history, other, rows = _scenario()
+    context = MinutasGenerationService(
+        Library([target, history, other], rows)
+    ).prepare_analysis_context(target["id"])["contexto"]
+    context[context_field] = [
+        {
+            "fonte_id": source_id,
+            "conteudo": [
+                {"pagina": 9, "texto": "Conclusão literal de documento não autorizado."}
+            ],
+        }
+    ]
+    analysis = _analysis_payload(context)
+    analysis["irregularidades"][0]["avaliacao_auditoria"]["fontes"] = [
+        {
+            "fonte_id": source_id,
+            "pagina": 9,
+            "trecho_suporte": "Conclusão literal de documento não autorizado.",
+        }
+    ]
+
+    validated = MinutasGenerationService._validate_analysis(analysis, context)
+    reference = validated["irregularidades"][0]["avaliacao_auditoria"]["fontes"][0]
+
+    assert reference["verificado"] is False
+    assert reference["falha_verificacao"] == "fonte não localizada"
+    assert validated["conferencia_documental"]["suficiente_para_geracao"] is False
 
 
 def test_analysis_marks_defense_allegation_classified_as_documented_fact():
@@ -2269,7 +2383,25 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
                         "correspondencias_em_outras_paginas": [5],
                         "motivo": "trecho não localizado na página indicada",
                         "bloqueante": True,
-                    }
+                    },
+                    {
+                        "irregularidade": "IRR-4",
+                        "campo": "Conclusão da Auditoria",
+                        "documento": "analise-defesa.pdf",
+                        "pagina": 9,
+                        "pagina_original": 8,
+                        "pagina_corrigida": 9,
+                        "pagina_corrigida_automaticamente": True,
+                        "trecho_suporte": "Conclusão literal localizada.",
+                        "texto_pagina": "Conclusão literal localizada.",
+                        "texto_pagina_original": "Texto da página oito.",
+                        "correspondencias_em_outras_paginas": [],
+                        "motivo": (
+                            "correspondência literal normalizada única no mesmo "
+                            "documento"
+                        ),
+                        "bloqueante": False,
+                    },
                 ],
                 "recuperacao_juridica": {
                     "estado": "SEM_RESULTADOS",
@@ -2349,5 +2481,9 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
         for item in app.code
     )
     assert any("página(s) 5" in item.value for item in app.warning)
+    assert any(
+        "Página corrigida automaticamente de 8 para 9" in item.value
+        for item in app.success
+    )
     assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is True
     assert generation_calls == []
