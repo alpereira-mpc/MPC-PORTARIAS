@@ -19,8 +19,13 @@ from services.minutas_library import MinutasAccessDenied
 VERSION = "fontes-atuais"
 
 
-def _target(identifier="target-taperoa", process="TC 01653/26", key="0165326"):
-    return {
+def _target(
+    identifier="target-taperoa",
+    process="TC 01653/26",
+    key="0165326",
+    **changes,
+):
+    target = {
         "id": identifier,
         "procuradora": "Elvira Samara",
         "procuradora_chave": "elvira samara",
@@ -29,6 +34,8 @@ def _target(identifier="target-taperoa", process="TC 01653/26", key="0165326"):
         "exercicio": 2026,
         "subtipo": "Instituto/Autarquia",
     }
+    target.update(changes)
+    return target
 
 
 class Library:
@@ -151,7 +158,7 @@ def test_docx_is_editable_a4_and_matches_institutional_geometry():
     assert exported.content[:2] == b"PK"
     assert section.page_width.cm == pytest.approx(21.001, abs=0.02)
     assert section.page_height.cm == pytest.approx(29.7, abs=0.02)
-    assert section.top_margin.cm == pytest.approx(1.776, abs=0.02)
+    assert section.top_margin.cm == pytest.approx(6.35, abs=0.02)
     assert section.bottom_margin.cm == pytest.approx(2.0, abs=0.02)
     assert section.left_margin.cm == pytest.approx(2.75, abs=0.02)
     assert section.right_margin.cm == pytest.approx(1.75, abs=0.02)
@@ -179,13 +186,19 @@ def test_docx_reproduces_logo_header_and_spacing_without_empty_body_paragraphs()
     )
 
     assert section.different_first_page_header_footer is False
-    assert section.header_distance.cm == pytest.approx(0, abs=0.01)
+    assert section.header_distance.cm == pytest.approx(0.5, abs=0.02)
     assert len(_image_blobs(document)) == 1
     assert int(extent.get("cx")) / 914400 == pytest.approx(2.62, abs=0.01)
     assert int(extent.get("cy")) / 914400 == pytest.approx(1.84, abs=0.01)
-    assert drawing_paragraph.paragraph_format.space_before.pt == pytest.approx(24)
-    assert nature.paragraph_format.space_after.pt == pytest.approx(48)
-    assert ementa.style.paragraph_format.space_after.pt == pytest.approx(72)
+    assert drawing_paragraph.paragraph_format.space_before.pt == pytest.approx(0)
+    assert nature.paragraph_format.space_after.pt == pytest.approx(24)
+    assert ementa.style.paragraph_format.space_after.pt == pytest.approx(36)
+    logo_bottom_cm = (
+        section.header_distance.cm
+        + drawing_paragraph.paragraph_format.space_before.pt * 2.54 / 72
+        + int(extent.get("cy")) / 914400 * 2.54
+    )
+    assert section.top_margin.cm - logo_bottom_cm >= 1.0
     assert not any(not paragraph.text for paragraph in body_paragraphs)
 
 
@@ -272,7 +285,7 @@ def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
     structure["relatorio_paragrafos"] = [
         "Apresentação do processo.",
         "Histórico da instrução.",
-        "É o relatório. Passo a opinar.",
+        "É o relatório. Passa-se a opinar.",
     ]
     structure["fundamentacao_geral_paragrafos"] = [
         "Premissas jurídicas gerais.",
@@ -291,18 +304,40 @@ def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
     for expected in (
         "Apresentação do processo.",
         "Histórico da instrução.",
-        "É o relatório. Passo a opinar.",
         "A Auditoria manteve a irregularidade.",
         "A defesa apresentou sua alegação.",
         "A análise ministerial confrontou os elementos.",
     ):
         assert texts.count(expected) == 1
+    assert texts.count("É o relatório. Passa-se a opinar.") == 1
+    transition = next(
+        paragraph
+        for paragraph in document.paragraphs
+        if paragraph.text == "É o relatório. Passa-se a opinar."
+    )
+    assert transition.style.name == "Minuta Transição"
 
     legacy = Document(BytesIO(_export(structure=_structure()).content))
     assert any(
         paragraph.text.startswith("Relatório processual")
         for paragraph in legacy.paragraphs
     )
+    assert [paragraph.text for paragraph in legacy.paragraphs].count(
+        "É o relatório. Passa-se a opinar."
+    ) == 1
+
+
+def test_docx_includes_authorized_origin_and_responsible_when_available():
+    target = _target(
+        origem="Instituto Municipal de Previdência",
+        responsavel="Gestora Responsável",
+    )
+
+    document = Document(BytesIO(_export(target=target).content))
+    texts = [paragraph.text for paragraph in document.paragraphs]
+
+    assert "Origem: Instituto Municipal de Previdência" in texts
+    assert "Responsável: Gestora Responsável" in texts
 
 
 def test_docx_keeps_only_footer_warning_and_preserves_justified_negative_request():
@@ -337,6 +372,19 @@ def test_docx_supports_short_and_long_drafts(long):
     assert document.paragraphs[-1].text.startswith("Procuradora-Geral")
     if long:
         assert len(document.paragraphs) > 55
+        assert len(document.sections) == 1
+        assert document.sections[0].different_first_page_header_footer is False
+        assert len(_image_blobs(document)) == 1
+        headings = [
+            paragraph
+            for paragraph in document.paragraphs
+            if paragraph.style.name == "Minuta Irregularidade"
+        ]
+        assert headings
+        assert all(
+            paragraph.style.paragraph_format.keep_with_next is True
+            for paragraph in headings
+        )
 
 
 def test_export_revalidates_authorization_target_sources_and_blocking_state():

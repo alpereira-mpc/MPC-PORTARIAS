@@ -487,6 +487,97 @@ def test_context_uses_target_instruction_and_excludes_contamination():
     assert library.repository.queries == [target["procuradora_chave"]]
 
 
+def test_context_preserves_verified_folios_without_converting_pdf_pages():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    audit["texto_integral"] = (
+        "Irregularidade previdenciária na página original.\nfls. 101/110"
+    )
+    audit["unidades_json"] = json.dumps(
+        [
+            {
+                "pagina": 1,
+                "texto": "Irregularidade previdenciária na página original.\nfls. 101/110",
+            }
+        ],
+        ensure_ascii=False,
+    )
+    complement = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"]
+        and row["papel"] == "complementar"
+    )
+    complement["texto_integral"] = (
+        "A defesa foi examinada no último relatório.\nfls. 150/158"
+    )
+    complement["unidades_json"] = json.dumps(
+        [
+            {
+                "pagina": 1,
+                "texto": "A defesa foi examinada no último relatório.\nfls. 150/158",
+            }
+        ],
+        ensure_ascii=False,
+    )
+    no_folios = _row(
+        target,
+        "complementar",
+        "Manifestação processual sem numeração de folhas.",
+        position=2,
+    )
+    no_folios["unidades_json"] = json.dumps(
+        [
+            {"pagina": 1, "texto": "Primeira página física."},
+            {"pagina": 2, "texto": "Segunda página física."},
+        ],
+        ensure_ascii=False,
+    )
+    single_folio = _row(
+        target,
+        "complementar",
+        "Cota processual.\nfl. 170",
+        position=3,
+    )
+    single_folio["unidades_json"] = json.dumps(
+        [
+            {"pagina": 1, "texto": "Cota processual.\nfl. 170"},
+            {"pagina": 2, "texto": "Continuação sem folha expressa."},
+        ],
+        ensure_ascii=False,
+    )
+    rows.extend((no_folios, single_folio))
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+    )
+
+    context = service.prepare_analysis_context(target["id"])["contexto"]
+    sources = context["documentos_processo_alvo"]
+
+    assert sources[0]["folhas_processuais"]["citacao"] == "fls. 101/110"
+    assert sources[1]["folhas_processuais"]["citacao"] == "fls. 150/158"
+    assert "folhas_processuais" not in sources[2]
+    assert sources[2]["conteudo"][0]["pagina"] == 1
+    assert sources[2]["conteudo"][1]["pagina"] == 2
+    assert sources[3]["folhas_processuais"]["citacao"] == "fl. 170"
+    assert sources[3]["folhas_processuais"]["fim"] is None
+
+    result = service.generate(target["id"], service.analyze(target["id"]))
+    report = "\n".join(result["estrutura"]["relatorio_paragrafos"])
+    assert "Relatório da Auditoria (fls. 101/110)" in report
+    assert "Relatório de Análise de Defesa (fls. 150/158)" in report
+    assert "Relatório de Análise de Defesa (fl. 170)" in report
+    assert "Manifestação processual sem numeração" not in report
+    assert "(fls. 1/2)" not in report
+    assert report.endswith("É o relatório. Passa-se a opinar.")
+
+
 @pytest.mark.parametrize(
     "target_key", sorted(HISTORICAL_TEST_PROCESS_KEYS)
 )
@@ -1552,9 +1643,119 @@ def test_structured_paragraphs_are_used_without_breaking_legacy_structures():
     rendered = MinutasGenerationService._structure_markdown(validated)
 
     assert "Relatório legado." not in rendered
-    assert "Apresentação do processo.\n\nÉ o relatório." in rendered
+    assert (
+        "Apresentação do processo.\n\nÉ o relatório. Passa-se a opinar."
+        in rendered
+    )
+    assert rendered.count("É o relatório. Passa-se a opinar.") == 1
+    assert "É o relatório. Passo a opinar." not in rendered
     assert "Constatação da Auditoria.\n\nAlegação da defesa." in rendered
     assert MinutasGenerationService._validate_structure(_draft_structure())
+
+
+@pytest.mark.parametrize(
+    "subtype",
+    (
+        "Instituto/Autarquia",
+        "Câmara Municipal",
+        "Secretaria Municipal ou Estadual",
+    ),
+)
+def test_other_pca_uses_direct_accounts_outcome_and_preserves_relief(subtype):
+    target, history, other, rows = _scenario()
+    target["subtipo"] = subtype
+
+    def generate(context):
+        structure = _draft_structure()
+        structure["pedidos"] = [
+            "Proponha-se a emissão de parecer favorável.",
+            "Proponha-se a regularidade com ressalvas das contas.",
+            "Aplique-se a multa fundamentada no tópico 18.1.",
+        ]
+        return _draft_result(context, estrutura=structure)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+    )
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert result["estrutura"]["pedidos"][0].startswith(
+        "Proponha-se a regularidade com ressalvas"
+    )
+    assert all(
+        "parecer favorável" not in item.casefold()
+        for item in result["estrutura"]["pedidos"]
+    )
+    assert any("multa fundamentada" in item for item in result["estrutura"]["pedidos"])
+
+
+def test_city_pca_orders_two_existing_competences_without_inventing_them():
+    target, history, other, rows = _scenario()
+    target["subtipo"] = "Prefeitura"
+
+    def generate(context):
+        structure = _draft_structure()
+        structure["pedidos"] = [
+            "Aplique-se a multa fundamentada no tópico 18.1.",
+            "Proponha-se a irregularidade das contas submetidas a julgamento.",
+            "Proponha-se a emissão de parecer contrário sobre as contas de governo.",
+        ]
+        return _draft_result(context, estrutura=structure)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+    )
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert "parecer contrário" in result["estrutura"]["pedidos"][0]
+    assert "irregularidade das contas" in result["estrutura"]["pedidos"][1]
+    assert "multa fundamentada" in result["estrutura"]["pedidos"][2]
+
+    structure = _draft_structure()
+    structure["pedidos"] = [
+        "Proponha-se a emissão de parecer favorável sobre as contas de governo."
+    ]
+    normalized, warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+    assert normalized["pedidos"] == structure["pedidos"]
+    assert any("duas manifestações" in warning for warning in warnings)
+
+
+def test_quality_warnings_preserve_invalid_currency_and_accounting_code():
+    target, history, other, rows = _scenario()
+    accounting_code = "1.1.1.1.01.00"
+
+    def generate(context):
+        structure = _draft_structure()
+        structure["fundamentacao_geral"] = (
+            "O código contábil "
+            + accounting_code
+            + " foi mantido. O valor indicado foi R$ 409.458.55."
+        )
+        structure["fundamentacao_geral_paragrafos"] = [
+            structure["fundamentacao_geral"]
+        ]
+        return _draft_result(context, estrutura=structure)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+    )
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert accounting_code in result["texto"]
+    assert "R$ 409.458.55" in result["texto"]
+    assert "R$ 409.458,55" not in result["texto"]
+    assert any(
+        "separadores incompatíveis" in warning
+        for warning in result["advertencias_qualidade"]
+    )
 
 
 def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
@@ -1565,6 +1766,10 @@ def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
     assert "Preserve pedido negativo somente" in prompt
     assert "aproveite de modo explícito o critério" in prompt
     assert 'encerramento deve ser apenas "É o Parecer."' in prompt
+    assert "sequencia_processual_verificada" in prompt
+    assert "página física do PDF" in prompt
+    assert "DEMAIS_PCA_JULGAMENTO_DIRETO" in prompt
+    assert "o backend inserirá deterministicamente" in prompt
     assert "relatorio_paragrafos" in schema["required"]
     assert "fundamentacao_geral_paragrafos" in schema["required"]
     topic_schema = schema["properties"]["topicos_irregularidades"]["items"]

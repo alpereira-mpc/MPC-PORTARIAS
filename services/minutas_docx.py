@@ -111,6 +111,7 @@ def _configure_style(
     fmt.space_after = Pt(after_pt)
     fmt.line_spacing = 1
     fmt.keep_with_next = keep_next
+    fmt.keep_together = keep_next
     return style
 
 
@@ -135,9 +136,17 @@ def _configure_styles(document):
         "Minuta Ementa",
         size=11,
         left_cm=6.752,
-        after_pt=72,
+        after_pt=36,
     )
     _configure_style(document, "Minuta Corpo", size=12, first_cm=3, after_pt=12)
+    _configure_style(
+        document,
+        "Minuta Transição",
+        size=12,
+        first_cm=3,
+        after_pt=12,
+        keep_next=True,
+    )
     _configure_style(
         document,
         "Minuta Irregularidade",
@@ -298,11 +307,12 @@ def _blocks(value, structured=None):
 
 def _add_body(document, value, style="Minuta Corpo", *, paragraphs=None):
     for block in _blocks(value, paragraphs):
-        selected_style = (
-            "Minuta Transcrição"
-            if block.startswith(('"', "“", "‘", "'"))
-            else style
-        )
+        if block == "É o relatório. Passa-se a opinar.":
+            selected_style = "Minuta Transição"
+        elif block.startswith(('"', "“", "‘", "'")):
+            selected_style = "Minuta Transcrição"
+        else:
+            selected_style = style
         paragraph = document.add_paragraph(style=selected_style)
         _add_text(paragraph, block, size=11 if selected_style == "Minuta Transcrição" else 12)
 
@@ -384,18 +394,18 @@ def _build_docx(target, structure, profile):
     section.orientation = WD_ORIENT.PORTRAIT
     section.page_width = Cm(21.001)
     section.page_height = Cm(29.7)
-    section.top_margin = Cm(1.776)
+    section.top_margin = Cm(6.35)
     section.bottom_margin = Cm(2)
     section.left_margin = Cm(2.75)
     section.right_margin = Cm(1.75)
-    section.header_distance = Cm(0)
+    section.header_distance = Cm(0.5)
     section.footer_distance = Cm(0)
     _configure_styles(document)
 
     header = section.header
     paragraph = header.paragraphs[0]
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    paragraph.paragraph_format.space_before = Pt(24)
+    paragraph.paragraph_format.space_before = Pt(0)
     paragraph.paragraph_format.space_after = Pt(0)
     run = paragraph.add_run()
     logo = run.add_picture(
@@ -421,6 +431,10 @@ def _build_docx(target, structure, profile):
     ]
     if str(target.get("origem") or "").strip():
         identification.append(f"Origem: {str(target['origem']).strip()}")
+    if str(target.get("responsavel") or "").strip():
+        identification.append(
+            f"Responsável: {str(target['responsavel']).strip()}"
+        )
     identification.append(
         "Natureza: Prestação de Contas Anuais - "
         f"exercício {int(target['exercicio'])}"
@@ -429,7 +443,7 @@ def _build_docx(target, structure, profile):
         item = document.add_paragraph(style="Minuta Identificação")
         _add_text(item, line, bold=True)
         if index == len(identification) - 1:
-            item.paragraph_format.space_after = Pt(48)
+            item.paragraph_format.space_after = Pt(24)
 
     ementa = document.add_paragraph(style="Minuta Ementa")
     _add_text(ementa, f"Ementa: {structure['ementa']}", size=11)
@@ -541,6 +555,10 @@ class MinutasDocxService:
         structure = MinutasGenerationService._validate_structure(
             generated.get("estrutura")
         )
+        structure, _normalization_warnings = (
+            MinutasGenerationService._normalize_structure(structure, target)
+        )
+        structure = MinutasGenerationService._validate_structure(structure)
         return MinutaDocx(
             name=_filename(target),
             mime=DOCX_MIME,

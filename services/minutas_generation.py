@@ -27,6 +27,7 @@ MAX_RAG_PASSAGES_PER_OPINION = 2
 MAX_RAG_PASSAGE_CHARS = 1600
 RAG_RECOVERY_VERSION = "3b5b1-relevance-v2"
 EVIDENCE_CORRECTION_VERSION = "3c3-assisted-evidence-v1"
+REPORT_TRANSITION = "É o relatório. Passa-se a opinar."
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
     re.compile(r"^(?:codigo|código)\s+verificador\s*[:#-]\s*\S+.*$"),
@@ -220,6 +221,53 @@ _CATEGORICAL_CURE = re.compile(
     r"(?:(?:foi|foram|esta|estao|restou|restaram|considera-se|consideram-se)\s+)?"
     r"(?:sanad[ao]s?|regularizad[ao]s?|corrigid[ao]s?|superad[ao]s?)\b"
 )
+_REPORT_TRANSITION_RE = re.compile(
+    r"\b[eé]\s+o\s+relat[oó]rio\s*\.\s*"
+    r"(?:passo\s+a|passa-se\s+a)\s+opinar\s*\.?",
+    re.IGNORECASE,
+)
+_STANDALONE_FOLIO_RE = re.compile(
+    r"^\s*(?:fls?|folhas?)\.?\s*(\d{1,7})"
+    r"(?:\s*(?:/|a|at[eé]|[-–—])\s*(\d{1,7}))?\s*\.?\s*$",
+    re.IGNORECASE,
+)
+_PRELIMINARY_OPINION_RE = re.compile(
+    r"\b(?:emiss[aã]o\s+de\s+)?parecer(?:\s+pr[eé]vio)?\s+"
+    r"(?:favor[aá]vel|contr[aá]rio)\b",
+    re.IGNORECASE,
+)
+_ACCOUNT_OUTCOME_PATTERNS = (
+    (
+        "REGULARIDADE_COM_RESSALVAS",
+        re.compile(
+            r"\bregularidade\s+com\s+ressalvas\b"
+            r"|\bcontas?\s+regulares?\s+com\s+ressalvas\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "IRREGULARIDADE",
+        re.compile(
+            r"\birregularidade\b|\bcontas?\s+irregulares?\b", re.IGNORECASE
+        ),
+    ),
+    (
+        "REGULARIDADE",
+        re.compile(
+            r"\bregularidade\b(?!\s+com\s+ressalvas)"
+            r"|\bcontas?\s+regulares?\b(?!\s+com\s+ressalvas)",
+            re.IGNORECASE,
+        ),
+    ),
+)
+_INVALID_BRL_RE = re.compile(
+    r"R\$\s*\d{1,3}(?:\.\d{3})*\.\d{2}(?!\d)", re.IGNORECASE
+)
+_NO_HARM_CLAIM_RE = re.compile(
+    r"\b(?:aus[eê]ncia|inexist[eê]ncia)\s+(?:de\s+)?(?:dano|preju[ií]zo)\b"
+    r"|\bn[aã]o\s+(?:houve|h[aá])\s+(?:dano|preju[ií]zo)\b",
+    re.IGNORECASE,
+)
 
 
 class MinutasGenerationError(MinutasValidationError):
@@ -254,6 +302,123 @@ def _paragraph_blocks(structured, legacy):
         for block in re.split(r"\n\s*\n", str(legacy or "").strip())
         if block.strip()
     ]
+
+
+def _without_report_transition(value):
+    return re.sub(r"\s+", " ", _REPORT_TRANSITION_RE.sub(" ", str(value or ""))).strip()
+
+
+def _normalized_report_sections(structure, process_sequence=None):
+    report = [
+        cleaned
+        for block in _paragraph_blocks(
+            structure.get("relatorio_paragrafos"), structure.get("relatorio")
+        )
+        if (cleaned := _without_report_transition(block))
+    ]
+    foundation = [
+        cleaned
+        for block in _paragraph_blocks(
+            structure.get("fundamentacao_geral_paragrafos"),
+            structure.get("fundamentacao_geral"),
+        )
+        if (cleaned := _without_report_transition(block))
+    ]
+    sequence = str(process_sequence or "").strip()
+    if sequence and _normalized_support(sequence) not in {
+        _normalized_support(block) for block in report
+    }:
+        report.append(sequence)
+    report.append(REPORT_TRANSITION)
+    return report, foundation
+
+
+def _verified_source_folios(content):
+    ranges = set()
+    singles = set()
+    paginated_units = []
+    for unit in content or ():
+        if not isinstance(unit, dict):
+            continue
+        if isinstance(unit.get("pagina"), int):
+            paginated_units.append(unit)
+        for raw_line in str(unit.get("texto") or "").splitlines():
+            match = _STANDALONE_FOLIO_RE.fullmatch(raw_line.strip())
+            if not match:
+                continue
+            start = int(match.group(1))
+            end = int(match.group(2)) if match.group(2) else None
+            if end is not None:
+                if end < start:
+                    return None
+                ranges.add((start, end))
+            else:
+                singles.add(start)
+    if len(ranges) == 1:
+        start, end = next(iter(ranges))
+        if any(not start <= item <= end for item in singles):
+            return None
+        return {
+            "inicio": start,
+            "fim": end,
+            "citacao": f"fls. {start}/{end}",
+            "criterio": "intervalo expresso no próprio documento",
+        }
+    if ranges:
+        return None
+    ordered = sorted(singles)
+    if len(ordered) == 1:
+        return {
+            "inicio": ordered[0],
+            "fim": None,
+            "citacao": f"fl. {ordered[0]}",
+            "criterio": "folha única expressa no próprio documento",
+        }
+    if (
+        ordered
+        and len(ordered) == len(paginated_units)
+        and ordered == list(range(ordered[0], ordered[-1] + 1))
+    ):
+        return {
+            "inicio": ordered[0],
+            "fim": ordered[-1],
+            "citacao": f"fls. {ordered[0]}/{ordered[-1]}",
+            "criterio": "folhas expressas e contínuas em todas as páginas",
+        }
+    return None
+
+
+def _process_sequence(context):
+    sequence = []
+    for source in context.get("documentos_processo_alvo", ()):
+        item = {
+            "fonte_id": source.get("fonte_id"),
+            "tipo": source.get("tipo") or source.get("papel"),
+            "arquivo": source.get("arquivo"),
+        }
+        if source.get("folhas_processuais"):
+            item["folhas_processuais"] = dict(source["folhas_processuais"])
+        sequence.append(item)
+    return sequence
+
+
+def _process_sequence_paragraph(context):
+    entries = []
+    for item in _process_sequence(context):
+        label = str(item.get("tipo") or item.get("arquivo") or "Documento").strip()
+        folios = item.get("folhas_processuais") or {}
+        citation = str(folios.get("citacao") or "").strip()
+        entries.append(f"{label} ({citation})" if citation else label)
+    if not entries:
+        return ""
+    return "Integram a instrução processual: " + "; ".join(entries) + "."
+
+
+def _account_outcomes(value):
+    text = str(value or "")
+    return {
+        name for name, pattern in _ACCOUNT_OUTCOME_PATTERNS if pattern.search(text)
+    }
 
 
 def _canonical_process_key(value):
@@ -930,7 +1095,7 @@ class MinutasGenerationService:
         content = _source_text(row)
         if not content:
             return None
-        return {
+        source = {
             "fonte_id": sha256(
                 (str(row.get("arquivo_sha256") or row["arquivo_path"])).encode()
             ).hexdigest()[:16],
@@ -944,6 +1109,10 @@ class MinutasGenerationService:
             "etapa_processual": row["tipo"],
             "conteudo": content,
         }
+        folios = _verified_source_folios(content)
+        if folios:
+            source["folhas_processuais"] = folios
+        return source
 
     def _valid_extraction_row(self, row, record):
         if str(row.get("referencia_id")) != str(record.get("id")):
@@ -1033,7 +1202,14 @@ class MinutasGenerationService:
                 "parecer_definitivo_excluido": True,
             },
             "documentos_processo_alvo": target_sources,
+            "sequencia_processual_verificada": _process_sequence(
+                {"documentos_processo_alvo": target_sources}
+            ),
         }
+        for field in ("origem", "responsavel"):
+            value = str(target.get(field) or "").strip()
+            if value:
+                context["processo_alvo"][field] = value
         if _serialized_size(context) > MAX_CONTEXT_BYTES:
             raise MinutasGenerationError(
                 "Os documentos essenciais do processo-alvo excedem o limite de contexto."
@@ -1401,8 +1577,20 @@ class MinutasGenerationService:
                 "parecer_definitivo_excluido": True,
             },
             "documentos_processo_alvo": target_sources,
+            "sequencia_processual_verificada": _process_sequence(
+                {"documentos_processo_alvo": target_sources}
+            ),
+            "orientacao_dispositivo": (
+                "PREFEITURA_CONDICIONAL_DUAS_COMPETENCIAS"
+                if target["subtipo"] == "Prefeitura"
+                else "DEMAIS_PCA_JULGAMENTO_DIRETO"
+            ),
             "referencias_historicas": [],
         }
+        for field in ("origem", "responsavel"):
+            value = str(target.get(field) or "").strip()
+            if value:
+                context["processo_alvo"][field] = value
         if analysis is not None:
             context["analise_estruturada"] = analysis
         if use_rag:
@@ -2194,7 +2382,86 @@ class MinutasGenerationService:
         return structure
 
     @staticmethod
+    def _normalize_structure(structure, target, context=None):
+        normalized = deepcopy(structure)
+        warnings = []
+        report, foundation = _normalized_report_sections(
+            normalized,
+            _process_sequence_paragraph(context or {}),
+        )
+        normalized["relatorio_paragrafos"] = report
+        normalized["relatorio"] = "\n\n".join(report)
+        normalized["fundamentacao_geral_paragrafos"] = foundation
+        normalized["fundamentacao_geral"] = "\n\n".join(foundation)
+        normalized["encerramento"] = "É o Parecer."
+
+        requests = [str(item).strip() for item in normalized.get("pedidos", ())]
+        opinion_requests = [
+            item for item in requests if _PRELIMINARY_OPINION_RE.search(item)
+        ]
+        account_requests = [item for item in requests if _account_outcomes(item)]
+        account_requests = [
+            item
+            for item in account_requests
+            if not _PRELIMINARY_OPINION_RE.search(item)
+        ]
+        subtype = str(target.get("subtipo") or "")
+        if subtype == "Prefeitura":
+            if opinion_requests and account_requests:
+                ordered = [opinion_requests[0], account_requests[0]]
+                normalized["pedidos"] = ordered + [
+                    item for item in requests if item not in ordered
+                ]
+            else:
+                warnings.append(
+                    "PCA de Prefeitura sem elementos suficientes para confirmar "
+                    "se as duas manifestações dispositivas são cabíveis; revise a "
+                    "competência e o objeto antes da assinatura."
+                )
+        else:
+            if opinion_requests:
+                removable = [
+                    item
+                    for item in opinion_requests
+                    if not re.search(
+                        r"\b(?:multa|d[eé]bito|recomenda|determina|ressalva)\w*\b",
+                        item,
+                        re.IGNORECASE,
+                    )
+                ]
+                remaining = [item for item in requests if item not in removable]
+                if remaining:
+                    requests = remaining
+                warnings.append(
+                    "Foi identificada proposta de parecer prévio em PCA que não é "
+                    "de Prefeitura; o dispositivo exige revisão jurídica."
+                )
+            account_requests = [
+                item
+                for item in requests
+                if _account_outcomes(item)
+                and not _PRELIMINARY_OPINION_RE.search(item)
+            ]
+            if account_requests:
+                first = account_requests[0]
+                normalized["pedidos"] = [first] + [
+                    item for item in requests if item != first
+                ]
+            else:
+                normalized["pedidos"] = requests
+                warnings.append(
+                    "A PCA exige proposta direta de regularidade, regularidade com "
+                    "ressalvas ou irregularidade no primeiro item do dispositivo."
+                )
+        return normalized, warnings
+
+    @staticmethod
     def _structure_markdown(structure):
+        structure = deepcopy(structure)
+        report_blocks, foundation_blocks = _normalized_report_sections(structure)
+        structure["relatorio_paragrafos"] = report_blocks
+        structure["fundamentacao_geral_paragrafos"] = foundation_blocks
+        structure["encerramento"] = "É o Parecer."
         report = "\n\n".join(
             _paragraph_blocks(
                 structure.get("relatorio_paragrafos"), structure["relatorio"]
@@ -2365,11 +2632,55 @@ class MinutasGenerationService:
             for source in target_context["documentos_processo_alvo"]
             for unit in source["conteudo"]
         )
+        source_normalized = _normalized_support(source_text)
+        for amount in sorted(set(_INVALID_BRL_RE.findall(text))):
+            warnings.append(
+                "Possível valor monetário com separadores incompatíveis com o "
+                f"padrão brasileiro: {amount}. Confira a fonte; o valor não foi "
+                "reescrito automaticamente."
+            )
         for amount in set(re.findall(r"R\$\s*[\d.]+(?:,\d{2})?", text)):
             if re.sub(r"\s+", "", amount) not in re.sub(r"\s+", "", source_text):
                 warnings.append(
                     f"Possível valor sem correspondência literal nas fontes: {amount}."
                 )
+        target_process = _canonical_process_key(
+            target_context.get("processo_alvo", {}).get("numero")
+        )
+        for process in set(
+            re.findall(r"\bTC\s*(?:n[.º°o]\s*)?(\d{5}\s*/\s*\d{2})\b", text, re.IGNORECASE)
+        ):
+            if _canonical_process_key(process) != target_process:
+                warnings.append(
+                    "Possível número de processo alheio ao processo-alvo: "
+                    f"TC {process}."
+                )
+        normative_patterns = (
+            r"\bPortaria\s+(?:[A-Z]{2,10}\s+)?(?:n[.º°o]\s*)?\d[\d./-]*",
+            r"\b(?:Lei|Decreto|Resolução)\s+(?:n[.º°o]\s*)?\d[\d./-]*",
+            r"\bart(?:igo)?\.?(?:\s+n[.º°o])?\s*\d+[A-Za-z-]*",
+        )
+        cited_norms = {
+            match.group(0)
+            for pattern in normative_patterns
+            for match in re.finditer(pattern, text, re.IGNORECASE)
+        }
+        for norm in sorted(cited_norms):
+            if _normalized_support(norm) not in source_normalized:
+                warnings.append(
+                    "Possível referência normativa sem correspondência nas fontes "
+                    f"do processo-alvo: {norm}."
+                )
+        unsupported_harm_claims = {
+            match.group(0)
+            for match in _NO_HARM_CLAIM_RE.finditer(text)
+            if _normalized_support(match.group(0)) not in source_normalized
+        }
+        if unsupported_harm_claims:
+            warnings.append(
+                "Possível afirmação de ausência de dano ou prejuízo ao controle "
+                "sem suporte textual nas fontes do processo-alvo."
+            )
         valid_pages = set().union(*source_pages.values())
         for page in {
             int(value)
@@ -2379,16 +2690,6 @@ class MinutasGenerationService:
                 warnings.append(
                     f"Possível citação de página sem correspondência nas fontes: {page}."
                 )
-        def declared_outcome(value):
-            normalized = _plain(value)
-            irregular = bool(re.search(r"\birregular(?:idade|es)?\b", normalized))
-            regular = bool(re.search(r"\bregular(?:idade|es)?\b", normalized))
-            if irregular and not regular:
-                return "irregular"
-            if regular and not irregular and "ressalva" not in normalized:
-                return "regular"
-            return None
-
         foundation = "\n".join(
             [structure["fundamentacao_geral"]]
             + [
@@ -2397,12 +2698,24 @@ class MinutasGenerationService:
                 if isinstance(topic, dict)
             ]
         )
-        outcomes = [
-            declared_outcome(structure["ementa"]),
-            declared_outcome(foundation),
-            declared_outcome(structure["conclusao_pedidos"]),
-        ]
-        if "regular" in outcomes and "irregular" in outcomes:
+        foundation_outcomes = _account_outcomes(
+            "\n".join((structure["ementa"], foundation))
+        )
+        dispositive_outcomes = _account_outcomes(
+            "\n".join(
+                (structure["conclusao_pedidos"], *structure.get("pedidos", ()))
+            )
+        )
+        if len(dispositive_outcomes) > 1:
+            warnings.append(
+                "O dispositivo contém propostas incompatíveis sobre a regularidade "
+                "do mesmo objeto."
+            )
+        if (
+            foundation_outcomes
+            and dispositive_outcomes
+            and foundation_outcomes.isdisjoint(dispositive_outcomes)
+        ):
             warnings.append(
                 "Possível inconsistência entre a ementa, a fundamentação e a conclusão "
                 "quanto ao resultado."
@@ -2497,9 +2810,16 @@ class MinutasGenerationService:
         if not isinstance(generated, dict):
             raise MinutasGenerationError("A IA não retornou uma minuta válida.")
         structure = self._validate_structure(generated.get("estrutura"))
-        warnings = self._quality_warnings(
-            structure, analyzed["analise"], prepared["contexto"]
+        structure, normalization_warnings = self._normalize_structure(
+            structure, target, prepared["contexto"]
         )
+        structure = self._validate_structure(structure)
+        warnings = [
+            *normalization_warnings,
+            *self._quality_warnings(
+                structure, analyzed["analise"], prepared["contexto"]
+            ),
+        ]
         return {
             **generated,
             "estrutura": structure,
