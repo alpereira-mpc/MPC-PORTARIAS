@@ -10,6 +10,7 @@ from services.minutas_generation import (
     RAG_RECOVERY_VERSION,
     MinutasGenerationService,
 )
+from services.minutas_docx import MinutasDocxError, MinutasDocxService
 from services.minutas_library import (
     COMPLEMENT_TYPES,
     MinutasAccessDenied,
@@ -52,6 +53,7 @@ def _error(exc):
             MinutasAccessDenied,
             MinutasDuplicateError,
             MinutasValidationError,
+            MinutasDocxError,
             MinutasExtractionError,
             StorageOperationError,
             GeminiErro,
@@ -1383,6 +1385,20 @@ def _generator_tab(store, identity):
             language=None,
             wrap_lines=True,
             height=320,
+        )
+    try:
+        word = MinutasDocxService(service).export(target["id"], analysis, result)
+    except Exception as exc:
+        _error(exc)
+    else:
+        st.download_button(
+            "Baixar minuta em Word",
+            data=word.content,
+            file_name=word.name,
+            mime=word.mime,
+            key=f"minutas_generation_docx_{target['id']}",
+            icon=":material/download:",
+            on_click="ignore",
         )
     with st.expander("Validação e fontes utilizadas"):
         details = [

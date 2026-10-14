@@ -1865,6 +1865,8 @@ class MinutasGenerationService:
 
     def analyze(self, target_reference_id):
         self.library._authorize()
+        target = self.library.get(target_reference_id)
+        self._validate_target(target)
         prepared = self.prepare_analysis_context(target_reference_id)
         generated = self._analyze(prepared["contexto"])
         if not isinstance(generated, dict):
@@ -1887,10 +1889,17 @@ class MinutasGenerationService:
             "diagnostico_conferencia": conference_diagnostics,
             "recuperacao_juridica": legal_recovery,
             "rag_recovery_version": RAG_RECOVERY_VERSION,
+            "processo_alvo_id": str(target["id"]),
+            "processo_alvo_chave": _canonical_process_key(
+                target.get("processo_chave") or target.get("numero_processo")
+            ),
+            "procuradora_chave": str(target.get("procuradora_chave") or ""),
         }
 
     def generate(self, target_reference_id, analyzed, use_rag=True):
         self.library._authorize()
+        target = self.library.get(target_reference_id)
+        self._validate_target(target)
         if not isinstance(analyzed, dict) or not isinstance(analyzed.get("analise"), dict):
             raise MinutasGenerationError("Analise os fundamentos antes de gerar a minuta.")
         recovery = analyzed.get("recuperacao_juridica") or {}
@@ -1949,5 +1958,10 @@ class MinutasGenerationService:
             "estrutura": structure,
             "texto": self._structure_markdown(structure),
             "advertencias_qualidade": warnings,
+            "processo_alvo_id": str(target["id"]),
+            "processo_alvo_chave": _canonical_process_key(
+                target.get("processo_chave") or target.get("numero_processo")
+            ),
+            "procuradora_chave": str(target.get("procuradora_chave") or ""),
             **{key: value for key, value in prepared.items() if key != "contexto"},
         }

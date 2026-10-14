@@ -1953,6 +1953,7 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     analysis_calls = []
     generation_calls = []
     refresh_calls = []
+    export_calls = []
     revision = {"value": "revision-1"}
     summary_calls = []
 
@@ -2029,8 +2030,30 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
                 ],
             }
 
+    class WordExporter:
+        def __init__(self, _library):
+            pass
+
+        def export(self, identifier, analyzed, generated):
+            export_calls.append(identifier)
+            assert analyzed["fontes_versao"] == revision["value"]
+            assert generated["fontes_versao"] == revision["value"]
+            return type(
+                "Word",
+                (),
+                {
+                    "content": b"PK-docx",
+                    "name": "MINUTA_PARECER_TC_01653_26.docx",
+                    "mime": (
+                        "application/vnd.openxmlformats-officedocument."
+                        "wordprocessingml.document"
+                    ),
+                },
+            )()
+
     monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args: object())
     monkeypatch.setattr(minutas_ia_ui, "MinutasGenerationService", Generator)
+    monkeypatch.setattr(minutas_ia_ui, "MinutasDocxService", WordExporter)
     _UI_HOLD.clear()
 
     def page():
@@ -2071,6 +2094,10 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
 
     app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
     assert generation_calls == [(TARGET_ID, True)]
+    assert export_calls == [TARGET_ID]
+    assert any(
+        item.label == "Baixar minuta em Word" for item in app.get("download_button")
+    )
     assert any("Conteúdo para revisão" in item.value for item in app.markdown)
     assert any("Conteúdo para revisão" in item.value for item in app.code)
     assert any(
@@ -2084,6 +2111,7 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     app.run()
     assert analysis_calls == [TARGET_ID]
     assert generation_calls == [(TARGET_ID, True)]
+    assert export_calls == [TARGET_ID, TARGET_ID]
     assert any("Conteúdo para revisão" in item.value for item in app.markdown)
 
     revision["value"] = "revision-2"
