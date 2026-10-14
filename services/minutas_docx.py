@@ -199,6 +199,25 @@ def _configure_styles(document):
         alignment=WD_ALIGN_PARAGRAPH.CENTER,
         after_pt=0,
     )
+    _configure_style(
+        document,
+        "Minuta Revisão Título",
+        size=12,
+        bold=True,
+        alignment=WD_ALIGN_PARAGRAPH.LEFT,
+        before_pt=0,
+        after_pt=12,
+        keep_next=True,
+    )
+    _configure_style(
+        document,
+        "Minuta Revisão Item",
+        size=10,
+        alignment=WD_ALIGN_PARAGRAPH.LEFT,
+        left_cm=0.75,
+        first_cm=-0.5,
+        after_pt=6,
+    )
 
 
 def _template_logo(template_path):
@@ -388,7 +407,54 @@ def _filename(target):
     return "MINUTA_PARECER.docx"
 
 
-def _build_docx(target, structure, profile):
+def _review_items(analyzed, generated):
+    items = []
+    documentary = generated.get("advertencias_documentais")
+    if not isinstance(documentary, list):
+        documentary = analyzed.get("pendencias_conferencia") or []
+    for issue in documentary:
+        if not isinstance(issue, dict):
+            continue
+        location = str(issue.get("documento") or "Documento não informado")
+        if issue.get("pagina") is not None:
+            location += f", p. {issue['pagina']}"
+        items.append(
+            f"{issue.get('irregularidade') or '—'} — "
+            f"{issue.get('categoria') or 'Campo não informado'} — {location}: "
+            f"{issue.get('natureza') or 'conferência documental necessária'}."
+        )
+    for warning in generated.get("advertencias_qualidade") or ():
+        text = str(warning or "").strip()
+        if text:
+            items.append(text)
+    return list(dict.fromkeys(items))
+
+
+def _add_review_section(document, items):
+    if not items:
+        return
+    title = document.add_paragraph(style="Minuta Revisão Título")
+    title.paragraph_format.page_break_before = True
+    _add_text(
+        title,
+        "INFORMAÇÕES AUXILIARES PARA REVISÃO",
+        bold=True,
+    )
+    introduction = document.add_paragraph(style="Minuta Revisão Item")
+    introduction.paragraph_format.left_indent = Cm(0)
+    introduction.paragraph_format.first_line_indent = Cm(0)
+    _add_text(
+        introduction,
+        "Os pontos abaixo não integram a fundamentação oficial da minuta e "
+        "devem ser conferidos pelo Assessor.",
+        size=10,
+    )
+    for item in items:
+        paragraph = document.add_paragraph(style="Minuta Revisão Item")
+        _add_text(paragraph, f"• {item}", size=10)
+
+
+def _build_docx(target, structure, profile, review_items=()):
     document = Document()
     section = document.sections[0]
     section.orientation = WD_ORIENT.PORTRAIT
@@ -482,6 +548,8 @@ def _build_docx(target, structure, profile):
     title = document.add_paragraph(style="Minuta Cargo")
     _add_text(title, profile["cargo"], size=11)
 
+    _add_review_section(document, review_items)
+
     output = BytesIO()
     document.save(output)
     return output.getvalue()
@@ -501,7 +569,6 @@ class MinutasDocxService:
 
     def export(self, target_reference_id, analyzed, generated):
         from services.minutas_generation import (
-            RAG_RECOVERY_VERSION,
             MinutasGenerationService,
             _canonical_process_key as canonical_process_key,
         )
@@ -511,13 +578,6 @@ class MinutasDocxService:
         MinutasGenerationService._validate_target(target)
         if not isinstance(analyzed, dict) or not isinstance(generated, dict):
             raise MinutasDocxError("Gere novamente a minuta antes de exportar.")
-        if analyzed.get("suficiente_para_geracao") is not True:
-            raise MinutasDocxError(
-                "A exportação está bloqueada até a conferência documental."
-            )
-        if analyzed.get("rag_recovery_version") != RAG_RECOVERY_VERSION:
-            raise MinutasDocxError("Atualize a recuperação jurídica antes de exportar.")
-
         summary = self._source_summary(target_reference_id)
         current_version = summary.get("fontes_versao")
         if summary.get("issues"):
@@ -562,5 +622,10 @@ class MinutasDocxService:
         return MinutaDocx(
             name=_filename(target),
             mime=DOCX_MIME,
-            content=_build_docx(target, structure, profile),
+            content=_build_docx(
+                target,
+                structure,
+                profile,
+                review_items=_review_items(analyzed, generated),
+            ),
         )

@@ -7,8 +7,8 @@ import streamlit as st
 from database.minutas_referencias import MinutasReferenciasStore
 from services.ai_service import GeminiErro, GeminiNaoConfigurada
 from services.minutas_generation import (
-    EVIDENCE_CORRECTION_VERSION,
     RAG_RECOVERY_VERSION,
+    VALIDATION_POLICY_VERSION,
     MinutasGenerationService,
 )
 from services.minutas_docx import MinutasDocxError, MinutasDocxService
@@ -1006,16 +1006,27 @@ def _analysis_panel(analysis_result):
         st.markdown("\n".join(f"- {item}" for item in general_attention))
     pending = analysis_result.get("pendencias_conferencia") or ()
     if pending:
-        lines = []
-        for issue in pending[:5]:
-            location = issue["documento"]
-            if issue.get("pagina") is not None:
-                location += f", p. {issue['pagina']}"
-            lines.append(
-                f"- {issue['irregularidade']} · {issue['categoria']} · "
-                f"{location}: {issue['natureza']}"
-            )
-        st.warning("Conferência documental pendente:\n\n" + "\n".join(lines))
+        affected = sorted(
+            {str(issue.get("irregularidade") or "—") for issue in pending}
+        )
+        st.warning(
+            "Análise concluída com pontos para conferência documental. A minuta "
+            "pode ser gerada e deverá ser revisada antes de sua utilização."
+        )
+        st.caption(
+            f"{len(pending)} advertência(s) em "
+            f"{len(affected)} irregularidade(s): {', '.join(affected)}."
+        )
+        with st.expander(f"Pontos para conferência documental ({len(pending)})"):
+            for issue in pending:
+                location = issue.get("documento") or "Documento não informado"
+                if issue.get("pagina") is not None:
+                    location += f", p. {issue['pagina']}"
+                st.markdown(
+                    f"- **{issue.get('irregularidade') or '—'} · "
+                    f"{issue.get('categoria') or 'Campo não informado'}** · "
+                    f"{location}: {issue.get('natureza') or 'conferência necessária'}"
+                )
     st.caption(
         f"Modelo: {analysis_result.get('modelo') or '—'} · "
         f"Tokens: {analysis_result.get('tokens_total') or 'não informado'} · "
@@ -1143,8 +1154,7 @@ def _technical_diagnostics_panel(
             candidates = issue.get("candidatos") or ()
             reference_key = issue.get("referencia_chave")
             can_review = bool(
-                issue.get("bloqueante")
-                and reference_key
+                reference_key
                 and generator is not None
                 and analysis is not None
                 and analysis_key
@@ -1165,8 +1175,8 @@ def _technical_diagnostics_panel(
                 if not candidates:
                     st.info(
                         "Nenhuma passagem candidata foi localizada com os "
-                        "critérios objetivos. A pendência permanece bloqueante e "
-                        "exige nova análise jurídica."
+                        "critérios objetivos. A advertência permanece registrada "
+                        "para revisão humana."
                     )
                     continue
                 candidate_by_id = {item["id"]: item for item in candidates}
@@ -1351,20 +1361,34 @@ def _generator_tab(store, identity):
         item and item.get("fontes_versao") != summary["fontes_versao"]
         for item in (analysis, result)
     )
-    analysis_version_changed = bool(
-        analysis
-        and analysis.get("evidence_correction_version")
-        != EVIDENCE_CORRECTION_VERSION
-    )
-    if sources_changed or analysis_version_changed or (result and not analysis):
+    if sources_changed or (result and not analysis):
         st.session_state.pop(analysis_key, None)
         st.session_state.pop(result_key, None)
         analysis = None
         result = None
         st.info(
-            "As fontes foram alteradas ou a versão da conferência mudou. A "
+            "As fontes foram alteradas. A "
             "análise e a minuta anteriores foram retiradas desta sessão."
         )
+
+    if analysis and analysis.get("validation_policy_version") != (
+        VALIDATION_POLICY_VERSION
+    ):
+        st.session_state.pop(result_key, None)
+        result = None
+        try:
+            analysis = generator.migrate_validation_policy(target["id"], analysis)
+        except Exception as exc:
+            st.session_state.pop(analysis_key, None)
+            analysis = None
+            _error(exc)
+        else:
+            st.session_state[analysis_key] = analysis
+            st.info(
+                "A análise anterior foi reclassificada pela política atual, sem "
+                "nova chamada ao Gemini. As conferências documentais passaram a "
+                "ser advertências não bloqueantes."
+            )
 
     rag_refresh_failed = False
     recovery_version = (
@@ -1444,15 +1468,16 @@ def _generator_tab(store, identity):
     )
     analysis_ready = bool(
         analysis
-        and analysis.get("suficiente_para_geracao") is True
+        and isinstance(analysis.get("analise"), dict)
         and analysis.get("rag_recovery_version") == RAG_RECOVERY_VERSION
         and (analysis.get("recuperacao_juridica") or {}).get("versao")
         == RAG_RECOVERY_VERSION
         and not rag_refresh_failed
     )
-    if analysis and not analysis_ready:
+    if analysis and (analysis.get("pendencias_conferencia") or ()):
         st.caption(
-            "A geração está bloqueada até que as evidências indicadas sejam conferidas."
+            "A conferência assistida é facultativa; as advertências permanecerão "
+            "registradas para a revisão do Assessor."
         )
     if st.button(
         "Gerar minuta",
@@ -1463,7 +1488,7 @@ def _generator_tab(store, identity):
     ):
         st.session_state.pop(result_key, None)
         try:
-            with st.spinner("Redigindo a minuta a partir da análise conferida..."):
+            with st.spinner("Redigindo a minuta com os pontos de revisão sinalizados..."):
                 st.session_state[result_key] = generator.generate(
                     target["id"], analysis, use_rag=use_rag
                 )

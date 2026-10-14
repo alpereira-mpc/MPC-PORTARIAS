@@ -27,6 +27,7 @@ MAX_RAG_PASSAGES_PER_OPINION = 2
 MAX_RAG_PASSAGE_CHARS = 1600
 RAG_RECOVERY_VERSION = "3b5b1-relevance-v2"
 EVIDENCE_CORRECTION_VERSION = "3c3-assisted-evidence-v1"
+VALIDATION_POLICY_VERSION = "4-documentary-warnings-v1"
 REPORT_TRANSITION = "É o relatório. Passa-se a opinar."
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
@@ -1796,7 +1797,7 @@ class MinutasGenerationService:
                         "documento": result["documento"],
                         "pagina": result["pagina"],
                         "natureza": result["motivo"],
-                        "bloqueante": not has_verified,
+                        "bloqueante": False,
                     }
                 )
             state = (
@@ -1877,7 +1878,7 @@ class MinutasGenerationService:
                                 ),
                                 "pagina": item["fontes"][0].get("pagina"),
                                 "natureza": "alegação defensiva classificada como fato",
-                                "bloqueante": True,
+                                "bloqueante": False,
                             }
                         )
             for field in ("pontos_controvertidos", "hipoteses_juridicas"):
@@ -1943,11 +1944,11 @@ class MinutasGenerationService:
                 + "; ".join(labels[:5])
                 + ". Confira a instrução."
             )
-        blocking = [item for item in pending if item["bloqueante"]]
         analysis["conferencia_documental"] = {
             "estado": "PENDENTE" if pending else "VERIFICADA",
-            "suficiente_para_geracao": not blocking,
+            "suficiente_para_geracao": True,
             "pendencias": pending,
+            "politica_versao": VALIDATION_POLICY_VERSION,
         }
         return analysis
 
@@ -2005,8 +2006,7 @@ class MinutasGenerationService:
                         other_pages.append(candidate_page)
             evidence_candidates = []
             if (
-                issue.get("bloqueante")
-                and issue.get("natureza")
+                issue.get("natureza")
                 in {
                     "página não localizada na fonte indicada",
                     "trecho não localizado na página indicada",
@@ -2215,7 +2215,57 @@ class MinutasGenerationService:
             }
         )
         corrected["intervencoes_evidencias"] = interventions
+        corrected["validation_policy_version"] = VALIDATION_POLICY_VERSION
         return corrected
+
+    def migrate_validation_policy(self, target_reference_id, analyzed):
+        """Reclassify a stored analysis without making another Gemini call."""
+        self.library._authorize()
+        target = self.library.get(target_reference_id)
+        self._validate_target(target)
+        if not isinstance(analyzed, dict) or not isinstance(
+            analyzed.get("analise"), dict
+        ):
+            raise MinutasGenerationError(
+                "Execute novamente Analisar fundamentos antes de gerar a minuta."
+            )
+        expected_identity = {
+            "processo_alvo_id": str(target["id"]),
+            "processo_alvo_chave": _canonical_process_key(
+                target.get("processo_chave") or target.get("numero_processo")
+            ),
+            "procuradora_chave": str(target.get("procuradora_chave") or ""),
+        }
+        if any(
+            str(analyzed.get(key) or "") != value
+            for key, value in expected_identity.items()
+        ):
+            raise MinutasGenerationError(
+                "A análise não pertence ao processo e à Procuradora selecionados."
+            )
+        prepared = self.prepare_analysis_context(target_reference_id)
+        if analyzed.get("fontes_versao") != prepared["fontes_versao"]:
+            raise MinutasGenerationError(
+                "As fontes foram alteradas. Analise novamente os fundamentos."
+            )
+        migrated = deepcopy(analyzed)
+        analysis = self._validate_analysis(
+            migrated["analise"], prepared["contexto"]
+        )
+        conference = analysis["conferencia_documental"]
+        migrated.update(
+            {
+                "analise": analysis,
+                "suficiente_para_geracao": True,
+                "pendencias_conferencia": conference["pendencias"],
+                "diagnostico_conferencia": self._conference_diagnostics(
+                    analysis, prepared["contexto"]
+                ),
+                "evidence_correction_version": EVIDENCE_CORRECTION_VERSION,
+                "validation_policy_version": VALIDATION_POLICY_VERSION,
+            }
+        )
+        return migrated
 
     def pilot_diagnostics(self, target_reference_id, analyzed):
         self.library._authorize()
@@ -2515,6 +2565,73 @@ class MinutasGenerationService:
         return "\n\n".join(sections)
 
     @staticmethod
+    def _analysis_for_generation(analysis):
+        """Keep unverified findings visible without presenting their quotes as proof."""
+        safe = deepcopy(analysis)
+        pending = []
+        for irregularity in safe.get("irregularidades", []):
+            identifier = str(irregularity.get("id") or "")
+            groups = (
+                ("fatos_documentados", "Fato documentado"),
+                ("normas_mencionadas", "Norma mencionada"),
+                ("argumentos_defesa", "Alegação defensiva"),
+            )
+            for field, category in groups:
+                for item in irregularity.get(field, []):
+                    if item.get("estado_conferencia") == "NAO_VERIFICADA":
+                        item["tratamento_redacao"] = (
+                            "PENDENTE_DE_CONFERENCIA; não apresentar como fato "
+                            "documentalmente confirmado"
+                        )
+                    for reference in item.get("fontes", []):
+                        if reference.get("verificado") is True:
+                            continue
+                        reason = str(
+                            reference.get("falha_verificacao")
+                            or "referência não verificada"
+                        )
+                        reference["trecho_suporte"] = ""
+                        reference["uso_na_redacao"] = "NAO_COMPROVADO"
+                        reference["aviso_conferencia"] = reason
+                        pending.append(
+                            {
+                                "irregularidade": identifier,
+                                "categoria": category,
+                                "motivo": reason,
+                            }
+                        )
+            audit = irregularity.get("avaliacao_auditoria") or {}
+            if audit.get("estado_conferencia") == "NAO_VERIFICADA":
+                audit["tratamento_redacao"] = (
+                    "PENDENTE_DE_CONFERENCIA; atribuir como conclusão indicada, "
+                    "não como conclusão documentalmente confirmada"
+                )
+            for reference in audit.get("fontes", []):
+                if reference.get("verificado") is True:
+                    continue
+                reason = str(
+                    reference.get("falha_verificacao")
+                    or "referência não verificada"
+                )
+                reference["trecho_suporte"] = ""
+                reference["uso_na_redacao"] = "NAO_COMPROVADO"
+                reference["aviso_conferencia"] = reason
+                pending.append(
+                    {
+                        "irregularidade": identifier,
+                        "categoria": "Conclusão da Auditoria",
+                        "motivo": reason,
+                    }
+                )
+        if pending:
+            safe["orientacao_evidencias_pendentes"] = (
+                "As referências marcadas NAO_COMPROVADO não são prova literal. "
+                "Preserve as irregularidades, diferencie constatação, alegação e "
+                "hipótese, use redação cautelosa e indique necessidade de conferência."
+            )
+        return safe
+
+    @staticmethod
     def _quality_warnings(structure, analysis, target_context):
         warnings = []
         assessments = {
@@ -2749,6 +2866,7 @@ class MinutasGenerationService:
             "recuperacao_juridica": legal_recovery,
             "rag_recovery_version": RAG_RECOVERY_VERSION,
             "evidence_correction_version": EVIDENCE_CORRECTION_VERSION,
+            "validation_policy_version": VALIDATION_POLICY_VERSION,
             "processo_alvo_id": str(target["id"]),
             "processo_alvo_chave": _canonical_process_key(
                 target.get("processo_chave") or target.get("numero_processo")
@@ -2762,6 +2880,20 @@ class MinutasGenerationService:
         self._validate_target(target)
         if not isinstance(analyzed, dict) or not isinstance(analyzed.get("analise"), dict):
             raise MinutasGenerationError("Analise os fundamentos antes de gerar a minuta.")
+        expected_identity = {
+            "processo_alvo_id": str(target["id"]),
+            "processo_alvo_chave": _canonical_process_key(
+                target.get("processo_chave") or target.get("numero_processo")
+            ),
+            "procuradora_chave": str(target.get("procuradora_chave") or ""),
+        }
+        if any(
+            str(analyzed.get(key) or "") != value
+            for key, value in expected_identity.items()
+        ):
+            raise MinutasGenerationError(
+                "A análise não pertence ao processo e à Procuradora selecionados."
+            )
         recovery = analyzed.get("recuperacao_juridica") or {}
         if use_rag and (
             analyzed.get("rag_recovery_version") != RAG_RECOVERY_VERSION
@@ -2784,24 +2916,16 @@ class MinutasGenerationService:
             analyzed["analise"], prepared["contexto"]
         )
         conference = analysis["conferencia_documental"]
-        if not conference["suficiente_para_geracao"]:
-            details = []
-            for issue in (
-                item for item in conference["pendencias"] if item["bloqueante"]
-            ):
-                location = issue["documento"]
-                if issue["pagina"] is not None:
-                    location += f", p. {issue['pagina']}"
-                details.append(
-                    f"{issue['irregularidade']} — {issue['categoria']} — "
-                    f"{location}: {issue['natureza']}"
-                )
-            raise MinutasGenerationError(
-                "Confira as evidências antes de gerar a minuta: "
-                + "; ".join(details[:3])
-                + "."
+        request_context = deepcopy(prepared["contexto"])
+        request_context["analise_estruturada"] = self._analysis_for_generation(
+            analysis
+        )
+        if conference["pendencias"]:
+            request_context["orientacao_conferencia_documental"] = (
+                "Existem pontos não verificados. Eles não impedem a minuta, mas "
+                "não podem ser tratados como prova confirmada. Preserve cada "
+                "irregularidade e use formulação cautelosa para revisão humana."
             )
-        request_context = prepared["contexto"]
         if _serialized_size(request_context) > MAX_CONTEXT_BYTES:
             raise MinutasGenerationError(
                 "A solicitação integral excede o limite seguro de contexto."
@@ -2817,7 +2941,7 @@ class MinutasGenerationService:
         warnings = [
             *normalization_warnings,
             *self._quality_warnings(
-                structure, analyzed["analise"], prepared["contexto"]
+                structure, analysis, prepared["contexto"]
             ),
         ]
         return {
@@ -2825,10 +2949,20 @@ class MinutasGenerationService:
             "estrutura": structure,
             "texto": self._structure_markdown(structure),
             "advertencias_qualidade": warnings,
+            "advertencias_documentais": deepcopy(conference["pendencias"]),
+            "validation_policy_version": VALIDATION_POLICY_VERSION,
             "processo_alvo_id": str(target["id"]),
             "processo_alvo_chave": _canonical_process_key(
                 target.get("processo_chave") or target.get("numero_processo")
             ),
             "procuradora_chave": str(target.get("procuradora_chave") or ""),
-            **{key: value for key, value in prepared.items() if key != "contexto"},
+            **{
+                key: (
+                    _serialized_size(request_context)
+                    if key == "contexto_bytes"
+                    else value
+                )
+                for key, value in prepared.items()
+                if key != "contexto"
+            },
         }

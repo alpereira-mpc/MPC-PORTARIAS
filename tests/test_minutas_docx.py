@@ -107,7 +107,7 @@ def _structure(*, long=False):
     }
 
 
-def _payload(target=None, *, sufficient=True, version=VERSION):
+def _payload(target=None, *, sufficient=True, version=VERSION, warnings=()):
     target = target or _target()
     identity = {
         "processo_alvo_id": str(target["id"]),
@@ -124,7 +124,7 @@ def _payload(target=None, *, sufficient=True, version=VERSION):
         **identity,
         "fontes_versao": version,
         "estrutura": _structure(),
-        "advertencias_qualidade": ["Advertência não bloqueante para revisão."],
+        "advertencias_qualidade": list(warnings),
     }
     return analyzed, generated
 
@@ -387,7 +387,7 @@ def test_docx_supports_short_and_long_drafts(long):
         )
 
 
-def test_export_revalidates_authorization_target_sources_and_blocking_state():
+def test_export_revalidates_authorization_target_and_sources_but_accepts_warnings():
     target = _target()
     analyzed, generated = _payload(target)
 
@@ -409,10 +409,35 @@ def test_export_revalidates_authorization_target_sources_and_blocking_state():
         )
 
     blocked = dict(analyzed, suficiente_para_geracao=False)
-    with pytest.raises(MinutasDocxError, match="bloqueada"):
-        MinutasDocxService(Library(target), source_summary=_summary).export(
-            target["id"], blocked, generated
-        )
+    blocked["pendencias_conferencia"] = [
+        {
+            "irregularidade": "18.3",
+            "categoria": "Fato documentado",
+            "documento": "auditoria.pdf",
+            "pagina": 4,
+            "natureza": "trecho não localizado na página indicada",
+            "bloqueante": True,
+        }
+    ]
+    exported = MinutasDocxService(
+        Library(target), source_summary=_summary
+    ).export(target["id"], blocked, generated)
+    body = "\n".join(
+        paragraph.text for paragraph in Document(BytesIO(exported.content)).paragraphs
+    )
+    assert "INFORMAÇÕES AUXILIARES PARA REVISÃO" in body
+    assert "18.3" in body
+    assert "auditoria.pdf, p. 4" in body
+    assert "não integram a fundamentação oficial" in body
+
+
+def test_docx_omits_auxiliary_review_section_without_warnings():
+    exported = _export()
+    body = "\n".join(
+        paragraph.text for paragraph in Document(BytesIO(exported.content)).paragraphs
+    )
+
+    assert "INFORMAÇÕES AUXILIARES PARA REVISÃO" not in body
 
 
 def test_export_requires_the_visual_template(tmp_path):
