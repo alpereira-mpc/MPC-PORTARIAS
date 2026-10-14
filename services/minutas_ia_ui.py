@@ -1145,7 +1145,8 @@ def _technical_diagnostics_panel(diagnostics, target_id):
                 st.caption(
                     "Descartados — barreira documental: "
                     f"{discarded.get('barreira_documental', 0)}; duplicação: "
-                    f"{discarded.get('duplicacao', 0)}; sem trecho utilizável: "
+                    f"{discarded.get('duplicacao', 0)}; sem pertinência temática: "
+                    f"{discarded.get('sem_pertinencia', 0)}; sem trecho utilizável: "
                     f"{discarded.get('sem_trecho', 0)}."
                 )
         omitted = recovery.get("materias_nao_pesquisadas") or ()
@@ -1165,8 +1166,8 @@ def _technical_diagnostics_panel(diagnostics, target_id):
         st.caption(
             f"Resultados retornados: {recovery.get('resultados_retornados', 0)} · "
             f"consultas executadas: {recovery.get('consultas_executadas', 0)} · "
-            f"trechos selecionados: {len(selected)}. Não há descarte semântico "
-            "adicional: a pertinência é o ranking lexical da pesquisa existente."
+            f"trechos selecionados: {len(selected)}. A pertinência temática é "
+            "conferida no trecho efetivamente selecionado."
         )
         for index, item in enumerate(selected, 1):
             st.markdown(
@@ -1286,7 +1287,7 @@ def _generator_tab(store, identity):
             st.session_state[analysis_key] = analysis
             st.info(
                 "A recuperação jurídica desta análise foi atualizada para a "
-                "estratégia progressiva, sem repetir a chamada ao Gemini."
+                "estratégia progressiva de pertinência, sem repetir a chamada ao Gemini."
             )
 
     section_label("Etapa 1 — Analisar processo")

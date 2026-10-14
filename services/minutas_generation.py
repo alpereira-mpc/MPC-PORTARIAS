@@ -24,7 +24,7 @@ MAX_RAG_RESULTS_PER_QUERY = 4
 MAX_RAG_PASSAGES = 6
 MAX_RAG_PASSAGES_PER_OPINION = 2
 MAX_RAG_PASSAGE_CHARS = 1600
-RAG_RECOVERY_VERSION = "3b5b1-progressive-v1"
+RAG_RECOVERY_VERSION = "3b5b1-relevance-v2"
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
     re.compile(r"^(?:codigo|código)\s+verificador\s*[:#-]\s*\S+.*$"),
@@ -62,8 +62,13 @@ _STOPWORDS = {
 }
 _RAG_GENERIC_TERMS = _STOPWORDS | {
     "ausencia",
+    "aplicacao",
+    "classificacao",
+    "circunstancia",
+    "circunstancias",
     "incorreta",
     "incorreto",
+    "incidencia",
     "desacordo",
     "proveniente",
     "provenientes",
@@ -84,6 +89,7 @@ _RAG_GENERIC_TERMS = _STOPWORDS | {
     "irregularidade",
     "juridica",
     "ministerial",
+    "obrigacao",
     "norma",
     "original",
     "outro",
@@ -92,19 +98,105 @@ _RAG_GENERIC_TERMS = _STOPWORDS | {
     "revisao",
     "sujeita",
     "processo",
+    "principio",
+    "pratica",
+    "praticas",
+    "distincao",
+    "entre",
 }
 _RAG_CONCEPTS = (
-    (("parcelament", "previdenci"), "parcelamento previdenciário", "acordo parcelamento"),
-    (("parcelament",), "parcelamento", "acordo parcelamento"),
-    (("contribu", "previdenci"), "contribuição previdenciária", "recolhimento previdenciário"),
-    (("recolh", "previdenci"), "recolhimento previdenciário", "contribuição previdenciária"),
-    (("fundeb",), "FUNDEB", "fundo educação básica"),
-    (("licit",), "licitação", "procedimento licitatório"),
-    (("contrat",), "contratação pública", "contrato administrativo"),
-    (("pessoal",), "despesa pessoal", "limite pessoal"),
-    (("restos", "pagar"), "restos a pagar", "obrigações financeiras"),
-    (("controle", "intern"), "controle interno", "sistema controle interno"),
-    (("transpar",), "transparência pública", "publicidade administrativa"),
+    {
+        "stems": ("receita", "intraorcament"),
+        "primary": "receita intraorçamentária",
+        "alternative": "contribuição intraorçamentária",
+        "anchors": (("intraorcament",),),
+    },
+    {
+        "stems": ("certific", "conselh"),
+        "primary": "certificação conselho previdenciário",
+        "alternative": "regularidade conselho previdenciário",
+        "anchors": (
+            ("certific", "conselh"),
+            ("regularidade", "conselh"),
+            ("credenci", "conselh"),
+        ),
+    },
+    {
+        "stems": ("compos", "conselh"),
+        "primary": "composição conselho previdenciário",
+        "alternative": "membros conselho previdenciário",
+        "anchors": (
+            ("compos", "conselh"),
+            ("membro", "conselh"),
+            ("represent", "conselh"),
+        ),
+    },
+    {
+        "stems": ("parcelament", "previdenci"),
+        "primary": "parcelamento previdenciário",
+        "alternative": "acordo dívida previdenciária",
+        "anchors": (("parcelament",), ("acordo", "divid", "previdenci")),
+    },
+    {
+        "stems": ("parcelament",),
+        "primary": "parcelamento",
+        "alternative": "acordo parcelamento",
+        "anchors": (("parcelament",), ("acordo", "divid")),
+    },
+    {
+        "stems": ("contribu", "previdenci"),
+        "primary": "contribuição previdenciária",
+        "alternative": "recolhimento previdenciário",
+        "anchors": (("contribu", "previdenci"), ("recolh", "previdenci")),
+    },
+    {
+        "stems": ("recolh", "previdenci"),
+        "primary": "recolhimento previdenciário",
+        "alternative": "contribuição previdenciária",
+        "anchors": (("recolh", "previdenci"), ("contribu", "previdenci")),
+    },
+    {
+        "stems": ("fundeb",),
+        "primary": "FUNDEB",
+        "alternative": "fundo educação básica",
+        "anchors": (("fundeb",), ("fundo", "educacao", "basica")),
+    },
+    {
+        "stems": ("licit",),
+        "primary": "licitação",
+        "alternative": "procedimento licitatório",
+        "anchors": (("licit",),),
+    },
+    {
+        "stems": ("contrat",),
+        "primary": "contratação pública",
+        "alternative": "contrato administrativo",
+        "anchors": (("contrat",),),
+    },
+    {
+        "stems": ("pessoal",),
+        "primary": "despesa pessoal",
+        "alternative": "limite pessoal",
+        "anchors": (("pessoal",),),
+    },
+    {
+        "stems": ("restos", "pagar"),
+        "primary": "restos a pagar",
+        "alternative": "obrigações financeiras",
+        "anchors": (("restos", "pagar"),),
+    },
+    {
+        "stems": ("controle", "intern"),
+        "primary": "controle interno",
+        "alternative": "sistema controle interno",
+        "anchors": (("controle", "intern"),),
+    },
+    {
+        "stems": ("transpar",),
+        "primary": "transparência pública",
+        "alternative": "publicidade administrativa",
+        "anchors": (("transpar",),),
+    },
 )
 _MINISTERIAL_TREATMENTS = {
     "MANTIDA_REJEICAO",
@@ -191,18 +283,38 @@ def _rag_query_plan(analysis):
         hypothesis_parts = [
             str(item or "") for item in irregularity.get("hipoteses_juridicas", [])
         ]
-        structured_text = " ".join(hypothesis_parts + norm_parts + [matter])
-        normalized_text = _plain(structured_text)
+        defense_parts = [
+            str(item.get(field) or "")
+            for item in irregularity.get("argumentos_defesa", [])
+            if isinstance(item, dict)
+            for field in ("alegacao", "comprovacao_documental")
+        ]
+        material_text = " ".join([matter] + norm_parts)
+        normalized_text = _plain(material_text)
+        material_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]+", normalized_text)
+            if len(token) >= 4
+            and token not in _RAG_GENERIC_TERMS
+            and not token.isdigit()
+        }
+        concept_text = normalized_text
+        if not material_tokens:
+            concept_text += " " + _plain(" ".join(hypothesis_parts + defense_parts))
         primary = alternative = ""
-        for stems, concept_query, concept_alternative in _RAG_CONCEPTS:
-            if all(stem in normalized_text for stem in stems):
-                primary = concept_query
-                alternative = concept_alternative
+        anchor_patterns = ()
+        for concept in _RAG_CONCEPTS:
+            if all(stem in concept_text for stem in concept["stems"]):
+                primary = concept["primary"]
+                alternative = concept["alternative"]
+                anchor_patterns = concept["anchors"]
                 break
         if not primary:
             tokens = []
             normalized_tokens = set()
-            for part in hypothesis_parts + norm_parts + [matter]:
+            # O objeto material e as normas específicas têm precedência. Hipóteses
+            # e defesa apenas completam uma consulta ainda sem assunto concreto.
+            for part in [matter] + norm_parts + hypothesis_parts + defense_parts:
                 for token in re.findall(r"[0-9A-Za-zÀ-ÿº°./-]+", part):
                     cleaned = token.strip("-./")
                     normalized = _plain(cleaned)
@@ -221,6 +333,7 @@ def _rag_query_plan(analysis):
                     break
             primary = " ".join(tokens)
             alternative = " ".join(tokens[:2]) if len(tokens) > 2 else ""
+            anchor_patterns = tuple((token,) for token in normalized_tokens)
         key = _normalized_support(primary)
         if not key:
             omitted.append(
@@ -247,9 +360,19 @@ def _rag_query_plan(analysis):
                 "consulta": primary,
                 "consulta_principal": primary,
                 "consulta_alternativa": alternative,
+                "ancoras_tematicas": anchor_patterns,
             }
         )
     return {"consultas": queries, "materias_nao_pesquisadas": omitted}
+
+
+def _rag_passage_is_pertinent(query, passage):
+    """Confere âncoras explícitas somente no trecho que será enviado ao Gemini."""
+    normalized = _plain(passage)
+    return any(
+        pattern and all(stem in normalized for stem in pattern)
+        for pattern in query.get("ancoras_tematicas", ())
+    )
 
 
 def _rag_queries(analysis):
@@ -671,6 +794,7 @@ class MinutasGenerationService:
                     "barreira_documental": 0,
                     "duplicacao": 0,
                     "sem_trecho": 0,
+                    "sem_pertinencia": 0,
                 },
             }
             for query in queries
@@ -706,6 +830,7 @@ class MinutasGenerationService:
                             "barreira_documental": 0,
                             "duplicacao": 0,
                             "sem_trecho": 0,
+                            "sem_pertinencia": 0,
                         },
                     }
                     query["tentativas"].append(attempt)
@@ -741,8 +866,11 @@ class MinutasGenerationService:
                         if not passage:
                             attempt["descartados"]["sem_trecho"] += 1
                             continue
-                        eligible = True
                         passage = passage[:MAX_RAG_PASSAGE_CHARS]
+                        if not _rag_passage_is_pertinent(query, passage):
+                            attempt["descartados"]["sem_pertinencia"] += 1
+                            continue
+                        eligible = True
                         fingerprint = sha256(
                             _normalized_support(passage).encode("utf-8")
                         ).hexdigest()
@@ -818,7 +946,12 @@ class MinutasGenerationService:
         )
         discards = {
             key: sum(item["descartados"][key] for item in diagnostic_queries)
-            for key in ("barreira_documental", "duplicacao", "sem_trecho")
+            for key in (
+                "barreira_documental",
+                "duplicacao",
+                "sem_trecho",
+                "sem_pertinencia",
+            )
         }
         if selected:
             absence_reason = ""
@@ -829,6 +962,11 @@ class MinutasGenerationService:
         elif discards["barreira_documental"] == returned:
             absence_reason = (
                 "As ocorrências retornadas foram excluídas pelas barreiras documentais."
+            )
+        elif discards["sem_pertinencia"]:
+            absence_reason = (
+                "As ocorrências retornadas não continham âncora temática verificável "
+                "no trecho recuperado."
             )
         else:
             absence_reason = (

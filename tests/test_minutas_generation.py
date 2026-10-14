@@ -1073,27 +1073,27 @@ def test_rag_queries_are_concise_and_built_from_irregularities_and_norms():
         "irregularidades": [
             {
                 "id": "18.1",
-                "apontamento": "Ausência de recolhimento de contribuições previdenciárias",
-                "normas_mencionadas": [{"descricao": "Lei 8.212/91"}],
-                "hipoteses_juridicas": ["Responsabilidade previdenciária"],
+                "apontamento": "Classificação de receita intraorçamentária previdenciária",
+                "normas_mencionadas": [{"descricao": "Portaria MPS 402/2008"}],
+                "hipoteses_juridicas": ["Aplicação do princípio da insignificância"],
             },
             {
                 "id": "18.2",
-                "apontamento": "Aplicação incorreta de recursos provenientes do FUNDEB",
-                "normas_mencionadas": [{"descricao": "Lei do FUNDEB"}],
-                "hipoteses_juridicas": ["Vinculação de recursos da educação básica"],
+                "apontamento": "Certificação dos Conselhos Previdenciários",
+                "normas_mencionadas": [{"descricao": "Lei municipal 123/2020"}],
+                "hipoteses_juridicas": ["Incidência das circunstâncias práticas"],
             },
             {
                 "id": "18.3",
-                "apontamento": "Despesa em desacordo com a legislação de licitação",
-                "normas_mencionadas": [{"descricao": "Lei 14.133/2021"}],
-                "hipoteses_juridicas": ["Procedimento licitatório"],
+                "apontamento": "Composição dos Conselhos Municipal Previdenciário e Fiscal",
+                "normas_mencionadas": [{"descricao": "Lei municipal 456/2021"}],
+                "hipoteses_juridicas": ["Distinção entre obrigação e recomendação"],
             },
             {
                 "id": "18.4",
-                "apontamento": "Ausência de comprovação documental",
+                "apontamento": "Evolução da dívida e parcelamentos previdenciários",
                 "normas_mencionadas": [],
-                "hipoteses_juridicas": ["Parcelamento de débitos previdenciários"],
+                "hipoteses_juridicas": ["Razoabilidade"],
             },
         ]
     }
@@ -1107,9 +1107,9 @@ def test_rag_queries_are_concise_and_built_from_irregularities_and_norms():
         "18.1", "18.2", "18.3", "18.4"
     ]
     assert [item["consulta_principal"] for item in queries] == [
-        "contribuição previdenciária",
-        "FUNDEB",
-        "licitação",
+        "receita intraorçamentária",
+        "certificação conselho previdenciário",
+        "composição conselho previdenciário",
         "parcelamento previdenciário",
     ]
     assert all(len(item["consulta_principal"].split()) <= 3 for item in queries)
@@ -1117,8 +1117,121 @@ def test_rag_queries_are_concise_and_built_from_irregularities_and_norms():
     assert all(
         generic not in _plain_query
         for _plain_query in [item["consulta_principal"].casefold() for item in queries]
-        for generic in ("ausência", "incorreta", "desacordo", "recursos provenientes")
+        for generic in (
+            "aplicação princípio",
+            "incidência circunstâncias",
+            "distinção entre",
+        )
     )
+
+
+def test_rag_filters_council_results_by_the_text_of_the_recovered_passage():
+    target, history, other, rows = _scenario()
+    opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == history["id"] and row["papel"] == "parecer"
+    )
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        irregularity = analysis["irregularidades"][0]
+        irregularity["apontamento"] = (
+            "Irregularidade previdenciária na página original: composição dos "
+            "Conselhos Previdenciário e Fiscal"
+        )
+        irregularity["hipoteses_juridicas"] = ["Distinção entre obrigação e recomendação"]
+        irregularity["normas_mencionadas"] = []
+        return _analysis_result(context, analise=analysis)
+
+    def search(_query, **_filters):
+        return {
+            "resultados": [
+                _search_result(
+                    history,
+                    opinion,
+                    context="Aplicação do princípio da razoabilidade em despesas com combustível.",
+                ),
+                _search_result(
+                    history,
+                    opinion,
+                    context="Pagamento de diárias e comprovação do deslocamento.",
+                    page=2,
+                ),
+                _search_result(
+                    history,
+                    opinion,
+                    context="A composição do conselho previdenciário exige membros representativos.",
+                    page=3,
+                ),
+            ]
+        }
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows), analyze=analyze, search=search
+    )
+    recovery = service.analyze(target["id"])["recuperacao_juridica"]
+
+    assert [item["pagina"] for item in recovery["trechos"]] == [3]
+    assert recovery["descartes"]["sem_pertinencia"] == 2
+    assert recovery["consultas"][0]["descartados"]["sem_pertinencia"] == 2
+
+
+def test_rag_selects_only_parcelment_passages_from_simulated_precedents():
+    target, _history, other, rows = _scenario()
+    rows = [row for row in rows if row["referencia_id"] == target["id"]]
+    jacarau = _record("jacarau", "TC 03101/26", "0310126")
+    bananeiras = _record("bananeiras", "TC 03102/26", "0310226")
+    jacarau_opinion = _row(jacarau, "parecer", "Parecer histórico de Jacaraú.")
+    bananeiras_opinion = _row(bananeiras, "parecer", "Parecer histórico de Bananeiras.")
+    rows.extend((jacarau_opinion, bananeiras_opinion))
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        irregularity = analysis["irregularidades"][0]
+        irregularity["apontamento"] = (
+            "Irregularidade previdenciária na página original: evolução da dívida "
+            "e parcelamentos previdenciários"
+        )
+        irregularity["hipoteses_juridicas"] = ["Proporcionalidade"]
+        irregularity["normas_mencionadas"] = []
+        return _analysis_result(context, analise=analysis)
+
+    def search(_query, **_filters):
+        return {
+            "resultados": [
+                _search_result(
+                    jacarau,
+                    jacarau_opinion,
+                    context="Jacaraú celebrou parcelamento da dívida previdenciária.",
+                ),
+                _search_result(
+                    bananeiras,
+                    bananeiras_opinion,
+                    context="Bananeiras apresentou acordo de parcelamento dos débitos.",
+                ),
+                _search_result(
+                    jacarau,
+                    jacarau_opinion,
+                    context="A nota atuarial avaliou investimentos e a meta de rentabilidade.",
+                    page=2,
+                ),
+            ]
+        }
+
+    service = MinutasGenerationService(
+        Library([target, jacarau, bananeiras, other], rows),
+        analyze=analyze,
+        search=search,
+    )
+    recovery = service.analyze(target["id"])["recuperacao_juridica"]
+
+    assert {item["referencia_id"] for item in recovery["trechos"]} == {
+        "jacarau",
+        "bananeiras",
+    }
+    assert len(recovery["trechos"]) == 2
+    assert recovery["descartes"]["sem_pertinencia"] == 1
 
 
 def test_rag_uses_one_safe_alternative_when_specific_query_has_no_result():
@@ -1134,7 +1247,13 @@ def test_rag_uses_one_safe_alternative_when_specific_query_has_no_result():
         calls.append(query)
         return {
             "resultados": (
-                [_search_result(history, opinion)]
+                [
+                    _search_result(
+                        history,
+                        opinion,
+                        context="Houve recolhimento previdenciário comprovado.",
+                    )
+                ]
                 if query == "recolhimento previdenciário"
                 else []
             )
@@ -1313,24 +1432,24 @@ def test_analysis_recovers_traced_legal_references_with_deduplication_and_limits
         calls.append((query, filters))
         return {
             "resultados": [
-                _search_result(history, opinion, context="Fundamento histórico comum."),
+                _search_result(history, opinion, context="Fundamentação previdenciária comum."),
                 _search_result(
                     history,
                     opinion,
-                    context="  FUNDAMENTO   histórico comum. ",
+                    context="  FUNDAMENTAÇÃO   previdenciária comum. ",
                     relevance=0.9,
                 ),
                 _search_result(
                     history,
                     opinion,
-                    context="Segundo fundamento complementar. " + "x" * 2000,
+                    context="Segunda fundamentação previdenciária. " + "x" * 2000,
                     page=2,
                     relevance=0.8,
                 ),
                 _search_result(
                     history,
                     opinion,
-                    context="Terceiro fundamento do mesmo parecer.",
+                    context="Terceira fundamentação previdenciária do mesmo parecer.",
                     page=3,
                     relevance=0.7,
                 ),
@@ -2068,6 +2187,7 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
                             "descartados": {
                                 "barreira_documental": 0,
                                 "duplicacao": 0,
+                                "sem_pertinencia": 2,
                                 "sem_trecho": 0,
                             },
                         }
@@ -2111,6 +2231,7 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
     assert "recolhimento previdenciário" in diagnostic_text
     assert "Tentativa alternativa" in diagnostic_text
     assert "resultados retornados: 0" in diagnostic_text
+    assert "sem pertinência temática: 2" in diagnostic_text
     assert any(
         "Citação literal não localizada." in item.value for item in app.code
     )
