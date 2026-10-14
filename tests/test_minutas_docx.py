@@ -12,7 +12,7 @@ from services.minutas_docx import (
     MinutasDocxError,
     MinutasDocxService,
 )
-from services.minutas_generation import RAG_RECOVERY_VERSION
+from services.minutas_generation import MinutasGenerationService, RAG_RECOVERY_VERSION
 from services.minutas_library import MinutasAccessDenied
 
 
@@ -179,19 +179,22 @@ def test_docx_reproduces_logo_header_and_spacing_without_empty_body_paragraphs()
     ementa = next(
         paragraph for paragraph in body_paragraphs if paragraph.text.startswith("Ementa:")
     )
-    nature = next(
+    responsible = next(
         paragraph
         for paragraph in body_paragraphs
-        if paragraph.text.startswith("Natureza:")
+        if paragraph.text.startswith("Responsável:")
     )
 
     assert section.different_first_page_header_footer is False
     assert section.header_distance.cm == pytest.approx(0.5, abs=0.02)
     assert len(_image_blobs(document)) == 1
+    assert drawing_paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert drawing_paragraph.paragraph_format.left_indent.cm == pytest.approx(0)
+    assert drawing_paragraph.paragraph_format.right_indent.cm == pytest.approx(0)
     assert int(extent.get("cx")) / 914400 == pytest.approx(2.62, abs=0.01)
     assert int(extent.get("cy")) / 914400 == pytest.approx(1.84, abs=0.01)
     assert drawing_paragraph.paragraph_format.space_before.pt == pytest.approx(0)
-    assert nature.paragraph_format.space_after.pt == pytest.approx(24)
+    assert responsible.paragraph_format.space_after.pt == pytest.approx(24)
     assert ementa.style.paragraph_format.space_after.pt == pytest.approx(36)
     logo_bottom_cm = (
         section.header_distance.cm
@@ -218,6 +221,10 @@ def test_docx_uses_original_logo_and_contains_only_target_content():
     assert len(output_images) == 1
     assert sha256(output_images[0]).digest() == sha256(reference_images[0]).digest()
     assert "Processo TC Nº 01653/26" in body_text
+    assert "Parecer Nº" in body_text
+    assert "MINUTA-TC-01653/26" not in body_text
+    assert "Origem: Não informada" in body_text
+    assert "Responsável: Não informado" in body_text
     assert "ELVIRA SAMARA PEREIRA DE OLIVEIRA" in body_text
     assert "Procuradora-Geral do Ministério Público de Contas" in body_text
     assert "MINUTA EXPERIMENTAL — SUJEITA À REVISÃO HUMANA" in footer_text
@@ -236,7 +243,7 @@ def test_docx_uses_original_logo_and_contains_only_target_content():
     assert "logomarca do ministério público de contas da paraíba" in xml_text
 
 
-def test_docx_preserves_structure_formatting_numbering_and_alineas():
+def test_docx_preserves_formatting_and_groups_recommendations_in_one_item():
     exported = _export()
     document = Document(BytesIO(exported.content))
     paragraphs = [paragraph for paragraph in document.paragraphs if paragraph.text]
@@ -252,11 +259,11 @@ def test_docx_preserves_structure_formatting_numbering_and_alineas():
         for paragraph in paragraphs
         if paragraph.text == "Julgue-se o feito conforme a fundamentação."
     )
-    alineas = [
+    recommendation = next(
         paragraph
         for paragraph in paragraphs
-        if paragraph.text.startswith(("mantenha", "documente"))
-    ]
+        if paragraph.text.startswith("Recomendem-se, de forma consolidada")
+    )
 
     assert ementa.style.name == "Minuta Ementa"
     assert ementa.style.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -267,16 +274,35 @@ def test_docx_preserves_structure_formatting_numbering_and_alineas():
     assert heading.runs[0].bold is True and heading.runs[0].italic is True
     assert transcription.style.name == "Minuta Transcrição"
     assert request._p.pPr.numPr is not None
-    assert len(alineas) == 2
-    assert all(paragraph._p.pPr.numPr is not None for paragraph in alineas)
+    assert recommendation._p.pPr.numPr is not None
+    assert "mantenha os controles previdenciários" in recommendation.text
+    assert "documente as providências adotadas" in recommendation.text
+    assert not any(paragraph.style.name == "Minuta Alínea" for paragraph in paragraphs)
     assert all_text.count("Julgue-se o feito conforme a fundamentação.") == 1
     assert "R$ 1.234,56" in all_text
     assert "art. 37" in all_text
     with ZipFile(BytesIO(exported.content)) as package:
         numbering = package.read("word/numbering.xml").decode("utf-8")
     assert 'w:val="decimal"' in numbering
-    assert 'w:val="lowerLetter"' in numbering
-    assert 'w:val="%1)"' in numbering
+    assert 'w:val="lowerLetter"' not in numbering
+    assert 'w:val="%1)"' not in numbering
+
+
+def test_docx_keeps_already_consolidated_recommendation_idempotent():
+    target = _target()
+    normalized, _warnings = MinutasGenerationService._normalize_structure(
+        _structure(), target
+    )
+
+    document = Document(BytesIO(_export(target=target, structure=normalized).content))
+    recommendations = [
+        paragraph.text
+        for paragraph in document.paragraphs
+        if paragraph.text.startswith("Recomendem-se, de forma consolidada")
+    ]
+
+    assert len(recommendations) == 1
+    assert recommendations[0].count("Recomendem-se, de forma consolidada") == 1
 
 
 def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
@@ -331,13 +357,21 @@ def test_docx_includes_authorized_origin_and_responsible_when_available():
     target = _target(
         origem="Instituto Municipal de Previdência",
         responsavel="Gestora Responsável",
+        parecer_numero="999/2025",
     )
 
     document = Document(BytesIO(_export(target=target).content))
     texts = [paragraph.text for paragraph in document.paragraphs]
 
-    assert "Origem: Instituto Municipal de Previdência" in texts
-    assert "Responsável: Gestora Responsável" in texts
+    assert texts[:5] == [
+        "Parecer Nº",
+        "Processo TC Nº 01653/26",
+        "Origem: Instituto Municipal de Previdência",
+        "Natureza: Prestação de Contas Anuais - exercício 2026",
+        "Responsável: Gestora Responsável",
+    ]
+    assert not any("MINUTA-TC-01653/26" in text for text in texts)
+    assert not any("999/2025" in text for text in texts)
 
 
 def test_docx_keeps_only_footer_warning_and_preserves_justified_negative_request():

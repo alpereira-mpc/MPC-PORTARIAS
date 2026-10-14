@@ -599,9 +599,10 @@ def test_context_preserves_verified_folios_without_converting_pdf_pages():
 
     result = service.generate(target["id"], service.analyze(target["id"]))
     report = "\n".join(result["estrutura"]["relatorio_paragrafos"])
-    assert "Relatório da Auditoria (fls. 101/110)" in report
-    assert "Relatório de Análise de Defesa (fls. 150/158)" in report
-    assert "Relatório de Análise de Defesa (fl. 170)" in report
+    assert "Integram a instrução processual" not in report
+    assert "Relatório da Auditoria (fls. 101/110)" not in report
+    assert "Relatório de Análise de Defesa (fls. 150/158)" not in report
+    assert "Relatório de Análise de Defesa (fl. 170)" not in report
     assert "Manifestação processual sem numeração" not in report
     assert "(fls. 1/2)" not in report
     assert report.endswith("É o relatório. Passa-se a opinar.")
@@ -1786,6 +1787,87 @@ def test_structured_paragraphs_are_used_without_breaking_legacy_structures():
     assert MinutasGenerationService._validate_structure(_draft_structure())
 
 
+def test_draft_header_removes_bureaucratic_phrases_and_groups_recommendations():
+    target, history, other, rows = _scenario()
+    target.update(
+        {
+            "origem": "Instituto Municipal de Previdência",
+            "responsavel": "Gestora Responsável",
+            "parecer_numero": "999/2025",
+        }
+    )
+
+    def generate(context):
+        structure = _draft_structure()
+        structure["relatorio_paragrafos"] = [
+            "Integram a instrução processual: Relatório da Auditoria.",
+            "A instrução processual é composta por relatório e defesa.",
+            "O processo está instruído com relatório, defesa e parecer.",
+            "A Auditoria apontou falha previdenciária relevante.",
+        ]
+        structure["fundamentacao_geral"] = (
+            "Constam dos autos os seguintes documentos: relatório e defesa. "
+            "A controvérsia exige exame jurídico da obrigação previdenciária."
+        )
+        structure["topicos_irregularidades"][0]["texto"] = (
+            "Foram juntados aos autos os seguintes documentos: relatório e defesa. "
+            "A defesa não comprovou o recolhimento indicado."
+        )
+        structure["pedidos"] = [
+            "Proponha-se a regularidade com ressalvas das contas.",
+            "Recomende-se à gestão que aprimore o controle previdenciário.",
+            "Expeçam-se recomendações:\na) registre as providências adotadas;\n"
+            "b) acompanhe os prazos legais.",
+        ]
+        return _draft_result(context, estrutura=structure)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+    )
+    result = service.generate(target["id"], service.analyze(target["id"]))
+    structure = result["estrutura"]
+
+    assert structure["identificacao_processual"].splitlines() == [
+        "Parecer Nº",
+        "Processo TC Nº 01653/26",
+        "Origem: Instituto Municipal de Previdência",
+        "Natureza: Prestação de Contas Anuais - exercício 2026",
+        "Responsável: Gestora Responsável",
+    ]
+    assert result["identificador_minuta"] == "MINUTA-TC-01653/26"
+    assert "MINUTA-TC-01653/26" not in result["texto"]
+    assert "999/2025" not in result["texto"]
+    forbidden = (
+        "Integram a instrução processual",
+        "A instrução processual é composta por",
+        "O processo está instruído com",
+        "Constam dos autos os seguintes documentos",
+        "Foram juntados aos autos os seguintes documentos",
+    )
+    assert not any(item in result["texto"] for item in forbidden)
+    assert "A Auditoria apontou falha previdenciária relevante." in result["texto"]
+    assert "A controvérsia exige exame jurídico" in result["texto"]
+    assert "A defesa não comprovou o recolhimento" in result["texto"]
+
+    recommendations = [
+        item for item in structure["pedidos"] if "recomend" in item.casefold()
+    ]
+    assert len(recommendations) == 1
+    assert "\n" not in recommendations[0]
+    assert "aprimore o controle previdenciário" in recommendations[0]
+    assert "registre as providências adotadas" in recommendations[0]
+    assert "acompanhe os prazos legais" in recommendations[0]
+    assert structure["pedidos"][0].startswith(
+        "Proponha-se a regularidade com ressalvas"
+    )
+    renormalized, _warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+    assert renormalized["pedidos"] == structure["pedidos"]
+
+
 @pytest.mark.parametrize(
     "subtype",
     (
@@ -1903,6 +1985,9 @@ def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
     assert "página física do PDF" in prompt
     assert "DEMAIS_PCA_JULGAMENTO_DIRETO" in prompt
     assert "o backend inserirá deterministicamente" in prompt
+    assert "Integram a instrução processual" in prompt
+    assert "nunca reutilize número do parecer definitivo" in prompt
+    assert "reúna todas as recomendações em um único item" in prompt
     assert "relatorio_paragrafos" in schema["required"]
     assert "fundamentacao_geral_paragrafos" in schema["required"]
     topic_schema = schema["properties"]["topicos_irregularidades"]["items"]

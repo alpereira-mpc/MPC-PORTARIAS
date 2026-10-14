@@ -391,13 +391,6 @@ def _add_requests(document, requests):
                 _add_text(subparagraph, item)
 
 
-def _process_display(target):
-    key = _canonical_process_key(target.get("numero_processo")) or _canonical_process_key(
-        target.get("processo_chave")
-    )
-    return f"{key[:5]}/{key[5:]}" if len(key) == 7 else str(target.get("numero_processo") or "")
-
-
 def _filename(target):
     key = _canonical_process_key(target.get("numero_processo")) or _canonical_process_key(
         target.get("processo_chave")
@@ -454,7 +447,7 @@ def _add_review_section(document, items):
         _add_text(paragraph, f"• {item}", size=10)
 
 
-def _build_docx(target, structure, profile, review_items=()):
+def _build_docx(target, structure, profile, header_lines, review_items=()):
     document = Document()
     section = document.sections[0]
     section.orientation = WD_ORIENT.PORTRAIT
@@ -471,6 +464,9 @@ def _build_docx(target, structure, profile, review_items=()):
     header = section.header
     paragraph = header.paragraphs[0]
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    paragraph.paragraph_format.left_indent = Cm(0)
+    paragraph.paragraph_format.right_indent = Cm(0)
+    paragraph.paragraph_format.first_line_indent = Cm(0)
     paragraph.paragraph_format.space_before = Pt(0)
     paragraph.paragraph_format.space_after = Pt(0)
     run = paragraph.add_run()
@@ -491,24 +487,10 @@ def _build_docx(target, structure, profile, review_items=()):
     )
     _set_run_font(footer_run, 9, italic=True)
 
-    identification = [
-        "Parecer Nº",
-        f"Processo TC Nº {_process_display(target)}",
-    ]
-    if str(target.get("origem") or "").strip():
-        identification.append(f"Origem: {str(target['origem']).strip()}")
-    if str(target.get("responsavel") or "").strip():
-        identification.append(
-            f"Responsável: {str(target['responsavel']).strip()}"
-        )
-    identification.append(
-        "Natureza: Prestação de Contas Anuais - "
-        f"exercício {int(target['exercicio'])}"
-    )
-    for index, line in enumerate(identification):
+    for index, line in enumerate(header_lines):
         item = document.add_paragraph(style="Minuta Identificação")
         _add_text(item, line, bold=True)
-        if index == len(identification) - 1:
+        if index == len(header_lines) - 1:
             item.paragraph_format.space_after = Pt(24)
 
     ementa = document.add_paragraph(style="Minuta Ementa")
@@ -571,6 +553,7 @@ class MinutasDocxService:
         from services.minutas_generation import (
             MinutasGenerationService,
             _canonical_process_key as canonical_process_key,
+            _draft_header_lines,
         )
 
         self.library._authorize()
@@ -626,6 +609,7 @@ class MinutasDocxService:
                 target,
                 structure,
                 profile,
+                _draft_header_lines(target),
                 review_items=_review_items(analyzed, generated),
             ),
         )

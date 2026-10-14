@@ -240,6 +240,19 @@ _PRELIMINARY_OPINION_RE = re.compile(
     r"(?:favor[aá]vel|contr[aá]rio)\b",
     re.IGNORECASE,
 )
+_RECOMMENDATION_REQUEST_RE = re.compile(r"\brecomend\w*\b", re.IGNORECASE)
+_BUREAUCRATIC_INSTRUCTION_SENTENCE_RE = re.compile(
+    r"^(?:"
+    r"(?:integram|compoem|constituem)\s+"
+    r"(?:(?:a\s+)?instrucao\s+processual|os\s+autos|o\s+processo)\b"
+    r"|a\s+instrucao(?:\s+processual)?\s+(?:e\s+)?"
+    r"(?:composta|formada|integrada)\s+por\b"
+    r"|(?:o\s+processo|os\s+autos)\s+(?:esta|estao)\s+"
+    r"instruid[oa]s?\s+(?:com|por)\b"
+    r"|(?:constam|foram\s+juntad[oa]s)\s+(?:dos|aos)\s+autos\s+"
+    r"(?:os\s+seguintes\s+)?(?:documentos|elementos|pecas)\b"
+    r").*$"
+)
 _ACCOUNT_OUTCOME_PATTERNS = (
     (
         "REGULARIDADE_COM_RESSALVAS",
@@ -312,13 +325,38 @@ def _without_report_transition(value):
     return re.sub(r"\s+", " ", _REPORT_TRANSITION_RE.sub(" ", str(value or ""))).strip()
 
 
+def _without_bureaucratic_instruction(value):
+    paragraphs = []
+    for block in re.split(r"\n\s*\n", str(value or "").strip()):
+        kept_lines = []
+        for line in block.splitlines():
+            sentences = re.split(r"(?<=[.!?])\s+", line.strip())
+            kept = [
+                sentence.strip()
+                for sentence in sentences
+                if sentence.strip()
+                and not _BUREAUCRATIC_INSTRUCTION_SENTENCE_RE.fullmatch(
+                    _plain(sentence).strip()
+                )
+            ]
+            if kept:
+                kept_lines.append(" ".join(kept))
+        if kept_lines:
+            paragraphs.append("\n".join(kept_lines))
+    return "\n\n".join(paragraphs).strip()
+
+
 def _normalized_report_sections(structure, process_sequence=None):
     report = [
         cleaned
         for block in _paragraph_blocks(
             structure.get("relatorio_paragrafos"), structure.get("relatorio")
         )
-        if (cleaned := _without_report_transition(block))
+        if (
+            cleaned := _without_bureaucratic_instruction(
+                _without_report_transition(block)
+            )
+        )
     ]
     foundation = [
         cleaned
@@ -326,7 +364,11 @@ def _normalized_report_sections(structure, process_sequence=None):
             structure.get("fundamentacao_geral_paragrafos"),
             structure.get("fundamentacao_geral"),
         )
-        if (cleaned := _without_report_transition(block))
+        if (
+            cleaned := _without_bureaucratic_instruction(
+                _without_report_transition(block)
+            )
+        )
     ]
     sequence = str(process_sequence or "").strip()
     if sequence and _normalized_support(sequence) not in {
@@ -406,18 +448,6 @@ def _process_sequence(context):
     return sequence
 
 
-def _process_sequence_paragraph(context):
-    entries = []
-    for item in _process_sequence(context):
-        label = str(item.get("tipo") or item.get("arquivo") or "Documento").strip()
-        folios = item.get("folhas_processuais") or {}
-        citation = str(folios.get("citacao") or "").strip()
-        entries.append(f"{label} ({citation})" if citation else label)
-    if not entries:
-        return ""
-    return "Integram a instrução processual: " + "; ".join(entries) + "."
-
-
 def _account_outcomes(value):
     text = str(value or "")
     return {
@@ -432,6 +462,129 @@ def _canonical_process_key(value):
     if not re.fullmatch(r"\d{5}\s*/?\s*\d{2}", normalized):
         return ""
     return re.sub(r"\D", "", normalized)
+
+
+def _draft_process_display(target):
+    key = _canonical_process_key(target.get("numero_processo")) or (
+        _canonical_process_key(target.get("processo_chave"))
+    )
+    return (
+        f"{key[:5]}/{key[5:]}"
+        if len(key) == 7
+        else str(target.get("numero_processo") or "NÃO INFORMADO").strip()
+    )
+
+
+def _draft_identifier(target):
+    return f"MINUTA-TC-{_draft_process_display(target)}"
+
+
+def _draft_header_lines(target):
+    process = _draft_process_display(target)
+    origin = str(target.get("origem") or "Não informada").strip()
+    responsible = str(target.get("responsavel") or "Não informado").strip()
+    exercise = str(target.get("exercicio") or "não informado").strip()
+    return [
+        "Parecer Nº",
+        f"Processo TC Nº {process}",
+        f"Origem: {origin}",
+        f"Natureza: Prestação de Contas Anuais - exercício {exercise}",
+        f"Responsável: {responsible}",
+    ]
+
+
+def _recommendation_clauses(request):
+    clauses = []
+    for line in str(request or "").splitlines():
+        clause = re.sub(r"^\s*[a-z]\s*[).:-]\s*", "", line, flags=re.IGNORECASE)
+        clause = re.sub(
+            r"^\s*(?:expe[cç]am-se\s+)?recomenda[cç][oõ]es?\s*:?\s*",
+            "",
+            clause,
+            flags=re.IGNORECASE,
+        )
+        clause = re.sub(
+            r"^\s*(?:recomende-se|recomenda-se|seja\s+recomendad[oa])\s*:?\s*",
+            "",
+            clause,
+            flags=re.IGNORECASE,
+        ).strip(" ;.")
+        if clause:
+            clauses.append(clause)
+    return clauses
+
+
+def _consolidate_recommendations(requests):
+    positions = [
+        index
+        for index, request in enumerate(requests)
+        if _RECOMMENDATION_REQUEST_RE.search(str(request or ""))
+    ]
+    if not positions:
+        return list(requests)
+    if len(positions) == 1 and _plain(requests[positions[0]]).startswith(
+        "recomendem-se, de forma consolidada, as seguintes providencias:"
+    ):
+        return list(requests)
+    clauses = []
+    seen = set()
+    for index in positions:
+        for clause in _recommendation_clauses(requests[index]):
+            key = _normalized_support(clause)
+            if key and key not in seen:
+                seen.add(key)
+                clauses.append(clause)
+    if not clauses:
+        return [request for index, request in enumerate(requests) if index not in positions]
+    consolidated = (
+        "Recomendem-se, de forma consolidada, as seguintes providências: "
+        + "; ".join(clauses)
+        + "."
+    )
+    first = positions[0]
+    result = []
+    for index, request in enumerate(requests):
+        if index == first:
+            result.append(consolidated)
+        if index not in positions:
+            result.append(request)
+    return result
+
+
+def _sanitize_draft_structure(structure):
+    sanitized = deepcopy(structure)
+    for field in (
+        "ementa",
+        "relatorio",
+        "fundamentacao_geral",
+        "conclusao_pedidos",
+    ):
+        sanitized[field] = _without_bureaucratic_instruction(
+            sanitized.get(field)
+        )
+    for field in ("relatorio_paragrafos", "fundamentacao_geral_paragrafos"):
+        if isinstance(sanitized.get(field), list):
+            sanitized[field] = [
+                cleaned
+                for item in sanitized[field]
+                if (cleaned := _without_bureaucratic_instruction(item))
+            ]
+    for topic in sanitized.get("topicos_irregularidades", ()):
+        if not isinstance(topic, dict):
+            continue
+        topic["texto"] = _without_bureaucratic_instruction(topic.get("texto"))
+        if isinstance(topic.get("paragrafos"), list):
+            topic["paragrafos"] = [
+                cleaned
+                for item in topic["paragrafos"]
+                if (cleaned := _without_bureaucratic_instruction(item))
+            ]
+    sanitized["pedidos"] = [
+        cleaned
+        for item in sanitized.get("pedidos", ())
+        if (cleaned := _without_bureaucratic_instruction(item))
+    ]
+    return sanitized
 
 
 def _is_historical_test_process(record):
@@ -2474,12 +2627,12 @@ class MinutasGenerationService:
 
     @staticmethod
     def _normalize_structure(structure, target, context=None):
-        normalized = deepcopy(structure)
+        normalized = _sanitize_draft_structure(structure)
         warnings = []
-        report, foundation = _normalized_report_sections(
-            normalized,
-            _process_sequence_paragraph(context or {}),
+        normalized["identificacao_processual"] = "\n".join(
+            _draft_header_lines(target)
         )
+        report, foundation = _normalized_report_sections(normalized)
         normalized["relatorio_paragrafos"] = report
         normalized["relatorio"] = "\n\n".join(report)
         normalized["fundamentacao_geral_paragrafos"] = foundation
@@ -2544,6 +2697,9 @@ class MinutasGenerationService:
                     "A PCA exige proposta direta de regularidade, regularidade com "
                     "ressalvas ou irregularidade no primeiro item do dispositivo."
                 )
+        normalized["pedidos"] = _consolidate_recommendations(
+            normalized.get("pedidos", ())
+        )
         return normalized, warnings
 
     @staticmethod
@@ -3010,6 +3166,7 @@ class MinutasGenerationService:
             **generated,
             "estrutura": structure,
             "texto": self._structure_markdown(structure),
+            "identificador_minuta": _draft_identifier(target),
             "advertencias_qualidade": warnings,
             "advertencias_documentais": deepcopy(conference["pendencias"]),
             "validation_policy_version": VALIDATION_POLICY_VERSION,
