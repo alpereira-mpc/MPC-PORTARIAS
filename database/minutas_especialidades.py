@@ -6,6 +6,45 @@ from database.store import now, unwrap_store
 from services.minutas_specialties import PROSECUTOR_KEY, STATES, scope, fingerprint
 
 
+REQUIRED_RELATIONS = (
+    "minutas_especialidades",
+    "minutas_classificacoes",
+    "minutas_acervo_vinculos",
+    "minutas_especialidades_eventos",
+    "minutas_acervo_documentos",
+    "minutas_documentos_catalogo",
+)
+
+
+def _first(result):
+    if hasattr(result, "fetchone"):
+        return result.fetchone()
+    rows = result.fetchall()
+    return rows[0] if rows else None
+
+
+def separation_enabled(connection, backend):
+    """Coluna aditiva. Ausente até o SQL manual: o aplicativo segue no comportamento atual."""
+    if backend == "postgresql":
+        result = connection.execute(
+            "SELECT 1 AS ok FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name='minutas_referencias' "
+            "AND column_name='acervo'"
+        )
+    else:
+        result = connection.execute(
+            "SELECT 1 AS ok FROM pragma_table_info('minutas_referencias') WHERE name='acervo'"
+        )
+    return _first(result) is not None
+
+
+def active_clause(enabled, alias="r"):
+    if not enabled:
+        return ""
+    column = f"{alias}.acervo" if alias else "acervo"
+    return f" AND {column}='ativo'"
+
+
 def scoped_clause(alias="r"):
     return (f"{alias}.procuradora_chave=? AND EXISTS (SELECT 1 FROM minutas_classificacoes mc "
             f"JOIN minutas_acervo_vinculos mv ON mv.referencia_id=mc.referencia_id "
@@ -19,6 +58,20 @@ class MinutasSpecialtiesStore:
     def __init__(self, store):
         self.store = unwrap_store(store)
 
+    def missing_relations(self):
+        """Relações invisíveis no search_path atual. Não cria nem altera nada."""
+        names = REQUIRED_RELATIONS
+        with self.store.connection(read_only=True) as c:
+            if getattr(self.store, "backend", "") == "postgresql":
+                row = c.execute(
+                    "SELECT " + ",".join(f"to_regclass('{name}') AS {name}" for name in names)
+                ).fetchone()
+                return [name for name in names if row[name] is None]
+            found = {row["name"] for row in c.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name IN ("
+                + ",".join("?" for _ in names) + ")", names).fetchall()}
+        return [name for name in names if name not in found]
+
     def catalog(self):
         with self.store.connection(read_only=True) as c:
             return [dict(row) for row in c.execute(
@@ -31,7 +84,11 @@ class MinutasSpecialtiesStore:
             row = c.execute("SELECT * FROM minutas_classificacoes WHERE referencia_id=?", (identifier,)).fetchone()
         return dict(row) if row else None
 
-    def list_records(self, specialty=None, *, pending=False, query="", role=None, page=1, limit=25):
+    def separation_enabled(self):
+        with self.store.connection(read_only=True) as connection:
+            return separation_enabled(connection, getattr(self.store, "backend", ""))
+
+    def list_records(self, specialty=None, *, pending=False, query="", role=None, page=1, limit=25, legacy=False):
         if specialty: scope(specialty)
         page, limit = int(page), int(limit)
         if not 1 <= limit <= 100 or page < 1: raise ValueError("Paginação inválida.")
@@ -50,6 +107,13 @@ class MinutasSpecialtiesStore:
             where += " AND EXISTS (SELECT 1 FROM minutas_documentos_catalogo dc WHERE dc.referencia_id=r.id AND dc.papel=?)"
             args.append(role)
         with self.store.connection(read_only=True) as c:
+            enabled = separation_enabled(c, getattr(self.store, "backend", ""))
+            if legacy:
+                if not enabled:
+                    return []
+                where += " AND r.acervo='legado'"
+            else:
+                where += active_clause(enabled)
             return [dict(r) for r in c.execute(
                 "SELECT r.*,mc.especialidade_id,mc.estado AS classificacao_estado,mc.classe,"
                 "mc.entidade AS origem,mc.motivo,mc.revisao AS classificacao_revisao "
@@ -61,6 +125,7 @@ class MinutasSpecialtiesStore:
     def dashboard(self):
         from services.minutas_extraction import EXTRACTOR_VERSION
         with self.store.connection(read_only=True) as c:
+            active = active_clause(separation_enabled(c, getattr(self.store, "backend", "")))
             rows = c.execute(
                 "SELECT s.id,COUNT(DISTINCT r.id) AS processos,"
                 "COUNT(DISTINCT CASE WHEN d.papel='parecer' THEN d.path END) AS pareceres,"
@@ -69,7 +134,8 @@ class MinutasSpecialtiesStore:
                 "THEN d.path END) AS indexados,MAX(mc.atualizado_em) AS ultima_atualizacao "
                 "FROM minutas_especialidades s LEFT JOIN minutas_acervo_vinculos v ON v.especialidade_id=s.id "
                 "LEFT JOIN minutas_classificacoes mc ON mc.referencia_id=v.referencia_id AND mc.estado='CLASSIFICADO' "
-                "LEFT JOIN minutas_referencias r ON r.id=mc.referencia_id AND r.procuradora_chave=s.procuradora_chave "
+                "LEFT JOIN minutas_referencias r ON r.id=mc.referencia_id AND r.procuradora_chave=s.procuradora_chave"
+                + active + " "
                 "LEFT JOIN minutas_documentos_catalogo d ON d.referencia_id=r.id "
                 "LEFT JOIN minutas_extracoes e ON e.arquivo_path=d.path AND e.referencia_id=r.id "
                 "WHERE s.procuradora_chave=? GROUP BY s.id", (EXTRACTOR_VERSION, PROSECUTOR_KEY),
@@ -77,24 +143,31 @@ class MinutasSpecialtiesStore:
             pending = c.execute(
                 "SELECT COUNT(*) AS total FROM minutas_referencias r LEFT JOIN minutas_classificacoes mc "
                 "ON mc.referencia_id=r.id WHERE r.procuradora_chave=? "
-                "AND (mc.estado IS NULL OR mc.estado<>'CLASSIFICADO')", (PROSECUTOR_KEY,),
+                "AND (mc.estado IS NULL OR mc.estado<>'CLASSIFICADO')" + active, (PROSECUTOR_KEY,),
             ).fetchone()["total"]
         return {"especialidades": [dict(r) for r in rows], "pendentes": pending}
 
     def snapshot(self):
         """Inventário explícito: três leituras; texto carregado só no dry-run administrativo."""
         with self.store.connection(read_only=True, isolation="REPEATABLE READ") as c:
+            enabled = separation_enabled(c, getattr(self.store, "backend", ""))
+            bare, scoped = active_clause(enabled, ""), active_clause(enabled)
             records = [dict(r) for r in c.execute(
-                "SELECT * FROM minutas_referencias WHERE procuradora_chave=? ORDER BY id", (PROSECUTOR_KEY,)).fetchall()]
+                "SELECT * FROM minutas_referencias WHERE procuradora_chave=?" + bare + " ORDER BY id", (PROSECUTOR_KEY,)).fetchall()]
             documents = [dict(r) for r in c.execute(
                 "SELECT d.* FROM minutas_documentos_catalogo d JOIN minutas_referencias r ON r.id=d.referencia_id "
-                "WHERE r.procuradora_chave=? ORDER BY d.path", (PROSECUTOR_KEY,)).fetchall()]
-            extractions = [dict(r) for r in c.execute(
-                "SELECT e.* FROM minutas_extracoes e WHERE e.procuradora_chave=? ORDER BY e.arquivo_path",
-                (PROSECUTOR_KEY,)).fetchall()]
+                "WHERE r.procuradora_chave=?" + scoped + " ORDER BY d.path", (PROSECUTOR_KEY,)).fetchall()]
+            if enabled:
+                extractions = [dict(r) for r in c.execute(
+                    "SELECT e.* FROM minutas_extracoes e JOIN minutas_referencias r ON r.id=e.referencia_id "
+                    "WHERE e.procuradora_chave=?" + scoped + " ORDER BY e.arquivo_path", (PROSECUTOR_KEY,)).fetchall()]
+            else:
+                extractions = [dict(r) for r in c.execute(
+                    "SELECT e.* FROM minutas_extracoes e WHERE e.procuradora_chave=? ORDER BY e.arquivo_path",
+                    (PROSECUTOR_KEY,)).fetchall()]
             classifications = [dict(r) for r in c.execute(
                 "SELECT mc.* FROM minutas_classificacoes mc JOIN minutas_referencias r ON r.id=mc.referencia_id "
-                "WHERE r.procuradora_chave=? ORDER BY mc.referencia_id", (PROSECUTOR_KEY,)).fetchall()]
+                "WHERE r.procuradora_chave=?" + scoped + " ORDER BY mc.referencia_id", (PROSECUTOR_KEY,)).fetchall()]
         return {"processos": records, "documentos": documents, "extracoes": extractions, "classificacoes": classifications}
 
     def legacy_snapshot(self):
@@ -179,10 +252,17 @@ class MinutasSpecialtiesStore:
             if getattr(self.store, "backend", "") == "postgresql":
                 c.execute("LOCK TABLE minutas_referencias,minutas_documentos_complementares,minutas_acervo_documentos,"
                           "minutas_extracoes,minutas_classificacoes IN SHARE ROW EXCLUSIVE MODE")
-            rows = [dict(r) for r in c.execute("SELECT * FROM minutas_referencias WHERE procuradora_chave=? ORDER BY id", (PROSECUTOR_KEY,)).fetchall()]
+            enabled = separation_enabled(c, getattr(self.store, "backend", ""))
+            bare, scoped = active_clause(enabled, ""), active_clause(enabled)
+            rows = [dict(r) for r in c.execute("SELECT * FROM minutas_referencias WHERE procuradora_chave=?" + bare + " ORDER BY id", (PROSECUTOR_KEY,)).fetchall()]
             if fingerprint(rows) != plan["registros_hash"]: raise ValueError("Inventário alterado; simule novamente.")
-            docs = [dict(r) for r in c.execute("SELECT d.* FROM minutas_documentos_catalogo d JOIN minutas_referencias r ON r.id=d.referencia_id WHERE r.procuradora_chave=? ORDER BY d.path", (PROSECUTOR_KEY,)).fetchall()]
-            ext = [dict(r) for r in c.execute("SELECT * FROM minutas_extracoes WHERE procuradora_chave=? ORDER BY arquivo_path", (PROSECUTOR_KEY,)).fetchall()]
+            docs = [dict(r) for r in c.execute("SELECT d.* FROM minutas_documentos_catalogo d JOIN minutas_referencias r ON r.id=d.referencia_id WHERE r.procuradora_chave=?" + scoped + " ORDER BY d.path", (PROSECUTOR_KEY,)).fetchall()]
+            if enabled:
+                ext = [dict(r) for r in c.execute(
+                    "SELECT e.* FROM minutas_extracoes e JOIN minutas_referencias r ON r.id=e.referencia_id "
+                    "WHERE e.procuradora_chave=?" + scoped + " ORDER BY e.arquivo_path", (PROSECUTOR_KEY,)).fetchall()]
+            else:
+                ext = [dict(r) for r in c.execute("SELECT * FROM minutas_extracoes WHERE procuradora_chave=? ORDER BY arquivo_path", (PROSECUTOR_KEY,)).fetchall()]
             if fingerprint(docs) != plan["documentos_hash"] or fingerprint(ext) != plan["extracoes_hash"]:
                 raise ValueError("Documentos ou extrações alterados; simule novamente.")
             changed = sum(self._classify(c, item, actor, automatic=True, batch=plan["lote"]) for item in plan["itens"])

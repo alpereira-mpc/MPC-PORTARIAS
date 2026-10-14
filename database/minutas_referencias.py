@@ -38,6 +38,10 @@ class MinutasReferenciasStore:
         if getattr(self.store, "backend", None) != "postgresql":
             raise RuntimeError("A biblioteca de referências exige PostgreSQL.")
 
+    def _active(self, connection, alias="r"):
+        from database.minutas_especialidades import active_clause, separation_enabled
+        return active_clause(separation_enabled(connection, getattr(self.store, "backend", "")), alias)
+
     def create(self, record):
         with self.store.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -69,7 +73,8 @@ class MinutasReferenciasStore:
         profile = self.profile()
         with self.store.connection(read_only=True) as c:
             row = c.execute("SELECT COUNT(e.id) AS total,MAX(e.atualizado_em) AS atualizado "
-                "FROM minutas_extracoes e JOIN minutas_referencias r ON r.id=e.referencia_id WHERE " + scoped_clause(),
+                "FROM minutas_extracoes e JOIN minutas_referencias r ON r.id=e.referencia_id WHERE " + scoped_clause()
+                + self._active(c),
                 (PROSECUTOR_KEY, self.specialty_id)).fetchone()
         return fingerprint([profile, dict(row)])
 
@@ -82,7 +87,7 @@ class MinutasReferenciasStore:
                     "SELECT r.*,mc.especialidade_id,mc.classe,mc.estado AS classificacao_estado,"
                     "mc.entidade AS origem,mc.revisao AS classificacao_revisao "
                     "FROM minutas_referencias r JOIN minutas_classificacoes mc ON mc.referencia_id=r.id "
-                    "WHERE r.id=? AND " + scoped_clause(),
+                    "WHERE r.id=? AND " + scoped_clause() + self._active(connection),
                     (identifier, PROSECUTOR_KEY, self.specialty_id),
                 ).fetchone()
             if row:
@@ -101,7 +106,7 @@ class MinutasReferenciasStore:
         with self.store.connection(read_only=True) as connection:
             row = connection.execute(
                 f"SELECT {COLUMNS} FROM minutas_referencias "
-                "WHERE procuradora_chave=? AND processo_chave=?",
+                "WHERE procuradora_chave=? AND processo_chave=?" + self._active(connection, ""),
                 (procuradora_key, process_key),
             ).fetchone()
         return dict(row) if row else None
@@ -115,14 +120,17 @@ class MinutasReferenciasStore:
                     "SELECT r.*,mc.classe,mc.estado AS classificacao_estado,mc.entidade AS origem,"
                     "mc.revisao AS classificacao_revisao FROM minutas_referencias r "
                     "JOIN minutas_classificacoes mc ON mc.referencia_id=r.id WHERE " + scoped_clause()
+                    + self._active(connection)
                     + " ORDER BY r.exercicio DESC,r.numero_processo,r.id",
                     (PROSECUTOR_KEY, self.specialty_id),
                 ).fetchall()
             return [dict(row, especialidade_id=self.specialty_id) for row in rows]
         with self.store.connection(read_only=True) as connection:
+            active = self._active(connection, "")
             rows = connection.execute(
-                f"SELECT {COLUMNS} FROM minutas_referencias "
-                "ORDER BY exercicio DESC, numero_processo, id"
+                f"SELECT {COLUMNS} FROM minutas_referencias"
+                + (" WHERE acervo='ativo'" if active else "")
+                + " ORDER BY exercicio DESC, numero_processo, id"
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -170,7 +178,7 @@ class MinutasReferenciasStore:
             from services.minutas_specialties import PROSECUTOR_KEY
             with self.store.connection(read_only=True) as c:
                 row = c.execute("SELECT e.* FROM minutas_extracoes e JOIN minutas_referencias r "
-                    "ON r.id=e.referencia_id WHERE e.arquivo_path=? AND " + scoped_clause(),
+                    "ON r.id=e.referencia_id WHERE e.arquivo_path=? AND " + scoped_clause() + self._active(c),
                     (path, PROSECUTOR_KEY, self.specialty_id)).fetchone()
             return dict(row) if row else None
         with self.store.connection(read_only=True) as connection:
@@ -196,12 +204,22 @@ class MinutasReferenciasStore:
         if self.specialty_id:
             return self._scoped_extractions(procuradora_key, inventory=False)
         with self.store.connection(read_only=True) as connection:
-            rows = connection.execute(
-                f"SELECT {EXTRACTION_COLUMNS} FROM minutas_extracoes "
-                "WHERE procuradora_chave=? AND status='PROCESSADO' "
-                "ORDER BY referencia_id,papel,posicao,arquivo_path",
-                (procuradora_key,),
-            ).fetchall()
+            if self._active(connection):
+                columns = ",".join("e." + name for name in EXTRACTION_COLUMNS.split(","))
+                rows = connection.execute(
+                    "SELECT " + columns + " FROM minutas_extracoes e "
+                    "JOIN minutas_referencias r ON r.id=e.referencia_id "
+                    "WHERE e.procuradora_chave=? AND e.status='PROCESSADO' AND r.acervo='ativo' "
+                    "ORDER BY e.referencia_id,e.papel,e.posicao,e.arquivo_path",
+                    (procuradora_key,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    f"SELECT {EXTRACTION_COLUMNS} FROM minutas_extracoes "
+                    "WHERE procuradora_chave=? AND status='PROCESSADO' "
+                    "ORDER BY referencia_id,papel,posicao,arquivo_path",
+                    (procuradora_key,),
+                ).fetchall()
         return [dict(row) for row in rows]
 
     def list_extraction_inventory_by_procuradora(self, procuradora_key):
@@ -209,12 +227,22 @@ class MinutasReferenciasStore:
         if self.specialty_id:
             return self._scoped_extractions(procuradora_key, inventory=True)
         with self.store.connection(read_only=True) as connection:
-            rows = connection.execute(
-                f"SELECT {EXTRACTION_INVENTORY_COLUMNS} FROM minutas_extracoes "
-                "WHERE procuradora_chave=? "
-                "ORDER BY referencia_id,papel,posicao,arquivo_path",
-                (procuradora_key,),
-            ).fetchall()
+            if self._active(connection):
+                columns = ",".join("e." + name for name in EXTRACTION_INVENTORY_COLUMNS.split(","))
+                rows = connection.execute(
+                    "SELECT " + columns + " FROM minutas_extracoes e "
+                    "JOIN minutas_referencias r ON r.id=e.referencia_id "
+                    "WHERE e.procuradora_chave=? AND r.acervo='ativo' "
+                    "ORDER BY e.referencia_id,e.papel,e.posicao,e.arquivo_path",
+                    (procuradora_key,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    f"SELECT {EXTRACTION_INVENTORY_COLUMNS} FROM minutas_extracoes "
+                    "WHERE procuradora_chave=? "
+                    "ORDER BY referencia_id,papel,posicao,arquivo_path",
+                    (procuradora_key,),
+                ).fetchall()
         return [dict(row) for row in rows]
 
     def _scoped_extractions(self, procuradora_key, *, inventory):
@@ -228,6 +256,7 @@ class MinutasReferenciasStore:
             rows = connection.execute(
                 "SELECT " + columns + " FROM minutas_extracoes e JOIN minutas_referencias r ON r.id=e.referencia_id "
                 "WHERE e.procuradora_chave=r.procuradora_chave AND " + scoped_clause()
+                + self._active(connection)
                 + ("" if inventory else " AND e.status='PROCESSADO'")
                 + " ORDER BY e.referencia_id,e.papel,e.posicao,e.arquivo_path",
                 (procuradora_key, self.specialty_id),
@@ -278,6 +307,9 @@ class MinutasReferenciasStore:
             "e.arquivo_sha256<>repeat('0',64)",
             "to_tsvector('portuguese',COALESCE(e.texto_integral,'')) @@ q.terms",
         ]
+        with self.store.connection(read_only=True) as connection:
+            if self._active(connection):
+                clauses.append("r.acervo='ativo'")
         parameters = [
             query,
             query,

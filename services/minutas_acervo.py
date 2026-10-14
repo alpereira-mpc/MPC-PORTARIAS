@@ -137,16 +137,21 @@ class MinutasAcervoService:
 
     def _upload_existing(self, c, specialty, key, year, digest, name, confirm_version):
         """Checks only metadata; reused before upload and inside the short transaction."""
+        from database.minutas_especialidades import active_clause, separation_enabled
+        enabled = separation_enabled(c, getattr(self.library.repository.store, "backend", ""))
+        active = active_clause(enabled, "")
         matches = c.execute("SELECT * FROM minutas_referencias WHERE procuradora_chave=? "
-            "AND LOWER(processo_chave) IN (?,?,?,?)",
+            "AND LOWER(processo_chave) IN (?,?,?,?)" + active,
             (PROSECUTOR_KEY, key, "tc" + key, "processotc" + key, "processo" + key)).fetchall()
         if len(matches) > 1:
             raise MinutasValidationError("Há registros equivalentes para este processo; confira os vínculos antes de cadastrar.")
         record = dict(matches[0]) if matches else None
+        scoped = active_clause(enabled)
         known = c.execute("SELECT e.referencia_id FROM minutas_extracoes e "
-            "JOIN minutas_referencias r ON r.id=e.referencia_id WHERE r.procuradora_chave=? AND e.arquivo_sha256=? "
+            "JOIN minutas_referencias r ON r.id=e.referencia_id WHERE r.procuradora_chave=? AND e.arquivo_sha256=?"
+            + scoped + " "
             "UNION SELECT d.referencia_id FROM minutas_acervo_documentos d JOIN minutas_referencias r "
-            "ON r.id=d.referencia_id WHERE r.procuradora_chave=? AND d.sha256=?",
+            "ON r.id=d.referencia_id WHERE r.procuradora_chave=? AND d.sha256=?" + scoped,
             (PROSECUTOR_KEY, digest, PROSECUTOR_KEY, digest)).fetchall()
         if any(str(d["referencia_id"]) != str((record or {}).get("id")) for d in known):
             raise MinutasValidationError("Conteúdo já vinculado a outro processo; confira os vínculos antes de cadastrar uma cópia.")
@@ -225,9 +230,15 @@ class MinutasAcervoService:
                     subtype = {"RPPS": "Instituto/Autarquia", "CAMARA": "Câmara Municipal",
                         "PREFEITURA": "Prefeitura", "SECRETARIA_MUNICIPAL": "Secretaria Municipal ou Estadual",
                         "ORGAO_ESTADUAL": "Secretaria Municipal ou Estadual"}.get(profile["perfil"])
-                    c.execute("INSERT INTO minutas_referencias (id,procuradora,procuradora_chave,numero_processo,processo_chave,"
-                        "exercicio,subtipo,criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                        (identifier, PROCURADORA, PROSECUTOR_KEY, "TC " + key[:5] + "/" + key[5:], key, year, subtype, stamp, actor, stamp, actor))
+                    from database.minutas_especialidades import separation_enabled
+                    if separation_enabled(c, getattr(self.library.repository.store, "backend", "")):
+                        c.execute("INSERT INTO minutas_referencias (id,procuradora,procuradora_chave,numero_processo,processo_chave,"
+                            "exercicio,subtipo,acervo,criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (identifier, PROCURADORA, PROSECUTOR_KEY, "TC " + key[:5] + "/" + key[5:], key, year, subtype, "ativo", stamp, actor, stamp, actor))
+                    else:
+                        c.execute("INSERT INTO minutas_referencias (id,procuradora,procuradora_chave,numero_processo,processo_chave,"
+                            "exercicio,subtipo,criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                            (identifier, PROCURADORA, PROSECUTOR_KEY, "TC " + key[:5] + "/" + key[5:], key, year, subtype, stamp, actor, stamp, actor))
                     record = {"id": identifier}
                     self.repository._classify(c, {"referencia_id": identifier, "estado": "CLASSIFICADO", "especialidade_id": specialty,
                         "classe": formal, "modalidade": profile["nome"], "perfil": profile["perfil"],

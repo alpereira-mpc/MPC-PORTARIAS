@@ -33,7 +33,9 @@ def specialized_pg(pg_url):
         # revocations and every RLS/table/index statement are still executed.
         source = re.sub(r"FROM\s+(?:PUBLIC\s*,\s*)?anon\s*,\s*authenticated", "FROM PUBLIC", source, flags=re.I)
         scripts.append(source.replace("mpc_portarias.", schema + "."))
-    with psycopg.connect(pg_url, autocommit=True) as c:
+    # ClientCursor uses the simple query protocol, so each idempotent script
+    # can contain the transaction and the following DDL in one execution.
+    with psycopg.connect(pg_url, autocommit=True, cursor_factory=psycopg.ClientCursor) as c:
         c.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         try:
             for source in scripts: c.execute(source)

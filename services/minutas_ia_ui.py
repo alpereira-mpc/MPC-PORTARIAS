@@ -1835,16 +1835,48 @@ def _search_tab(store, identity):
         st.rerun()
 
 
+def _specialty_infrastructure_error(exc):
+    sqlstate = getattr(exc, "sqlstate", None)
+    if sqlstate in {"42P01", "42501", "42703", "3F000"}:
+        return True
+    message = str(exc).casefold()
+    return "no such table" in message or ("relation" in message and "does not exist" in message)
+
+
+def _block_specialties(detail=""):
+    message = (
+        "Especialidades indisponíveis. Confira a implantação de "
+        "database/minutas_especialidades.sql e o catálogo; o acesso especializado "
+        "permanece bloqueado."
+    )
+    if detail:
+        message += " " + detail
+    st.warning(message)
+
+
 def render(store, identity):
     started = perf_counter()
     st.title("Gerador de Minutas de Pareceres — Projeto-Piloto")
     render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
     st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
+    from database.minutas_especialidades import MinutasSpecialtiesStore
     from services.minutas_specialties_ui import selection, synchronize_scope, acervo
     from services.minutas_specialties import RPPS
     administrative_library = _service(store, identity, administrative=True)
     if administrative_library is None:
         return
+    repository_store = getattr(getattr(administrative_library, "repository", None), "store", None)
+    if getattr(repository_store, "backend", None) in {"postgresql", "sqlite"}:
+        try:
+            missing = MinutasSpecialtiesStore(repository_store).missing_relations()
+        except Exception as exc:
+            if not _specialty_infrastructure_error(exc):
+                raise
+            _block_specialties()
+            return
+        if missing:
+            _block_specialties("Relações ausentes ou invisíveis: " + ", ".join(missing) + ".")
+            return
     try:
         profile = selection(administrative_library)
         if profile is None:
@@ -1853,8 +1885,10 @@ def render(store, identity):
         if library is None:
             return
         synchronize_scope(library, identity)
-    except Exception:
-        st.warning("Especialidades indisponíveis. Confira a implantação de database/minutas_especialidades.sql e o catálogo; o acesso especializado permanece bloqueado.")
+    except Exception as exc:
+        if not _specialty_infrastructure_error(exc):
+            raise
+        _block_specialties()
         return
     sections = (
         "Acervo",

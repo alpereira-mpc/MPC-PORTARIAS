@@ -187,26 +187,40 @@ def _uploads(admin, library, profile):
             progress.progress((index + 1) / len(uploads))
 
 
+def _record_summary(record):
+    st.markdown(f"**Processo {record.get('numero_processo') or '—'}**")
+    st.caption(
+        f"Exercício {record.get('exercicio') or '—'} · "
+        f"{record.get('origem') or 'Origem a conferir'} · "
+        f"{record.get('classe') or 'Classe a conferir'} · "
+        f"{record.get('classificacao_estado') or 'Sem classificação'}"
+    )
+
+
 def acervo(library, administrative_library, profile):
     admin = MinutasAcervoService(administrative_library)
     admin.library._authorize()
-    mode = st.radio("Operação do acervo", ("Consultar", "Adicionar documentos", "Pendências de classificação", "Administração"),
+    mode = st.radio("Operação do acervo", ("Consultar", "Adicionar documentos", "Administração"),
                     horizontal=True, key="minutas_acervo_mode")
     if mode == "Adicionar documentos":
+        if not admin.repository.separation_enabled():
+            st.caption("A separação do acervo legado ainda não está aplicada. Não recadastre um número que já exista: o arquivo seria gravado no registro histórico.")
         _uploads(admin, library, profile)
         return
     if mode == "Administração":
         _administration(admin, profile)
         return
-    pending = mode == "Pendências de classificação"
-    query = st.text_input("Processo ou entidade", key="minutas_query_" + profile["id"] + str(pending))
+    query = st.text_input("Processo ou entidade", key="minutas_query_" + profile["id"])
     role = st.selectbox("Tipo documental", ("Todos", "parecer", "auditoria", "complementar", "modelo"))
-    page_key = "minutas_page_" + fingerprint([profile["id"], pending, query, role])
+    page_key = "minutas_page_" + fingerprint([profile["id"], query, role])
     page = st.number_input("Página", min_value=1, value=1, step=1, key=page_key)
-    records = admin.repository.list_records(None if pending else profile["id"], pending=pending, query=query,
+    records = admin.repository.list_records(profile["id"], query=query,
                                            role=None if role == "Todos" else role, page=page)
     if not records:
-        st.info("Nenhum processo nesta página. Registros sem classificação permanecem em Pendências de classificação.")
+        if query or role != "Todos" or page > 1:
+            st.info("Nenhum processo encontrado com esses filtros.")
+        else:
+            st.info("Nenhum documento neste acervo. Em Adicionar documentos, cadastre o primeiro processo desta especialidade.")
         return
     options = {str(r["id"]): r for r in records}
     st.caption(f"{len(records)} processo(s) nesta página · até 25 por página")
@@ -214,31 +228,71 @@ def acervo(library, administrative_library, profile):
         format_func=lambda key: f"{options[key]['numero_processo']} · {options[key].get('origem') or 'Origem a conferir'}",
         key="minutas_record_" + page_key)
     if identifier:
-        selected_library = administrative_library if pending else library
-        record = selected_library.get(identifier)
-        st.write({key: options[identifier].get(key) for key in ("numero_processo", "exercicio", "origem", "classe", "classificacao_estado")})
+        record = library.get(identifier)
+        _record_summary(options[identifier])
         detail = st.radio("Detalhes", ("Documentos", "Classificação"), horizontal=True, key="minutas_detail_" + identifier)
         if detail == "Documentos":
-            _documents(selected_library, record)
+            _documents(library, record)
         else:
             _classification(admin, record, admin.catalog())
 
 
+def _plan_summary(plan):
+    counts = plan.get("contagens") or {}
+    results = plan.get("resultados") or {}
+    st.caption(
+        f"Processos {counts.get('processos', 0)} · arquivos {counts.get('arquivos_vinculados', 0)} · "
+        f"extrações {counts.get('extracoes', 0)}"
+    )
+    if results:
+        st.caption(" · ".join(f"{key}: {value}" for key, value in sorted(results.items())))
+    incomplete = counts.get("metadados_incompletos") or []
+    if incomplete:
+        st.caption(f"Metadados incompletos: {len(incomplete)}")
+
+
+def _legacy_archive(admin, library):
+    st.caption("Leitura do acervo anterior. Estes processos não entram na pesquisa, no RAG nem na geração.")
+    records = admin.repository.list_records(legacy=True, limit=100)
+    if not records:
+        st.info("Nenhum processo legado encontrado.")
+        return
+    options = {str(row["id"]): row for row in records}
+    st.caption(f"{len(records)} processo(s) legado(s)")
+    identifier = st.selectbox("Processo legado", list(options), index=None,
+        placeholder="Selecione para consultar os documentos",
+        format_func=lambda key: f"{options[key]['numero_processo']} · exercício {options[key].get('exercicio') or '—'}",
+        key="minutas_legacy_record")
+    if identifier:
+        _record_summary(options[identifier])
+        _documents(library, library.get(identifier))
+
+
 def _administration(admin, profile):
-    operation = st.selectbox("Administração", ("Painel de especialidades", "Inventário e reclassificação", "Evolução da especialidade"))
+    operations = ["Painel de especialidades", "Inventário e reclassificação", "Evolução da especialidade"]
+    if admin.repository.separation_enabled():
+        operations.append("Acervo legado")
+    operation = st.selectbox("Administração", operations)
     if operation == "Painel de especialidades":
         data = admin.repository.dashboard()
         catalog = {row["id"]: row for row in admin.catalog()}
-        st.dataframe([{"Especialidade": catalog[row["id"]]["nome"], "Estado": catalog[row["id"]]["estado"],
-            **{key: value for key, value in row.items() if key != "id"}} for row in data["especialidades"]], hide_index=True)
-        st.caption(f"Processos pendentes de classificação: {data['pendentes']}")
+        rows = []
+        for row in data["especialidades"]:
+            item = catalog.get(row["id"], {})
+            rows.append({"Especialidade": item.get("nome", row["id"]), "Estado": item.get("estado", ""),
+                "Processos": row.get("processos", 0), "Pareceres": row.get("pareceres", 0),
+                "Relatórios": row.get("relatorios", 0), "Indexados": row.get("indexados", 0)})
+        st.dataframe(rows, hide_index=True)
+        st.caption(f"Processos do acervo ativo sem classificação: {data['pendentes']}")
+    elif operation == "Acervo legado":
+        _legacy_archive(admin, admin.library)
     elif operation == "Inventário e reclassificação":
         st.warning("Operação administrativa explícita. Antes de aplicar, confira o inventário e comprove restauração do backup de banco e Storage.")
         if st.button("Simular reclassificação (sem alterações)"):
             st.session_state["minutas_migration_plan"] = admin.dry_run()
         plan = st.session_state.get("minutas_migration_plan")
         if plan:
-            st.json(plan)
+            _plan_summary(plan)
             st.download_button("Baixar relatório da simulação", json.dumps(plan, ensure_ascii=False, indent=2), "minutas-dry-run.json", "application/json")
             backup = st.text_input("Identificador da evidência de backup e teste de restauração")
             verified = st.checkbox("Backup de banco e Storage restaurado e conferido em ambiente isolado")

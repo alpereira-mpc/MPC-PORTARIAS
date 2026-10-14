@@ -15,7 +15,7 @@ from database.minutas_especialidades import MinutasSpecialtiesStore
 from database.minutas_referencias import MinutasReferenciasStore, COLUMNS, COMPLEMENT_COLUMNS, EXTRACTION_COLUMNS
 from services.minutas_acervo import MinutasAcervoService, inventory, migration_plan
 from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionService
-from services.minutas_library import MinutasLibraryService, MinutasAccessDenied
+from services.minutas_library import MinutasLibraryService, MinutasAccessDenied, MinutasValidationError
 from services.minutas_specialties import CATALOG, CLASSES, PROSECUTOR_KEY, RPPS, scope, suggest
 from tests.access_testing import TEST_IDENTITY
 from tests.test_minutas_library import _pdf
@@ -67,17 +67,45 @@ def library(store, storage, specialty=RPPS):
         {"MINUTAS_PILOTO_ENABLED": True, "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]]})
 
 
-@pytest.fixture
-def environment(tmp_path):
-    store = SyntheticStore(tmp_path / "minutas.db")
+def build_store(path, *, separated=False):
+    store = SyntheticStore(path)
     with store.connection() as c:
         for table, columns in (("minutas_referencias", COLUMNS), ("minutas_documentos_complementares", COMPLEMENT_COLUMNS),
                                ("minutas_extracoes", EXTRACTION_COLUMNS)):
             definitions = ["id TEXT PRIMARY KEY"] + [name + " " + ("INTEGER" if name in ("exercicio", "posicao") or "tamanho" in name else "TEXT")
                 for name in columns.split(",") if name != "id"]
             if table == "minutas_extracoes": definitions.append("UNIQUE(arquivo_path)")
-            if table == "minutas_referencias": definitions.append("UNIQUE(procuradora_chave,processo_chave)")
+            if table == "minutas_referencias" and separated:
+                definitions.append("acervo TEXT NOT NULL DEFAULT 'ativo'")
+            elif table == "minutas_referencias":
+                definitions.append("UNIQUE(procuradora_chave,processo_chave)")
             c.execute(f"CREATE TABLE {table} (" + ",".join(definitions) + ")")
+        if separated:
+            c.execute("CREATE UNIQUE INDEX minutas_referencias_processo_ativo_uq ON minutas_referencias(procuradora_chave,processo_chave) WHERE acervo='ativo'")
+            c.execute("CREATE UNIQUE INDEX minutas_referencias_processo_legado_uq ON minutas_referencias(procuradora_chave,processo_chave) WHERE acervo='legado'")
+    return store
+
+
+@pytest.fixture
+def environment(tmp_path):
+    store = build_store(tmp_path / "minutas.db")
+    with store.connection() as c:
+        sql = (Path(__file__).resolve().parents[1] / "database/minutas_especialidades.sql").read_text(encoding="utf-8")
+        sql = re.sub(r"--[^\n]*", "", sql).replace("mpc_portarias.", "").replace("::text", "")
+        for statement in sql.split(";"):
+            statement = statement.strip()
+            if statement.startswith(("CREATE TABLE", "CREATE INDEX", "CREATE OR REPLACE VIEW")):
+                c.execute(statement.replace("CREATE OR REPLACE VIEW", "CREATE VIEW"))
+        for profile in CATALOG:
+            c.execute("INSERT INTO minutas_especialidades(id,procuradora_chave,grupo,nome,perfil,estado,motor) VALUES(?,?,?,?,?,?,?)",
+                tuple(profile[key] for key in ("id", "procuradora_chave", "grupo", "nome", "perfil", "estado", "motor")))
+    return store, Storage()
+
+
+@pytest.fixture
+def separated(tmp_path):
+    store = build_store(tmp_path / "minutas.db", separated=True)
+    with store.connection() as c:
         sql = (Path(__file__).resolve().parents[1] / "database/minutas_especialidades.sql").read_text(encoding="utf-8")
         sql = re.sub(r"--[^\n]*", "", sql).replace("mpc_portarias.", "").replace("::text", "")
         for statement in sql.split(";"):
@@ -328,6 +356,31 @@ def test_inventory_before_schema_matches_catalog_and_paginates_pending(environme
     assert sum(r["processos"] for r in repo.dashboard()["especialidades"]) == 0
 
 
+def test_missing_relations_keep_the_module_closed(environment, monkeypatch):
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+    from services import minutas_ia_ui
+    store, storage = environment
+    with store.connection() as c:
+        c.execute("DROP VIEW minutas_documentos_catalogo")
+        for table in ("minutas_acervo_documentos", "minutas_acervo_vinculos", "minutas_classificacoes",
+                      "minutas_especialidades_eventos", "minutas_especialidades"):
+            c.execute("DROP TABLE " + table)
+    assert MinutasSpecialtiesStore(store).missing_relations() == [
+        "minutas_especialidades", "minutas_classificacoes", "minutas_acervo_vinculos",
+        "minutas_especialidades_eventos", "minutas_acervo_documentos", "minutas_documentos_catalogo"]
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *args, administrative=False:
+        library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
+    def page():
+        from services.minutas_ia_ui import render
+        from tests.access_testing import TEST_IDENTITY
+        render(None, TEST_IDENTITY)
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert not app.exception
+    assert any("Especialidades indisponíveis" in item.value and "minutas_especialidades" in item.value for item in app.warning)
+    assert all(getattr(item, "key", None) != "minutas_specialty" for item in app.selectbox)
+
+
 def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(environment, monkeypatch):
     import streamlit as st
     from streamlit.testing.v1 import AppTest
@@ -362,12 +415,10 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert "minutas_legal_search" not in app.session_state
     assert any("ainda não habilitada" in info.value for info in app.info)
     app.radio(key="minutas_active_view").set_value("Acervo").run()
-    app.radio(key="minutas_acervo_mode").set_value("Pendências de classificação").run()
-    assert not app.exception and not app.error
-    assert any("02720/25" in option for select in app.selectbox for option in select.options)
+    assert "Pendências de classificação" not in app.radio(key="minutas_acervo_mode").options
     app.radio(key="minutas_acervo_mode").set_value("Administração").run()
     assert not app.exception and not app.error
-    assert any("pendentes de classificação: 1" in caption.value for caption in app.caption)
+    assert any("sem classificação: 1" in caption.value for caption in app.caption)
     assert storage.downloads == []
     assert not any("ts_headline" in query for query in store.queries)
 
@@ -514,6 +565,71 @@ def test_upload_does_not_hold_shared_write_transaction_during_storage_io(environ
     result = admin.add_file(RPPS, {"numero_processo": "12345/26", "exercicio": 2026, "classe": "PCA", "fundamento": "Conferido"},
                            ("x.pdf", _pdf(b"x")), role="parecer")
     assert result["estado"] == "CADASTRADO"
+
+
+def test_legacy_stays_intact_while_active_archive_reuses_process_and_pdf(separated):
+    store, storage = separated
+    legacy = seed(store)
+    digest = sha256(_pdf(b"parecer-legado")).hexdigest()
+    with store.connection() as c:
+        c.execute("UPDATE minutas_referencias SET acervo='legado'")
+        c.execute("UPDATE minutas_extracoes SET arquivo_sha256=? WHERE referencia_id=? AND papel='parecer'", (digest, legacy["id"]))
+        preserved = dict(c.execute(
+            "SELECT id,numero_processo,processo_chave,auditoria_path,parecer_path FROM minutas_referencias WHERE id=?",
+            (legacy["id"],)).fetchone())
+    admin = MinutasAcervoService(library(store, storage))
+    assert admin.repository.separation_enabled()
+    assert admin.repository.list_records(RPPS) == []
+    assert [row["id"] for row in admin.repository.list_records(legacy=True)] == [legacy["id"]]
+    values = {"numero_processo": "01653/26", "exercicio": 2026, "classe": "PCA", "origem": "Instituto de Previdência",
+              "fundamento": "Novo acervo ativo"}
+    first = admin.add_file(RPPS, values, ("parecer.pdf", _pdf(b"parecer-legado")), role="parecer")
+    assert first["estado"] == "CADASTRADO" and first["referencia_id"] != legacy["id"]
+    second = admin.add_file(RPPS, values, ("auditoria.pdf", _pdf(b"relatorio-novo")), role="auditoria")
+    assert second["referencia_id"] == first["referencia_id"]
+    with pytest.raises(ValueError, match="outro processo"):
+        admin.add_file(RPPS, {**values, "numero_processo": "01654/26"}, ("copia.pdf", _pdf(b"parecer-legado")), role="parecer")
+    assert admin.add_file(RPPS, values, ("outra.pdf", _pdf(b"parecer-legado")), role="parecer")["estado"] == "DUPLICADO"
+    with store.connection() as c:
+        c.execute("INSERT INTO minutas_classificacoes(referencia_id,especialidade_id,estado,classe,origem,atualizado_em,atualizado_por) VALUES(?,?,?,?,?,?,?)",
+                  (legacy["id"], RPPS, "CLASSIFICADO", "PCA", "teste", "1", "teste"))
+        c.execute("INSERT INTO minutas_acervo_vinculos(referencia_id,especialidade_id,justificativa) VALUES(?,?,?)",
+                  (legacy["id"], RPPS, "Histórico preservado"))
+    active = library(store, storage)
+    assert [row["id"] for row in active.list()] == [first["referencia_id"]]
+    with pytest.raises(MinutasValidationError, match="não encontrada"):
+        active.get(legacy["id"])
+    assert legacy["id"] not in {row["id"] for row in admin.repository.list_records(RPPS)}
+    with store.connection() as c:
+        again = dict(c.execute(
+            "SELECT id,numero_processo,processo_chave,auditoria_path,parecer_path FROM minutas_referencias WHERE id=?",
+            (legacy["id"],)).fetchone())
+    assert again == preserved
+    store.queries.clear()
+    active.repository.list_extractions_by_procuradora(PROSECUTOR_KEY)
+    assert any("r.acervo='ativo'" in query for query in store.queries)
+    captured = []
+    original = store.connection
+
+    class Tracing:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def execute(self, sql, params=()):
+            captured.append(sql)
+            return self.connection.execute(sql, params)
+
+    @contextmanager
+    def tracing(**kwargs):
+        with original(**kwargs) as connection:
+            yield Tracing(connection)
+
+    store.connection = tracing
+    from services.minutas_search import MinutasSearchService
+    with pytest.raises(sqlite3.OperationalError):
+        MinutasSearchService(active).search("parecer")
+    assert any("r.acervo='ativo'" in sql for sql in captured)
+    assert len(CATALOG) == 24
 
 
 def test_outdated_text_does_not_automatically_classify_rpps(environment):
