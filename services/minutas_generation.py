@@ -1,6 +1,7 @@
 """In-memory context selection and experimental Minutas IA generation."""
 
 from collections import defaultdict
+from copy import deepcopy
 from hashlib import sha256
 import json
 import re
@@ -25,6 +26,7 @@ MAX_RAG_PASSAGES = 6
 MAX_RAG_PASSAGES_PER_OPINION = 2
 MAX_RAG_PASSAGE_CHARS = 1600
 RAG_RECOVERY_VERSION = "3b5b1-relevance-v2"
+EVIDENCE_CORRECTION_VERSION = "3c3-assisted-evidence-v1"
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
     re.compile(r"^(?:codigo|código)\s+verificador\s*[:#-]\s*\S+.*$"),
@@ -471,6 +473,259 @@ def _literal_page_matches(excerpt, pages):
         if verified:
             matches.append(page)
     return sorted(matches)
+
+
+def _analysis_reference_records(analysis):
+    records = []
+    category_fields = (
+        ("fatos_documentados", "Fato documentado", ("descricao",)),
+        ("normas_mencionadas", "Norma mencionada", ("descricao", "origem")),
+        (
+            "argumentos_defesa",
+            "Alegação defensiva",
+            ("alegacao", "comprovacao_documental"),
+        ),
+    )
+    for irregularity_index, irregularity in enumerate(
+        analysis.get("irregularidades", ())
+    ):
+        identifier = str(irregularity.get("id") or "")
+        for field, category, assertion_fields in category_fields:
+            for item_index, item in enumerate(irregularity.get(field, ())):
+                assertion = " ".join(
+                    str(item.get(name) or "").strip() for name in assertion_fields
+                ).strip()
+                for source_index, reference in enumerate(item.get("fontes") or ()):
+                    location = (
+                        irregularity_index,
+                        field,
+                        item_index,
+                        source_index,
+                    )
+                    records.append(
+                        {
+                            "irregularidade": identifier,
+                            "categoria": category,
+                            "afirmacao": assertion,
+                            "referencia": reference,
+                            "localizacao": location,
+                            "chave": _reference_key(location, reference),
+                        }
+                    )
+        audit = irregularity.get("avaliacao_auditoria") or {}
+        for source_index, reference in enumerate(audit.get("fontes") or ()):
+            location = (
+                irregularity_index,
+                "avaliacao_auditoria",
+                0,
+                source_index,
+            )
+            records.append(
+                {
+                    "irregularidade": identifier,
+                    "categoria": "Conclusão da Auditoria",
+                    "afirmacao": str(audit.get("descricao") or "").strip(),
+                    "referencia": reference,
+                    "localizacao": location,
+                    "chave": _reference_key(location, reference),
+                }
+            )
+    return records
+
+
+def _reference_key(location, reference):
+    payload = json.dumps(
+        {
+            "localizacao": location,
+            "fonte_id": reference.get("fonte_id"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _candidate_passages(page_text):
+    pieces = [
+        part.strip()
+        for part in re.split(
+            r"(?:\r?\n)+|(?<=[.!?;])\s+(?=[0-9A-ZÀ-Ý])",
+            str(page_text or ""),
+        )
+        if part.strip()
+    ]
+    passages = []
+    seen = set()
+    for index, piece in enumerate(pieces):
+        options = [piece]
+        if index + 1 < len(pieces):
+            options.append(f"{piece} {pieces[index + 1]}")
+        for option in options:
+            words = _evidence_words(option)
+            normalized = " ".join(words)
+            if (
+                len(words) < 2
+                or len(words) > 100
+                or sum(len(word) for word in words) < 8
+                or normalized in seen
+            ):
+                continue
+            seen.add(normalized)
+            passages.append(option)
+    return passages
+
+
+def _protected_assertion_tokens(value):
+    normalized = _plain(value)
+    tokens = set(re.findall(r"\br\s*\$\s*[\d.,]+|\b\d[\d./-]*\b", normalized))
+    for pattern in (
+        r"\bart(?:igo)?\.?\s*(?:n[.oº°]*\s*)?\d+[a-z-]*",
+        r"\blei\s*(?:n[.oº°]*\s*)?\d+[\d./-]*",
+        r"\b(?:decreto|resolucao|sumula)\s*(?:n[.oº°]*\s*)?\d+[\d./-]*",
+    ):
+        tokens.update(re.findall(pattern, normalized))
+    return tokens
+
+
+def _protected_assertion_names(value):
+    ignored = {
+        "A",
+        "As",
+        "Auditoria",
+        "Conclusão",
+        "Defesa",
+        "O",
+        "Os",
+        "Relatório",
+    }
+    names = set()
+    capitalized = (
+        r"(?:[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][a-záàâãéêíóôõúç]+|"
+        r"[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]{2,})"
+    )
+    for match in re.finditer(
+        rf"\b{capitalized}(?:(?:\s+(?:d[aeo]s?|e))?\s+{capitalized})+\b",
+        str(value or ""),
+    ):
+        words = match.group(0).strip().split()
+        while words and words[0] in ignored:
+            words.pop(0)
+        substantive_words = [
+            word
+            for word in words
+            if word.casefold() not in {"da", "de", "do", "das", "dos", "e"}
+        ]
+        if len(substantive_words) >= 2:
+            names.add(_normalized_support(" ".join(words)))
+    names.update(
+        _normalized_support(match.group(0))
+        for match in re.finditer(r"\b[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]{3,}\b", str(value or ""))
+    )
+    return names
+
+
+def _candidate_support_check(assertion, passage):
+    assertion_normalized = _normalized_support(assertion)
+    passage_normalized = _normalized_support(passage)
+    protected = _protected_assertion_tokens(assertion)
+    missing_protected = sorted(
+        token for token in protected if token not in passage_normalized
+    )
+    if missing_protected:
+        return False, "não preserva valores, datas ou referências normativas da afirmação"
+    missing_names = sorted(
+        name
+        for name in _protected_assertion_names(assertion)
+        if name not in passage_normalized
+    )
+    if missing_names:
+        return False, "não preserva nomes ou entidades da afirmação"
+
+    decisive_stems = {
+        stem
+        for stem in (
+            "acolhid",
+            "afastad",
+            "ausencia",
+            "comprovad",
+            "inexist",
+            "irregular",
+            "mantid",
+            "nao",
+            "regulariz",
+            "rejeitad",
+            "sanad",
+            "subsist",
+            "superad",
+            "procedent",
+            "improcedent",
+        )
+        if stem in assertion_normalized
+    }
+    if any(stem not in passage_normalized for stem in decisive_stems):
+        return False, "não preserva qualificadores decisivos da afirmação"
+
+    assertion_terms = _terms(assertion) - _RAG_GENERIC_TERMS
+    if not assertion_terms:
+        assertion_terms = _terms(assertion) - _STOPWORDS
+    passage_terms = _terms(passage)
+    matched = assertion_terms & passage_terms
+    required = 1 if len(assertion_terms) <= 2 else max(2, (len(assertion_terms) + 1) // 2)
+    if len(matched) < required:
+        return False, "não contém elementos objetivos suficientes da afirmação"
+    return True, "elementos objetivos e qualificadores preservados"
+
+
+def _evidence_candidates(assertion, excerpt, pages, *, limit=6):
+    assertion_terms = _terms(assertion)
+    excerpt_terms = _terms(excerpt)
+    search_terms = (assertion_terms | excerpt_terms) - _STOPWORDS
+    candidates = []
+    for page, page_text in pages.items():
+        for passage in _candidate_passages(page_text):
+            passage_terms = _terms(passage)
+            matched_assertion = assertion_terms & passage_terms
+            matched_excerpt = excerpt_terms & passage_terms
+            matched_search = search_terms & passage_terms
+            if not matched_search:
+                continue
+            safe, reason = _candidate_support_check(assertion, passage)
+            candidate_id = sha256(
+                json.dumps(
+                    {
+                        "pagina": page,
+                        "trecho": _normalized_support(passage),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()[:24]
+            candidates.append(
+                {
+                    "id": candidate_id,
+                    "pagina": page,
+                    "trecho_literal": passage,
+                    "termos_afirmacao": sorted(matched_assertion),
+                    "substituicao_segura": safe,
+                    "motivo_seguranca": reason,
+                    "pontuacao": (
+                        len(matched_assertion) * 4
+                        + len(matched_excerpt) * 2
+                        + len(matched_search)
+                    ),
+                }
+            )
+    candidates.sort(
+        key=lambda item: (
+            not item["substituicao_segura"],
+            -item["pontuacao"],
+            item["pagina"],
+            item["id"],
+        )
+    )
+    return candidates[:limit]
 
 
 def _specific_divergence_ground(value):
@@ -1515,37 +1770,39 @@ class MinutasGenerationService:
             source["fonte_id"]: source.get("arquivo") or source["fonte_id"]
             for source in context["documentos_processo_alvo"]
         }
+        records = _analysis_reference_records(analysis)
         references = defaultdict(list)
-        category_fields = (
-            ("fatos_documentados", "Fato documentado"),
-            ("normas_mencionadas", "Norma mencionada"),
-            ("argumentos_defesa", "Alegação defensiva"),
-        )
-        for irregularity in analysis.get("irregularidades", ()):
-            identifier = str(irregularity.get("id") or "")
-            for field, category in category_fields:
-                for item in irregularity.get(field, ()):
-                    references[(identifier, category)].extend(item.get("fontes") or ())
-            audit = irregularity.get("avaliacao_auditoria") or {}
-            references[(identifier, "Conclusão da Auditoria")].extend(
-                audit.get("fontes") or ()
-            )
+        for record in records:
+            references[(record["irregularidade"], record["categoria"])].append(record)
 
         diagnostics = []
+        used_records = set()
         conference = analysis.get("conferencia_documental") or {}
         for issue in conference.get("pendencias", ()):
             candidates = references.get(
                 (str(issue.get("irregularidade") or ""), issue.get("categoria")),
                 (),
             )
-            reference = next(
+            record = next(
                 (
                     item
                     for item in candidates
-                    if item.get("falha_verificacao") == issue.get("natureza")
+                    if item["chave"] not in used_records
+                    if item["referencia"].get("falha_verificacao")
+                    == issue.get("natureza")
                 ),
-                candidates[0] if candidates else {},
+                next(
+                    (
+                        item
+                        for item in candidates
+                        if item["chave"] not in used_records
+                    ),
+                    {},
+                ),
             )
+            if record:
+                used_records.add(record["chave"])
+            reference = record.get("referencia") or {}
             source_id = reference.get("fonte_id")
             page = reference.get("pagina")
             excerpt = str(reference.get("trecho_suporte") or "")
@@ -1558,6 +1815,19 @@ class MinutasGenerationService:
                     verified, _reason = _continuous_word_sequence(excerpt, text)
                     if verified:
                         other_pages.append(candidate_page)
+            evidence_candidates = []
+            if (
+                issue.get("bloqueante")
+                and issue.get("natureza")
+                in {
+                    "página não localizada na fonte indicada",
+                    "trecho não localizado na página indicada",
+                }
+                and source_id in page_texts
+            ):
+                evidence_candidates = _evidence_candidates(
+                    record.get("afirmacao"), excerpt, page_texts[source_id]
+                )
             diagnostics.append(
                 {
                     "irregularidade": issue.get("irregularidade"),
@@ -1569,13 +1839,17 @@ class MinutasGenerationService:
                     "trecho_suporte": excerpt,
                     "texto_pagina": indicated_text,
                     "correspondencias_em_outras_paginas": sorted(other_pages),
+                    "afirmacao_associada": record.get("afirmacao") or "",
+                    "referencia_chave": record.get("chave"),
+                    "candidatos": evidence_candidates,
                     "motivo": issue.get("natureza"),
                     "bloqueante": bool(issue.get("bloqueante")),
                 }
             )
         recorded_corrections = set()
         for (identifier, category), candidates in references.items():
-            for reference in candidates:
+            for record in candidates:
+                reference = record["referencia"]
                 if not reference.get("pagina_corrigida_automaticamente"):
                     continue
                 source_id = reference.get("fonte_id")
@@ -1619,11 +1893,163 @@ class MinutasGenerationService:
                 )
         return diagnostics
 
+    def correct_evidence_reference(
+        self,
+        target_reference_id,
+        analyzed,
+        reference_key,
+        candidate_id,
+    ):
+        """Apply one literal candidate and revalidate the complete analysis."""
+        self.library._authorize()
+        target = self.library.get(target_reference_id)
+        self._validate_target(target)
+        if not isinstance(analyzed, dict) or not isinstance(
+            analyzed.get("analise"), dict
+        ):
+            raise MinutasGenerationError(
+                "Execute novamente Analisar fundamentos antes da conferência."
+            )
+        if analyzed.get("evidence_correction_version") != EVIDENCE_CORRECTION_VERSION:
+            raise MinutasGenerationError(
+                "A versão da conferência mudou. Analise novamente os fundamentos."
+            )
+        expected_identity = {
+            "processo_alvo_id": str(target["id"]),
+            "processo_alvo_chave": _canonical_process_key(
+                target.get("processo_chave") or target.get("numero_processo")
+            ),
+            "procuradora_chave": str(target.get("procuradora_chave") or ""),
+        }
+        if any(analyzed.get(key) != value for key, value in expected_identity.items()):
+            raise MinutasGenerationError(
+                "A análise não pertence ao processo e à Procuradora selecionados."
+            )
+
+        prepared = self.prepare_analysis_context(target_reference_id)
+        if analyzed.get("fontes_versao") != prepared["fontes_versao"]:
+            raise MinutasGenerationError(
+                "As fontes foram alteradas. Analise novamente os fundamentos."
+            )
+
+        corrected = deepcopy(analyzed)
+        analysis = self._validate_analysis(
+            corrected["analise"], prepared["contexto"]
+        )
+        records = {
+            record["chave"]: record for record in _analysis_reference_records(analysis)
+        }
+        record = records.get(str(reference_key or ""))
+        if record is None:
+            raise MinutasGenerationError(
+                "A referência pendente não pertence à análise atual."
+            )
+        reference = record["referencia"]
+        if reference.get("verificado"):
+            raise MinutasGenerationError("A referência selecionada já está verificada.")
+        source_id = reference.get("fonte_id")
+        page_texts = self._source_page_texts(prepared["contexto"])
+        if source_id not in page_texts:
+            raise MinutasGenerationError(
+                "A fonte da referência não está autorizada para este processo."
+            )
+        candidates = _evidence_candidates(
+            record["afirmacao"],
+            reference.get("trecho_suporte"),
+            page_texts[source_id],
+        )
+        candidate = next(
+            (item for item in candidates if item["id"] == candidate_id), None
+        )
+        if candidate is None:
+            raise MinutasGenerationError(
+                "O trecho candidato não pertence às fontes atuais."
+            )
+        if not candidate["substituicao_segura"]:
+            raise MinutasGenerationError(
+                "O trecho selecionado não preserva a afirmação original."
+            )
+        verified, _reason = _continuous_word_sequence(
+            candidate["trecho_literal"],
+            page_texts[source_id].get(candidate["pagina"], ""),
+        )
+        if not verified:
+            raise MinutasGenerationError(
+                "O trecho selecionado não corresponde literalmente à fonte atual."
+            )
+
+        original_page = reference.get("pagina")
+        original_excerpt = reference.get("trecho_suporte")
+        reference["pagina"] = candidate["pagina"]
+        reference["trecho_suporte"] = candidate["trecho_literal"]
+        reference["correcao_assistida"] = {
+            "pagina_original": original_page,
+            "trecho_original": original_excerpt,
+            "pagina_corrigida": candidate["pagina"],
+            "trecho_corrigido": candidate["trecho_literal"],
+            "candidato_id": candidate["id"],
+            "criterio": (
+                "trecho literal do mesmo documento autorizado, com elementos "
+                "objetivos e qualificadores preservados"
+            ),
+            "revisao_humana_obrigatoria": True,
+        }
+        for key in (
+            "falha_verificacao",
+            "pagina_corrigida_automaticamente",
+            "pagina_original",
+            "criterio_correcao_pagina",
+        ):
+            reference.pop(key, None)
+
+        analysis = self._validate_analysis(analysis, prepared["contexto"])
+        if not reference.get("verificado"):
+            raise MinutasGenerationError(
+                "A correção não superou a validação literal da referência."
+            )
+        conference = analysis["conferencia_documental"]
+        corrected["analise"] = analysis
+        corrected["suficiente_para_geracao"] = conference[
+            "suficiente_para_geracao"
+        ]
+        corrected["pendencias_conferencia"] = conference["pendencias"]
+        corrected["diagnostico_conferencia"] = self._conference_diagnostics(
+            analysis, prepared["contexto"]
+        )
+        interventions = list(corrected.get("intervencoes_evidencias") or ())
+        interventions.append(
+            {
+                "referencia_chave": reference_key,
+                "irregularidade": record["irregularidade"],
+                "categoria": record["categoria"],
+                "fonte_id": source_id,
+                **reference["correcao_assistida"],
+            }
+        )
+        corrected["intervencoes_evidencias"] = interventions
+        return corrected
+
     def pilot_diagnostics(self, target_reference_id, analyzed):
         self.library._authorize()
         target = self.library.get(target_reference_id)
         self._validate_target(target)
         if not isinstance(analyzed, dict):
+            return {"disponivel": False}
+        expected_identity = {
+            "processo_alvo_id": str(target["id"]),
+            "processo_alvo_chave": _canonical_process_key(
+                target.get("processo_chave") or target.get("numero_processo")
+            ),
+            "procuradora_chave": str(target.get("procuradora_chave") or ""),
+        }
+        if any(analyzed.get(key) != value for key, value in expected_identity.items()):
+            return {"disponivel": False}
+        if (
+            analyzed.get("fontes_versao")
+            != self._source_state(target)["fontes_versao"]
+            or analyzed.get("evidence_correction_version")
+            != EVIDENCE_CORRECTION_VERSION
+        ):
             return {"disponivel": False}
         conference = analyzed.get("diagnostico_conferencia")
         recovery = analyzed.get("recuperacao_juridica")
@@ -2009,6 +2435,7 @@ class MinutasGenerationService:
             "diagnostico_conferencia": conference_diagnostics,
             "recuperacao_juridica": legal_recovery,
             "rag_recovery_version": RAG_RECOVERY_VERSION,
+            "evidence_correction_version": EVIDENCE_CORRECTION_VERSION,
             "processo_alvo_id": str(target["id"]),
             "processo_alvo_chave": _canonical_process_key(
                 target.get("processo_chave") or target.get("numero_processo")

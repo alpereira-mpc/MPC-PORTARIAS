@@ -6,12 +6,14 @@ from streamlit.testing.v1 import AppTest
 
 from services import ai_service
 from services.minutas_generation import (
+    EVIDENCE_CORRECTION_VERSION,
     HISTORICAL_TEST_PROCESS_KEY,
     HISTORICAL_TEST_PROCESS_KEYS,
     RAG_RECOVERY_VERSION,
     MinutasGenerationError,
     MinutasGenerationService,
     _canonical_process_key,
+    _candidate_support_check,
     _clean_text,
     _continuous_word_sequence,
     _rag_query_plan,
@@ -450,6 +452,16 @@ def test_evidence_matching_rejects_paraphrase_without_literal_sequence():
     assert reason == "trecho não localizado na página indicada"
 
 
+def test_candidate_safety_preserves_named_entities():
+    safe, reason = _candidate_support_check(
+        "O Instituto Taperoá registrou débito previdenciário.",
+        "O Instituto Bananeiras registrou débito previdenciário.",
+    )
+
+    assert safe is False
+    assert reason == "não preserva nomes ou entidades da afirmação"
+
+
 def test_context_uses_target_instruction_and_excludes_contamination():
     target, history, other, rows = _scenario()
     library = Library([target, history, other], rows)
@@ -857,6 +869,302 @@ def test_analysis_keeps_block_when_literal_excerpt_matches_multiple_pages():
     diagnostic = result["diagnostico_conferencia"][0]
     assert diagnostic["correspondencias_em_outras_paginas"] == [2, 3]
     assert diagnostic["bloqueante"] is True
+
+
+def test_paraphrase_exposes_only_same_document_literal_candidates():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    candidate = (
+        "A Auditoria registrou que o recolhimento previdenciário de março não "
+        "foi comprovado nos autos."
+    )
+    audit["texto_integral"] += "\n" + candidate
+    audit["unidades_json"] = json.dumps(
+        [
+            {"pagina": 1, "texto": "Irregularidade previdenciária na página original."},
+            {"pagina": 2, "texto": candidate},
+        ]
+    )
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        fact = analysis["irregularidades"][0]["fatos_documentados"][0]
+        fact["descricao"] = (
+            "O recolhimento previdenciário de março não foi comprovado."
+        )
+        fact["fontes"][0]["trecho_suporte"] = (
+            "Não houve prova do pagamento previdenciário de março."
+        )
+        return _analysis_result(context, analise=analysis)
+
+    result = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=analyze,
+        search=lambda *_args, **_kwargs: {"resultados": []},
+    ).analyze(target["id"])
+
+    assert result["suficiente_para_geracao"] is False
+    diagnostic = next(
+        item
+        for item in result["diagnostico_conferencia"]
+        if item["campo"] == "Fato documentado"
+    )
+    assert diagnostic["afirmacao_associada"].startswith("O recolhimento")
+    assert diagnostic["referencia_chave"]
+    assert [(item["pagina"], item["trecho_literal"]) for item in diagnostic["candidatos"]] == [
+        (2, candidate)
+    ]
+    assert diagnostic["candidatos"][0]["substituicao_segura"] is True
+    assert all(
+        "Parecer histórico" not in item["trecho_literal"]
+        for item in diagnostic["candidatos"]
+    )
+
+
+def test_paraphrase_with_multiple_candidates_remains_blocking():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    passages = (
+        "O recolhimento previdenciário de março não foi comprovado no relatório.",
+        "O recolhimento previdenciário de março não foi comprovado pela defesa.",
+    )
+    audit["texto_integral"] += "\n" + "\n".join(passages)
+    audit["unidades_json"] = json.dumps(
+        [
+            {"pagina": 1, "texto": "Irregularidade previdenciária na página original."},
+            {"pagina": 2, "texto": passages[0]},
+            {"pagina": 3, "texto": passages[1]},
+        ]
+    )
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        fact = analysis["irregularidades"][0]["fatos_documentados"][0]
+        fact["descricao"] = (
+            "O recolhimento previdenciário de março não foi comprovado."
+        )
+        fact["fontes"][0]["trecho_suporte"] = (
+            "Não houve prova do pagamento previdenciário de março."
+        )
+        return _analysis_result(context, analise=analysis)
+
+    result = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=analyze,
+        search=lambda *_args, **_kwargs: {"resultados": []},
+    ).analyze(target["id"])
+    diagnostic = next(
+        item
+        for item in result["diagnostico_conferencia"]
+        if item["campo"] == "Fato documentado"
+    )
+
+    assert result["suficiente_para_geracao"] is False
+    assert {item["pagina"] for item in diagnostic["candidatos"]} == {2, 3}
+    assert all(
+        item["substituicao_segura"] for item in diagnostic["candidatos"]
+    )
+
+
+def test_assisted_correction_revalidates_globally_without_new_ai_call():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    candidate = (
+        "A Auditoria registrou que o recolhimento previdenciário de março não "
+        "foi comprovado nos autos."
+    )
+    audit["texto_integral"] += "\n" + candidate
+    audit["unidades_json"] = json.dumps(
+        [
+            {"pagina": 1, "texto": "Irregularidade previdenciária na página original."},
+            {"pagina": 2, "texto": candidate},
+        ]
+    )
+    analysis_calls = []
+    drafting_calls = []
+
+    def analyze(context):
+        analysis_calls.append(context)
+        analysis = _analysis_payload(context, count=2)
+        fact = analysis["irregularidades"][0]["fatos_documentados"][0]
+        fact["descricao"] = (
+            "O recolhimento previdenciário de março não foi comprovado."
+        )
+        fact["fontes"][0]["trecho_suporte"] = (
+            "Não houve prova do pagamento previdenciário de março."
+        )
+        analysis["irregularidades"][1]["normas_mencionadas"][0][
+            "descricao"
+        ] = "Art. 37 da Constituição"
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=analyze,
+        generate=lambda context: drafting_calls.append(context)
+        or _draft_result(context),
+        search=lambda *_args, **_kwargs: {"resultados": []},
+    )
+    analyzed = service.analyze(target["id"])
+    preserved_irregularity = json.loads(
+        json.dumps(analyzed["analise"]["irregularidades"][1])
+    )
+    preserved_recovery = analyzed["recuperacao_juridica"]
+    diagnostic = next(
+        item
+        for item in analyzed["diagnostico_conferencia"]
+        if item["campo"] == "Fato documentado" and item["bloqueante"]
+    )
+    selected = diagnostic["candidatos"][0]
+
+    corrected = service.correct_evidence_reference(
+        target["id"], analyzed, diagnostic["referencia_chave"], selected["id"]
+    )
+
+    assert len(analysis_calls) == 1
+    assert corrected["suficiente_para_geracao"] is True
+    assert corrected["pendencias_conferencia"] == []
+    assert corrected["recuperacao_juridica"] == preserved_recovery
+    assert corrected["analise"]["irregularidades"][1] == preserved_irregularity
+    reference = corrected["analise"]["irregularidades"][0][
+        "fatos_documentados"
+    ][0]["fontes"][0]
+    assert reference["pagina"] == 2
+    assert reference["trecho_suporte"] == candidate
+    assert reference["verificado"] is True
+    assert reference["correcao_assistida"]["trecho_original"].startswith(
+        "Não houve prova"
+    )
+    assert reference["correcao_assistida"]["revisao_humana_obrigatoria"] is True
+    assert corrected["intervencoes_evidencias"][0]["fonte_id"] == reference[
+        "fonte_id"
+    ]
+
+    service.generate(target["id"], corrected)
+    assert len(drafting_calls) == 1
+
+
+def test_assisted_correction_rejects_candidate_that_changes_objective_value():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    candidate = "O débito previdenciário apurado foi de R$ 2.000,00."
+    audit["texto_integral"] += "\n" + candidate
+    audit["unidades_json"] = json.dumps(
+        [
+            {"pagina": 1, "texto": "Irregularidade previdenciária na página original."},
+            {"pagina": 2, "texto": candidate},
+        ]
+    )
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        fact = analysis["irregularidades"][0]["fatos_documentados"][0]
+        fact["descricao"] = "O débito previdenciário foi de R$ 1.000,00."
+        fact["fontes"][0]["trecho_suporte"] = (
+            "A dívida previdenciária totalizou mil reais."
+        )
+        return _analysis_result(context, analise=analysis)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=analyze,
+        search=lambda *_args, **_kwargs: {"resultados": []},
+    )
+    analyzed = service.analyze(target["id"])
+    diagnostic = next(
+        item
+        for item in analyzed["diagnostico_conferencia"]
+        if item["campo"] == "Fato documentado"
+    )
+    unsafe = next(item for item in diagnostic["candidatos"] if item["pagina"] == 2)
+
+    assert unsafe["substituicao_segura"] is False
+    with pytest.raises(MinutasGenerationError, match="não preserva"):
+        service.correct_evidence_reference(
+            target["id"], analyzed, diagnostic["referencia_chave"], unsafe["id"]
+        )
+    assert analyzed["suficiente_para_geracao"] is False
+
+
+def test_assisted_correction_rejects_other_process_stale_sources_and_access():
+    target, history, other, rows = _scenario()
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    candidate = "O recolhimento previdenciário não foi comprovado nos autos."
+    audit["texto_integral"] += "\n" + candidate
+    audit["unidades_json"] = json.dumps(
+        [
+            {"pagina": 1, "texto": "Irregularidade previdenciária na página original."},
+            {"pagina": 2, "texto": candidate},
+        ]
+    )
+
+    def analyze(context):
+        analysis = _analysis_payload(context)
+        fact = analysis["irregularidades"][0]["fatos_documentados"][0]
+        fact["descricao"] = "O recolhimento previdenciário não foi comprovado."
+        fact["fontes"][0]["trecho_suporte"] = "Não houve prova do recolhimento."
+        return _analysis_result(context, analise=analysis)
+
+    library = Library([target, history, other], rows)
+    service = MinutasGenerationService(
+        library,
+        analyze=analyze,
+        search=lambda *_args, **_kwargs: {"resultados": []},
+    )
+    analyzed = service.analyze(target["id"])
+    diagnostic = next(
+        item
+        for item in analyzed["diagnostico_conferencia"]
+        if item["campo"] == "Fato documentado"
+    )
+    candidate_id = diagnostic["candidatos"][0]["id"]
+
+    stale_rule = dict(analyzed)
+    stale_rule["evidence_correction_version"] = "3c3-obsoleta"
+    with pytest.raises(MinutasGenerationError, match="versão da conferência"):
+        service.correct_evidence_reference(
+            target["id"],
+            stale_rule,
+            diagnostic["referencia_chave"],
+            candidate_id,
+        )
+
+    with pytest.raises(MinutasGenerationError, match="não pertence"):
+        service.correct_evidence_reference(
+            history["id"], analyzed, diagnostic["referencia_chave"], candidate_id
+        )
+
+    rows[0]["atualizado_em"] = "2026-10-14T12:00:00+00:00"
+    with pytest.raises(MinutasGenerationError, match="fontes foram alteradas"):
+        service.correct_evidence_reference(
+            target["id"], analyzed, diagnostic["referencia_chave"], candidate_id
+        )
+
+    library.authorized = False
+    with pytest.raises(MinutasAccessDenied):
+        service.correct_evidence_reference(
+            target["id"], analyzed, diagnostic["referencia_chave"], candidate_id
+        )
 
 
 @pytest.mark.parametrize(
@@ -1877,7 +2185,16 @@ def test_generation_revalidates_authorization_and_source_revision():
         service.refresh_legal_recovery(target["id"], analyzed)
     library.authorized = True
 
+    mismatched = dict(analyzed)
+    mismatched["processo_alvo_id"] = history["id"]
+    assert service.pilot_diagnostics(target["id"], mismatched) == {
+        "disponivel": False
+    }
+
     rows[0]["atualizado_em"] = "2026-10-13T11:00:00+00:00"
+    assert service.pilot_diagnostics(target["id"], analyzed) == {
+        "disponivel": False
+    }
     with pytest.raises(MinutasGenerationError, match="fontes foram alteradas"):
         service.generate(target["id"], analyzed)
     assert drafting_calls == []
@@ -2183,6 +2500,7 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
                 "pendencias_conferencia": [],
                 "fontes_versao": revision["value"],
                 "rag_recovery_version": RAG_RECOVERY_VERSION,
+                "evidence_correction_version": EVIDENCE_CORRECTION_VERSION,
                 "recuperacao_juridica": {
                     "versao": RAG_RECOVERY_VERSION,
                     "estado": "SEM_RESULTADOS",
@@ -2322,6 +2640,7 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
 
     target = _record(TARGET_ID, "TC 01653/26", HISTORICAL_TEST_PROCESS_KEY)
     generation_calls = []
+    correction_calls = []
     issue = {
         "irregularidade": "IRR-2",
         "categoria": "Fato documentado",
@@ -2360,6 +2679,7 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
                 "pendencias_conferencia": [issue],
                 "fontes_versao": "revision-pending",
                 "rag_recovery_version": RAG_RECOVERY_VERSION,
+                "evidence_correction_version": EVIDENCE_CORRECTION_VERSION,
                 "recuperacao_juridica": {
                     "versao": RAG_RECOVERY_VERSION,
                     "estado": "SEM_RESULTADOS",
@@ -2381,6 +2701,24 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
                         "trecho_suporte": "Citação literal não localizada.",
                         "texto_pagina": "Texto integral extraído da página quatro.",
                         "correspondencias_em_outras_paginas": [5],
+                        "afirmacao_associada": (
+                            "O recolhimento previdenciário não foi comprovado."
+                        ),
+                        "referencia_chave": "ref-pending",
+                        "candidatos": [
+                            {
+                                "id": "candidate-safe",
+                                "pagina": 5,
+                                "trecho_literal": (
+                                    "O recolhimento previdenciário não foi "
+                                    "comprovado nos autos."
+                                ),
+                                "substituicao_segura": True,
+                                "motivo_seguranca": (
+                                    "elementos objetivos e qualificadores preservados"
+                                ),
+                            }
+                        ],
                         "motivo": "trecho não localizado na página indicada",
                         "bloqueante": True,
                     },
@@ -2443,6 +2781,20 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
                 },
             }
 
+        def correct_evidence_reference(
+            self, identifier, analyzed, reference_key, candidate_id
+        ):
+            correction_calls.append(
+                (identifier, reference_key, candidate_id)
+            )
+            corrected = dict(analyzed)
+            corrected["suficiente_para_geracao"] = True
+            corrected["pendencias_conferencia"] = []
+            corrected["intervencoes_evidencias"] = [
+                {"referencia_chave": reference_key, "candidato_id": candidate_id}
+            ]
+            return corrected
+
         def generate(self, *_args):
             generation_calls.append(True)
 
@@ -2487,3 +2839,20 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
     )
     assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is True
     assert generation_calls == []
+
+    app.button(key=f"minutas_evidence_review_{TARGET_ID}_ref-pending_open").click().run()
+    assert any(
+        "O recolhimento previdenciário não foi comprovado" in item.value
+        for item in app.markdown
+    )
+    assert any(
+        "não foi comprovado nos autos" in item.value for item in app.code
+    )
+    app.button(key=f"minutas_evidence_review_{TARGET_ID}_ref-pending_apply").click().run()
+    assert correction_calls == [
+        (TARGET_ID, "ref-pending", "candidate-safe")
+    ]
+    assert app.session_state[
+        f"minutas_generation_analysis_{TARGET_ID}"
+    ]["suficiente_para_geracao"] is True
+    assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is False

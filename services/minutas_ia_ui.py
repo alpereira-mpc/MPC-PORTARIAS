@@ -7,6 +7,7 @@ import streamlit as st
 from database.minutas_referencias import MinutasReferenciasStore
 from services.ai_service import GeminiErro, GeminiNaoConfigurada
 from services.minutas_generation import (
+    EVIDENCE_CORRECTION_VERSION,
     RAG_RECOVERY_VERSION,
     MinutasGenerationService,
 )
@@ -1061,7 +1062,15 @@ def _legal_references_panel(analysis_result):
             )
 
 
-def _technical_diagnostics_panel(diagnostics, target_id):
+def _technical_diagnostics_panel(
+    diagnostics,
+    target_id,
+    *,
+    generator=None,
+    analysis=None,
+    analysis_key=None,
+    result_key=None,
+):
     with st.expander("Diagnóstico técnico do piloto"):
         if not diagnostics or not diagnostics.get("disponivel"):
             st.info(
@@ -1130,6 +1139,88 @@ def _technical_diagnostics_panel(diagnostics, target_id):
                 key=f"minutas_diagnostic_full_page_{target_id}_{index}",
             ):
                 st.code(page_text, language=None, wrap_lines=True, height=420)
+
+            candidates = issue.get("candidatos") or ()
+            reference_key = issue.get("referencia_chave")
+            can_review = bool(
+                issue.get("bloqueante")
+                and reference_key
+                and generator is not None
+                and analysis is not None
+                and analysis_key
+                and result_key
+            )
+            review_key = (
+                f"minutas_evidence_review_{target_id}_{reference_key}"
+            )
+            if can_review and st.button(
+                "Conferir evidência",
+                key=f"{review_key}_open",
+                type="tertiary",
+            ):
+                st.session_state[review_key] = True
+            if can_review and st.session_state.get(review_key):
+                st.markdown("**Afirmação associada**")
+                st.write(issue.get("afirmacao_associada") or "Não informada.")
+                if not candidates:
+                    st.info(
+                        "Nenhuma passagem candidata foi localizada com os "
+                        "critérios objetivos. A pendência permanece bloqueante e "
+                        "exige nova análise jurídica."
+                    )
+                    continue
+                candidate_by_id = {item["id"]: item for item in candidates}
+                selected_id = st.selectbox(
+                    "Passagem candidata do documento autorizado",
+                    tuple(candidate_by_id),
+                    format_func=lambda identifier: (
+                        f"p. {candidate_by_id[identifier]['pagina']} · "
+                        + (
+                            "compatível com os critérios objetivos"
+                            if candidate_by_id[identifier]["substituicao_segura"]
+                            else "exige nova análise jurídica"
+                        )
+                    ),
+                    key=f"{review_key}_candidate",
+                )
+                selected = candidate_by_id[selected_id]
+                st.code(
+                    selected["trecho_literal"],
+                    language=None,
+                    wrap_lines=True,
+                )
+                if selected["substituicao_segura"]:
+                    st.caption(
+                        "A seleção será novamente comparada à extração atual no "
+                        "servidor e ficará sinalizada para revisão humana."
+                    )
+                else:
+                    st.warning(
+                        selected.get("motivo_seguranca")
+                        or "A passagem não sustenta a afirmação original."
+                    )
+                if st.button(
+                    "Aplicar trecho e revalidar",
+                    key=f"{review_key}_apply",
+                    disabled=not selected["substituicao_segura"],
+                ):
+                    try:
+                        corrected = generator.correct_evidence_reference(
+                            target_id,
+                            analysis,
+                            reference_key,
+                            selected_id,
+                        )
+                    except Exception as exc:
+                        _error(exc)
+                    else:
+                        st.session_state[analysis_key] = corrected
+                        st.session_state.pop(result_key, None)
+                        st.session_state.pop(review_key, None)
+                        st.success(
+                            "Evidência corrigida e análise completa revalidada."
+                        )
+                        st.rerun()
 
         recovery = diagnostics.get("recuperacao_juridica") or {}
         st.markdown("**Recuperação RAG**")
@@ -1260,14 +1351,19 @@ def _generator_tab(store, identity):
         item and item.get("fontes_versao") != summary["fontes_versao"]
         for item in (analysis, result)
     )
-    if sources_changed or (result and not analysis):
+    analysis_version_changed = bool(
+        analysis
+        and analysis.get("evidence_correction_version")
+        != EVIDENCE_CORRECTION_VERSION
+    )
+    if sources_changed or analysis_version_changed or (result and not analysis):
         st.session_state.pop(analysis_key, None)
         st.session_state.pop(result_key, None)
         analysis = None
         result = None
         st.info(
-            "As fontes foram alteradas. A análise e a minuta anteriores foram "
-            "retiradas desta sessão."
+            "As fontes foram alteradas ou a versão da conferência mudou. A "
+            "análise e a minuta anteriores foram retiradas desta sessão."
         )
 
     rag_refresh_failed = False
@@ -1327,7 +1423,14 @@ def _generator_tab(store, identity):
         except Exception as exc:
             _error(exc)
         else:
-            _technical_diagnostics_panel(diagnostics, target["id"])
+            _technical_diagnostics_panel(
+                diagnostics,
+                target["id"],
+                generator=generator,
+                analysis=analysis,
+                analysis_key=analysis_key,
+                result_key=result_key,
+            )
 
     section_label("Etapa 2 — Gerar minuta")
     use_rag = st.checkbox(
