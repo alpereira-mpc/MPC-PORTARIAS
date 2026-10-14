@@ -1,6 +1,10 @@
 """Private UI for the Minutas IA reference library."""
 
 from datetime import date, datetime
+from hashlib import sha256
+import json
+import logging
+from time import perf_counter
 
 import streamlit as st
 
@@ -33,6 +37,50 @@ from services.minutas_storage import (
     SupabaseMinutasStorage,
 )
 from services.ui_theme import badge, empty_state, render_html, section_label
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _clear_generated_result(result_key, docx_cache_key):
+    st.session_state.pop(result_key, None)
+    st.session_state.pop(docx_cache_key, None)
+
+
+def _docx_signature(target_id, analysis, result):
+    payload = {
+        "target_id": str(target_id),
+        "fontes_versao": result.get("fontes_versao"),
+        "validation_policy_version": result.get("validation_policy_version"),
+        "analysis_policy_version": analysis.get("validation_policy_version"),
+        "estrutura": result.get("estrutura"),
+        "texto": result.get("texto"),
+        "advertencias_documentais": result.get("advertencias_documentais"),
+        "advertencias_qualidade": result.get("advertencias_qualidade"),
+    }
+    serialized = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
+    return sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _cached_docx(service, generator, target_id, analysis, result, cache_key):
+    signature = _docx_signature(target_id, analysis, result)
+    cached = st.session_state.get(cache_key)
+    if isinstance(cached, dict) and cached.get("signature") == signature:
+        LOGGER.info("MINUTAS_PERF etapa=docx cache=hit duracao_ms=0")
+        return cached["word"]
+    started = perf_counter()
+    word = MinutasDocxService(
+        service, source_summary=generator.source_summary
+    ).export(target_id, analysis, result)
+    st.session_state[cache_key] = {"signature": signature, "word": word}
+    LOGGER.info(
+        "MINUTAS_PERF etapa=docx cache=miss duracao_ms=%d bytes=%d",
+        round((perf_counter() - started) * 1000),
+        len(word.content),
+    )
+    return word
 
 
 def _service(store, identity):
@@ -939,17 +987,32 @@ def _library_tab(store, identity):
         empty_state("Nenhuma referência cadastrada.")
         return
     keep_open = st.session_state.pop("minutas_keep_open", None)
+    records_by_id = {str(record["id"]): record for record in records}
+    selector_key = "minutas_library_reference"
+    if str(keep_open or "") in records_by_id:
+        st.session_state[selector_key] = str(keep_open)
+    elif str(st.session_state.get(selector_key) or "") not in records_by_id:
+        st.session_state[selector_key] = next(iter(records_by_id))
+    selected_id = st.selectbox(
+        "Processo para administrar",
+        tuple(records_by_id),
+        format_func=lambda identifier: (
+            f"{records_by_id[identifier]['numero_processo']} · "
+            f"{records_by_id[identifier]['subtipo']} · "
+            f"Exercício {records_by_id[identifier]['exercicio']}"
+        ),
+        key=selector_key,
+    )
     extractor = MinutasExtractionService(service)
-    for record in records:
-        _reference_card(
-            service,
-            extractor,
-            record,
-            expanded=str(record["id"]) == str(keep_open),
-        )
+    _reference_card(
+        service,
+        extractor,
+        records_by_id[selected_id],
+        expanded=True,
+    )
 
 
-def _analysis_panel(analysis_result):
+def _analysis_panel(analysis_result, *, show_details=True):
     def source_suffix(item):
         sources = item.get("fontes") or ()
         if not sources:
@@ -965,7 +1028,8 @@ def _analysis_panel(analysis_result):
     analysis = analysis_result["analise"]
     if analysis.get("resumo_processual"):
         st.caption(analysis["resumo_processual"])
-    for index, irregularity in enumerate(analysis.get("irregularidades", ()), 1):
+    irregularities = analysis.get("irregularidades", ()) if show_details else ()
+    for index, irregularity in enumerate(irregularities, 1):
         title = irregularity.get("apontamento") or f"Irregularidade {index}"
         with st.expander(f"{index}. {title}"):
             facts = irregularity.get("fatos_documentados") or ()
@@ -1000,7 +1064,9 @@ def _analysis_panel(analysis_result):
             if attention:
                 st.markdown("**Pontos que exigem atenção**")
                 st.markdown("\n".join(f"- {item}" for item in attention))
-    general_attention = analysis.get("pontos_atencao_gerais") or ()
+    general_attention = (
+        analysis.get("pontos_atencao_gerais") or () if show_details else ()
+    )
     if general_attention:
         st.markdown("**Pontos gerais que exigem atenção**")
         st.markdown("\n".join(f"- {item}" for item in general_attention))
@@ -1081,6 +1147,7 @@ def _technical_diagnostics_panel(
     analysis=None,
     analysis_key=None,
     result_key=None,
+    docx_cache_key=None,
 ):
     with st.expander("Diagnóstico técnico do piloto"):
         if not diagnostics or not diagnostics.get("disponivel"):
@@ -1225,7 +1292,7 @@ def _technical_diagnostics_panel(
                         _error(exc)
                     else:
                         st.session_state[analysis_key] = corrected
-                        st.session_state.pop(result_key, None)
+                        _clear_generated_result(result_key, docx_cache_key)
                         st.session_state.pop(review_key, None)
                         st.success(
                             "Evidência corrigida e análise completa revalidada."
@@ -1355,6 +1422,7 @@ def _generator_tab(store, identity):
 
     analysis_key = f"minutas_generation_analysis_{target['id']}"
     result_key = f"minutas_generation_result_{target['id']}"
+    docx_cache_key = f"minutas_generation_docx_cache_{target['id']}"
     analysis = st.session_state.get(analysis_key)
     result = st.session_state.get(result_key)
     sources_changed = any(
@@ -1363,7 +1431,7 @@ def _generator_tab(store, identity):
     )
     if sources_changed or (result and not analysis):
         st.session_state.pop(analysis_key, None)
-        st.session_state.pop(result_key, None)
+        _clear_generated_result(result_key, docx_cache_key)
         analysis = None
         result = None
         st.info(
@@ -1374,7 +1442,7 @@ def _generator_tab(store, identity):
     if analysis and analysis.get("validation_policy_version") != (
         VALIDATION_POLICY_VERSION
     ):
-        st.session_state.pop(result_key, None)
+        _clear_generated_result(result_key, docx_cache_key)
         result = None
         try:
             analysis = generator.migrate_validation_policy(target["id"], analysis)
@@ -1390,38 +1458,20 @@ def _generator_tab(store, identity):
                 "ser advertências não bloqueantes."
             )
 
-    rag_refresh_failed = False
     recovery_version = (
         (analysis.get("recuperacao_juridica") or {}).get("versao")
         if analysis
         else None
     )
-    if analysis and (
+    rag_stale = bool(analysis) and (
         analysis.get("rag_recovery_version") != RAG_RECOVERY_VERSION
         or recovery_version != RAG_RECOVERY_VERSION
-    ):
-        st.session_state.pop(result_key, None)
-        result = None
-        try:
-            analysis = generator.refresh_legal_recovery(target["id"], analysis)
-        except Exception as exc:
-            safe_analysis = dict(analysis)
-            safe_analysis.pop("recuperacao_juridica", None)
-            safe_analysis.pop("rag_recovery_version", None)
-            st.session_state[analysis_key] = safe_analysis
-            analysis = safe_analysis
-            rag_refresh_failed = True
-            _error(exc)
-            st.warning(
-                "A estratégia de pesquisa jurídica mudou. Execute novamente "
-                "Analisar fundamentos para atualizar o diagnóstico RAG."
-            )
-        else:
-            st.session_state[analysis_key] = analysis
-            st.info(
-                "A recuperação jurídica desta análise foi atualizada para a "
-                "estratégia progressiva de pertinência, sem repetir a chamada ao Gemini."
-            )
+    )
+    if rag_stale:
+        st.caption(
+            "A recuperação jurídica será atualizada somente se você gerar com "
+            "referências jurídicas; navegar nesta tela não executa nova pesquisa."
+        )
 
     section_label("Etapa 1 — Analisar processo")
     if st.button(
@@ -1432,7 +1482,7 @@ def _generator_tab(store, identity):
         disabled=bool(summary["issues"]),
     ):
         st.session_state.pop(analysis_key, None)
-        st.session_state.pop(result_key, None)
+        _clear_generated_result(result_key, docx_cache_key)
         try:
             with st.spinner("Analisando fatos, defesa e conclusões da Auditoria..."):
                 st.session_state[analysis_key] = generator.analyze(target["id"])
@@ -1440,27 +1490,42 @@ def _generator_tab(store, identity):
             _error(exc)
     analysis = st.session_state.get(analysis_key)
     if analysis:
-        _analysis_panel(analysis)
-        _legal_references_panel(analysis)
-        try:
-            diagnostics = generator.pilot_diagnostics(target["id"], analysis)
-        except Exception as exc:
-            _error(exc)
-        else:
-            _technical_diagnostics_panel(
-                diagnostics,
-                target["id"],
-                generator=generator,
-                analysis=analysis,
-                analysis_key=analysis_key,
-                result_key=result_key,
-            )
+        show_details = st.toggle(
+            "Mostrar análise detalhada e precedentes",
+            value=False,
+            key=f"minutas_generation_details_{target['id']}",
+        )
+        _analysis_panel(analysis, show_details=show_details)
+        if show_details:
+            _legal_references_panel(analysis)
+        show_diagnostics = st.toggle(
+            "Mostrar diagnóstico técnico",
+            value=False,
+            key=f"minutas_generation_diagnostics_{target['id']}",
+        )
+        if show_diagnostics:
+            try:
+                diagnostics = generator.pilot_diagnostics(target["id"], analysis)
+            except Exception as exc:
+                _error(exc)
+            else:
+                _technical_diagnostics_panel(
+                    diagnostics,
+                    target["id"],
+                    generator=generator,
+                    analysis=analysis,
+                    analysis_key=analysis_key,
+                    result_key=result_key,
+                    docx_cache_key=docx_cache_key,
+                )
 
     section_label("Etapa 2 — Gerar minuta")
     use_rag = st.checkbox(
         "Usar referências jurídicas recuperadas nesta geração",
         value=True,
         key=f"minutas_generation_use_rag_{target['id']}",
+        on_change=_clear_generated_result,
+        args=(result_key, docx_cache_key),
         help=(
             "Desative para comparar com o comportamento anterior. A análise "
             "probatória e os demais controles permanecem iguais."
@@ -1469,10 +1534,6 @@ def _generator_tab(store, identity):
     analysis_ready = bool(
         analysis
         and isinstance(analysis.get("analise"), dict)
-        and analysis.get("rag_recovery_version") == RAG_RECOVERY_VERSION
-        and (analysis.get("recuperacao_juridica") or {}).get("versao")
-        == RAG_RECOVERY_VERSION
-        and not rag_refresh_failed
     )
     if analysis and (analysis.get("pendencias_conferencia") or ()):
         st.caption(
@@ -1486,14 +1547,35 @@ def _generator_tab(store, identity):
         key=f"minutas_generation_submit_{target['id']}",
         disabled=not analysis_ready or bool(summary["issues"]),
     ):
-        st.session_state.pop(result_key, None)
-        try:
-            with st.spinner("Redigindo a minuta com os pontos de revisão sinalizados..."):
-                st.session_state[result_key] = generator.generate(
-                    target["id"], analysis, use_rag=use_rag
+        _clear_generated_result(result_key, docx_cache_key)
+        generation_analysis = analysis
+        if use_rag and rag_stale:
+            try:
+                with st.spinner("Atualizando referências jurídicas..."):
+                    generation_analysis = generator.refresh_legal_recovery(
+                        target["id"], analysis
+                    )
+            except Exception as exc:
+                generation_analysis = None
+                _error(exc)
+                st.warning(
+                    "A pesquisa jurídica não foi repetida automaticamente. "
+                    "Tente gerar novamente quando o serviço estiver disponível "
+                    "ou desative o uso de referências jurídicas."
                 )
-        except Exception as exc:
-            _error(exc)
+            else:
+                st.session_state[analysis_key] = generation_analysis
+                analysis = generation_analysis
+        if generation_analysis is not None:
+            try:
+                with st.spinner(
+                    "Redigindo a minuta com os pontos de revisão sinalizados..."
+                ):
+                    st.session_state[result_key] = generator.generate(
+                        target["id"], generation_analysis, use_rag=use_rag
+                    )
+            except Exception as exc:
+                _error(exc)
 
     result = st.session_state.get(result_key)
     if not result:
@@ -1526,7 +1608,14 @@ def _generator_tab(store, identity):
             height=320,
         )
     try:
-        word = MinutasDocxService(service).export(target["id"], analysis, result)
+        word = _cached_docx(
+            service,
+            generator,
+            target["id"],
+            analysis,
+            result,
+            docx_cache_key,
+        )
     except Exception as exc:
         _error(exc)
     else:
@@ -1711,15 +1800,30 @@ def _search_tab(store, identity):
 
 
 def render(store, identity):
+    started = perf_counter()
     st.title("Gerador de Minutas de Pareceres — Projeto-Piloto")
     render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
     st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
-    library, search, generator = st.tabs(
-        ["Biblioteca de Referências", "Pesquisa Jurídica", "Gerar Minuta"]
+    sections = (
+        "Biblioteca de Referências",
+        "Pesquisa Jurídica",
+        "Gerar Minuta",
     )
-    with library:
+    active = st.radio(
+        "Área do módulo",
+        sections,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="minutas_active_view",
+    )
+    if active == sections[0]:
         _library_tab(store, identity)
-    with search:
+    elif active == sections[1]:
         _search_tab(store, identity)
-    with generator:
+    else:
         _generator_tab(store, identity)
+    LOGGER.info(
+        "MINUTAS_PERF etapa=interface duracao_ms=%d area=%s",
+        round((perf_counter() - started) * 1000),
+        sections.index(active) + 1,
+    )

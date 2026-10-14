@@ -4,7 +4,9 @@ from collections import defaultdict
 from copy import deepcopy
 from hashlib import sha256
 import json
+import logging
 import re
+from time import perf_counter
 import unicodedata
 
 from services import ai_service
@@ -28,6 +30,7 @@ MAX_RAG_PASSAGE_CHARS = 1600
 RAG_RECOVERY_VERSION = "3b5b1-relevance-v2"
 EVIDENCE_CORRECTION_VERSION = "3c3-assisted-evidence-v1"
 VALIDATION_POLICY_VERSION = "4-documentary-warnings-v1"
+LOGGER = logging.getLogger(__name__)
 REPORT_TRANSITION = "É o relatório. Passa-se a opinar."
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
@@ -976,11 +979,26 @@ class MinutasGenerationService:
         self.search = search or MinutasSearchService(library)
         self._analyze = analyze or ai_service.analisar_fundamentos_minuta
         self._generate = generate or ai_service.gerar_minuta_parecer
+        # A instância vive apenas durante um rerun do Streamlit. Este cache evita
+        # repetir o mesmo inventário dentro da execução sem reutilizar dados entre
+        # sessões ou impedir que o rerun seguinte enxergue fontes alteradas.
+        self._records_cache = None
+        self._source_state_cache = {}
+
+    def _records(self):
+        if self._records_cache is None:
+            self._records_cache = tuple(self.library.list())
+        return self._records_cache
+
+    def _refresh_source_cache(self, target):
+        """Força revisão atual das fontes antes de uma ação explícita."""
+        self._records_cache = None
+        self._source_state_cache.pop(str(target["id"]), None)
 
     def targets(self):
         return [
             record
-            for record in self.library.list()
+            for record in self._records()
             if record.get("procuradora") == PROCURADORA
             and _is_historical_test_process(record)
         ]
@@ -996,9 +1014,13 @@ class MinutasGenerationService:
 
     def _source_state(self, target):
         self._validate_target(target)
+        cache_key = str(target["id"])
+        if cache_key in self._source_state_cache:
+            return self._source_state_cache[cache_key]
+        started = perf_counter()
         records_list = [
             record
-            for record in self.library.list()
+            for record in self._records()
             if record.get("procuradora_chave") == target["procuradora_chave"]
             and _is_historical_test_process(record)
         ]
@@ -1073,7 +1095,7 @@ class MinutasGenerationService:
         revision = sha256(
             json.dumps(revision_payload, sort_keys=True).encode("utf-8")
         ).hexdigest()
-        return {
+        state = {
             "records": records,
             "issues": issues,
             "fontes_alvo_previstas": len(required),
@@ -1081,6 +1103,14 @@ class MinutasGenerationService:
             "fontes_versao": revision,
             "_parecer_alvo_hashes": target_opinion_hashes,
         }
+        self._source_state_cache[cache_key] = state
+        LOGGER.info(
+            "MINUTAS_PERF etapa=inventario duracao_ms=%d registros=%d extracoes=%d",
+            round((perf_counter() - started) * 1000),
+            len(records_list),
+            len(inventory),
+        )
+        return state
 
     def source_summary(self, target_reference_id):
         self.library._authorize()
@@ -2114,6 +2144,7 @@ class MinutasGenerationService:
                 "A análise não pertence ao processo e à Procuradora selecionados."
             )
 
+        self._refresh_source_cache(target)
         prepared = self.prepare_analysis_context(target_reference_id)
         if analyzed.get("fontes_versao") != prepared["fontes_versao"]:
             raise MinutasGenerationError(
@@ -2243,6 +2274,7 @@ class MinutasGenerationService:
             raise MinutasGenerationError(
                 "A análise não pertence ao processo e à Procuradora selecionados."
             )
+        self._refresh_source_cache(target)
         prepared = self.prepare_analysis_context(target_reference_id)
         if analyzed.get("fontes_versao") != prepared["fontes_versao"]:
             raise MinutasGenerationError(
@@ -2282,9 +2314,10 @@ class MinutasGenerationService:
         }
         if any(analyzed.get(key) != value for key, value in expected_identity.items()):
             return {"disponivel": False}
+        self._refresh_source_cache(target)
+        current_revision = self._source_state(target)["fontes_versao"]
         if (
-            analyzed.get("fontes_versao")
-            != self._source_state(target)["fontes_versao"]
+            analyzed.get("fontes_versao") != current_revision
             or analyzed.get("evidence_correction_version")
             != EVIDENCE_CORRECTION_VERSION
         ):
@@ -2305,6 +2338,7 @@ class MinutasGenerationService:
         }
 
     def refresh_legal_recovery(self, target_reference_id, analyzed):
+        started = perf_counter()
         self.library._authorize()
         target = self.library.get(target_reference_id)
         self._validate_target(target)
@@ -2314,6 +2348,7 @@ class MinutasGenerationService:
             raise MinutasGenerationError(
                 "Execute novamente Analisar fundamentos para atualizar a pesquisa jurídica."
             )
+        self._refresh_source_cache(target)
         current = self.source_summary(target_reference_id)
         if analyzed.get("fontes_versao") != current["fontes_versao"]:
             raise MinutasGenerationError(
@@ -2324,6 +2359,12 @@ class MinutasGenerationService:
             target_reference_id, analyzed["analise"]
         )
         refreshed["rag_recovery_version"] = RAG_RECOVERY_VERSION
+        LOGGER.info(
+            "MINUTAS_PERF etapa=rag_atualizacao duracao_ms=%d consultas=%d trechos=%d",
+            round((perf_counter() - started) * 1000),
+            int(refreshed["recuperacao_juridica"].get("consultas_executadas") or 0),
+            len(refreshed["recuperacao_juridica"].get("trechos") or ()),
+        )
         return refreshed
 
     @staticmethod
@@ -2840,11 +2881,15 @@ class MinutasGenerationService:
         return warnings
 
     def analyze(self, target_reference_id):
+        total_started = perf_counter()
         self.library._authorize()
         target = self.library.get(target_reference_id)
         self._validate_target(target)
+        self._refresh_source_cache(target)
         prepared = self.prepare_analysis_context(target_reference_id)
+        ai_started = perf_counter()
         generated = self._analyze(prepared["contexto"])
+        ai_duration_ms = round((perf_counter() - ai_started) * 1000)
         if not isinstance(generated, dict):
             raise MinutasGenerationError("A IA não retornou análise jurídica válida.")
         analysis = self._validate_analysis(generated.get("analise"), prepared["contexto"])
@@ -2852,10 +2897,12 @@ class MinutasGenerationService:
         conference_diagnostics = self._conference_diagnostics(
             analysis, prepared["contexto"]
         )
+        rag_started = perf_counter()
         legal_recovery = self._recover_legal_references(
             target_reference_id, analysis
         )
-        return {
+        rag_duration_ms = round((perf_counter() - rag_started) * 1000)
+        response = {
             **generated,
             "analise": analysis,
             "suficiente_para_geracao": conference["suficiente_para_geracao"],
@@ -2873,8 +2920,20 @@ class MinutasGenerationService:
             ),
             "procuradora_chave": str(target.get("procuradora_chave") or ""),
         }
+        LOGGER.info(
+            "MINUTAS_PERF etapa=analise duracao_ms=%d gemini_ms=%d rag_ms=%d "
+            "fontes=%d consultas=%d trechos=%d",
+            round((perf_counter() - total_started) * 1000),
+            ai_duration_ms,
+            rag_duration_ms,
+            int(prepared["fontes_alvo"]),
+            int(legal_recovery.get("consultas_executadas") or 0),
+            len(legal_recovery.get("trechos") or ()),
+        )
+        return response
 
     def generate(self, target_reference_id, analyzed, use_rag=True):
+        total_started = perf_counter()
         self.library._authorize()
         target = self.library.get(target_reference_id)
         self._validate_target(target)
@@ -2902,6 +2961,7 @@ class MinutasGenerationService:
             raise MinutasGenerationError(
                 "Atualize a recuperação jurídica antes de gerar a minuta."
             )
+        self._refresh_source_cache(target)
         prepared = self.prepare_context(
             target_reference_id,
             analyzed["analise"],
@@ -2930,7 +2990,9 @@ class MinutasGenerationService:
             raise MinutasGenerationError(
                 "A solicitação integral excede o limite seguro de contexto."
             )
+        ai_started = perf_counter()
         generated = self._generate(request_context)
+        ai_duration_ms = round((perf_counter() - ai_started) * 1000)
         if not isinstance(generated, dict):
             raise MinutasGenerationError("A IA não retornou uma minuta válida.")
         structure = self._validate_structure(generated.get("estrutura"))
@@ -2944,7 +3006,7 @@ class MinutasGenerationService:
                 structure, analysis, prepared["contexto"]
             ),
         ]
-        return {
+        response = {
             **generated,
             "estrutura": structure,
             "texto": self._structure_markdown(structure),
@@ -2966,3 +3028,14 @@ class MinutasGenerationService:
                 if key != "contexto"
             },
         }
+        LOGGER.info(
+            "MINUTAS_PERF etapa=geracao duracao_ms=%d gemini_ms=%d "
+            "contexto_bytes=%d rag_ativo=%s fontes_alvo=%d referencias=%d",
+            round((perf_counter() - total_started) * 1000),
+            ai_duration_ms,
+            int(response.get("contexto_bytes") or 0),
+            bool(use_rag),
+            int(response.get("fontes_alvo") or 0),
+            int(response.get("referencias_historicas") or 0),
+        )
+        return response

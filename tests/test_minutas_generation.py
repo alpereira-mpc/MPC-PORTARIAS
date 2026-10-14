@@ -100,12 +100,14 @@ class Repository:
     def __init__(self, rows):
         self.rows = rows
         self.queries = []
+        self.inventory_queries = []
 
     def list_extractions_by_procuradora(self, key):
         self.queries.append(key)
         return list(self.rows)
 
     def list_extraction_inventory_by_procuradora(self, key):
+        self.inventory_queries.append(key)
         return [row for row in self.rows if row["procuradora_chave"] == key]
 
     def list_documents(self, reference_id):
@@ -135,6 +137,7 @@ class Library:
         self.repository = Repository(rows)
         self.storage = object()
         self.authorized = authorized
+        self.list_calls = 0
 
     def _authorize(self):
         if not self.authorized:
@@ -147,6 +150,7 @@ class Library:
 
     def list(self):
         self._authorize()
+        self.list_calls += 1
         return list(self.records.values())
 
 
@@ -462,6 +466,29 @@ def test_candidate_safety_preserves_named_entities():
 
     assert safe is False
     assert reason == "não preserva nomes ou entidades da afirmação"
+
+
+def test_generation_service_reuses_inventory_only_within_current_instance():
+    target, history, other, rows = _scenario()
+    library = Library([target, history, other], rows)
+    service = MinutasGenerationService(library)
+
+    assert target in service.targets()
+    first = service.source_summary(target["id"])
+    second = service.source_summary(target["id"])
+
+    assert first == second
+    assert library.list_calls == 1
+    assert library.repository.inventory_queries == [target["procuradora_chave"]]
+
+    # Uma nova instância representa outro rerun e consulta novamente, evitando
+    # que mudanças nas fontes fiquem ocultas por cache entre execuções.
+    MinutasGenerationService(library).source_summary(target["id"])
+    assert library.list_calls == 2
+    assert library.repository.inventory_queries == [
+        target["procuradora_chave"],
+        target["procuradora_chave"],
+    ]
 
 
 def test_context_uses_target_instruction_and_excludes_contamination():
@@ -2784,7 +2811,9 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     generation_calls = []
     refresh_calls = []
     export_calls = []
+    diagnostic_calls = []
     revision = {"value": "revision-1"}
+    refresh_failure = {"value": False}
     summary_calls = []
 
     class Generator:
@@ -2829,10 +2858,13 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
             }
 
         def pilot_diagnostics(self, _identifier, _analyzed):
+            diagnostic_calls.append(_identifier)
             return {"disponivel": False}
 
         def refresh_legal_recovery(self, identifier, analyzed):
             refresh_calls.append(identifier)
+            if refresh_failure["value"]:
+                raise RuntimeError("falha RAG sintética")
             refreshed = dict(analyzed)
             refreshed["rag_recovery_version"] = RAG_RECOVERY_VERSION
             refreshed["recuperacao_juridica"] = {
@@ -2863,7 +2895,7 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
             }
 
     class WordExporter:
-        def __init__(self, _library):
+        def __init__(self, _library, *, source_summary=None):
             pass
 
         def export(self, identifier, analyzed, generated):
@@ -2897,14 +2929,11 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     assert analysis_calls == []
     assert generation_calls == []
     assert summary_calls == [TARGET_ID]
+    assert diagnostic_calls == []
 
     app.button(key=f"minutas_analysis_submit_{TARGET_ID}").click().run()
     assert analysis_calls == [TARGET_ID]
     assert generation_calls == []
-    assert any(
-        "Execute novamente Analisar fundamentos" in item.value
-        for item in app.info
-    )
 
     analysis_key = f"minutas_generation_analysis_{TARGET_ID}"
     stale = dict(app.session_state[analysis_key])
@@ -2916,15 +2945,14 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     }
     app.session_state[analysis_key] = stale
     app.run()
-    assert refresh_calls == [TARGET_ID]
-    assert app.session_state[analysis_key]["rag_recovery_version"] == (
-        RAG_RECOVERY_VERSION
-    )
+    assert refresh_calls == []
     assert any(
-        "estratégia progressiva" in item.value for item in app.info
+        "navegar nesta tela não executa nova pesquisa" in item.value
+        for item in app.caption
     )
 
     app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
+    assert refresh_calls == [TARGET_ID]
     assert generation_calls == [(TARGET_ID, True)]
     assert export_calls == [TARGET_ID]
     assert any(
@@ -2943,8 +2971,22 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     app.run()
     assert analysis_calls == [TARGET_ID]
     assert generation_calls == [(TARGET_ID, True)]
-    assert export_calls == [TARGET_ID, TARGET_ID]
+    assert refresh_calls == [TARGET_ID]
+    assert export_calls == [TARGET_ID]
+    assert diagnostic_calls == []
     assert any("Conteúdo para revisão" in item.value for item in app.markdown)
+
+    stale_again = dict(app.session_state[analysis_key])
+    stale_again.pop("rag_recovery_version")
+    stale_again["recuperacao_juridica"] = {"estado": "SEM_RESULTADOS"}
+    app.session_state[analysis_key] = stale_again
+    refresh_failure["value"] = True
+    app.run()
+    app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
+    assert refresh_calls == [TARGET_ID, TARGET_ID]
+    assert generation_calls == [(TARGET_ID, True)]
+    app.run()
+    assert refresh_calls == [TARGET_ID, TARGET_ID]
 
     revision["value"] = "revision-2"
     app.run()
@@ -3129,6 +3171,9 @@ def test_ui_shows_document_warning_and_keeps_drafting_enabled(monkeypatch):
 
     app = AppTest.from_function(page, default_timeout=30).run()
     app.button(key=f"minutas_analysis_submit_{TARGET_ID}").click().run()
+    app.toggle(key=f"minutas_generation_diagnostics_{TARGET_ID}").set_value(
+        True
+    ).run()
 
     warning_text = "\n".join(item.value for item in app.warning)
     review_text = "\n".join(
