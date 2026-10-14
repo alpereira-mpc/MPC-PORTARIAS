@@ -8,6 +8,7 @@ from services import ai_service
 from services.minutas_generation import (
     HISTORICAL_TEST_PROCESS_KEY,
     HISTORICAL_TEST_PROCESS_KEYS,
+    RAG_RECOVERY_VERSION,
     MinutasGenerationError,
     MinutasGenerationService,
     _canonical_process_key,
@@ -1200,6 +1201,105 @@ def test_rag_balances_four_matters_and_limits_progressive_search_to_eight_calls(
     assert all(len(query.split()) <= 3 for query in calls)
 
 
+def test_real_recovery_flow_covers_four_matters_and_accepts_six_new_precedents():
+    target, history, other, rows = _scenario()
+    other_historical = [
+        _record("history-third", "TC 01499/26", "0149926"),
+        _record("history-fourth", "TC 02650/25", "0265025"),
+    ]
+    rows.extend(
+        _row(record, "parecer", f"Parecer histórico {record['numero_processo']}.")
+        for record in other_historical
+    )
+    new_records = [
+        _record(
+            f"new-precedent-{index}",
+            f"TC {30000 + index:05d}/26",
+            f"{30000 + index:05d}26",
+        )
+        for index in range(1, 7)
+    ]
+    new_opinions = [
+        _row(
+            record,
+            "parecer",
+            f"Fundamentação previdenciária histórica {index}.",
+            file_hash=f"new-opinion-{index}",
+        )
+        for index, record in enumerate(new_records, 1)
+    ]
+    rows.extend(new_opinions)
+    expected_queries = {
+        "contribuição previdenciária",
+        "FUNDEB",
+        "licitação",
+        "parcelamento previdenciário",
+    }
+    calls = []
+
+    def analyze(context):
+        analysis = _analysis_payload(context, count=4)
+        configurations = (
+            (
+                "18.1",
+                "Irregularidade previdenciária na página original: contribuições",
+                ["Responsabilidade por contribuições previdenciárias"],
+            ),
+            ("18.2", "Aplicação de recursos do FUNDEB", ["Vinculação do FUNDEB"]),
+            ("18.3", "Procedimento de licitação", ["Controle licitatório"]),
+            (
+                "18.4",
+                "Ausência de comprovação documental",
+                ["Parcelamento de débitos previdenciários"],
+            ),
+        )
+        for irregularity, (identifier, matter, hypotheses) in zip(
+            analysis["irregularidades"], configurations
+        ):
+            irregularity["id"] = identifier
+            irregularity["apontamento"] = matter
+            irregularity["hipoteses_juridicas"] = hypotheses
+            irregularity["normas_mencionadas"] = []
+        return _analysis_result(context, analise=analysis)
+
+    def search(query, **_filters):
+        calls.append(query)
+        if query not in expected_queries:
+            return {"resultados": []}
+        index = sorted(expected_queries).index(query)
+        return {
+            "resultados": [
+                _search_result(
+                    new_records[index],
+                    new_opinions[index],
+                    context=f"Trecho pertinente a {query}.",
+                )
+            ]
+        }
+
+    eligible_records = [target, history, *other_historical, *new_records]
+    assert len(eligible_records) == 10
+    service = MinutasGenerationService(
+        Library([*eligible_records, other], rows),
+        analyze=analyze,
+        search=search,
+    )
+
+    analyzed = service.analyze(target["id"])
+    recovery = analyzed["recuperacao_juridica"]
+
+    assert analyzed["rag_recovery_version"] == RAG_RECOVERY_VERSION
+    assert recovery["versao"] == RAG_RECOVERY_VERSION
+    assert {item["irregularidade_id"] for item in recovery["consultas"]} == {
+        "18.1", "18.2", "18.3", "18.4"
+    }
+    assert set(calls) == expected_queries
+    assert recovery["consultas_executadas"] == 4
+    assert len(recovery["trechos"]) == 4
+    assert all(item["referencia_id"].startswith("new-precedent-") for item in recovery["trechos"])
+    assert all(item["referencia_id"] != target["id"] for item in recovery["trechos"])
+
+
 def test_analysis_recovers_traced_legal_references_with_deduplication_and_limits():
     target, history, other, rows = _scenario()
     opinion = next(
@@ -1373,6 +1473,46 @@ def test_generation_continues_when_legal_search_finds_no_precedent():
     assert result["texto"]
 
 
+def test_stale_rag_state_is_refreshed_without_repeating_probative_analysis():
+    target, history, other, rows = _scenario()
+    analysis_calls = []
+    search_calls = []
+
+    def analyze(context):
+        analysis_calls.append(context)
+        return _analysis_result(context)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=analyze,
+        search=lambda query, **_filters: search_calls.append(query)
+        or {"resultados": []},
+    )
+    current = service.analyze(target["id"])
+    stale = dict(current)
+    stale.pop("rag_recovery_version")
+    stale["recuperacao_juridica"] = {
+        "estado": "SEM_RESULTADOS",
+        "consultas": [
+            {"consulta": "Classificação incorreta recursos provenientes contribuições servidores como"}
+        ],
+        "trechos": [],
+    }
+    calls_before_refresh = len(search_calls)
+
+    refreshed = service.refresh_legal_recovery(target["id"], stale)
+
+    assert len(analysis_calls) == 1
+    assert len(search_calls) > calls_before_refresh
+    assert refreshed["analise"] is stale["analise"]
+    assert refreshed["rag_recovery_version"] == RAG_RECOVERY_VERSION
+    assert refreshed["recuperacao_juridica"]["versao"] == RAG_RECOVERY_VERSION
+    assert all(
+        len(item["consulta_principal"].split()) <= 3
+        for item in refreshed["recuperacao_juridica"]["consultas"]
+    )
+
+
 def test_complete_generation_uses_one_analysis_and_one_drafting_call():
     target, history, other, rows = _scenario()
     analysis_calls = []
@@ -1419,6 +1559,8 @@ def test_generation_revalidates_authorization_and_source_revision():
         service.generate(target["id"], analyzed)
     with pytest.raises(MinutasAccessDenied):
         service.pilot_diagnostics(target["id"], analyzed)
+    with pytest.raises(MinutasAccessDenied):
+        service.refresh_legal_recovery(target["id"], analyzed)
     library.authorized = True
 
     rows[0]["atualizado_em"] = "2026-10-13T11:00:00+00:00"
@@ -1691,6 +1833,7 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     target = _record(TARGET_ID, "TC 01653/26", HISTORICAL_TEST_PROCESS_KEY)
     analysis_calls = []
     generation_calls = []
+    refresh_calls = []
     revision = {"value": "revision-1"}
     summary_calls = []
 
@@ -1724,10 +1867,29 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
                 "suficiente_para_geracao": True,
                 "pendencias_conferencia": [],
                 "fontes_versao": revision["value"],
+                "rag_recovery_version": RAG_RECOVERY_VERSION,
+                "recuperacao_juridica": {
+                    "versao": RAG_RECOVERY_VERSION,
+                    "estado": "SEM_RESULTADOS",
+                    "consultas": [],
+                    "trechos": [],
+                },
             }
 
         def pilot_diagnostics(self, _identifier, _analyzed):
             return {"disponivel": False}
+
+        def refresh_legal_recovery(self, identifier, analyzed):
+            refresh_calls.append(identifier)
+            refreshed = dict(analyzed)
+            refreshed["rag_recovery_version"] = RAG_RECOVERY_VERSION
+            refreshed["recuperacao_juridica"] = {
+                "versao": RAG_RECOVERY_VERSION,
+                "estado": "SEM_RESULTADOS",
+                "consultas": [],
+                "trechos": [],
+            }
+            return refreshed
 
         def generate(self, identifier, analyzed, use_rag=True):
             assert analyzed["fontes_versao"] == revision["value"]
@@ -1768,6 +1930,24 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     assert any(
         "Execute novamente Analisar fundamentos" in item.value
         for item in app.info
+    )
+
+    analysis_key = f"minutas_generation_analysis_{TARGET_ID}"
+    stale = dict(app.session_state[analysis_key])
+    stale.pop("rag_recovery_version")
+    stale["recuperacao_juridica"] = {
+        "estado": "SEM_RESULTADOS",
+        "consultas": [{"consulta": "consulta longa antiga"}],
+        "trechos": [],
+    }
+    app.session_state[analysis_key] = stale
+    app.run()
+    assert refresh_calls == [TARGET_ID]
+    assert app.session_state[analysis_key]["rag_recovery_version"] == (
+        RAG_RECOVERY_VERSION
+    )
+    assert any(
+        "estratégia progressiva" in item.value for item in app.info
     )
 
     app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
@@ -1837,6 +2017,13 @@ def test_ui_shows_document_issue_and_disables_drafting(monkeypatch):
                 "suficiente_para_geracao": False,
                 "pendencias_conferencia": [issue],
                 "fontes_versao": "revision-pending",
+                "rag_recovery_version": RAG_RECOVERY_VERSION,
+                "recuperacao_juridica": {
+                    "versao": RAG_RECOVERY_VERSION,
+                    "estado": "SEM_RESULTADOS",
+                    "consultas": [],
+                    "trechos": [],
+                },
             }
 
         def pilot_diagnostics(self, identifier, _analyzed):

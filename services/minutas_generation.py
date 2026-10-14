@@ -24,6 +24,7 @@ MAX_RAG_RESULTS_PER_QUERY = 4
 MAX_RAG_PASSAGES = 6
 MAX_RAG_PASSAGES_PER_OPINION = 2
 MAX_RAG_PASSAGE_CHARS = 1600
+RAG_RECOVERY_VERSION = "3b5b1-progressive-v1"
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
     re.compile(r"^(?:codigo|código)\s+verificador\s*[:#-]\s*\S+.*$"),
@@ -648,6 +649,7 @@ class MinutasGenerationService:
         omitted_matters = plan["materias_nao_pesquisadas"]
         if not queries:
             return {
+                "versao": RAG_RECOVERY_VERSION,
                 "estado": "SEM_CONSULTAS",
                 "consultas": [],
                 "trechos": [],
@@ -785,6 +787,7 @@ class MinutasGenerationService:
                         break
         except Exception:
             return {
+                "versao": RAG_RECOVERY_VERSION,
                 "estado": "INDISPONIVEL",
                 "consultas": diagnostic_queries,
                 "trechos": [],
@@ -833,6 +836,7 @@ class MinutasGenerationService:
                 "e validação documental."
             )
         return {
+            "versao": RAG_RECOVERY_VERSION,
             "estado": "CONCLUIDA" if selected else "SEM_RESULTADOS",
             "consultas": diagnostic_queries,
             "trechos": selected,
@@ -1398,13 +1402,40 @@ class MinutasGenerationService:
             return {"disponivel": False}
         conference = analyzed.get("diagnostico_conferencia")
         recovery = analyzed.get("recuperacao_juridica")
-        if conference is None or recovery is None:
+        if (
+            conference is None
+            or not isinstance(recovery, dict)
+            or analyzed.get("rag_recovery_version") != RAG_RECOVERY_VERSION
+            or recovery.get("versao") != RAG_RECOVERY_VERSION
+        ):
             return {"disponivel": False}
         return {
             "disponivel": True,
             "conferencia_documental": conference,
             "recuperacao_juridica": recovery,
         }
+
+    def refresh_legal_recovery(self, target_reference_id, analyzed):
+        self.library._authorize()
+        target = self.library.get(target_reference_id)
+        self._validate_target(target)
+        if not isinstance(analyzed, dict) or not isinstance(
+            analyzed.get("analise"), dict
+        ):
+            raise MinutasGenerationError(
+                "Execute novamente Analisar fundamentos para atualizar a pesquisa jurídica."
+            )
+        current = self.source_summary(target_reference_id)
+        if analyzed.get("fontes_versao") != current["fontes_versao"]:
+            raise MinutasGenerationError(
+                "As fontes foram alteradas. Analise novamente os fundamentos."
+            )
+        refreshed = dict(analyzed)
+        refreshed["recuperacao_juridica"] = self._recover_legal_references(
+            target_reference_id, analyzed["analise"]
+        )
+        refreshed["rag_recovery_version"] = RAG_RECOVERY_VERSION
+        return refreshed
 
     @staticmethod
     def _validate_structure(structure):
@@ -1717,6 +1748,7 @@ class MinutasGenerationService:
             "fontes_alvo": prepared["fontes_alvo"],
             "diagnostico_conferencia": conference_diagnostics,
             "recuperacao_juridica": legal_recovery,
+            "rag_recovery_version": RAG_RECOVERY_VERSION,
         }
 
     def generate(self, target_reference_id, analyzed, use_rag=True):
@@ -1724,6 +1756,13 @@ class MinutasGenerationService:
         if not isinstance(analyzed, dict) or not isinstance(analyzed.get("analise"), dict):
             raise MinutasGenerationError("Analise os fundamentos antes de gerar a minuta.")
         recovery = analyzed.get("recuperacao_juridica") or {}
+        if use_rag and (
+            analyzed.get("rag_recovery_version") != RAG_RECOVERY_VERSION
+            or recovery.get("versao") != RAG_RECOVERY_VERSION
+        ):
+            raise MinutasGenerationError(
+                "Atualize a recuperação jurídica antes de gerar a minuta."
+            )
         prepared = self.prepare_context(
             target_reference_id,
             analyzed["analise"],

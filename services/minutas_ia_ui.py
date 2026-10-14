@@ -6,7 +6,10 @@ import streamlit as st
 
 from database.minutas_referencias import MinutasReferenciasStore
 from services.ai_service import GeminiErro, GeminiNaoConfigurada
-from services.minutas_generation import MinutasGenerationService
+from services.minutas_generation import (
+    RAG_RECOVERY_VERSION,
+    MinutasGenerationService,
+)
 from services.minutas_library import (
     COMPLEMENT_TYPES,
     MinutasAccessDenied,
@@ -1253,6 +1256,39 @@ def _generator_tab(store, identity):
             "retiradas desta sessão."
         )
 
+    rag_refresh_failed = False
+    recovery_version = (
+        (analysis.get("recuperacao_juridica") or {}).get("versao")
+        if analysis
+        else None
+    )
+    if analysis and (
+        analysis.get("rag_recovery_version") != RAG_RECOVERY_VERSION
+        or recovery_version != RAG_RECOVERY_VERSION
+    ):
+        st.session_state.pop(result_key, None)
+        result = None
+        try:
+            analysis = generator.refresh_legal_recovery(target["id"], analysis)
+        except Exception as exc:
+            safe_analysis = dict(analysis)
+            safe_analysis.pop("recuperacao_juridica", None)
+            safe_analysis.pop("rag_recovery_version", None)
+            st.session_state[analysis_key] = safe_analysis
+            analysis = safe_analysis
+            rag_refresh_failed = True
+            _error(exc)
+            st.warning(
+                "A estratégia de pesquisa jurídica mudou. Execute novamente "
+                "Analisar fundamentos para atualizar o diagnóstico RAG."
+            )
+        else:
+            st.session_state[analysis_key] = analysis
+            st.info(
+                "A recuperação jurídica desta análise foi atualizada para a "
+                "estratégia progressiva, sem repetir a chamada ao Gemini."
+            )
+
     section_label("Etapa 1 — Analisar processo")
     if st.button(
         "Analisar fundamentos",
@@ -1290,7 +1326,12 @@ def _generator_tab(store, identity):
         ),
     )
     analysis_ready = bool(
-        analysis and analysis.get("suficiente_para_geracao") is True
+        analysis
+        and analysis.get("suficiente_para_geracao") is True
+        and analysis.get("rag_recovery_version") == RAG_RECOVERY_VERSION
+        and (analysis.get("recuperacao_juridica") or {}).get("versao")
+        == RAG_RECOVERY_VERSION
+        and not rag_refresh_failed
     )
     if analysis and not analysis_ready:
         st.caption(
