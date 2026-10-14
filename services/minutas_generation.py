@@ -3502,6 +3502,13 @@ class MinutasGenerationService:
         analysis = self._validate_analysis(generated.get("analise"), prepared["contexto"])
         precedents = self._instruction_precedents(analysis, target["processo_chave"])
         conference = analysis.get("conferencia_documental") or {}
+        metrics = {
+            key: generated[key]
+            for key in (
+                "modelo", "duracao_ms", "tokens_entrada", "tokens_saida", "tokens_total",
+            )
+            if isinstance(generated, dict) and generated.get(key) is not None
+        }
         return {
             "analise": analysis,
             "pendencias_conferencia": conference.get("pendencias") or [],
@@ -3515,7 +3522,47 @@ class MinutasGenerationService:
             "advertencias_instrucao": prepared["advertencias"],
             "consolidacao_contexto": prepared["omissoes"],
             "contexto_bytes": _serialized_size(prepared["contexto"]),
+            **metrics,
         }
+
+    def _instruction_reference_lists(self, precedents):
+        """Converte a recuperação no contrato do gerador histórico: lista, não o envelope."""
+        opinions = []
+        passages = []
+        rows = precedents.get("referencias") if isinstance(precedents, dict) else ()
+        for item in rows or ():
+            if not isinstance(item, dict):
+                continue
+            passage = str(item.get("trecho") or item.get("trecho_literal") or "").strip()
+            process = str(item.get("processo") or "").strip()
+            if not passage or not process:
+                continue
+            page = item.get("pagina")
+            page = page if isinstance(page, int) and not isinstance(page, bool) else None
+            document = str(item.get("documento") or "Parecer definitivo")
+            content = {"texto": passage}
+            if page is not None:
+                content["pagina"] = page
+            opinions.append({
+                "processo": process,
+                "exercicio": item.get("exercicio") if isinstance(item.get("exercicio"), int) else None,
+                "subtipo": str(item.get("subtipo") or ""),
+                "uso": "fundamentos jurídicos pertinentes do parecer definitivo",
+                "parecer": {
+                    "papel": "parecer",
+                    "tipo": "Parecer definitivo",
+                    "arquivo": document,
+                    "conteudo": [content],
+                },
+            })
+            passages.append({
+                "processo": process,
+                "documento": document,
+                "pagina": page,
+                "trecho_literal": passage,
+                "natureza": "manifestação histórica não vinculante",
+            })
+        return opinions, passages
 
     def generate_instruction(self, documentos, analyzed, *, processo, exercicio=None, origem="", use_rag=True):
         from services.minutas_instrucao import montar_contexto
@@ -3530,21 +3577,71 @@ class MinutasGenerationService:
                 "A instrução foi alterada. Analise novamente antes de gerar a minuta."
             )
         analysis = self._validate_analysis(analyzed.get("analise"), prepared["contexto"])
+        conference = analysis.get("conferencia_documental") or {}
         context = deepcopy(prepared["contexto"])
+        context["orientacao_dispositivo"] = (
+            "PREFEITURA_CONDICIONAL_DUAS_COMPETENCIAS"
+            if target.get("subtipo") == "Prefeitura"
+            else "DEMAIS_PCA_JULGAMENTO_DIRETO"
+        )
         context["analise_estruturada"] = self._analysis_for_generation(analysis)
+        if conference.get("pendencias"):
+            context["orientacao_conferencia_documental"] = (
+                "Existem pontos não verificados. Eles não impedem a minuta, mas "
+                "não podem ser tratados como prova confirmada. Preserve cada "
+                "irregularidade e use formulação cautelosa para revisão humana."
+            )
+        opinions, passages = ([], [])
         if use_rag:
-            context["referencias_historicas"] = analyzed.get("referencias") or {"referencias": []}
+            opinions, passages = self._instruction_reference_lists(analyzed.get("referencias"))
+            context["referencias_historicas"] = opinions
+            context["referencias_juridicas_recuperadas"] = passages
+            context["orientacao_referencias_juridicas"] = (
+                "Manifestações históricas não vinculantes; são fundamentos jurídicos "
+                "e não são fatos do processo-alvo. Se o parecer for pouco fundamentado "
+                "ou remeter a documento ausente, indique a limitação e não invente a "
+                "análise técnica. A ausência de precedente pertinente não autoriza "
+                "fundamento inadequado."
+            )
+        while _serialized_size(context) > MAX_CONTEXT_BYTES and context.get(
+            "referencias_juridicas_recuperadas"
+        ):
+            context["referencias_juridicas_recuperadas"].pop()
+        while _serialized_size(context) > MAX_CONTEXT_BYTES and context.get(
+            "referencias_historicas"
+        ):
+            context["referencias_historicas"].pop()
+        if _serialized_size(context) > MAX_CONTEXT_BYTES:
+            raise MinutasGenerationError(
+                "A solicitação integral excede o limite seguro de contexto."
+            )
         generated = self._generate(context)
+        if not isinstance(generated, dict):
+            raise MinutasGenerationError("A IA não retornou uma minuta válida.")
         structure, _warnings = self._normalize_structure(
             self._validate_structure(generated.get("estrutura")), target, context,
         )
         structure = self._validate_structure(structure)
+        metrics = {
+            key: generated[key]
+            for key in (
+                "modelo", "duracao_ms", "tokens_entrada", "tokens_saida", "tokens_total",
+            )
+            if generated.get(key) is not None
+        }
         return {
             "estrutura": structure,
+            "texto": self._structure_markdown(structure),
             "fontes_versao": prepared["versao"],
             "processo_alvo_id": target["id"],
             "processo_alvo_chave": target["processo_chave"],
             "procuradora_chave": target["procuradora_chave"],
             "metadados_cabecalho": generated.get("metadados_cabecalho") or {},
             "fontes_alvo": prepared["fontes_alvo"],
+            "advertencias_documentais": deepcopy(conference.get("pendencias") or []),
+            "referencias_historicas": len(context.get("referencias_historicas") or []),
+            "referencias_juridicas_enviadas": len(
+                context.get("referencias_juridicas_recuperadas") or []
+            ),
+            **metrics,
         }

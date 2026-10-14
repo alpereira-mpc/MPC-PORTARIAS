@@ -4,7 +4,9 @@ from datetime import date, datetime
 from hashlib import sha256
 import json
 import logging
+import traceback
 from time import perf_counter
+from uuid import uuid4
 
 import streamlit as st
 
@@ -13,8 +15,10 @@ from services.ai_service import GeminiErro, GeminiNaoConfigurada
 from services.minutas_generation import (
     RAG_RECOVERY_VERSION,
     VALIDATION_POLICY_VERSION,
+    MinutasGenerationError,
     MinutasGenerationService,
 )
+from services.minutas_instrucao import MinutasInstrucaoError
 from services.minutas_docx import MinutasDocxError, MinutasDocxService
 from services.minutas_library import (
     COMPLEMENT_TYPES,
@@ -133,13 +137,15 @@ def _service(store, identity, *, administrative=False):
     return MinutasLibraryService(repository, storage, identity, st.secrets)
 
 
-def _error(exc):
+def _error(exc, *, etapa="operacao"):
     if isinstance(
         exc,
         (
             MinutasAccessDenied,
             MinutasDuplicateError,
             MinutasValidationError,
+            MinutasGenerationError,
+            MinutasInstrucaoError,
             MinutasDocxError,
             MinutasExtractionError,
             StorageOperationError,
@@ -148,8 +154,19 @@ def _error(exc):
         ),
     ):
         st.error(str(exc))
-    else:
-        st.error("Não foi possível concluir a operação. Tente novamente.")
+        return
+    diagnostic = uuid4().hex[:12]
+    LOGGER.error(
+        "MINUTAS_ERRO id=%s etapa=%s tipo=%s\n%s",
+        diagnostic,
+        etapa,
+        type(exc).__name__,
+        "".join(traceback.format_tb(exc.__traceback__)),
+    )
+    st.error(
+        "Não foi possível concluir a operação. Tente novamente. "
+        f"Diagnóstico {diagnostic}."
+    )
 
 
 def _upload_tuple(upload):
@@ -1541,15 +1558,15 @@ def _instruction_panel(generator, service):
                 documents, analyzed, processo=processo, exercicio=exercicio, origem=origem,
             )
         except Exception as exc:
-            _error(exc)
+            _error(exc, etapa="geracao_instrucao")
     generated = st.session_state.get("minutas_instrucao_minuta")
     if generated and analyzed:
         try:
-            word = MinutasDocxService(service.library).export_instruction(
+            word = MinutasDocxService(service).export_instruction(
                 analyzed, generated, processo=processo, exercicio=exercicio, origem=origem,
             )
         except Exception as exc:
-            _error(exc)
+            _error(exc, etapa="exportacao_instrucao")
         else:
             st.download_button(
                 "Baixar DOCX", data=word.content, file_name=word.name, mime=word.mime,

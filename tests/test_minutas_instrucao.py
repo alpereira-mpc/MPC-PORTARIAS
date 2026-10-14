@@ -3,6 +3,10 @@
 from io import BytesIO
 
 from reportlab.pdfgen import canvas
+import inspect
+import json
+import logging
+
 import pytest
 
 from services.minutas_docx import ELVIRA_TEMPLATE, MinutasDocxService
@@ -346,3 +350,221 @@ def test_analise_geracao_e_docx_aceitam_quantidade_variavel(quantidade):
     assert [item["referencia_id"] for item in analyzed["referencias"]["referencias"]] == ["parecer-1"]
     assert word.content.startswith(b"PK")
     assert word.name == "MINUTA_PARECER_TC_03333_26.docx"
+
+
+def _irregularidade(identifier, fonte_id, *, trecho):
+    return {
+        "id": identifier,
+        "apontamento": f"Apontamento {identifier} de cobertura documental",
+        "fatos_documentados": [{
+            "descricao": f"Fato {identifier}",
+            "fontes": [{
+                "fonte_id": fonte_id,
+                "pagina": 1,
+                "trecho_suporte": trecho,
+            }],
+        }],
+        "normas_mencionadas": [],
+        "argumentos_defesa": [],
+        "pontos_controvertidos": [f"Controversia {identifier}."],
+        "hipoteses_juridicas": ["Conferir a cobertura documental."],
+        "avaliacao_auditoria": {
+            "descricao": f"Conclusao indicada {identifier}.",
+            "tratamento_defesa": "NAO_IDENTIFICADO",
+            "fontes": [{
+                "fonte_id": fonte_id,
+                "pagina": 1,
+                "trecho_suporte": "citacao inexistente na pagina",
+            }],
+        },
+    }
+
+
+def _estrutura_varias(identifiers):
+    return {
+        "identificacao_processual": "Processo TC 03333/26",
+        "ementa": "Ementa de teste da instrucao.",
+        "relatorio": "Relatorio da instrucao processual.",
+        "relatorio_paragrafos": ["Relatorio da instrucao processual."],
+        "fundamentacao_geral": "Fundamentacao geral de teste.",
+        "fundamentacao_geral_paragrafos": ["Fundamentacao geral de teste."],
+        "topicos_irregularidades": [{
+            "titulo": "Cobertura documental",
+            "texto": "Os apontamentos permanecem em conferencia.",
+            "paragrafos": ["Os apontamentos permanecem em conferencia."],
+            "irregularidades_ids": list(identifiers),
+            "avaliacoes_irregularidades": [{
+                "irregularidade_id": identifier,
+                "tratamento_ministerial_defesa": "NAO_APLICAVEL",
+                "fundamentos_divergencia": [],
+                "estado_saneamento": "NAO_ALEGADO",
+                "fontes_saneamento": [],
+            } for identifier in identifiers],
+        }],
+        "conclusao_pedidos": "Pede-se a conferencia.",
+        "pedidos": ["Pela irregularidade das contas, em conferencia humana."],
+        "encerramento": "E o parecer, salvo melhor juizo.",
+    }
+
+
+def test_geracao_com_advertencias_e_precedentes_usa_o_contrato_historico():
+    base = _doc(
+        "inicial.pdf",
+        "Pagamento sem cobertura documental no instituto de previdencia municipal",
+        "relatorio_inicial",
+    )
+    identifiers = ["IRR-1", "IRR-2", "IRR-3", "IRR-4"]
+    literal = (
+        "Pagamento sem cobertura documental no instituto de previdencia municipal"
+    )
+    captured = {}
+
+    def analyze(_context):
+        return {
+            "analise": {
+                "resumo_processual": "Instrucao com quatro apontamentos.",
+                "sem_irregularidades_identificadas": False,
+                "pontos_atencao_gerais": ["Conferir as citacoes."],
+                "irregularidades": [
+                    _irregularidade(
+                        identifier, base["fonte_id"],
+                        trecho=literal if identifier == "IRR-1" else "trecho ausente da pagina",
+                    )
+                    for identifier in identifiers
+                ],
+            },
+            "modelo": "modelo-analise-real",
+            "duracao_ms": 1800,
+            "tokens_entrada": 1200,
+            "tokens_saida": 400,
+            "tokens_total": 1600,
+        }
+
+    def generate(context):
+        captured["historicas"] = context["referencias_historicas"]
+        captured["recuperadas"] = context["referencias_juridicas_recuperadas"]
+        captured["fatos"] = context["documentos_processo_alvo"]
+        captured["orientacao"] = context["orientacao_conferencia_documental"]
+        return {
+            "estrutura": _estrutura_varias(identifiers),
+            "modelo": "modelo-redacao-real",
+            "duracao_ms": 2400,
+            "tokens_total": 900,
+        }
+
+    def search(_query, **kwargs):
+        captured["excluido"] = kwargs.get("exclude_process_key")
+        return {"resultados": [
+            {"papel": "parecer", "referencia_id": "parecer-outro", "processo_chave": "0165326",
+             "numero_processo": "01653/26", "trecho": "Art. 40 da Constituicao orienta a contribuicao."},
+            {"papel": "parecer", "referencia_id": "parecer-alvo", "processo_chave": "0333326",
+             "numero_processo": "03333/26", "trecho": "Segredo do proprio processo."},
+            {"papel": "auditoria", "referencia_id": "relatorio", "processo_chave": "0165326",
+             "numero_processo": "01653/26", "trecho": "Fato historico que nao pode migrar."},
+        ]}
+
+    service = MinutasGenerationService(
+        _library(), analyze=analyze, generate=generate, search=search,
+    )
+    analyzed = service.analyze_instruction(documents := [base], processo="03333/26", exercicio=2025)
+    assert analyzed["modelo"] == "modelo-analise-real"
+    assert analyzed["tokens_total"] == 1600
+    assert analyzed["duracao_ms"] == 1800
+    assert len(analyzed["pendencias_conferencia"]) >= 5
+    assert len({item["irregularidade"] for item in analyzed["pendencias_conferencia"]}) == 4
+    generated = service.generate_instruction(
+        documents, analyzed, processo="03333/26", exercicio=2025,
+    )
+    assert captured["excluido"] == "0333326"
+    assert isinstance(captured["historicas"], list)
+    assert captured["historicas"][0]["parecer"]["papel"] == "parecer"
+    assert "Art. 40" in captured["historicas"][0]["parecer"]["conteudo"][0]["texto"]
+    assert "Segredo do proprio processo" not in json.dumps(captured["historicas"])
+    assert "Fato historico que nao pode migrar" not in json.dumps(captured)
+    assert captured["fatos"][0]["fonte_id"] == base["fonte_id"]
+    assert "não impedem a minuta" in captured["orientacao"]
+    assert generated["advertencias_documentais"]
+    assert generated["referencias_historicas"] == 1
+    assert generated["modelo"] == "modelo-redacao-real"
+    assert generated["texto"]
+    assert "estado" not in captured["historicas"][0]
+
+
+def test_resposta_invalida_nao_conclui_a_minuta():
+    base = _doc(
+        "inicial.pdf",
+        "Pagamento sem cobertura documental no instituto de previdencia municipal",
+        "relatorio_inicial",
+    )
+
+    def analyze(_context):
+        return {"analise": _analysis(base)}
+
+    def generate(_context):
+        return {"estrutura": {"ementa": "Incompleta."}}
+
+    service = MinutasGenerationService(
+        _library(), analyze=analyze, generate=generate,
+        search=lambda *_args, **_kwargs: {"resultados": []},
+    )
+    analyzed = service.analyze_instruction([base], processo="03333/26", exercicio=2025)
+    with pytest.raises(MinutasGenerationError, match="partes obrigatórias"):
+        service.generate_instruction([base], analyzed, processo="03333/26", exercicio=2025)
+
+
+def test_ausencia_de_precedente_nao_inventa_fundamento():
+    base = _doc(
+        "inicial.pdf",
+        "Pagamento sem cobertura documental no instituto de previdencia municipal",
+        "relatorio_inicial",
+    )
+    captured = {}
+
+    def generate(context):
+        captured["historicas"] = context["referencias_historicas"]
+        captured["recuperadas"] = context["referencias_juridicas_recuperadas"]
+        return {"estrutura": _structure(), "modelo": "modelo-redacao", "duracao_ms": 10, "tokens_total": 1}
+
+    service = MinutasGenerationService(
+        _library(), analyze=lambda _context: {"analise": _analysis(base)}, generate=generate,
+        search=lambda *_args, **_kwargs: {"resultados": []},
+    )
+    analyzed = service.analyze_instruction([base], processo="03333/26")
+    generated = service.generate_instruction([base], analyzed, processo="03333/26")
+    assert captured["historicas"] == []
+    assert captured["recuperadas"] == []
+    assert generated["referencias_historicas"] == 0
+    assert generated["referencias_juridicas_enviadas"] == 0
+
+
+def test_erro_de_geracao_e_instrucao_chega_ao_usuario_e_o_inesperado_nao_vaza(monkeypatch, caplog):
+    import streamlit as st
+    from services.minutas_generation import MinutasGenerationError
+    from services.minutas_ia_ui import _error
+    from services.minutas_instrucao import MinutasInstrucaoError
+
+    shown = []
+    monkeypatch.setattr(st, "error", shown.append)
+    _error(MinutasGenerationError("As fontes foram alteradas. Analise novamente."))
+    _error(MinutasInstrucaoError("Inclua ao menos um PDF de instrução."))
+    assert "fontes foram alteradas" in shown[0]
+    assert "PDF de instrução" in shown[1]
+    secret = "sb_secret_nao_logar"
+    try:
+        raise RuntimeError(secret)
+    except RuntimeError as exc:
+        with caplog.at_level(logging.ERROR):
+            _error(exc, etapa="geracao_instrucao")
+    assert "Tente novamente" in shown[2]
+    assert secret not in shown[2]
+    assert "Diagnóstico" in shown[2]
+    assert "RuntimeError" in caplog.text
+    assert "geracao_instrucao" in caplog.text
+    assert secret not in caplog.text
+
+
+def test_exportacao_da_instrucao_recebe_a_biblioteca():
+    from services import minutas_ia_ui
+    source = inspect.getsource(minutas_ia_ui._instruction_panel)
+    assert "service.library" not in source
+    assert "MinutasDocxService(service)" in source
