@@ -2,12 +2,15 @@
 
 import json
 import re
+import uuid
+from pathlib import PurePath
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 
 DEFAULT_BUCKET = "minutas-referencias"
+ALLOWED_OBJECT_SUFFIXES = {".pdf", ".docx"}
 
 
 class StorageConfigurationError(RuntimeError):
@@ -16,6 +19,56 @@ class StorageConfigurationError(RuntimeError):
 
 class StorageOperationError(RuntimeError):
     pass
+
+
+_HTTP_CATEGORIES = {
+    400: "solicitação rejeitada",
+    401: "autorização",
+    403: "autorização",
+    404: "objeto não encontrado",
+    409: "conflito",
+    412: "pré-condição",
+    413: "tamanho",
+    429: "limite",
+}
+
+
+def acervo_object_path(name):
+    """Caminho físico novo: só UUID e extensão. O nome original fica nos metadados."""
+    suffix = PurePath(str(name or "")).suffix.lower()
+    if suffix not in ALLOWED_OBJECT_SUFFIXES:
+        raise StorageOperationError("Extensão não permitida no armazenamento.")
+    return f"acervo/{uuid.uuid4().hex}/{uuid.uuid4().hex}{suffix}"
+
+
+def _http_detail(payload):
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("error", "errorCode", "statusCode"):
+        value = payload.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", value):
+            return ", " + value
+        if isinstance(value, int) and 100 <= value <= 599:
+            return f", {value}"
+    return ""
+
+
+def _operation_error(exc):
+    if isinstance(exc, HTTPError):
+        code = int(exc.code or 0)
+        category = "serviço" if code >= 500 else _HTTP_CATEGORIES.get(code, "http")
+        detail = ""
+        try:
+            body = exc.read() or b""
+            detail = _http_detail(json.loads(body.decode("utf-8", errors="replace")))
+        except Exception:
+            detail = ""
+        return StorageOperationError(
+            f"Falha no armazenamento privado (HTTP {code}, {category}{detail})."
+        )
+    if isinstance(exc, TimeoutError):
+        return StorageOperationError("Falha no armazenamento privado (rede, tempo esgotado).")
+        return StorageOperationError("Falha no armazenamento privado (rede).")
 
 
 def _secret(secrets, name):
@@ -69,7 +122,7 @@ class SupabaseMinutasStorage:
             with self._opener(request, timeout=30) as response:
                 return response.read()
         except (HTTPError, URLError, TimeoutError) as exc:
-            raise StorageOperationError("Falha no armazenamento privado.") from exc
+            raise _operation_error(exc) from exc
 
     def upload(self, path, content, mime):
         endpoint = "/object/" + quote(self.bucket + "/" + path, safe="/")

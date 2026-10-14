@@ -1,10 +1,15 @@
+from email.message import Message
+from io import BytesIO
 import json
+from urllib.error import HTTPError
 
 import pytest
 
 from services.minutas_storage import (
     StorageConfigurationError,
+    StorageOperationError,
     SupabaseMinutasStorage,
+    acervo_object_path,
 )
 
 
@@ -85,3 +90,35 @@ def test_storage_configuration_prefers_current_secret_key():
 def test_invalid_storage_configuration_fails_closed(url, key, bucket):
     with pytest.raises(StorageConfigurationError):
         SupabaseMinutasStorage(url, key, bucket)
+
+
+def test_new_acervo_object_path_uses_uuid_and_keeps_only_the_extension():
+    path = acervo_object_path("proc_01653_26_parecer - instituto taperoá.pdf")
+    assert path.startswith("acervo/")
+    assert path.endswith(".pdf")
+    assert " " not in path and "á" not in path and "taperoá" not in path
+    folder, name = path.split("/")[1:]
+    assert len(folder) == 32 and folder.isalnum()
+    assert len(name) == 36 and name[:-4].isalnum()
+    assert acervo_object_path("modelo decisão.docx").endswith(".docx")
+    with pytest.raises(StorageOperationError, match="Extensão"):
+        acervo_object_path("arquivo.exe")
+
+
+def test_storage_http_error_reports_code_and_category_without_secrets():
+    def opener(request, timeout):
+        raise HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            Message(),
+            BytesIO(b'{"statusCode":"400","error":"InvalidKey","message":"secret=sb_secret_x"}'),
+        )
+
+    storage = SupabaseMinutasStorage(
+        "https://project.supabase.co", "sb_secret_current", opener=opener
+    )
+    with pytest.raises(StorageOperationError, match=r"HTTP 400, solicitação rejeitada, InvalidKey") as caught:
+        storage.upload("acervo/abc/def.pdf", b"%PDF", "application/pdf")
+    assert "sb_secret" not in str(caught.value)
+    assert "Bearer" not in str(caught.value)

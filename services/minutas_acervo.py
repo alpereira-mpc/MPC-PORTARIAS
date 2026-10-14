@@ -12,6 +12,40 @@ from services.minutas_specialties import PROSECUTOR_KEY, CLASSES, scope, suggest
 from services.minutas_library import MinutasValidationError, _validate_file, _normalize_process, _validate_year
 
 
+_PROCESS_IN_NAME = re.compile(r"(?i)(?:proc(?:esso)?|tc)[_ \-.]*(\d{5})[_/\-](\d{2})(?!\d)")
+_PROCESS_IN_TEXT = re.compile(
+    r"(?i)(?:processo|proc\.?)\s*(?:tc)?\s*(?:n[º°o.]*)?\s*[:\-]?\s*(\d{5})\s*/\s*(\d{2})"
+    r"|\bTC\s*(?:n[º°o.]*)?\s*[:\-]?\s*(\d{5})\s*/\s*(\d{2})"
+)
+_ACCOUNT_YEAR = re.compile(
+    r"(?i)exerc[ií]cio(?:\s+(?:das\s+contas|financeiro))?\s*[:\-]?\s*(20\d{2})"
+)
+
+
+def stable_process_key(value):
+    key = re.sub(r"[^0-9a-z]", "", str(value or "").casefold())
+    key = re.sub(r"^(?:processo)?(?:tc)?", "", key)
+    return key if re.fullmatch(r"\d{7}", key) else ""
+
+
+def identify_process_keys(name="", text=""):
+    """Nome do arquivo e cabeçalho; o ano da numeração não é exercício das contas."""
+    name_keys = {a + b for a, b in _PROCESS_IN_NAME.findall(str(name or ""))}
+    text_keys = set()
+    for match in _PROCESS_IN_TEXT.finditer(str(text or "")):
+        first, second, third, fourth = match.groups()
+        if first and second:
+            text_keys.add(first + second)
+        elif third and fourth:
+            text_keys.add(third + fourth)
+    years = {int(year) for year in _ACCOUNT_YEAR.findall(str(text or ""))}
+    return name_keys, text_keys, years
+
+
+def display_process_key(key):
+    return key[:5] + "/" + key[5:] if re.fullmatch(r"\d{7}", key or "") else ""
+
+
 def inventory(snapshot):
     records, documents, extractions = (snapshot[k] for k in ("processos", "documentos", "extracoes"))
     paths = {d["path"]: d for d in documents}
@@ -119,7 +153,27 @@ class MinutasAcervoService:
     def link(self, identifier, specialty, reason):
         return self.repository.link(identifier, specialty, reason, self.library._authorize())
 
-    def preview_upload(self, name, content, role):
+    def find_active_process(self, specialty, key):
+        """Único processo ATIVO da Procuradora na especialidade; ignora o legado."""
+        self.library._authorize()
+        scope(specialty)
+        key = stable_process_key(key)
+        if not key:
+            return None
+        query = display_process_key(key)
+        matches = []
+        seen = set()
+        for row in self.repository.list_records(specialty, query=query, limit=100):
+            if stable_process_key(row.get("processo_chave") or row.get("numero_processo")) != key:
+                continue
+            identifier = str(row["id"])
+            if identifier in seen:
+                continue
+            seen.add(identifier)
+            matches.append(row)
+        return matches[0] if len(matches) == 1 else None
+
+    def preview_upload(self, name, content, role, specialty=None):
         """Extração local explícita; não conserva bytes em caches globais."""
         self.library._authorize()
         from services.minutas_extraction import extract_content
@@ -128,12 +182,48 @@ class MinutasAcervoService:
         file = _validate_file("auditoria" if role == "auditoria" else "parecer", (name, content))
         extracted = extract_content(content, file["mime"], "complementar" if role == "modelo" else role)
         text = extracted["texto_integral"]
-        numbers = set(re.findall(r"(?i)processo\s*(?:TC)?\s*(?:n[º°o.]*)?\s*[:\-]?\s*(\d{5}/\d{2})", text))
-        years = set(re.findall(r"(?i)exerc[ií]cio\s*[:\-]?\s*(20\d{2})", text))
+        name_keys, text_keys, years = identify_process_keys(name, text)
+        warnings = []
+        recovered = None
+        if name_keys and text_keys and name_keys != text_keys:
+            warnings.append("O número extraído do nome do arquivo diverge do texto do documento. Confira antes de cadastrar.")
+        elif len(name_keys | text_keys) > 1:
+            warnings.append("Há mais de um número de processo no documento; selecione o processo já cadastrado.")
+        elif len(name_keys | text_keys) == 1 and specialty:
+            recovered = self.find_active_process(specialty, next(iter(name_keys | text_keys)))
+        processo = ""
+        exercicio = int(next(iter(years))) if len(years) == 1 else None
+        origem = ""
+        classe = ""
+        referencia_id = None
+        suggestion = "Necessita conferência"
+        if recovered:
+            processo = recovered.get("numero_processo") or display_process_key(
+                stable_process_key(recovered.get("processo_chave")))
+            exercicio = int(recovered["exercicio"]) if recovered.get("exercicio") not in (None, "") else exercicio
+            origem = recovered.get("origem") or ""
+            classe = recovered.get("classe") or ""
+            referencia_id = str(recovered["id"])
+            if years and exercicio not in years:
+                warnings.append(
+                    "O exercício indicado no documento diverge do cadastro. "
+                    "Confira o exercício das contas; o ano da numeração do processo não foi utilizado."
+                )
+        else:
+            if len(name_keys) == 1 and (not text_keys or name_keys == text_keys):
+                processo = display_process_key(next(iter(name_keys)))
+            elif len(text_keys) == 1 and not name_keys:
+                processo = display_process_key(next(iter(text_keys)))
+            classified = suggest({"id": "preview", "procuradora_chave": PROSECUTOR_KEY},
+                [{"referencia_id": "preview", "procuradora_chave": PROSECUTOR_KEY, "texto_integral": text}])
+            origem = classified.get("entidade") or ""
+            suggestion = classified.get("especialidade_id") or classified.get("motivo") or ""
+        if recovered:
+            suggestion = "Processo já cadastrado — dados recuperados do acervo"
         return {"nome": name, "sha256": sha256(content).hexdigest(),
-                "processo": next(iter(numbers)) if len(numbers) == 1 else "",
-                "exercicio": int(next(iter(years))) if len(years) == 1 else None,
-                "status": extracted["status"], "texto": text}
+                "processo": processo, "exercicio": exercicio, "origem": origem, "classe": classe,
+                "referencia_id": referencia_id, "recuperado": bool(recovered),
+                "advertencias": warnings, "sugestao": suggestion, "status": extracted["status"]}
 
     def _upload_existing(self, c, specialty, key, year, digest, name, confirm_version):
         """Checks only metadata; reused before upload and inside the short transaction."""
@@ -197,7 +287,8 @@ class MinutasAcervoService:
         year = _validate_year(values.get("exercicio"))
         file = _validate_file("auditoria" if role == "auditoria" else "parecer", upload)
         digest = sha256(file["content"]).hexdigest()
-        path = "acervo/" + str(uuid.uuid4()) + "/" + file["name"]
+        from services.minutas_storage import acervo_object_path
+        path = acervo_object_path(file["name"])
         parameters = (specialty, key, year, digest, file["name"], confirm_version)
         with self.library.repository.store.connection(read_only=True) as c:
             existing, duplicate, unhashed = self._upload_existing(c, *parameters)

@@ -13,12 +13,15 @@ import pytest
 
 from database.minutas_especialidades import MinutasSpecialtiesStore
 from database.minutas_referencias import MinutasReferenciasStore, COLUMNS, COMPLEMENT_COLUMNS, EXTRACTION_COLUMNS
-from services.minutas_acervo import MinutasAcervoService, inventory, migration_plan
+from services.minutas_acervo import (
+    MinutasAcervoService, display_process_key, identify_process_keys, inventory, migration_plan,
+)
 from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionService
 from services.minutas_library import MinutasLibraryService, MinutasAccessDenied, MinutasValidationError
 from services.minutas_specialties import CATALOG, CLASSES, PROSECUTOR_KEY, RPPS, scope, suggest
 from tests.access_testing import TEST_IDENTITY
-from tests.test_minutas_library import _pdf
+from tests.test_minutas_extraction import _pdf as _text_pdf
+from tests.test_minutas_library import _docx, _pdf
 
 
 class SyntheticStore:
@@ -423,6 +426,76 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not any("ts_headline" in query for query in store.queries)
 
 
+def test_batch_processing_summary_declares_total_success_only_when_every_required_step_succeeds():
+    from services.minutas_specialties_ui import batch_processing_summary
+    complete = batch_processing_summary(
+        [{"nome": "a.pdf", "estado": "CADASTRADO", "extracao": "PROCESSADO"},
+         {"nome": "b.pdf", "estado": "CADASTRADO", "extracao": "PROCESSADO"}], "parecer")
+    assert complete["complete"] and complete["cadastrados"] == 2 and complete["processadas"] == 2 and complete["falhas"] == 0
+    modelo = batch_processing_summary(
+        [{"nome": "m.docx", "estado": "CADASTRADO"}, {"nome": "n.docx", "estado": "CADASTRADO"}], "modelo")
+    assert modelo["complete"] and modelo["processadas"] == 0
+    assert not batch_processing_summary(
+        [{"nome": "a.pdf", "estado": "CADASTRADO", "extracao": "ATENCAO"}], "parecer")["complete"]
+    assert not batch_processing_summary(
+        [{"nome": "a.pdf", "estado": "DUPLICADO"}], "parecer")["complete"]
+    assert not batch_processing_summary(
+        [{"nome": "a.pdf", "falha": "HTTP 400"}], "parecer")["complete"]
+
+
+def test_batch_upload_ui_keeps_a_single_themed_confirmation_across_reruns(environment, monkeypatch):
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+    from services import minutas_ia_ui, ai_service
+    store, storage = environment
+    seed(store)
+    monkeypatch.setattr(ai_service, "analisar_fundamentos_minuta", lambda *a, **k: (_ for _ in ()).throw(AssertionError("IA")))
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *args, administrative=False:
+        library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
+    def page():
+        from services.minutas_ia_ui import render
+        from tests.access_testing import TEST_IDENTITY
+        render(None, TEST_IDENTITY)
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.radio(key="minutas_acervo_mode").set_value("Adicionar documentos").run()
+    app.session_state["minutas_batch_result_" + RPPS] = {
+        "signature": "lote-persistido",
+        "summary": {"cadastrados": 2, "processadas": 2, "atencao": 0, "duplicados": 0, "falhas": 0, "complete": True},
+        "details": [
+            {"nome": "parecer taperoá.pdf", "estado": "CADASTRADO", "extracao": "PROCESSADO"},
+            {"nome": "relatorio.pdf", "estado": "CADASTRADO", "extracao": "PROCESSADO"},
+        ],
+    }
+    app.run()
+    html = " ".join(item.value for item in app.markdown)
+    assert html.count("Cadastro e processamento concluídos!") == 1
+    assert "2 documento(s) cadastrado(s)" in html
+    assert "2 extração(ões) PROCESSADA(S)" in html
+    assert "0 falha(s)" in html
+    assert not app.success and not app.warning and not app.error
+    assert "Ver detalhes do processamento" in [item.label for item in app.expander]
+    app.radio(key="minutas_active_view").set_value("Pesquisa Jurídica").run()
+    app.radio(key="minutas_active_view").set_value("Acervo").run()
+    app.radio(key="minutas_acervo_mode").set_value("Adicionar documentos").run()
+    html = " ".join(item.value for item in app.markdown)
+    assert html.count("Cadastro e processamento concluídos!") == 1
+    assert "minutas_batch_result_" + RPPS in app.session_state
+    app.session_state["minutas_batch_result_" + RPPS] = {
+        "signature": "lote-parcial",
+        "summary": {"cadastrados": 1, "processadas": 0, "atencao": 1, "duplicados": 1, "falhas": 0, "complete": False},
+        "details": [
+            {"nome": "a.pdf", "estado": "CADASTRADO", "extracao": "ATENCAO", "extracao_erro": "texto insuficiente"},
+            {"nome": "b.pdf", "estado": "DUPLICADO"},
+        ],
+    }
+    app.run()
+    html = " ".join(item.value for item in app.markdown)
+    assert "Cadastro e processamento concluídos!" not in html
+    assert "concluídos com ressalvas" in html
+    assert "1 duplicidade(s)" in html
+    assert not app.success
+
+
 def test_duplicate_legacy_without_hash_does_not_require_reupload(environment):
     store, storage = environment
     target = seed(store)
@@ -479,6 +552,94 @@ def test_conflicting_formal_class_is_not_silently_assigned_to_rpps():
     result = suggest(record, [{"referencia_id": "a", "procuradora_chave": PROSECUTOR_KEY,
         "texto_integral": "Origem: Instituto de Previdência\nNatureza: Prestação de Contas Anual"}])
     assert result["estado"] == "PENDENTE" and result["especialidade_id"] is None
+
+
+def test_identify_process_keys_reads_filename_and_keeps_numbering_year_off_the_accounts_year():
+    name_keys, text_keys, years = identify_process_keys(
+        "proc_02119_26_relatorio_de_analise_defesa.pdf",
+        "Processo TC nº 02119/20\nExercício: 2026",
+    )
+    assert name_keys == {"0211926"} and text_keys == {"0211920"} and years == {2026}
+    name_keys, text_keys, years = identify_process_keys(
+        "TC 02434/25 - Instituto.pdf",
+        "TC n.º 02434/25\nExercício das contas: 2024",
+    )
+    assert name_keys == text_keys == {"0243425"} and years == {2024}
+    assert display_process_key("0267425") == "02674/25"
+    assert identify_process_keys("parecer.pdf", "Sem número") == (set(), set(), set())
+
+
+def test_audit_report_preview_recovers_active_process_and_ignores_legacy(separated):
+    store, storage = separated
+    hidden = seed(store, process="TC 02119/26", entity="Instituto legado")
+    with store.connection() as c:
+        c.execute("UPDATE minutas_referencias SET acervo='legado' WHERE id=?", (hidden["id"],))
+    admin = MinutasAcervoService(library(store, storage))
+    processes = [
+        ("02119/26", 2024, "Instituto de Previdência do Município de Sertãozinho"),
+        ("02674/25", 2023, "Instituto de Previdência do Município de Dona Inês"),
+        ("02434/25", 2024, "Instituto de Previdência do Município de Soledade"),
+        ("01880/25", 2022, "Instituto de Previdência do Município de Alhandra"),
+        ("01653/26", 2025, "Instituto de Previdência do Município de Taperoá"),
+        ("02720/25", 2024, "Instituto de Previdência do Município de Exemplo"),
+    ]
+    ids = {}
+    opinion = (
+        "EMENTA: Prestação de contas anuais.\n"
+        "O processo foi instruído pela Auditoria e houve manifestação da defesa.\n"
+        "Passo à análise ministerial dos documentos e das normas aplicáveis.\n"
+        "Ante o exposto, opino pela regularidade com ressalvas das contas.\n"
+        "É o parecer."
+    )
+    for number, year, origin in processes:
+        result = admin.add_file(RPPS, {"numero_processo": number, "exercicio": year, "classe": "PCA",
+            "origem": origin, "fundamento": "Conferido"},
+            (f"parecer_{number.replace('/', '_')}.pdf", _text_pdf(opinion + origin)), role="parecer")
+        ids[number] = result["referencia_id"]
+        assert result["estado"] == "CADASTRADO"
+    report = _text_pdf("Relatório de Análise de Defesa\nProcesso TC nº 02119/26\nSem campo de origem.")
+    recovered = admin.preview_upload("proc_02119_26_relatorio_de_analise_defesa.pdf", report, "auditoria", RPPS)
+    assert recovered["recuperado"] and recovered["referencia_id"] == ids["02119/26"] != hidden["id"]
+    assert recovered["origem"] == "Instituto de Previdência do Município de Sertãozinho"
+    assert recovered["exercicio"] == 2024
+    assert "dados recuperados do acervo" in recovered["sugestao"]
+    wrong_year = admin.preview_upload(
+        "proc_02674_25_relatorio_de_analise_defesa.pdf",
+        _text_pdf("Relatório de Análise de Defesa\nProcesso nº 02674/25\nExercício: 2026"),
+        "complementar", RPPS)
+    assert wrong_year["recuperado"] and wrong_year["exercicio"] == 2023
+    assert wrong_year["origem"] == "Instituto de Previdência do Município de Dona Inês"
+    assert any("exercício" in item.casefold() for item in wrong_year["advertencias"])
+    conflict = admin.preview_upload(
+        "proc_02119_26_relatorio_de_analise_defesa.pdf",
+        _text_pdf("Processo TC nº 02119/20"),
+        "auditoria", RPPS)
+    assert not conflict["recuperado"] and not conflict["processo"]
+    assert any("diverge" in item.casefold() for item in conflict["advertencias"])
+    missing = admin.preview_upload("sem_numero.pdf", _text_pdf("Relatório sem identificação"), "auditoria", RPPS)
+    assert not missing["recuperado"] and not missing["processo"]
+    batch = [
+        admin.preview_upload(f"proc_{number.replace('/', '_')}_relatorio_de_analise_defesa.pdf",
+            _text_pdf(f"Relatório de Análise de Defesa do processo {number}"), "auditoria", RPPS)
+        for number, year, origin in processes
+    ]
+    assert [item["referencia_id"] for item in batch] == [ids[number] for number, _, _ in processes]
+    attached = admin.add_file(RPPS, {"numero_processo": "02119/26", "exercicio": 2024, "classe": "PCA",
+        "origem": recovered["origem"], "fundamento": "Conferido"}, ("proc_02119_26_relatorio.pdf", report), role="auditoria")
+    assert attached["estado"] == "CADASTRADO" and attached["referencia_id"] == ids["02119/26"]
+    with pytest.raises(ValueError, match="outro processo"):
+        admin.add_file(RPPS, {"numero_processo": "02674/25", "exercicio": 2023, "classe": "PCA",
+            "origem": "Instituto de Previdência do Município de Dona Inês", "fundamento": "Conferido"},
+                       ("copia.pdf", report), role="auditoria")
+    parecer = admin.preview_upload("parecer.pdf", _text_pdf(
+        "Origem: Instituto de Previdência do Município de Novo\nNatureza: Prestação de Contas Anual\n"
+        "Processo TC nº 03333/26\nExercício: 2026"), "parecer", RPPS)
+    assert not parecer["recuperado"] and parecer["processo"] == "03333/26"
+    assert "Instituto de Previdência do Município de Novo" in parecer["origem"]
+    isolated = admin.preview_upload("proc_09999_20_relatorio.pdf", _text_pdf("Relatório legado"), "auditoria", RPPS)
+    assert not isolated["recuperado"]
+    with store.connection() as c:
+        assert c.execute("SELECT acervo FROM minutas_referencias WHERE id=?", (hidden["id"],)).fetchone()["acervo"] == "legado"
 
 
 def test_bulk_upload_same_content_cannot_create_another_process(environment):
@@ -640,3 +801,54 @@ def test_outdated_text_does_not_automatically_classify_rpps(environment):
     plan = MinutasAcervoService(library(store, storage)).dry_run()
     assert all(item["estado"] != "CLASSIFICADO" for item in plan["itens"])
     assert len(plan["contagens"]["nao_indexados"]) == 2
+
+
+def test_acervo_storage_keeps_original_names_and_does_not_rewrite_legacy_objects(environment):
+    store, storage = environment
+    legacy = seed(store)
+    legacy_path = legacy["parecer_path"]
+    storage.objects[legacy_path] = _pdf(b"legado")
+    scoped = library(store, storage)
+    admin = MinutasAcervoService(scoped)
+    admin.apply(admin.dry_run(), {"identificador": "teste", "restauracao_verificada": True})
+    values = {"numero_processo": "12345/26", "exercicio": 2026, "classe": "PCA",
+              "origem": "Instituto de Previdência", "fundamento": "Conferido"}
+    original = "proc_01653_26_parecer - município de Taperoá - sanção.pdf"
+    opinion = (
+        "EMENTA: Prestação de contas anuais. Regularidade com ressalvas.\n\n"
+        "O processo foi instruído pela Auditoria e houve manifestação da defesa.\n"
+        "Passo à análise ministerial dos documentos e das normas aplicáveis.\n"
+        "Ante o exposto, opino pela regularidade com ressalvas das contas.\n"
+        "É o parecer."
+    )
+    content = _text_pdf(opinion)
+    first = admin.add_file(RPPS, values, (original, content), role="parecer")
+    assert first["estado"] == "CADASTRADO"
+    assert re.fullmatch(r"acervo/[0-9a-f]{32}/[0-9a-f]{32}\.pdf", first["path"])
+    assert original not in first["path"] and " " not in first["path"] and "á" not in first["path"]
+    digest = sha256(content).hexdigest()
+    assert sha256(storage.objects[first["path"]]).hexdigest() == digest
+    with store.connection() as c:
+        stored = dict(c.execute("SELECT nome,sha256,path FROM minutas_acervo_documentos WHERE path=?",
+                                (first["path"],)).fetchone())
+    assert stored["nome"] == original and stored["sha256"] == digest
+    downloaded = scoped.download_path(first["referencia_id"], first["path"])
+    assert downloaded.name == original and downloaded.content == content
+    extracted = MinutasExtractionService(scoped).reprocess_document(first["referencia_id"], first["path"])
+    assert extracted[0]["status"] == "PROCESSADO" and extracted[0]["arquivo_nome"] == original
+    assert "regularidade com ressalvas" in extracted[0]["texto_integral"].casefold()
+    same_name = admin.add_file(
+        RPPS, values, (original, _text_pdf(opinion.replace("ressalvas", "irregularidade"))),
+        role="parecer", confirm_version=True)
+    assert same_name["estado"] == "CADASTRADO" and same_name["path"] != first["path"]
+    with store.connection() as c:
+        names = [row["nome"] for row in c.execute(
+            "SELECT nome FROM minutas_acervo_documentos WHERE referencia_id=? ORDER BY posicao",
+            (first["referencia_id"],)).fetchall()]
+    assert names == [original, original]
+    model = admin.add_file(RPPS, values, ("modelo - decisão e instrução.docx", _docx()), role="modelo")
+    assert re.fullmatch(r"acervo/[0-9a-f]{32}/[0-9a-f]{32}\.docx", model["path"])
+    model_file = scoped.download_path(first["referencia_id"], model["path"])
+    assert model_file.name == "modelo - decisão e instrução.docx"
+    assert scoped.download_path(legacy["id"], legacy_path).content == _pdf(b"legado")
+    assert legacy_path in storage.objects and storage.objects[legacy_path] == _pdf(b"legado")

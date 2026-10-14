@@ -153,6 +153,8 @@ class MinutasLibraryService:
     @staticmethod
     def _path(identifier, kind, name):
         suffix = PurePath(name).suffix.lower()
+        if suffix not in {".pdf", ".docx"}:
+            raise MinutasValidationError("Aceitos apenas PDF e DOCX.")
         return f"referencias/{identifier}/{kind}/{uuid.uuid4().hex}{suffix}"
 
     def create(self, values, auditoria, parecer):
