@@ -239,6 +239,21 @@ def _clean_text(value):
     return "\n".join(lines).strip()
 
 
+def _paragraph_blocks(structured, legacy):
+    if isinstance(structured, list):
+        return [
+            block.strip()
+            for item in structured
+            for block in re.split(r"\n\s*\n", str(item or "").strip())
+            if block.strip()
+        ]
+    return [
+        block.strip()
+        for block in re.split(r"\n\s*\n", str(legacy or "").strip())
+        if block.strip()
+    ]
+
+
 def _canonical_process_key(value):
     normalized = re.sub(r"\s+", " ", _plain(value)).strip()
     normalized = re.sub(r"^processo\s*", "", normalized)
@@ -1610,7 +1625,26 @@ class MinutasGenerationService:
             raise MinutasGenerationError(
                 "A IA não retornou fundamentação estruturada válida."
             )
+        for field in ("relatorio_paragrafos", "fundamentacao_geral_paragrafos"):
+            paragraphs = structure.get(field)
+            if paragraphs is not None and (
+                not isinstance(paragraphs, list)
+                or not paragraphs
+                or any(not str(item or "").strip() for item in paragraphs)
+            ):
+                raise MinutasGenerationError(
+                    "A IA não retornou a estrutura de parágrafos válida."
+                )
         for topic in topics:
+            paragraphs = topic.get("paragrafos")
+            if paragraphs is not None and (
+                not isinstance(paragraphs, list)
+                or not paragraphs
+                or any(not str(item or "").strip() for item in paragraphs)
+            ):
+                raise MinutasGenerationError(
+                    "A IA não retornou os parágrafos da fundamentação válidos."
+                )
             identifiers = topic["irregularidades_ids"]
             assessments = topic["avaliacoes_irregularidades"]
             assessment_ids = [
@@ -1663,19 +1697,33 @@ class MinutasGenerationService:
 
     @staticmethod
     def _structure_markdown(structure):
+        report = "\n\n".join(
+            _paragraph_blocks(
+                structure.get("relatorio_paragrafos"), structure["relatorio"]
+            )
+        )
+        general_foundation = "\n\n".join(
+            _paragraph_blocks(
+                structure.get("fundamentacao_geral_paragrafos"),
+                structure["fundamentacao_geral"],
+            )
+        )
         sections = [
             structure["identificacao_processual"].strip(),
             "## Ementa\n\n" + structure["ementa"].strip(),
-            "## Relatório\n\n" + structure["relatorio"].strip(),
-            "## Fundamentação\n\n" + structure["fundamentacao_geral"].strip(),
+            "## Relatório\n\n" + report,
+            "## Fundamentação\n\n" + general_foundation,
         ]
         for topic in structure["topicos_irregularidades"]:
             if isinstance(topic, dict) and str(topic.get("texto") or "").strip():
+                topic_text = "\n\n".join(
+                    _paragraph_blocks(topic.get("paragrafos"), topic["texto"])
+                )
                 sections.append(
                     "### "
                     + str(topic.get("titulo") or "Irregularidade").strip()
                     + "\n\n"
-                    + str(topic["texto"]).strip()
+                    + topic_text
                 )
         request_texts = [request.strip() for request in structure["pedidos"]]
         request_keys = {_normalized_support(request) for request in request_texts}

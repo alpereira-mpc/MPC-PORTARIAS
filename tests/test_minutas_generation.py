@@ -1025,6 +1025,48 @@ def test_existing_document_and_page_without_cure_excerpt_is_warned():
     )
 
 
+def test_verified_cure_with_specific_support_is_not_warned():
+    target, history, other, rows = _scenario()
+
+    def generate(context):
+        source = context["documentos_processo_alvo"][0]
+        unit = source["conteudo"][0]
+        support = next(
+            line.strip() for line in unit["texto"].splitlines() if line.strip()
+        )
+        structure = _draft_structure(
+            ministerial_treatment="PARCIALMENTE_ACOLHIDA",
+            divergence_grounds=(
+                "O comprovante da página 1 demonstra o recolhimento no prazo.",
+            ),
+            cure_state="COMPROVADO",
+            cure_sources=(
+                {
+                    "fonte_id": source["fonte_id"],
+                    "pagina": unit.get("pagina", 0),
+                    "trecho_suporte": support,
+                },
+            ),
+        )
+        structure["topicos_irregularidades"][0]["texto"] = (
+            "A irregularidade foi sanada com suporte documental verificável."
+        )
+        return _draft_result(context, estrutura=structure)
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=generate,
+    )
+
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert not any(
+        "saneamento" in warning.casefold()
+        for warning in result["advertencias_qualidade"]
+    )
+
+
 def test_coherent_draft_renders_numbered_requests_and_closing():
     target, history, other, rows = _scenario()
     service = MinutasGenerationService(
@@ -1066,6 +1108,45 @@ def test_duplicate_request_line_is_rendered_only_in_numbered_requests():
     request = result["estrutura"]["pedidos"][0]
     assert result["texto"].count(request) == 1
     assert "1. " + request in result["texto"]
+
+
+def test_structured_paragraphs_are_used_without_breaking_legacy_structures():
+    structure = _draft_structure()
+    structure["relatorio"] = "Relatório legado."
+    structure["relatorio_paragrafos"] = [
+        "Apresentação do processo.",
+        "É o relatório. Passo a opinar.",
+    ]
+    structure["fundamentacao_geral_paragrafos"] = [
+        "Fundamentação geral em parágrafo próprio."
+    ]
+    structure["topicos_irregularidades"][0]["paragrafos"] = [
+        "Constatação da Auditoria.",
+        "Alegação da defesa.",
+        "Análise ministerial.",
+    ]
+
+    validated = MinutasGenerationService._validate_structure(structure)
+    rendered = MinutasGenerationService._structure_markdown(validated)
+
+    assert "Relatório legado." not in rendered
+    assert "Apresentação do processo.\n\nÉ o relatório." in rendered
+    assert "Constatação da Auditoria.\n\nAlegação da defesa." in rendered
+    assert MinutasGenerationService._validate_structure(_draft_structure())
+
+
+def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
+    prompt = ai_service.PROMPT_MINUTA_PARECER
+    schema = ai_service._MINUTA_OUTPUT_SCHEMA
+
+    assert "Não crie pedido expresso de afastamento" in prompt
+    assert "Preserve pedido negativo somente" in prompt
+    assert "aproveite de modo explícito o critério" in prompt
+    assert 'encerramento deve ser apenas "É o Parecer."' in prompt
+    assert "relatorio_paragrafos" in schema["required"]
+    assert "fundamentacao_geral_paragrafos" in schema["required"]
+    topic_schema = schema["properties"]["topicos_irregularidades"]["items"]
+    assert "paragrafos" in topic_schema["required"]
 
 
 def test_rag_queries_are_concise_and_built_from_irregularities_and_norms():

@@ -159,6 +159,36 @@ def test_docx_is_editable_a4_and_matches_institutional_geometry():
     assert document.styles["Normal"].font.size.pt == pytest.approx(12)
 
 
+def test_docx_reproduces_logo_header_and_spacing_without_empty_body_paragraphs():
+    exported = _export()
+    document = Document(BytesIO(exported.content))
+    section = document.sections[0]
+    header = section.header
+    drawing_paragraph = next(
+        paragraph for paragraph in header.paragraphs if paragraph._p.xpath(".//w:drawing")
+    )
+    extent = drawing_paragraph._p.xpath(".//wp:extent")[0]
+    body_paragraphs = document.paragraphs
+    ementa = next(
+        paragraph for paragraph in body_paragraphs if paragraph.text.startswith("Ementa:")
+    )
+    nature = next(
+        paragraph
+        for paragraph in body_paragraphs
+        if paragraph.text.startswith("Natureza:")
+    )
+
+    assert section.different_first_page_header_footer is False
+    assert section.header_distance.cm == pytest.approx(0, abs=0.01)
+    assert len(_image_blobs(document)) == 1
+    assert int(extent.get("cx")) / 914400 == pytest.approx(2.62, abs=0.01)
+    assert int(extent.get("cy")) / 914400 == pytest.approx(1.84, abs=0.01)
+    assert drawing_paragraph.paragraph_format.space_before.pt == pytest.approx(24)
+    assert nature.paragraph_format.space_after.pt == pytest.approx(48)
+    assert ementa.style.paragraph_format.space_after.pt == pytest.approx(72)
+    assert not any(not paragraph.text for paragraph in body_paragraphs)
+
+
 def test_docx_uses_original_logo_and_contains_only_target_content():
     exported = _export()
     output = Document(BytesIO(exported.content))
@@ -234,6 +264,68 @@ def test_docx_preserves_structure_formatting_numbering_and_alineas():
     assert 'w:val="decimal"' in numbering
     assert 'w:val="lowerLetter"' in numbering
     assert 'w:val="%1)"' in numbering
+
+
+def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
+    structure = _structure()
+    structure["relatorio"] = "Texto legado que não deve prevalecer."
+    structure["relatorio_paragrafos"] = [
+        "Apresentação do processo.",
+        "Histórico da instrução.",
+        "É o relatório. Passo a opinar.",
+    ]
+    structure["fundamentacao_geral_paragrafos"] = [
+        "Premissas jurídicas gerais.",
+        "Limites da prova documental.",
+    ]
+    structure["topicos_irregularidades"][0]["paragrafos"] = [
+        "A Auditoria manteve a irregularidade.",
+        "A defesa apresentou sua alegação.",
+        "A análise ministerial confrontou os elementos.",
+    ]
+
+    document = Document(BytesIO(_export(structure=structure).content))
+    texts = [paragraph.text for paragraph in document.paragraphs]
+
+    assert "Texto legado que não deve prevalecer." not in texts
+    for expected in (
+        "Apresentação do processo.",
+        "Histórico da instrução.",
+        "É o relatório. Passo a opinar.",
+        "A Auditoria manteve a irregularidade.",
+        "A defesa apresentou sua alegação.",
+        "A análise ministerial confrontou os elementos.",
+    ):
+        assert texts.count(expected) == 1
+
+    legacy = Document(BytesIO(_export(structure=_structure()).content))
+    assert any(
+        paragraph.text.startswith("Relatório processual")
+        for paragraph in legacy.paragraphs
+    )
+
+
+def test_docx_keeps_only_footer_warning_and_preserves_justified_negative_request():
+    structure = _structure()
+    structure["pedidos"] = [
+        "Afaste-se a multa, diante da controvérsia expressamente fundamentada."
+    ]
+    structure["encerramento"] = (
+        "É o Parecer. Documento experimental sem caráter oficial e sujeito à revisão."
+    )
+
+    document = Document(BytesIO(_export(structure=structure).content))
+    body_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    footer_text = "\n".join(
+        paragraph.text
+        for section in document.sections
+        for paragraph in section.footer.paragraphs
+    )
+
+    assert "Afaste-se a multa" in body_text
+    assert body_text.count("É o Parecer.") == 1
+    assert "experimental" not in body_text.casefold()
+    assert footer_text.count("MINUTA EXPERIMENTAL — SUJEITA À REVISÃO HUMANA") == 1
 
 
 @pytest.mark.parametrize("long", (False, True))

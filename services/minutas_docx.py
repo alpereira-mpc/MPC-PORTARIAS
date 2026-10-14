@@ -135,9 +135,9 @@ def _configure_styles(document):
         "Minuta Ementa",
         size=11,
         left_cm=6.752,
-        after_pt=12,
+        after_pt=72,
     )
-    _configure_style(document, "Minuta Corpo", size=12, first_cm=3, after_pt=6)
+    _configure_style(document, "Minuta Corpo", size=12, first_cm=3, after_pt=12)
     _configure_style(
         document,
         "Minuta Irregularidade",
@@ -281,7 +281,14 @@ def _add_text(paragraph, text, *, size=12, bold=None, italic=None):
         _set_run_font(run, size, bold=bold, italic=italic)
 
 
-def _blocks(value):
+def _blocks(value, structured=None):
+    if isinstance(structured, list):
+        return [
+            block.strip()
+            for item in structured
+            for block in re.split(r"\n\s*\n", str(item or "").strip())
+            if block.strip()
+        ]
     return [
         block.strip()
         for block in re.split(r"\n\s*\n", str(value or "").strip())
@@ -289,8 +296,8 @@ def _blocks(value):
     ]
 
 
-def _add_body(document, value, style="Minuta Corpo"):
-    for block in _blocks(value):
+def _add_body(document, value, style="Minuta Corpo", *, paragraphs=None):
+    for block in _blocks(value, paragraphs):
         selected_style = (
             "Minuta Transcrição"
             if block.startswith(('"', "“", "‘", "'"))
@@ -310,6 +317,12 @@ def _conclusion(structure):
         if _normalized_support(unnumbered) not in request_keys:
             kept.append(line)
     return "\n".join(kept).strip()
+
+
+def _closing(value):
+    if re.search(r"\bé\s+o\s+parecer\.", str(value or ""), re.IGNORECASE):
+        return "É o Parecer."
+    return str(value or "").strip()
 
 
 def _add_requests(document, requests):
@@ -382,6 +395,7 @@ def _build_docx(target, structure, profile):
     header = section.header
     paragraph = header.paragraphs[0]
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    paragraph.paragraph_format.space_before = Pt(24)
     paragraph.paragraph_format.space_after = Pt(0)
     run = paragraph.add_run()
     logo = run.add_picture(
@@ -411,30 +425,45 @@ def _build_docx(target, structure, profile):
         "Natureza: Prestação de Contas Anuais - "
         f"exercício {int(target['exercicio'])}"
     )
-    for line in identification:
+    for index, line in enumerate(identification):
         item = document.add_paragraph(style="Minuta Identificação")
         _add_text(item, line, bold=True)
-    for _index in range(4):
-        spacer = document.add_paragraph()
-        spacer.paragraph_format.space_after = Pt(0)
+        if index == len(identification) - 1:
+            item.paragraph_format.space_after = Pt(48)
 
     ementa = document.add_paragraph(style="Minuta Ementa")
     _add_text(ementa, f"Ementa: {structure['ementa']}", size=11)
-    _add_body(document, structure["relatorio"])
-    _add_body(document, structure["fundamentacao_geral"])
+    _add_body(
+        document,
+        structure["relatorio"],
+        paragraphs=structure.get("relatorio_paragrafos"),
+    )
+    _add_body(
+        document,
+        structure["fundamentacao_geral"],
+        paragraphs=structure.get("fundamentacao_geral_paragrafos"),
+    )
     for topic in structure["topicos_irregularidades"]:
         heading = document.add_paragraph(style="Minuta Irregularidade")
         _add_text(heading, topic["titulo"], bold=True, italic=True)
-        _add_body(document, topic["texto"])
+        _add_body(
+            document,
+            topic["texto"],
+            paragraphs=topic.get("paragrafos"),
+        )
 
     conclusion = _conclusion(structure)
     if conclusion:
         _add_body(document, conclusion)
     _add_requests(document, structure["pedidos"])
-    _add_body(document, structure["encerramento"], style="Minuta Encerramento")
+    _add_body(
+        document,
+        _closing(structure["encerramento"]),
+        style="Minuta Encerramento",
+    )
 
-    document.add_paragraph()
     name = document.add_paragraph(style="Minuta Procuradora")
+    name.paragraph_format.space_before = Pt(24)
     _add_text(name, profile["nome"], size=14, bold=True, italic=True)
     title = document.add_paragraph(style="Minuta Cargo")
     _add_text(title, profile["cargo"], size=11)
