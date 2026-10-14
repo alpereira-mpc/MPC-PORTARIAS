@@ -128,6 +128,22 @@ class MinutasLibraryService:
         self.storage = storage
         self.identity = dict(identity or {})
         self.secrets = secrets
+        self.specialty_id = getattr(repository, "specialty_id", None)
+
+    def require_specialty(self):
+        self._authorize()
+        from services.minutas_specialties import scope
+        return scope(self.specialty_id)
+
+    def download_path(self, identifier, path):
+        """Revalidate the scoped relationship, including retained document versions."""
+        record = self.get(identifier)
+        from services.minutas_extraction import MinutasExtractionService
+        documents = MinutasExtractionService(self)._documents(record, include_models=True)
+        document = next((d for d in documents if d["path"] == path), None)
+        if document is None:
+            raise MinutasValidationError("Documento fora do acervo selecionado.")
+        return Download(document["nome"], document["mime"], self.storage.download(path))
 
     def _authorize(self):
         if not can_access_minutas_piloto(self.identity, self.secrets):
@@ -200,12 +216,12 @@ class MinutasLibraryService:
 
     def list(self):
         self._authorize()
-        return self.repository.list()
+        return [record for record in self.repository.list() if record.get("procuradora") == PROCURADORA]
 
     def get(self, identifier):
         self._authorize()
         record = self.repository.get(identifier)
-        if not record:
+        if not record or record.get("procuradora") != PROCURADORA:
             raise MinutasValidationError("Referência não encontrada.")
         return record
 

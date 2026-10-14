@@ -59,6 +59,7 @@ class Download:
 
 
 class Library:
+    specialty_id = "elvira.pca.rpps"
     def __init__(self, rows=(), *, authorized=True):
         self.repository = SearchRepository(rows)
         self.authorized = authorized
@@ -204,6 +205,7 @@ def test_postgresql_query_filters_valid_opinions_and_blocks_cross_prosecutor_lin
         "Lei 8.429",
         PROCURADORA.casefold(),
         EXTRACTOR_VERSION,
+        specialty_id="elvira.pca.rpps",
         year=2025,
         subtype="Prefeitura",
         exclude_reference_id="target-reference",
@@ -223,10 +225,12 @@ def test_postgresql_query_filters_valid_opinions_and_blocks_cross_prosecutor_lin
     assert "e.procuradora_chave=?" in sql
     assert "r.procuradora_chave=?" in sql
     assert "e.procuradora_chave=r.procuradora_chave" in sql
-    assert "e.arquivo_path=r.parecer_path" in sql
-    assert "e.arquivo_nome=r.parecer_nome" in sql
-    assert "e.arquivo_mime=r.parecer_mime" in sql
-    assert "e.arquivo_tamanho=r.parecer_tamanho" in sql
+    assert "doc.path=e.arquivo_path" in sql
+    assert "doc.nome=e.arquivo_nome" in sql
+    assert "doc.mime=e.arquivo_mime" in sql
+    assert "doc.tamanho=e.arquivo_tamanho" in sql
+    assert "mv.especialidade_id=?" in sql
+    assert "mc.estado='CLASSIFICADO'" in sql
     assert "e.arquivo_sha256<>repeat('0',64)" in sql
     assert "e.referencia_id<>?" in sql
     assert "r.processo_chave<>?" in sql
@@ -248,6 +252,7 @@ def test_result_context_uses_ranked_fragments_around_distinct_occurrences():
         "contribuição previdenciária",
         PROCURADORA.casefold(),
         EXTRACTOR_VERSION,
+        specialty_id="elvira.pca.rpps",
     )
 
     sql = store.connection_instance.query
@@ -307,7 +312,7 @@ def test_search_ui_queries_only_after_submit_and_keeps_result_on_rerun(monkeypat
                 ],
             }
 
-    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args: object())
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args: Library())
     monkeypatch.setattr(minutas_ia_ui, "MinutasSearchService", Search)
 
     def page():

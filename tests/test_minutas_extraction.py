@@ -124,6 +124,7 @@ class FakeStorage:
 
 
 class FakeLibrary:
+    specialty_id = "elvira.pca.rpps"
     def __init__(self, repository, storage, authorized=True):
         self.repository = repository
         self.storage = storage

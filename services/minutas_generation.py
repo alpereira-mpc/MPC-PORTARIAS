@@ -15,10 +15,6 @@ from services.minutas_library import MinutasValidationError, PROCURADORA
 from services.minutas_search import MinutasSearchService
 
 
-HISTORICAL_TEST_PROCESS_KEY = "0165326"
-HISTORICAL_TEST_PROCESS_KEYS = frozenset(
-    {HISTORICAL_TEST_PROCESS_KEY, "0272025", "0149926", "0265025"}
-)
 MAX_CONTEXT_BYTES = ai_service.MINUTA_MAX_CONTEXT_BYTES
 MAX_HISTORICAL_REFERENCES = 3
 MAX_RAG_QUERIES = 4
@@ -711,15 +707,6 @@ def _sanitize_draft_structure(structure):
     return sanitized
 
 
-def _is_historical_test_process(record):
-    keys = {
-        key
-        for field in ("processo_chave", "numero_processo")
-        if (key := _canonical_process_key(record.get(field)))
-    }
-    return len(keys) == 1 and keys.issubset(HISTORICAL_TEST_PROCESS_KEYS)
-
-
 def _terms(value):
     return {
         token
@@ -1252,7 +1239,7 @@ class MinutasGenerationService:
 
     def __init__(self, library, analyze=None, generate=None, search=None):
         self.library = library
-        self.extractor = MinutasExtractionService(library)
+        self.extractor = MinutasExtractionService(library, cache_documents=True)
         self.search = search or MinutasSearchService(library)
         self._analyze = analyze or ai_service.analisar_fundamentos_minuta
         self._generate = generate or ai_service.gerar_minuta_parecer
@@ -1263,7 +1250,14 @@ class MinutasGenerationService:
         self._source_state_cache = {}
 
     def _records(self):
+        from services.minutas_specialties import scope, RPPS
+        if scope(getattr(self.library, "specialty_id", None))["id"] != RPPS:
+            raise MinutasGenerationError("Esta especialidade ainda não possui motor habilitado.")
         if self._records_cache is None:
+            if hasattr(self.library.repository, "profile"):
+                profile = self.library.repository.profile()
+                if profile["motor"] != "pca-rpps-v1" or profile["config_versao"] != "1":
+                    raise MinutasGenerationError("Configuração jurídica ainda não habilitada neste motor.")
             self._records_cache = tuple(self.library.list())
         return self._records_cache
 
@@ -1271,20 +1265,26 @@ class MinutasGenerationService:
         """Força revisão atual das fontes antes de uma ação explícita."""
         self._records_cache = None
         self._source_state_cache.pop(str(target["id"]), None)
+        self.extractor.document_cache.clear()
 
     def targets(self):
         return [
             record
             for record in self._records()
             if record.get("procuradora") == PROCURADORA
-            and _is_historical_test_process(record)
+            and record.get("especialidade_id") == self.library.specialty_id
+            and record.get("classificacao_estado") == "CLASSIFICADO"
         ]
 
     @staticmethod
     def _validate_target(target):
-        if not _is_historical_test_process(target):
+        from services.minutas_specialties import RPPS
+        keys = {_canonical_process_key(target.get(field)) for field in ("processo_chave", "numero_processo")}
+        if "" in keys or len(keys) != 1:
+            raise MinutasGenerationError("Identificação do processo inválida ou conflitante.")
+        if target.get("especialidade_id") != RPPS or target.get("classificacao_estado") != "CLASSIFICADO":
             raise MinutasGenerationError(
-                "O processo selecionado não está habilitado para a validação cruzada."
+                "O processo não está classificado na especialidade RPPS habilitada."
             )
         if target.get("procuradora") != PROCURADORA:
             raise MinutasGenerationError("Procuradora não autorizada para este teste.")
@@ -1299,7 +1299,8 @@ class MinutasGenerationService:
             record
             for record in self._records()
             if record.get("procuradora_chave") == target["procuradora_chave"]
-            and _is_historical_test_process(record)
+            and record.get("especialidade_id") == target.get("especialidade_id")
+            and record.get("classificacao_estado") == "CLASSIFICADO"
         ]
         records = {str(record["id"]): record for record in records_list}
         inventory = self.library.repository.list_extraction_inventory_by_procuradora(
@@ -1353,8 +1354,12 @@ class MinutasGenerationService:
             )
         }
         revision_payload = {
+            "especialidade": target.get("especialidade_id"),
+            "configuracao": (self.library.repository.profile()
+                             if hasattr(self.library.repository, "profile") else {}),
             "records": [
-                (str(record["id"]), str(record.get("atualizado_em") or ""))
+                (str(record["id"]), str(record.get("atualizado_em") or ""),
+                 record.get("especialidade_id"), record.get("classificacao_revisao"))
                 for record in records_list
             ],
             "inventory": [
@@ -1878,9 +1883,9 @@ class MinutasGenerationService:
         candidates = relevant_candidates
         if not candidates:
             raise MinutasGenerationError(
-                "Não há parecer histórico processado da Procuradora selecionada."
+                "Não há parecer histórico processado de outro processo nesta especialidade. "
+                "Alimente ou confira o acervo, sem utilizar o parecer do processo-alvo."
             )
-
         context = {
             "modo": "Teste de Geração — Processo Histórico",
             "natureza": "documento experimental sujeito à revisão humana",

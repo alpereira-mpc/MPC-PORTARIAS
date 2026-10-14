@@ -69,22 +69,22 @@ def test_authorized_user_sees_and_opens_private_module(store, monkeypatch):
     assert "Gerador de Minutas de Pareceres — Projeto-Piloto" in titles
     captions = "\n".join(item.value for item in app.caption)
     assert "Elvira Samara" in captions
-    module_navigation = app.radio(key="minutas_active_view")
-    assert list(module_navigation.options) == [
-        "Biblioteca de Referências",
-        "Pesquisa Jurídica",
-        "Gerar Minuta",
-    ]
+    assert not any(item.key == "minutas_active_view" for item in app.radio)
     assert any("ainda não está configurada" in item.value for item in app.warning)
 
 
 def test_module_navigation_executes_only_the_active_view(monkeypatch):
     from services import minutas_ia_ui
+    from services import minutas_specialties_ui
+    from services.minutas_specialties import scope, RPPS
 
     calls = []
     monkeypatch.setattr(
-        minutas_ia_ui, "_library_tab", lambda *_args: calls.append("library")
+        minutas_specialties_ui, "acervo", lambda *_args: calls.append("library")
     )
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(minutas_specialties_ui, "selection", lambda *_args: scope(RPPS))
+    monkeypatch.setattr(minutas_specialties_ui, "synchronize_scope", lambda *_args: None)
     monkeypatch.setattr(
         minutas_ia_ui, "_search_tab", lambda *_args: calls.append("search")
     )
@@ -109,7 +109,7 @@ def test_configured_library_shows_phase_2a_fields(store, monkeypatch):
     from services.minutas_library import SUBTIPOS
 
     class Repository:
-        def __init__(self, _store):
+        def __init__(self, _store, **_kwargs):
             pass
 
         def list(self):
@@ -122,6 +122,9 @@ def test_configured_library_shows_phase_2a_fields(store, monkeypatch):
 
     monkeypatch.setattr(minutas_ia_ui, "MinutasReferenciasStore", Repository)
     monkeypatch.setattr(minutas_ia_ui, "SupabaseMinutasStorage", Storage)
+    # Keep coverage of the legacy paired-file component independently of the
+    # new specialized navigation, which has dedicated tests.
+    monkeypatch.setattr(minutas_ia_ui, "render", minutas_ia_ui._library_tab)
     secrets = {
         "MINUTAS_PILOTO_ENABLED": True,
         "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]],
@@ -142,6 +145,7 @@ def test_configured_library_shows_phase_2a_fields(store, monkeypatch):
 
 def test_registered_reference_uses_compact_document_flow(store, monkeypatch):
     from services import minutas_ia_ui
+    monkeypatch.setattr(minutas_ia_ui, "render", minutas_ia_ui._library_tab)
 
     record = {
         "id": "11111111-1111-1111-1111-111111111111",
@@ -185,7 +189,7 @@ def test_registered_reference_uses_compact_document_flow(store, monkeypatch):
     }
 
     class Repository:
-        def __init__(self, _store):
+        def __init__(self, _store, **_kwargs):
             pass
 
         def list(self):

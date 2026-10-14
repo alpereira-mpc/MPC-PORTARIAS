@@ -8,8 +8,6 @@ from streamlit.testing.v1 import AppTest
 from services import ai_service
 from services.minutas_generation import (
     EVIDENCE_CORRECTION_VERSION,
-    HISTORICAL_TEST_PROCESS_KEY,
-    HISTORICAL_TEST_PROCESS_KEYS,
     RAG_RECOVERY_VERSION,
     VALIDATION_POLICY_VERSION,
     MinutasGenerationError,
@@ -26,6 +24,8 @@ from services.minutas_library import MinutasAccessDenied
 
 
 TARGET_ID = "target-taperoa"
+HISTORICAL_TEST_PROCESS_KEY = "0165326"
+HISTORICAL_TEST_PROCESS_KEYS = {"0165326", "0272025", "0149926", "0265025"}
 _UI_HOLD = {}
 
 
@@ -39,6 +39,9 @@ def _record(
 ):
     return {
         "id": identifier,
+        "especialidade_id": "elvira.pca.rpps",
+        "classificacao_estado": "CLASSIFICADO",
+        "classificacao_revisao": 1,
         "procuradora": procuradora,
         "procuradora_chave": procuradora.casefold(),
         "numero_processo": process,
@@ -132,6 +135,7 @@ class Repository:
 
 
 class Library:
+    specialty_id = "elvira.pca.rpps"
     def __init__(self, records, rows, *, authorized=True):
         self.records = {record["id"]: record for record in records}
         self.repository = Repository(rows)
@@ -156,7 +160,7 @@ class Library:
 
 def _scenario():
     target = _record(TARGET_ID, "TC 01653/26", HISTORICAL_TEST_PROCESS_KEY)
-    history = _record("history-rio", "TC 02720/25", "tc0272025", subtype="Prefeitura")
+    history = _record("history-rio", "TC 02720/25", "tc0272025")
     other = _record(
         "other-office",
         "TC 99999/26",
@@ -370,13 +374,14 @@ def test_taperoa_equivalent_formats_are_found_and_accepted(display, stored_key):
         "TC 01653/26 adicional",
     ),
 )
-def test_other_processes_are_strictly_rejected(value):
+def test_unclassified_processes_are_strictly_rejected(value):
     assert _canonical_process_key(value) != HISTORICAL_TEST_PROCESS_KEY
     target = _record(TARGET_ID, value, re.sub(r"[^0-9a-z]", "", value.casefold()))
+    target["classificacao_estado"] = "PENDENTE"
     service = MinutasGenerationService(Library([target], []))
 
     assert service.targets() == []
-    with pytest.raises(MinutasGenerationError, match="não está habilitado"):
+    with pytest.raises(MinutasGenerationError, match="não está classificado|inválida ou conflitante"):
         service.prepare_context(target["id"])
 
 

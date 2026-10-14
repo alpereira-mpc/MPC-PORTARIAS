@@ -327,12 +327,18 @@ def extract_content(content, mime, role):
 
 
 class MinutasExtractionService:
-    def __init__(self, library):
+    def __init__(self, library, *, cache_documents=False):
         self.library = library
         self.repository = library.repository
         self.storage = library.storage
+        self.cache_documents = cache_documents
+        self.document_cache = {}
 
-    def _documents(self, reference):
+    def _documents(self, reference, include_models=False):
+        cache_key = (str(reference["id"]), str(reference.get("atualizado_em")),
+                     reference.get("classificacao_revisao"), include_models, getattr(self.library, "specialty_id", None))
+        if self.cache_documents and cache_key in self.document_cache:
+            return self.document_cache[cache_key]
         documents = [
             {
                 "documento_id": None,
@@ -349,7 +355,7 @@ class MinutasExtractionService:
             documents.append(
                 {
                     "documento_id": document["id"],
-                    "papel": "complementar",
+                    "papel": document.get("papel", "complementar"),
                     "tipo": document["tipo"],
                     "posicao": int(document["posicao"]),
                     "nome": document["nome"],
@@ -370,6 +376,9 @@ class MinutasExtractionService:
                 "path": reference["parecer_path"],
             }
         )
+        documents = [d for d in documents if d["path"] and (include_models or d["papel"] != "modelo")]
+        if self.cache_documents:
+            self.document_cache[cache_key] = documents
         return documents
 
     def statuses(self, reference_id):
@@ -474,6 +483,8 @@ class MinutasExtractionService:
         }
 
     def context_sources(self, target_reference_id):
+        from services.minutas_specialties import scope
+        scope(getattr(self.library, "specialty_id", None))
         target = self.library.get(target_reference_id)
         rows = self.repository.list_extractions_by_procuradora(
             target["procuradora_chave"]

@@ -509,6 +509,9 @@ class MinutasDocxService:
         )
 
         self.library._authorize()
+        from services.minutas_specialties import scope, RPPS
+        if scope(getattr(self.library, "specialty_id", None))["id"] != RPPS:
+            raise MinutasDocxError("Exportação indisponível nesta especialidade.")
         target = self.library.get(target_reference_id)
         MinutasGenerationService._validate_target(target)
         if not isinstance(analyzed, dict) or not isinstance(generated, dict):

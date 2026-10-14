@@ -27,6 +27,8 @@ def _target(
 ):
     target = {
         "id": identifier,
+        "especialidade_id": "elvira.pca.rpps",
+        "classificacao_estado": "CLASSIFICADO",
         "procuradora": "Elvira Samara",
         "procuradora_chave": "elvira samara",
         "numero_processo": process,
@@ -39,6 +41,7 @@ def _target(
 
 
 class Library:
+    specialty_id = "elvira.pca.rpps"
     def __init__(self, target=None, *, authorized=True):
         self.target = target or _target()
         self.authorized = authorized

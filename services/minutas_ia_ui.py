@@ -119,10 +119,12 @@ def _cached_docx(service, generator, target_id, analysis, result, cache_key):
     return word
 
 
-def _service(store, identity):
+def _service(store, identity, *, administrative=False):
     try:
         storage = SupabaseMinutasStorage.from_secrets(st.secrets)
-        repository = MinutasReferenciasStore(store)
+        repository = MinutasReferenciasStore(store,
+            specialty_id=None if administrative else st.session_state.get("minutas_specialty"),
+            include_acervo=True)
     except (StorageConfigurationError, RuntimeError):
         st.warning(
             "A Biblioteca de Referências ainda não está configurada neste ambiente."
@@ -1417,8 +1419,8 @@ def _generator_tab(store, identity):
         return
     if not targets:
         empty_state(
-            "Nenhum dos processos habilitados para validação cruzada está "
-            "disponível nesta biblioteca."
+            "Nenhum processo classificado nesta especialidade está disponível. "
+            "Confira o acervo e as pendências de classificação."
         )
         return
 
@@ -1714,7 +1716,9 @@ def _search_tab(store, identity):
         with filters[0]:
             st.text_input("Procuradora", value=PROCURADORA, disabled=True)
         with filters[1]:
-            st.text_input("Natureza", value=SEARCH_NATURE, disabled=True)
+            from services.minutas_specialties import scope, CLASSES
+            selected = scope(library.specialty_id)
+            st.text_input("Classe / grupo", value=CLASSES.get(selected["grupo"], "Temas na classe efetiva"), disabled=True)
         with filters[2]:
             year = st.text_input("Exercício", placeholder="Todos")
         with filters[3]:
@@ -1792,7 +1796,7 @@ def _search_tab(store, identity):
                 icon=":material/description:",
             ):
                 try:
-                    document = search_service.download_opinion(item["referencia_id"])
+                    document = search_service.download_opinion(item["referencia_id"], item["arquivo_path"])
                     st.session_state[download_key] = {
                         "name": document.name,
                         "mime": document.mime,
@@ -1836,11 +1840,29 @@ def render(store, identity):
     st.title("Gerador de Minutas de Pareceres — Projeto-Piloto")
     render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
     st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
+    from services.minutas_specialties_ui import selection, synchronize_scope, acervo
+    from services.minutas_specialties import RPPS
+    administrative_library = _service(store, identity, administrative=True)
+    if administrative_library is None:
+        return
+    try:
+        profile = selection(administrative_library)
+        if profile is None:
+            return
+        library = _service(store, identity)
+        if library is None:
+            return
+        synchronize_scope(library, identity)
+    except Exception:
+        st.warning("Especialidades indisponíveis. Confira a implantação de database/minutas_especialidades.sql e o catálogo; o acesso especializado permanece bloqueado.")
+        return
     sections = (
-        "Biblioteca de Referências",
+        "Acervo",
         "Pesquisa Jurídica",
         "Gerar Minuta",
     )
+    if st.session_state.get("minutas_active_view") not in sections:
+        st.session_state["minutas_active_view"] = sections[0]
     active = st.radio(
         "Área do módulo",
         sections,
@@ -1848,12 +1870,17 @@ def render(store, identity):
         label_visibility="collapsed",
         key="minutas_active_view",
     )
-    if active == sections[0]:
-        _library_tab(store, identity)
-    elif active == sections[1]:
-        _search_tab(store, identity)
-    else:
-        _generator_tab(store, identity)
+    try:
+        if active == sections[0]:
+            acervo(library, administrative_library, profile)
+        elif active == sections[1]:
+            _search_tab(store, identity)
+        elif profile["id"] == RPPS and profile["motor"] == "pca-rpps-v1":
+            _generator_tab(store, identity)
+        else:
+            st.info("Geração especializada ainda não habilitada. Alimente e pesquise o acervo desta especialidade.")
+    except Exception as exc:
+        _error(exc)
     LOGGER.info(
         "MINUTAS_PERF etapa=interface duracao_ms=%d area=%s",
         round((perf_counter() - started) * 1000),

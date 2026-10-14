@@ -48,6 +48,8 @@ class MinutasSearchService:
         page_size=DEFAULT_PAGE_SIZE,
     ):
         self.library._authorize()
+        from services.minutas_specialties import scope, CLASSES
+        selected = scope(getattr(self.library, "specialty_id", None))
         query = self._query(query)
         if procuradora != PROCURADORA:
             raise MinutasValidationError(
@@ -72,6 +74,7 @@ class MinutasSearchService:
             query,
             PROCURADORA.casefold(),
             EXTRACTOR_VERSION,
+            specialty_id=selected["id"],
             year=year,
             subtype=subtype or None,
             exclude_reference_id=exclude_reference_id,
@@ -99,7 +102,8 @@ class MinutasSearchService:
                     "procuradora": row["procuradora"],
                     "processo": row["numero_processo"],
                     "exercicio": int(row["exercicio"]),
-                    "natureza": SEARCH_NATURE,
+                    "natureza": CLASSES.get(selected["grupo"], "Classe efetiva do processo"),
+                    "especialidade_id": selected["id"],
                     "subtipo": row["subtipo"],
                     "documento": row["arquivo_nome"],
                     "arquivo_path": row["arquivo_path"],
@@ -115,6 +119,7 @@ class MinutasSearchService:
             )
         return {
             "consulta": query,
+            "especialidade_id": selected["id"],
             "pagina": page,
             "tamanho_pagina": page_size,
             "tem_anterior": page > 1,
@@ -122,6 +127,15 @@ class MinutasSearchService:
             "resultados": results,
         }
 
-    def download_opinion(self, reference_id):
+    def download_opinion(self, reference_id, path=None):
         """Revalidate authorization before accessing the private original."""
+        from services.minutas_specialties import scope
+        scope(getattr(self.library, "specialty_id", None))
+        if path:
+            from services.minutas_extraction import MinutasExtractionService
+            record = self.library.get(reference_id)
+            if not any(d["papel"] == "parecer" and d["path"] == path
+                       for d in MinutasExtractionService(self.library)._documents(record)):
+                raise MinutasValidationError("Parecer fora do acervo selecionado.")
+            return self.library.download_path(reference_id, path)
         return self.library.download(reference_id, "parecer")
