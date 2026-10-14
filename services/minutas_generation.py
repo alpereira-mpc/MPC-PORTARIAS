@@ -850,6 +850,39 @@ _DEFENSE_ALLEGATION = re.compile(
 _DOCUMENTED_CONFIRMATION = re.compile(
     r"\b(?:a auditoria confirmou|documentos? comprovam|restou comprovad[oa])\b"
 )
+_LEGAL_OPINION_SECTIONS = {
+    "ementa",
+    "fundamentacao",
+    "analise_irregularidades",
+    "conclusao_ministerial",
+}
+_OPINION_REMISSION_RE = re.compile(
+    r"\b(?:conforme|nos termos|segundo|de acordo com|remiss[aã]o|"
+    r"remete-se|remeto-me|acompanho)\b[\s\S]{0,160}?"
+    r"\b(?:relat[oó]rio|auditoria|an[aá]lise t[eé]cnica|documento)\b",
+    re.IGNORECASE,
+)
+_THIN_OPINION_RE = re.compile(
+    r"\b(?:acompanho(?:\s+integralmente)?\s+o\s+relat[oó]rio|"
+    r"na forma do relat[oó]rio|"
+    r"sem fundamenta[cç][aã]o|"
+    r"fundamenta[cç][aã]o insuficiente|"
+    r"n[aã]o desenvolve fundamenta)\b",
+    re.IGNORECASE,
+)
+_LEGAL_FOUNDATION_MARKER_RE = re.compile(
+    r"\b(?:art\.?|lei\b|constitui[cç][aã]o|fundamenta|ante o exposto|"
+    r"opino|s[uú]mula)\b",
+    re.IGNORECASE,
+)
+_MISSING_TECHNICAL_ANALYSIS = (
+    "O parecer definitivo remete a documento ausente. "
+    "A análise técnica correspondente não está disponível e não deve ser inventada."
+)
+_THIN_OPINION_LIMITATION = (
+    "O parecer definitivo não desenvolve fundamentação jurídica suficiente. "
+    "Indique a limitação e não invente o conteúdo da análise técnica."
+)
 _PDF_LIGATURES = str.maketrans(
     {
         "ﬀ": "ff",
@@ -1199,6 +1232,48 @@ def _explicit_audit_findings(context):
                     }
                 )
     return findings
+
+
+def _stored_sections(row):
+    raw = row.get("secoes_json")
+    if isinstance(raw, list):
+        sections = raw
+    else:
+        try:
+            sections = json.loads(raw or "[]")
+        except (TypeError, json.JSONDecodeError):
+            return []
+    if not isinstance(sections, list):
+        return []
+    return [item for item in sections if isinstance(item, dict)]
+
+
+def _opinion_legal_content(row):
+    """Fundamentos do parecer definitivo, sem o relatório de auditoria."""
+    sections = _stored_sections(row)
+    legal = [
+        text
+        for section in sections
+        if section.get("secao") in _LEGAL_OPINION_SECTIONS
+        and (text := _clean_text(section.get("texto")))
+    ]
+    full = _source_text(row)
+    full_text = "\n".join(unit["texto"] for unit in full)
+    if legal:
+        return "\n".join(legal), [{"texto": text} for text in legal], False
+    return full_text, None, bool(sections)
+
+
+def _opinion_precedent_limitation(text, *, has_audit, sections_without_foundation=False):
+    body = str(text or "").strip()
+    remits = _OPINION_REMISSION_RE.search(body) is not None
+    thin = bool(_THIN_OPINION_RE.search(body)) or sections_without_foundation
+    founded = _LEGAL_FOUNDATION_MARKER_RE.search(body) is not None
+    if remits and not has_audit:
+        return _MISSING_TECHNICAL_ANALYSIS
+    if thin or (remits and not founded):
+        return _THIN_OPINION_LIMITATION
+    return ""
 
 
 def _source_text(row):
@@ -1844,20 +1919,24 @@ class MinutasGenerationService:
             opinion = self._source(opinions[0], record)
             if opinion is None:
                 continue
-            audits = [row for row in source_rows if row["papel"] == "auditoria"]
-            audit = self._source(audits[0], record) if audits else None
-            comparison = audit or opinion
-            comparison_text = "\n".join(
-                unit["texto"] for unit in comparison["conteudo"]
+            legal_text, legal_units, sections_without_foundation = (
+                _opinion_legal_content(opinions[0])
             )
-            comparison_terms = _terms(comparison_text)
+            if legal_units:
+                opinion = {**opinion, "conteudo": legal_units}
+            legal_terms = _terms(legal_text)
+            has_audit = any(row["papel"] == "auditoria" for row in source_rows)
             candidates.append(
                 {
                     "record": record,
                     "parecer": opinion,
-                    "auditoria": audit,
-                    "pertinencia_tematica": len(theme_terms & comparison_terms),
-                    "similaridade_documental": len(target_terms & comparison_terms),
+                    "limitacao": _opinion_precedent_limitation(
+                        legal_text,
+                        has_audit=has_audit,
+                        sections_without_foundation=sections_without_foundation,
+                    ),
+                    "pertinencia_tematica": len(theme_terms & legal_terms),
+                    "similaridade_documental": len(target_terms & legal_terms),
                 }
             )
         candidates.sort(
@@ -1918,7 +1997,10 @@ class MinutasGenerationService:
                 validated_legal_references
             )
             context["orientacao_referencias_juridicas"] = (
-                "Manifestações históricas não vinculantes; não são fatos do processo-alvo."
+                "Manifestações históricas não vinculantes; são fundamentos jurídicos "
+                "e não são fatos do processo-alvo. Se o parecer for pouco fundamentado "
+                "ou remeter a documento ausente, indique a limitação e não invente a "
+                "análise técnica."
             )
         omitted = []
         while (
@@ -1940,9 +2022,11 @@ class MinutasGenerationService:
                 "processo": candidate["record"]["numero_processo"],
                 "exercicio": int(candidate["record"]["exercicio"]),
                 "subtipo": candidate["record"]["subtipo"],
-                "uso": "estilo, estrutura e raciocínio jurídico",
+                "uso": "fundamentos jurídicos pertinentes do parecer definitivo",
                 "parecer": candidate["parecer"],
             }
+            if candidate.get("limitacao"):
+                reference["limitacao"] = candidate["limitacao"]
             proposed = {
                 **context,
                 "referencias_historicas": [
@@ -3339,3 +3423,128 @@ class MinutasGenerationService:
             int(response.get("referencias_historicas") or 0),
         )
         return response
+
+    def _instruction_target(self, processo, exercicio, origem):
+        key = _canonical_process_key(processo)
+        if len(key) != 7:
+            raise MinutasGenerationError(
+                "Informe o processo TC no formato 00000/00 antes de analisar a instrução."
+            )
+        return {
+            "id": f"instrucao-{key}",
+            "numero_processo": f"{key[:5]}/{key[5:]}",
+            "processo_chave": key,
+            "exercicio": int(exercicio or 0) or None,
+            "origem": origem or "",
+            "procuradora": PROCURADORA,
+            "procuradora_chave": PROCURADORA.casefold(),
+            "especialidade_id": "elvira.pca.rpps",
+            "classificacao_estado": "CLASSIFICADO",
+            "subtipo": "Instituto/Autarquia",
+            "parecer_definitivo": False,
+            "instrucao_local": True,
+        }
+
+    def _instruction_precedents(self, analysis, process_key):
+        """Recupera somente pareceres definitivos de outros processos."""
+        plan = _rag_query_plan(analysis)
+        queries = plan["consultas"]
+        if not queries:
+            return {"estado": "SEM_CONSULTAS", "referencias": [], "consultas": []}
+        references = []
+        seen = set()
+        search_method = self.search if callable(self.search) else self.search.search
+        try:
+            for query in queries:
+                response = search_method(
+                    query["consulta_principal"],
+                    page_size=MAX_RAG_RESULTS_PER_QUERY,
+                    exclude_process_key=process_key,
+                )
+                for row in response.get("resultados") or []:
+                    if str(row.get("papel") or "parecer") != "parecer":
+                        continue
+                    if str(row.get("processo_chave") or "") == process_key:
+                        continue
+                    identifier = str(row.get("referencia_id") or row.get("id") or "")
+                    if identifier in seen:
+                        continue
+                    seen.add(identifier)
+                    references.append({
+                        "referencia_id": identifier,
+                        "processo": row.get("numero_processo") or row.get("processo") or "",
+                        "trecho": _clean_text(
+                            row.get("trecho") or row.get("texto") or ""
+                        )[:MAX_RAG_PASSAGE_CHARS],
+                    })
+        except Exception as exc:
+            return {
+                "estado": "INDISPONIVEL",
+                "motivo": (_clean_text(str(exc)) or "Recuperação indisponível.")[:180],
+                "referencias": [],
+                "consultas": queries,
+            }
+        return {
+            "estado": "RECUPERADO" if references else "SEM_RESULTADO",
+            "referencias": references[:MAX_RAG_PASSAGES],
+            "consultas": queries,
+        }
+
+    def analyze_instruction(self, documentos, *, processo, exercicio=None, origem=""):
+        from services.minutas_instrucao import montar_contexto
+        self.library._authorize()
+        target = self._instruction_target(processo, exercicio, origem)
+        prepared = montar_contexto(
+            documentos, processo=target["numero_processo"], exercicio=exercicio,
+            origem=origem,
+        )
+        generated = self._analyze(prepared["contexto"])
+        analysis = self._validate_analysis(generated.get("analise"), prepared["contexto"])
+        precedents = self._instruction_precedents(analysis, target["processo_chave"])
+        conference = analysis.get("conferencia_documental") or {}
+        return {
+            "analise": analysis,
+            "pendencias_conferencia": conference.get("pendencias") or [],
+            "fontes_versao": prepared["versao"],
+            "processo_alvo_id": target["id"],
+            "processo_alvo_chave": target["processo_chave"],
+            "procuradora_chave": target["procuradora_chave"],
+            "fontes_alvo": prepared["fontes_alvo"],
+            "referencias_historicas": len(precedents.get("referencias") or []),
+            "referencias": precedents,
+            "advertencias_instrucao": prepared["advertencias"],
+            "consolidacao_contexto": prepared["omissoes"],
+            "contexto_bytes": _serialized_size(prepared["contexto"]),
+        }
+
+    def generate_instruction(self, documentos, analyzed, *, processo, exercicio=None, origem="", use_rag=True):
+        from services.minutas_instrucao import montar_contexto
+        self.library._authorize()
+        target = self._instruction_target(processo, exercicio, origem)
+        prepared = montar_contexto(
+            documentos, processo=target["numero_processo"], exercicio=exercicio,
+            origem=origem,
+        )
+        if not isinstance(analyzed, dict) or analyzed.get("fontes_versao") != prepared["versao"]:
+            raise MinutasGenerationError(
+                "A instrução foi alterada. Analise novamente antes de gerar a minuta."
+            )
+        analysis = self._validate_analysis(analyzed.get("analise"), prepared["contexto"])
+        context = deepcopy(prepared["contexto"])
+        context["analise_estruturada"] = self._analysis_for_generation(analysis)
+        if use_rag:
+            context["referencias_historicas"] = analyzed.get("referencias") or {"referencias": []}
+        generated = self._generate(context)
+        structure, _warnings = self._normalize_structure(
+            self._validate_structure(generated.get("estrutura")), target, context,
+        )
+        structure = self._validate_structure(structure)
+        return {
+            "estrutura": structure,
+            "fontes_versao": prepared["versao"],
+            "processo_alvo_id": target["id"],
+            "processo_alvo_chave": target["processo_chave"],
+            "procuradora_chave": target["procuradora_chave"],
+            "metadados_cabecalho": generated.get("metadados_cabecalho") or {},
+            "fontes_alvo": prepared["fontes_alvo"],
+        }

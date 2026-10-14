@@ -736,14 +736,18 @@ def test_reference_selection_combines_subtype_and_analysis_theme():
     rows.extend(
         (
             _row(same_subtype, "parecer", "Padrão de redação ministerial."),
-            _row(same_theme, "parecer", "Padrão jurídico da Procuradora."),
             _row(
                 same_theme,
+                "parecer",
+                "Fundamentação jurídica sobre contribuição previdenciária.",
+            ),
+            _row(same_theme, "auditoria", "Texto de relatório sem a matéria pesquisada."),
+            _row(unrelated, "parecer", "Outro padrão de redação."),
+            _row(
+                unrelated,
                 "auditoria",
                 "Irregularidade documentada sobre contribuição previdenciária.",
             ),
-            _row(unrelated, "parecer", "Outro padrão de redação."),
-            _row(unrelated, "auditoria", "Aquisição de merenda por licitação."),
         )
     )
     service = MinutasGenerationService(
@@ -758,6 +762,12 @@ def test_reference_selection_combines_subtype_and_analysis_theme():
         item["processo"] for item in prepared["contexto"]["referencias_historicas"]
     ] == [same_subtype["numero_processo"], same_theme["numero_processo"]]
     assert prepared["relatorios_historicos"] == 0
+    historical = json.dumps(
+        prepared["contexto"]["referencias_historicas"], ensure_ascii=False
+    )
+    assert "Irregularidade documentada sobre contribuição previdenciária." not in (
+        historical
+    )
 
 
 def test_historical_reference_requires_current_processed_linked_extraction():
@@ -783,6 +793,131 @@ def test_historical_reference_requires_current_processed_linked_extraction():
 
     assert valid["numero_processo"] in selected
     assert outdated["numero_processo"] not in selected
+
+
+def test_parecer_without_audit_is_precedent_and_audit_text_is_not():
+    target, _history, other, rows = _scenario()
+    rows = [row for row in rows if row["referencia_id"] == target["id"]]
+    founded = _record(
+        "history-founded", "TC 01499/26", "0149926", subtype="Prefeitura"
+    )
+    decoy = _record(
+        "history-audit-match", "TC 02650/25", "0265025", subtype="Prefeitura"
+    )
+    founded_opinion = _row(
+        founded,
+        "parecer",
+        "Fundamentação: a contribuição previdenciária observa o art. 40 da Constituição.",
+    )
+    decoy_opinion = _row(decoy, "parecer", "Padrão genérico de merenda escolar.")
+    decoy_audit = _row(
+        decoy,
+        "auditoria",
+        "Irregularidade previdenciária SIGILOSO 98765 na contribuição previdenciária.",
+    )
+    target_opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "parecer"
+    )
+    rows.extend((founded_opinion, decoy_opinion, decoy_audit))
+
+    def search(_query, **_filters):
+        return {
+            "resultados": [
+                _search_result(
+                    decoy,
+                    decoy_audit,
+                    context=decoy_audit["texto_integral"],
+                    relevance=5,
+                ),
+                _search_result(
+                    founded,
+                    founded_opinion,
+                    context=founded_opinion["texto_integral"],
+                    relevance=0.2,
+                ),
+                _search_result(
+                    target,
+                    target_opinion,
+                    context="SEGREDO DO PARECER-ALVO contribuição previdenciária",
+                    relevance=9,
+                ),
+            ]
+        }
+
+    service = MinutasGenerationService(
+        Library([target, founded, decoy, other], rows),
+        analyze=_analysis_result,
+        search=search,
+    )
+    prepared = service.prepare_context(target["id"])
+    selected = {
+        item["processo"]
+        for item in prepared["contexto"]["referencias_historicas"]
+    }
+    serialized = json.dumps(prepared["contexto"], ensure_ascii=False)
+
+    assert founded["numero_processo"] in selected
+    assert decoy["numero_processo"] not in selected
+    assert target["numero_processo"] not in selected
+    assert [source["papel"] for source in prepared["contexto"]["documentos_processo_alvo"]] == [
+        "auditoria",
+        "complementar",
+    ]
+    assert "SIGILOSO 98765" not in serialized
+    assert "SEGREDO DO PARECER-ALVO" not in serialized
+    assert "CONTEÚDO DE OUTRA PROCURADORA" not in serialized
+
+    recovery = service.analyze(target["id"])["recuperacao_juridica"]
+    passages = json.dumps(recovery["trechos"], ensure_ascii=False)
+    assert {item["referencia_id"] for item in recovery["trechos"]} == {founded["id"]}
+    assert "SIGILOSO 98765" not in passages
+    assert "SEGREDO DO PARECER-ALVO" not in passages
+
+
+def test_thin_opinion_and_missing_remission_do_not_fabricate_technical_analysis():
+    target, _history, other, rows = _scenario()
+    rows = [row for row in rows if row["referencia_id"] == target["id"]]
+    missing = _record(
+        "history-missing", "TC 01499/26", "0149926", subtype=target["subtipo"]
+    )
+    thin = _record(
+        "history-thin", "TC 02650/25", "0265025", subtype=target["subtipo"]
+    )
+    rows.extend(
+        (
+            _row(missing, "parecer", "Conforme o relatório da auditoria."),
+            _row(thin, "parecer", "Acompanho integralmente o relatório da auditoria."),
+            _row(
+                thin,
+                "auditoria",
+                "APURACAO TECNICA SIGILOSA 12345: desvio de combustível não descrito no parecer.",
+            ),
+        )
+    )
+    prepared = MinutasGenerationService(
+        Library([target, missing, thin, other], rows)
+    ).prepare_context(target["id"])
+    by_process = {
+        item["processo"]: item
+        for item in prepared["contexto"]["referencias_historicas"]
+    }
+
+    missing_reference = by_process[missing["numero_processo"]]
+    thin_reference = by_process[thin["numero_processo"]]
+    assert "documento ausente" in missing_reference["limitacao"]
+    assert "não deve ser inventada" in missing_reference["limitacao"]
+    assert "12345" not in missing_reference["limitacao"]
+    assert "não invente o conteúdo da análise técnica" in thin_reference["limitacao"]
+    assert "APURACAO TECNICA SIGILOSA 12345" not in json.dumps(
+        thin_reference, ensure_ascii=False
+    )
+    assert [source["papel"] for source in prepared["contexto"]["documentos_processo_alvo"]] == [
+        "auditoria",
+        "complementar",
+    ]
+    assert target["numero_processo"] not in by_process
 
 
 def test_analysis_separates_defense_evidence_and_rejected_audit_conclusion():
@@ -2106,6 +2241,8 @@ def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
     assert "o backend inserirá deterministicamente" in prompt
     assert "Integram a instrução processual" in prompt
     assert "nunca reutilize número do parecer definitivo" in prompt
+    assert "não invente o conteúdo da análise técnica" in prompt
+    assert "fundamentos jurídicos pertinentes" in prompt
     assert "reúna todas as recomendações em um único item" in prompt
     assert "relatorio_paragrafos" in schema["required"]
     assert "fundamentacao_geral_paragrafos" in schema["required"]

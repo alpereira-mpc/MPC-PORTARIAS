@@ -220,6 +220,8 @@ def test_postgresql_query_filters_valid_opinions_and_blocks_cross_prosecutor_lin
     assert "websearch_to_tsquery('portuguese',?)" in sql
     assert "ts_rank_cd" in sql
     assert "e.papel='parecer'" in sql
+    assert "papel='auditoria'" not in sql
+    assert "auditoria_path" not in sql
     assert "e.status='PROCESSADO'" in sql
     assert "e.extrator_versao=?" in sql
     assert "e.procuradora_chave=?" in sql
@@ -274,6 +276,7 @@ def test_search_index_sql_is_additive_idempotent_and_keeps_access_private():
     assert "USING GIN" in sql
     assert "to_tsvector('portuguese'" in sql
     assert "papel = 'parecer' AND status = 'PROCESSADO'" in sql
+    assert "auditoria" not in sql
     assert "REVOKE ALL" in sql
     assert "PUBLIC, anon, authenticated" in sql
     assert "GRANT " not in sql

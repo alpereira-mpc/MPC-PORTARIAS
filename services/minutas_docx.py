@@ -115,7 +115,31 @@ def _configure_style(
     return style
 
 
-def _configure_styles(document):
+def _apply_style_overrides(document, overrides):
+    for name, values in (overrides or {}).items():
+        if name not in document.styles or not isinstance(values, dict):
+            continue
+        style = document.styles[name]
+        fmt = style.paragraph_format
+        if values.get("size"):
+            style.font.size = Pt(values["size"])
+        if "bold" in values:
+            style.font.bold = values["bold"]
+        if "italic" in values:
+            style.font.italic = values["italic"]
+        if values.get("left_cm") is not None:
+            fmt.left_indent = Cm(values["left_cm"])
+        if values.get("first_cm") is not None:
+            fmt.first_line_indent = Cm(values["first_cm"])
+        if values.get("right_cm") is not None:
+            fmt.right_indent = Cm(values["right_cm"])
+        if values.get("before_pt") is not None:
+            fmt.space_before = Pt(values["before_pt"])
+        if values.get("after_pt") is not None:
+            fmt.space_after = Pt(values["after_pt"])
+
+
+def _configure_styles(document, overrides=None):
     _configure_style(
         document,
         "Normal",
@@ -218,6 +242,120 @@ def _configure_styles(document):
         first_cm=-0.5,
         after_pt=6,
     )
+    _apply_style_overrides(document, overrides)
+
+
+def _metric(value, low, high):
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if low <= number <= high:
+        return number
+    return None
+
+
+def _length_cm(value):
+    return None if value is None else float(value.cm)
+
+
+def _length_pt(value):
+    return None if value is None else float(value.pt)
+
+
+def _paragraph_metrics(paragraph):
+    fmt = paragraph.paragraph_format
+    style_fmt = paragraph.style.paragraph_format if paragraph.style is not None else None
+    run = next((item for item in paragraph.runs if str(item.text or "").strip()), None)
+    size = None
+    bold = False
+    italic = False
+    if run is not None and run.font.size is not None:
+        size = float(run.font.size.pt)
+    elif paragraph.style is not None and paragraph.style.font.size is not None:
+        size = float(paragraph.style.font.size.pt)
+    if run is not None:
+        bold = bool(run.font.bold)
+        italic = bool(run.font.italic)
+    left = _length_cm(fmt.left_indent)
+    if left is None and style_fmt is not None:
+        left = _length_cm(style_fmt.left_indent)
+    first = _length_cm(fmt.first_line_indent)
+    if first is None and style_fmt is not None:
+        first = _length_cm(style_fmt.first_line_indent)
+    after = _length_pt(fmt.space_after)
+    if after is None and style_fmt is not None:
+        after = _length_pt(style_fmt.space_after)
+    before = _length_pt(fmt.space_before)
+    if before is None and style_fmt is not None:
+        before = _length_pt(style_fmt.space_before)
+    return {
+        "center": paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER,
+        "left_cm": _metric(left, 0, 12),
+        "first_cm": _metric(first, -3, 8),
+        "before_pt": _metric(before, 0, 72),
+        "after_pt": _metric(after, 0, 72),
+        "size": _metric(size, 8, 18),
+        "bold": bold,
+        "italic": italic,
+    }
+
+
+def read_visual_model(content):
+    """Lê só medidas, estilos e a logomarca. O texto do modelo não entra no resultado."""
+    try:
+        template = Document(BytesIO(content))
+    except Exception as exc:
+        raise MinutasDocxError("O modelo visual da especialidade é inválido.") from exc
+    if not template.sections:
+        raise MinutasDocxError("O modelo visual da especialidade não tem página configurada.")
+    section = template.sections[0]
+    spec = {
+        "page_width_cm": _metric(_length_cm(section.page_width), 14, 30),
+        "page_height_cm": _metric(_length_cm(section.page_height), 14, 45),
+        "top_cm": _metric(_length_cm(section.top_margin), 0.5, 8),
+        "bottom_cm": _metric(_length_cm(section.bottom_margin), 0.5, 8),
+        "left_cm": _metric(_length_cm(section.left_margin), 0.5, 8),
+        "right_cm": _metric(_length_cm(section.right_margin), 0.5, 8),
+        "header_cm": _metric(_length_cm(section.header_distance), 0, 5),
+        "footer_cm": _metric(_length_cm(section.footer_distance), 0, 5),
+        "styles": {},
+    }
+    for relationship in section.header.part.rels.values():
+        if relationship.reltype.endswith("/image"):
+            spec["logo"] = relationship.target_part.blob
+            break
+    extents = section.header._element.xpath(".//wp:extent")
+    if extents:
+        spec["logo_width_in"] = _metric(int(extents[0].get("cx") or 0) / 914400, 1, 4)
+    samples = [_paragraph_metrics(paragraph) for paragraph in template.paragraphs if paragraph.text.strip()]
+    body = next((item for item in samples if item.get("first_cm")), None)
+    ementa = max((item for item in samples if (item.get("left_cm") or 0) >= 5), default=None, key=lambda item: item["left_cm"])
+    heading = next((item for item in samples if item["bold"] and item["italic"] and not item["center"]), None)
+    signature = [item for item in samples if item["center"]]
+    styles = {}
+    if body:
+        styles["Minuta Corpo"] = {key: body[key] for key in ("size", "first_cm", "after_pt") if body.get(key) is not None}
+    if ementa:
+        styles["Minuta Ementa"] = {key: ementa[key] for key in ("size", "left_cm", "after_pt") if ementa.get(key) is not None}
+    if heading:
+        styles["Minuta Irregularidade"] = {
+            key: heading[key] for key in ("size", "left_cm", "after_pt") if heading.get(key) is not None
+        }
+        styles["Minuta Irregularidade"]["bold"] = True
+        styles["Minuta Irregularidade"]["italic"] = True
+    spec["styles"] = styles
+    named = next((item for item in reversed(signature) if item["bold"]), None)
+    plain = next((item for item in reversed(signature) if not item["bold"]), None)
+    if named:
+        spec["signature_name"] = {
+            key: named[key] for key in ("size", "before_pt") if named.get(key) is not None
+        }
+    if plain and plain.get("size"):
+        spec["signature_role"] = {"size": plain["size"]}
+    return spec
 
 
 def _template_logo(template_path):
@@ -324,7 +462,7 @@ def _blocks(value, structured=None):
     ]
 
 
-def _add_body(document, value, style="Minuta Corpo", *, paragraphs=None):
+def _add_body(document, value, style="Minuta Corpo", *, paragraphs=None, size=12):
     for block in _blocks(value, paragraphs):
         if block == "É o relatório. Passa-se a opinar.":
             selected_style = "Minuta Transição"
@@ -333,7 +471,11 @@ def _add_body(document, value, style="Minuta Corpo", *, paragraphs=None):
         else:
             selected_style = style
         paragraph = document.add_paragraph(style=selected_style)
-        _add_text(paragraph, block, size=11 if selected_style == "Minuta Transcrição" else 12)
+        _add_text(
+            paragraph,
+            block,
+            size=11 if selected_style == "Minuta Transcrição" else size,
+        )
 
 
 def _conclusion(structure):
@@ -400,19 +542,24 @@ def _filename(target):
     return "MINUTA_PARECER.docx"
 
 
-def _build_docx(target, structure, profile, header_lines):
+def _style_size(visual, name, default):
+    values = ((visual or {}).get("styles") or {}).get(name) or {}
+    return values.get("size") or default
+
+
+def _build_docx(target, structure, profile, header_lines, visual=None):
     document = Document()
     section = document.sections[0]
     section.orientation = WD_ORIENT.PORTRAIT
-    section.page_width = Cm(21.001)
-    section.page_height = Cm(29.7)
-    section.top_margin = Cm(6.35)
-    section.bottom_margin = Cm(2)
-    section.left_margin = Cm(2.75)
-    section.right_margin = Cm(1.75)
-    section.header_distance = Cm(0.5)
-    section.footer_distance = Cm(0)
-    _configure_styles(document)
+    section.page_width = Cm((visual or {}).get("page_width_cm") or 21.001)
+    section.page_height = Cm((visual or {}).get("page_height_cm") or 29.7)
+    section.top_margin = Cm((visual or {}).get("top_cm") or 6.35)
+    section.bottom_margin = Cm((visual or {}).get("bottom_cm") or 2)
+    section.left_margin = Cm((visual or {}).get("left_cm") or 2.75)
+    section.right_margin = Cm((visual or {}).get("right_cm") or 1.75)
+    section.header_distance = Cm((visual or {}).get("header_cm") if (visual or {}).get("header_cm") is not None else 0.5)
+    section.footer_distance = Cm((visual or {}).get("footer_cm") or 0)
+    _configure_styles(document, (visual or {}).get("styles"))
 
     header = section.header
     paragraph = header.paragraphs[0]
@@ -423,8 +570,9 @@ def _build_docx(target, structure, profile, header_lines):
     paragraph.paragraph_format.space_before = Pt(0)
     paragraph.paragraph_format.space_after = Pt(0)
     run = paragraph.add_run()
+    logo_bytes = (visual or {}).get("logo") or _template_logo(Path(profile["template"]))
     logo = run.add_picture(
-        BytesIO(_template_logo(Path(profile["template"]))), width=Inches(2.62)
+        BytesIO(logo_bytes), width=Inches((visual or {}).get("logo_width_in") or 2.62)
     )
     logo._inline.docPr.set("title", "MPC-PB")
     logo._inline.docPr.set(
@@ -446,42 +594,57 @@ def _build_docx(target, structure, profile, header_lines):
         if index == len(header_lines) - 1:
             item.paragraph_format.space_after = Pt(24)
 
+    body_size = _style_size(visual, "Minuta Corpo", 12)
+    ementa_size = _style_size(visual, "Minuta Ementa", 11)
+    heading_size = _style_size(visual, "Minuta Irregularidade", 12)
     ementa = document.add_paragraph(style="Minuta Ementa")
-    _add_text(ementa, f"Ementa: {structure['ementa']}", size=11)
+    _add_text(ementa, f"Ementa: {structure['ementa']}", size=ementa_size)
     _add_body(
         document,
         structure["relatorio"],
         paragraphs=structure.get("relatorio_paragrafos"),
+        size=body_size,
     )
     _add_body(
         document,
         structure["fundamentacao_geral"],
         paragraphs=structure.get("fundamentacao_geral_paragrafos"),
+        size=body_size,
     )
     for topic in structure["topicos_irregularidades"]:
         heading = document.add_paragraph(style="Minuta Irregularidade")
-        _add_text(heading, topic["titulo"], bold=True, italic=True)
+        _add_text(heading, topic["titulo"], bold=True, italic=True, size=heading_size)
         _add_body(
             document,
             topic["texto"],
             paragraphs=topic.get("paragrafos"),
+            size=body_size,
         )
 
     conclusion = _conclusion(structure)
     if conclusion:
-        _add_body(document, conclusion)
+        _add_body(document, conclusion, size=body_size)
     _add_requests(document, structure["pedidos"])
     _add_body(
         document,
         _closing(structure["encerramento"]),
         style="Minuta Encerramento",
+        size=body_size,
     )
 
+    signature = (visual or {}).get("signature_name") or {}
+    role = (visual or {}).get("signature_role") or {}
     name = document.add_paragraph(style="Minuta Procuradora")
-    name.paragraph_format.space_before = Pt(24)
-    _add_text(name, profile["nome"], size=14, bold=True, italic=True)
+    name.paragraph_format.space_before = Pt(signature.get("before_pt") or 24)
+    _add_text(
+        name,
+        profile["nome"],
+        size=signature.get("size") or 14,
+        bold=True,
+        italic=True,
+    )
     title = document.add_paragraph(style="Minuta Cargo")
-    _add_text(title, profile["cargo"], size=11)
+    _add_text(title, profile["cargo"], size=role.get("size") or 11)
 
     output = BytesIO()
     document.save(output)
@@ -499,6 +662,16 @@ class MinutasDocxService:
             source_summary = MinutasGenerationService(library).source_summary
         self._source_summary = source_summary
         self.template_path = Path(template_path) if template_path else None
+
+    def _active_visual(self):
+        if self.template_path is not None:
+            return None
+        from services.minutas_modelos import active_model_bytes
+
+        content = active_model_bytes(self.library)
+        if not content:
+            return None
+        return read_visual_model(content)
 
     def export(self, target_reference_id, analyzed, generated):
         from services.minutas_generation import (
@@ -568,5 +741,68 @@ class MinutasDocxService:
                 structure,
                 profile,
                 _draft_header_lines(header_target),
+                self._active_visual(),
+            ),
+        )
+
+    def export_instruction(self, analyzed, generated, *, processo, exercicio=None, origem=""):
+        """DOCX da minuta gerada sobre a instrução local, sem consultar o acervo."""
+        from services.minutas_generation import (
+            MinutasGenerationService,
+            _canonical_process_key as canonical_process_key,
+            _draft_header_lines,
+            _target_with_header_metadata,
+        )
+        from services.minutas_library import PROCURADORA
+
+        self.library._authorize()
+        key = canonical_process_key(processo)
+        if len(key) != 7:
+            raise MinutasDocxError("Informe o processo TC no formato 00000/00.")
+        target = {
+            "id": f"instrucao-{key}",
+            "numero_processo": f"{key[:5]}/{key[5:]}",
+            "processo_chave": key,
+            "exercicio": exercicio,
+            "origem": origem or "",
+            "procuradora": PROCURADORA,
+            "procuradora_chave": PROCURADORA.casefold(),
+            "especialidade_id": "elvira.pca.rpps",
+            "classificacao_estado": "CLASSIFICADO",
+            "subtipo": "Instituto/Autarquia",
+        }
+        if not isinstance(analyzed, dict) or not isinstance(generated, dict):
+            raise MinutasDocxError("Gere novamente a minuta antes de exportar.")
+        if analyzed.get("fontes_versao") != generated.get("fontes_versao"):
+            raise MinutasDocxError(
+                "As fontes foram alteradas. Analise e gere novamente a minuta."
+            )
+        if (
+            str(analyzed.get("processo_alvo_id") or "") != target["id"]
+            or str(generated.get("processo_alvo_id") or "") != target["id"]
+        ):
+            raise MinutasDocxError("A minuta não pertence ao processo informado.")
+        profile = dict(_PROFILES.get(PROCURADORA) or {})
+        if not profile:
+            raise MinutasDocxError("Não há modelo Word autorizado para esta Procuradora.")
+        if self.template_path:
+            profile["template"] = self.template_path
+        structure = MinutasGenerationService._validate_structure(generated.get("estrutura"))
+        header_target = _target_with_header_metadata(
+            target, generated.get("metadados_cabecalho")
+        )
+        structure, _warnings = MinutasGenerationService._normalize_structure(
+            structure, header_target
+        )
+        structure = MinutasGenerationService._validate_structure(structure)
+        return MinutaDocx(
+            name=_filename(target),
+            mime=DOCX_MIME,
+            content=_build_docx(
+                target,
+                structure,
+                profile,
+                _draft_header_lines(header_target),
+                self._active_visual(),
             ),
         )

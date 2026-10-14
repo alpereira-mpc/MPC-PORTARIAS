@@ -41,6 +41,14 @@ def acervo_object_path(name):
     return f"acervo/{uuid.uuid4().hex}/{uuid.uuid4().hex}{suffix}"
 
 
+def modelo_object_path(name):
+    """Modelo visual novo, fora do acervo de processos. O nome original fica nos metadados."""
+    suffix = PurePath(str(name or "")).suffix.lower()
+    if suffix != ".docx":
+        raise StorageOperationError("O modelo visual aceita apenas DOCX.")
+    return f"modelos/{uuid.uuid4().hex}/{uuid.uuid4().hex}.docx"
+
+
 def _http_detail(payload):
     if not isinstance(payload, dict):
         return ""

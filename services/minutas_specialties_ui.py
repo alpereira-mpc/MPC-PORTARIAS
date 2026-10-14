@@ -209,9 +209,9 @@ def _uploads(admin, library, profile):
     st.caption("Extração local. Nenhuma chamada Gemini será feita por este cadastro.")
     uploads = st.file_uploader("Adicionar documentos", type=["pdf", "docx"], accept_multiple_files=True,
                                key="minutas_uploads_" + profile["id"])
-    role = st.selectbox("Finalidade do lote", ("parecer", "auditoria", "complementar", "modelo"),
+    role = st.selectbox("Finalidade do lote", ("parecer", "auditoria", "complementar"),
         format_func=lambda value: {"parecer": "Pareceres definitivos", "auditoria": "Relatórios da Auditoria",
-        "complementar": "Instrução complementar", "modelo": "Modelos visuais (fora do RAG)"}[value],
+        "complementar": "Instrução complementar"}[value],
         key="minutas_upload_role_" + profile["id"])
     result_key = "minutas_batch_result_" + profile["id"]
     preview_key = "minutas_upload_preview_" + profile["id"]
@@ -364,11 +364,63 @@ def _record_summary(record):
     )
 
 
+def _visual_model(library, profile):
+    from services.minutas_modelos import MinutasModeloVisualService
+
+    service = MinutasModeloVisualService(library)
+    st.caption(
+        "Modelo de formatação desta especialidade. Não se vincula a processo, "
+        "não entra no acervo jurídico e não é usado como precedente."
+    )
+    if not service.enabled():
+        st.info(
+            "O cadastro ainda não está disponível neste banco. A exportação continua "
+            "no modelo institucional padrão. A migração manual está em "
+            "database/minutas_modelos_visuais.sql."
+        )
+        return
+    upload = st.file_uploader(
+        "Substituir modelo visual",
+        type=["docx"],
+        key="minutas_modelo_upload_" + profile["id"],
+    )
+    if st.button("Salvar modelo visual", key="minutas_modelo_save_" + profile["id"], disabled=upload is None):
+        try:
+            result = service.save(profile["id"], (upload.name, upload.getvalue()))
+        except Exception as exc:
+            st.warning(str(exc))
+        else:
+            st.caption(f"Modelo visual {result['estado'].lower()} · versão {result['versao']}.")
+    current = service.active(profile["id"])
+    if current:
+        render_record(
+            current["nome"],
+            secondary=f"Versão {current['versao']} · modelo ativo",
+            meta="A minuta usa a formatação deste arquivo. O texto dele não é copiado.",
+            accent="brand",
+            boxed=True,
+        )
+    else:
+        st.caption("Nenhum modelo visual configurado. A exportação usa o modelo institucional padrão.")
+    previous = [item for item in service.versions(profile["id"]) if not int(item["ativo"])]
+    if previous:
+        st.caption("Versões anteriores preservadas: " + ", ".join(
+            f"{item['nome']} (versão {item['versao']})" for item in previous
+        ))
+
+
 def acervo(library, administrative_library, profile):
     admin = MinutasAcervoService(administrative_library)
     admin.library._authorize()
-    mode = st.radio("Operação do acervo", ("Consultar", "Adicionar documentos", "Administração"),
-                    horizontal=True, key="minutas_acervo_mode")
+    mode = st.radio(
+        "Operação do acervo",
+        ("Consultar", "Adicionar documentos", "Modelo visual", "Administração"),
+        horizontal=True,
+        key="minutas_acervo_mode",
+    )
+    if mode == "Modelo visual":
+        _visual_model(library, profile)
+        return
     if mode == "Adicionar documentos":
         if not admin.repository.separation_enabled():
             st.caption("A separação do acervo legado ainda não está aplicada. Não recadastre um número que já exista: o arquivo seria gravado no registro histórico.")

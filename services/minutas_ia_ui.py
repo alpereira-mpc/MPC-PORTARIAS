@@ -1402,6 +1402,161 @@ def _technical_diagnostics_panel(
             )
 
 
+def _sync_instruction(item):
+    from services.minutas_instrucao import tipo_info
+
+    info = tipo_info(st.session_state.get(f"minutas_instrucao_tipo_{item['id']}", item["tipo"]))
+    item["tipo"] = info["chave"]
+    item["papel"] = info["papel"]
+    item["data"] = st.session_state.get(f"minutas_instrucao_data_{item['id']}", item.get("data") or "")
+    item["origem_documento"] = st.session_state.get(
+        f"minutas_instrucao_origem_{item['id']}", item.get("origem_documento") or ""
+    )
+    item["descricao"] = st.session_state.get(
+        f"minutas_instrucao_descricao_{item['id']}", item.get("descricao") or ""
+    )
+    item["rotulo"] = (
+        (item["descricao"] or info["rotulo"]) if info["chave"] == "outros" else info["rotulo"]
+    )
+    return item
+
+
+def _move_instruction(identifier, delta):
+    documents = st.session_state.get("minutas_instrucao_documentos") or []
+    index = next((position for position, item in enumerate(documents) if item["id"] == identifier), None)
+    if index is None:
+        return
+    target = index + delta
+    if 0 <= target < len(documents):
+        documents[index], documents[target] = documents[target], documents[index]
+        st.session_state["minutas_instrucao_documentos"] = documents
+
+
+def _drop_instruction(identifier):
+    st.session_state["minutas_instrucao_documentos"] = [
+        item for item in st.session_state.get("minutas_instrucao_documentos") or []
+        if item["id"] != identifier
+    ]
+
+
+def _instruction_panel(generator, service):
+    from services.minutas_instrucao import TIPOS, receber_pdf, versao
+
+    st.caption(
+        "Envie um ou vários PDFs da instrução. Eles não entram no acervo "
+        "e não são usados como precedente."
+    )
+    documents = list(st.session_state.get("minutas_instrucao_documentos") or [])
+    uploads = st.file_uploader(
+        "Documentos da instrução",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="minutas_instrucao_upload",
+    )
+    if st.button("Incluir na instrução", key="minutas_instrucao_incluir"):
+        known = {item["sha256"] for item in documents}
+        for upload in uploads or []:
+            content = upload.getvalue()
+            digest = sha256(content).hexdigest()
+            if digest in known:
+                continue
+            try:
+                documents.append(receber_pdf(upload.name, content, "relatorio_inicial"))
+                known.add(digest)
+            except Exception as exc:
+                _error(exc)
+        st.session_state["minutas_instrucao_documentos"] = documents
+    if not documents:
+        empty_state("Nenhum documento de instrução foi incluído.")
+    for position, item in enumerate(documents):
+        for suffix, field in (
+            ("tipo", "tipo"), ("data", "data"),
+            ("origem", "origem_documento"), ("descricao", "descricao"),
+        ):
+            key = f"minutas_instrucao_{suffix}_{item['id']}"
+            if key not in st.session_state:
+                st.session_state[key] = item.get(field) or ""
+        _sync_instruction(item)
+        st.markdown(f"**{position + 1}. {item['nome']}**")
+        st.caption(f"SHA-256 {item['sha256'][:12]} · páginas {', '.join(map(str, item['paginas'])) or '—'}")
+        left, right = st.columns(2)
+        left.selectbox(
+            "Classificação",
+            [entry[0] for entry in TIPOS],
+            format_func=lambda key: dict((item[0], item[1]) for item in TIPOS)[key],
+            key=f"minutas_instrucao_tipo_{item['id']}",
+        )
+        right.text_input("Data", key=f"minutas_instrucao_data_{item['id']}")
+        left, right = st.columns(2)
+        left.text_input("Origem do documento", key=f"minutas_instrucao_origem_{item['id']}")
+        right.text_input("Descrição", key=f"minutas_instrucao_descricao_{item['id']}")
+        up, down, remove = st.columns(3)
+        up.button("Subir", key=f"minutas_instrucao_up_{item['id']}",
+                  on_click=_move_instruction, args=(item["id"], -1))
+        down.button("Descer", key=f"minutas_instrucao_down_{item['id']}",
+                    on_click=_move_instruction, args=(item["id"], 1))
+        remove.button("Remover", key=f"minutas_instrucao_drop_{item['id']}",
+                      on_click=_drop_instruction, args=(item["id"],))
+    documents = [_sync_instruction(item) for item in documents]
+    current = versao(documents) if documents else ""
+    if st.session_state.get("minutas_instrucao_versao") != current:
+        st.session_state["minutas_instrucao_versao"] = current
+        st.session_state.pop("minutas_instrucao_analise", None)
+        st.session_state.pop("minutas_instrucao_minuta", None)
+    processo = st.text_input("Processo TC", key="minutas_instrucao_processo")
+    exercicio = st.number_input(
+        "Exercício das contas", min_value=1990, max_value=2100, value=None,
+        key="minutas_instrucao_exercicio",
+    )
+    origem = st.text_input("Origem", key="minutas_instrucao_origem_processo")
+    if st.button("Analisar instrução", key="minutas_instrucao_analisar", disabled=not documents):
+        try:
+            st.session_state["minutas_instrucao_analise"] = generator.analyze_instruction(
+                documents, processo=processo, exercicio=exercicio, origem=origem,
+            )
+            st.session_state.pop("minutas_instrucao_minuta", None)
+        except Exception as exc:
+            _error(exc)
+    analyzed = st.session_state.get("minutas_instrucao_analise")
+    if analyzed:
+        for warning in analyzed.get("advertencias_instrucao") or []:
+            st.caption(warning)
+        for omission in analyzed.get("consolidacao_contexto") or []:
+            st.caption(
+                f"{omission['arquivo']}: páginas {omission['paginas_nao_enviadas_integralmente']} "
+                f"consolidadas. {omission['motivo']}"
+            )
+        precedents = analyzed.get("referencias") or {}
+        recovered = precedents.get("referencias") or []
+        if recovered:
+            st.caption(
+                f"{len(recovered)} parecer(es) definitivo(s) de outros processos recuperado(s)."
+            )
+        elif precedents.get("estado"):
+            st.caption(f"Precedentes históricos: {precedents['estado']}.")
+        _analysis_panel(analyzed)
+    if st.button("Gerar minuta", key="minutas_instrucao_gerar", disabled=not analyzed):
+        try:
+            st.session_state["minutas_instrucao_minuta"] = generator.generate_instruction(
+                documents, analyzed, processo=processo, exercicio=exercicio, origem=origem,
+            )
+        except Exception as exc:
+            _error(exc)
+    generated = st.session_state.get("minutas_instrucao_minuta")
+    if generated and analyzed:
+        try:
+            word = MinutasDocxService(service.library).export_instruction(
+                analyzed, generated, processo=processo, exercicio=exercicio, origem=origem,
+            )
+        except Exception as exc:
+            _error(exc)
+        else:
+            st.download_button(
+                "Baixar DOCX", data=word.content, file_name=word.name, mime=word.mime,
+                key="minutas_instrucao_docx",
+            )
+
+
 def _generator_tab(store, identity):
     st.subheader("Teste de Geração — Processo Histórico")
     st.caption(
@@ -1412,6 +1567,15 @@ def _generator_tab(store, identity):
     if service is None:
         return
     generator = MinutasGenerationService(service)
+    mode = st.radio(
+        "Modo",
+        ("Processo do acervo", "Instrução do processo"),
+        horizontal=True,
+        key="minutas_generation_mode",
+    )
+    if mode == "Instrução do processo":
+        _instruction_panel(generator, service)
+        return
     try:
         targets = generator.targets()
     except Exception as exc:
