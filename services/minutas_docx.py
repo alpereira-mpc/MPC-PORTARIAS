@@ -400,54 +400,7 @@ def _filename(target):
     return "MINUTA_PARECER.docx"
 
 
-def _review_items(analyzed, generated):
-    items = []
-    documentary = generated.get("advertencias_documentais")
-    if not isinstance(documentary, list):
-        documentary = analyzed.get("pendencias_conferencia") or []
-    for issue in documentary:
-        if not isinstance(issue, dict):
-            continue
-        location = str(issue.get("documento") or "Documento não informado")
-        if issue.get("pagina") is not None:
-            location += f", p. {issue['pagina']}"
-        items.append(
-            f"{issue.get('irregularidade') or '—'} — "
-            f"{issue.get('categoria') or 'Campo não informado'} — {location}: "
-            f"{issue.get('natureza') or 'conferência documental necessária'}."
-        )
-    for warning in generated.get("advertencias_qualidade") or ():
-        text = str(warning or "").strip()
-        if text:
-            items.append(text)
-    return list(dict.fromkeys(items))
-
-
-def _add_review_section(document, items):
-    if not items:
-        return
-    title = document.add_paragraph(style="Minuta Revisão Título")
-    title.paragraph_format.page_break_before = True
-    _add_text(
-        title,
-        "INFORMAÇÕES AUXILIARES PARA REVISÃO",
-        bold=True,
-    )
-    introduction = document.add_paragraph(style="Minuta Revisão Item")
-    introduction.paragraph_format.left_indent = Cm(0)
-    introduction.paragraph_format.first_line_indent = Cm(0)
-    _add_text(
-        introduction,
-        "Os pontos abaixo não integram a fundamentação oficial da minuta e "
-        "devem ser conferidos pelo Assessor.",
-        size=10,
-    )
-    for item in items:
-        paragraph = document.add_paragraph(style="Minuta Revisão Item")
-        _add_text(paragraph, f"• {item}", size=10)
-
-
-def _build_docx(target, structure, profile, header_lines, review_items=()):
+def _build_docx(target, structure, profile, header_lines):
     document = Document()
     section = document.sections[0]
     section.orientation = WD_ORIENT.PORTRAIT
@@ -530,8 +483,6 @@ def _build_docx(target, structure, profile, header_lines, review_items=()):
     title = document.add_paragraph(style="Minuta Cargo")
     _add_text(title, profile["cargo"], size=11)
 
-    _add_review_section(document, review_items)
-
     output = BytesIO()
     document.save(output)
     return output.getvalue()
@@ -554,6 +505,7 @@ class MinutasDocxService:
             MinutasGenerationService,
             _canonical_process_key as canonical_process_key,
             _draft_header_lines,
+            _target_with_header_metadata,
         )
 
         self.library._authorize()
@@ -598,8 +550,11 @@ class MinutasDocxService:
         structure = MinutasGenerationService._validate_structure(
             generated.get("estrutura")
         )
+        header_target = _target_with_header_metadata(
+            target, generated.get("metadados_cabecalho")
+        )
         structure, _normalization_warnings = (
-            MinutasGenerationService._normalize_structure(structure, target)
+            MinutasGenerationService._normalize_structure(structure, header_target)
         )
         structure = MinutasGenerationService._validate_structure(structure)
         return MinutaDocx(
@@ -609,7 +564,6 @@ class MinutasDocxService:
                 target,
                 structure,
                 profile,
-                _draft_header_lines(target),
-                review_items=_review_items(analyzed, generated),
+                _draft_header_lines(header_target),
             ),
         )

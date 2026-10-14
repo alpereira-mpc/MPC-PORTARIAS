@@ -47,6 +47,41 @@ def _clear_generated_result(result_key, docx_cache_key):
     st.session_state.pop(docx_cache_key, None)
 
 
+def _generated_review_items(result):
+    items = []
+    for warning in result.get("advertencias_qualidade") or ():
+        text = str(warning or "").strip()
+        if text:
+            items.append(("Advertência de qualidade", text))
+    for issue in result.get("advertencias_documentais") or ():
+        if not isinstance(issue, dict):
+            continue
+        location = str(issue.get("documento") or "Documento não informado")
+        if issue.get("pagina") is not None:
+            location += f", p. {issue['pagina']}"
+        items.append(
+            (
+                "Conferência documental",
+                f"{issue.get('irregularidade') or '—'} · "
+                f"{issue.get('categoria') or 'Campo não informado'} · {location}: "
+                f"{issue.get('natureza') or 'conferência necessária'}",
+            )
+        )
+    return items
+
+
+def _generated_review_panel(result):
+    items = _generated_review_items(result)
+    if not items:
+        return
+    st.caption(
+        f"{len(items)} advertência(s) disponível(is) para conferência facultativa do Assessor."
+    )
+    with st.expander(f"Conferência facultativa ({len(items)})", expanded=False):
+        for category, text in items:
+            st.markdown(f"- **{category}:** {text}")
+
+
 def _docx_signature(target_id, analysis, result):
     payload = {
         "target_id": str(target_id),
@@ -55,6 +90,7 @@ def _docx_signature(target_id, analysis, result):
         "analysis_policy_version": analysis.get("validation_policy_version"),
         "estrutura": result.get("estrutura"),
         "texto": result.get("texto"),
+        "metadados_cabecalho": result.get("metadados_cabecalho"),
         "advertencias_documentais": result.get("advertencias_documentais"),
         "advertencias_qualidade": result.get("advertencias_qualidade"),
     }
@@ -1587,17 +1623,13 @@ def _generator_tab(store, identity):
     section_label("Minuta gerada")
     quality_warnings = result.get("advertencias_qualidade") or ()
     if quality_warnings:
-        st.warning(
-            "Geração concluída, com insuficiência jurídica potencial detectada "
-            "para revisão humana."
-        )
+        st.info("Geração concluída com pontos disponíveis para conferência facultativa.")
     else:
         st.success(
             "Geração concluída sem advertências determinísticas de insuficiência "
             "jurídica. A revisão humana permanece obrigatória."
         )
-    for warning in quality_warnings:
-        st.warning(warning)
+    _generated_review_panel(result)
     with st.container(border=True):
         st.markdown(result["texto"])
     with st.expander("Copiar texto da minuta"):

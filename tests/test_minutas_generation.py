@@ -1856,6 +1856,10 @@ def test_draft_header_removes_bureaucratic_phrases_and_groups_recommendations():
     ]
     assert len(recommendations) == 1
     assert "\n" not in recommendations[0]
+    assert recommendations[0].startswith(
+        "Pela expedição de recomendação à gestão do Instituto Municipal de Previdência"
+    )
+    assert "Recomendem-se, de forma consolidada" not in recommendations[0]
     assert "aprimore o controle previdenciário" in recommendations[0]
     assert "registre as providências adotadas" in recommendations[0]
     assert "acompanhe os prazos legais" in recommendations[0]
@@ -1866,6 +1870,116 @@ def test_draft_header_removes_bureaucratic_phrases_and_groups_recommendations():
         structure, target
     )
     assert renormalized["pedidos"] == structure["pedidos"]
+
+
+def test_header_metadata_uses_only_unambiguous_target_extractions():
+    target, history, other, rows = _scenario()
+    target_source = next(
+        row for row in rows if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    target_text = (
+        "ENTIDADE: Instituto de Previdência do Município de Taperoá\n"
+        "GESTOR RESPONSÁVEL: André Batista de Queiroz\n"
+        "Irregularidade previdenciária na página original."
+    )
+    target_source["texto_integral"] = target_text
+    target_source["unidades_json"] = json.dumps(
+        [{"pagina": 1, "texto": target_text}], ensure_ascii=False
+    )
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+    )
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert result["metadados_cabecalho"] == {
+        "origem": "Instituto de Previdência do Município de Taperoá",
+        "responsavel": "André Batista de Queiroz",
+    }
+    assert "Origem: Instituto de Previdência do Município de Taperoá" in result["texto"]
+    assert "Responsável: André Batista de Queiroz" in result["texto"]
+
+
+def test_header_metadata_omits_conflicting_or_non_entity_values():
+    target, history, other, rows = _scenario()
+    target_source = next(
+        row for row in rows if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    target_text = (
+        "ENTIDADE: Instituto de Previdência do Município de Taperoá\n"
+        "ENTIDADE: Instituto Municipal de Previdência de Outra Cidade\n"
+        "RESPONSÁVEL: Auditor da Unidade Técnica"
+    )
+    target_source["texto_integral"] = target_text
+    target_source["unidades_json"] = json.dumps(
+        [{"pagina": 1, "texto": target_text}], ensure_ascii=False
+    )
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+    )
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert result["metadados_cabecalho"] == {}
+    assert "Origem: Não informada" in result["texto"]
+    assert "Responsável: Não informado" in result["texto"]
+
+
+def test_header_metadata_does_not_leak_from_historical_processes():
+    target, history, other, rows = _scenario()
+    historical_source = next(
+        row for row in rows if row["referencia_id"] == history["id"] and row["papel"] == "auditoria"
+    )
+    historical_text = (
+        "ENTIDADE: Prefeitura Municipal de Outra Cidade\n"
+        "RESPONSÁVEL: Gestor Histórico"
+    )
+    historical_source["texto_integral"] = historical_text
+    historical_source["unidades_json"] = json.dumps(
+        [{"pagina": 1, "texto": historical_text}], ensure_ascii=False
+    )
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+    )
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert result["metadados_cabecalho"] == {}
+    assert "Outra Cidade" not in result["texto"]
+
+
+def test_header_metadata_supports_another_jurisdiction_type():
+    target, history, other, rows = _scenario()
+    target["subtipo"] = "Câmara Municipal"
+    target_source = next(
+        row for row in rows if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    target_text = (
+        "ÓRGÃO: Câmara Municipal de Taperoá\n"
+        "ORDENADOR DE DESPESA: Maria de Sousa"
+    )
+    target_source["texto_integral"] = target_text
+    target_source["unidades_json"] = json.dumps(
+        [{"pagina": 1, "texto": target_text}], ensure_ascii=False
+    )
+
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+    )
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert result["metadados_cabecalho"] == {
+        "origem": "Câmara Municipal de Taperoá",
+        "responsavel": "Maria de Sousa",
+    }
 
 
 @pytest.mark.parametrize(
@@ -2977,6 +3091,15 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
                 "advertencias_qualidade": [
                     "Divergência jurídica sujeita à revisão humana."
                 ],
+                "advertencias_documentais": [
+                    {
+                        "irregularidade": "IRR-1",
+                        "categoria": "Fato documentado",
+                        "documento": "auditoria.pdf",
+                        "pagina": 4,
+                        "natureza": "trecho exige conferência",
+                    }
+                ],
             }
 
     class WordExporter:
@@ -3046,11 +3169,13 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     assert any("Conteúdo para revisão" in item.value for item in app.markdown)
     assert any("Conteúdo para revisão" in item.value for item in app.code)
     assert any(
-        "Geração concluída, com insuficiência jurídica potencial" in item.value
-        for item in app.warning
+        "Geração concluída com pontos disponíveis" in item.value for item in app.info
     )
     assert any(
-        "Divergência jurídica sujeita" in item.value for item in app.warning
+        item.label == "Conferência facultativa (2)" for item in app.expander
+    )
+    assert any(
+        "auditoria.pdf, p. 4" in item.value for item in app.markdown
     )
 
     app.run()

@@ -479,6 +479,99 @@ def _draft_identifier(target):
     return f"MINUTA-TC-{_draft_process_display(target)}"
 
 
+_HEADER_METADATA_LABELS = {
+    "origem": (
+        "origem",
+        "entidade",
+        "unidade gestora",
+        "órgão",
+        "orgão",
+        "jurisdicionado",
+    ),
+    "responsavel": (
+        "responsável",
+        "responsavel",
+        "gestor responsável",
+        "gestor responsavel",
+        "dirigente responsável",
+        "dirigente responsavel",
+        "ordenador de despesa",
+    ),
+}
+_HEADER_METADATA_REJECTED = {
+    "origem": (
+        "auditoria",
+        "tribunal de contas",
+        "tce-pb",
+        "ministerio publico de contas",
+        "relatorio",
+        "documento",
+    ),
+    "responsavel": ("auditor", "procurador", "relator", "analista"),
+}
+
+
+def _header_metadata_value(field, value):
+    candidate = re.sub(r"\s+", " ", str(value or "")).strip(" .;:-")
+    normalized = _plain(candidate)
+    if (
+        not candidate
+        or len(candidate) > 220
+        or any(term in normalized for term in _HEADER_METADATA_REJECTED[field])
+    ):
+        return ""
+    if field == "responsavel" and (
+        len(candidate.split()) < 2 or any(character.isdigit() for character in candidate)
+    ):
+        return ""
+    return candidate
+
+
+def _header_metadata_from_text(field, text):
+    labels = "|".join(re.escape(label) for label in _HEADER_METADATA_LABELS[field])
+    pattern = re.compile(
+        rf"(?im)^\s*(?:{labels})\s*[:\-–—]\s*(?P<value>[^\n]+)$"
+    )
+    candidates = {}
+    for match in pattern.finditer(str(text or "")):
+        value = _header_metadata_value(field, match.group("value"))
+        if value:
+            candidates.setdefault(_normalized_support(value), value)
+    return candidates
+
+
+def _resolved_header_metadata(target, sources=(), analysis=None):
+    metadata = {}
+    source_text = "\n".join(
+        unit.get("texto", "")
+        for source in sources
+        for unit in source.get("conteudo", ())
+        if isinstance(unit, dict)
+    )
+    analysis_text = json.dumps(analysis or {}, ensure_ascii=False)
+    for field in ("origem", "responsavel"):
+        structured = _header_metadata_value(field, target.get(field))
+        if structured:
+            metadata[field] = structured
+            continue
+        candidates = {
+            **_header_metadata_from_text(field, source_text),
+            **_header_metadata_from_text(field, analysis_text),
+        }
+        if len(candidates) == 1:
+            metadata[field] = next(iter(candidates.values()))
+    return metadata
+
+
+def _target_with_header_metadata(target, metadata):
+    resolved = dict(target)
+    for field in ("origem", "responsavel"):
+        value = _header_metadata_value(field, (metadata or {}).get(field))
+        if value:
+            resolved[field] = value
+    return resolved
+
+
 def _draft_header_lines(target):
     process = _draft_process_display(target)
     origin = str(target.get("origem") or "Não informada").strip()
@@ -509,12 +602,41 @@ def _recommendation_clauses(request):
             clause,
             flags=re.IGNORECASE,
         ).strip(" ;.")
+        no_sense = re.search(r"\bno\s+sentido\s+de\s+(.+)$", clause, re.IGNORECASE)
+        if no_sense:
+            clause = no_sense.group(1).strip(" ;.")
+        else:
+            clause = re.sub(
+                r"^\s*(?:pela\s+)?expedi[çc][aã]o\s+de\s+"
+                r"recomenda(?:[çc][aã]o|[çc][oõ]es)\s*(?:à|ao|a)?\s*"
+                r"gest[aã]o(?:\s+que)?\s*",
+                "",
+                clause,
+                flags=re.IGNORECASE,
+            )
+            clause = re.sub(
+                r"^\s*(?:à|ao|a)?\s*gest[aã]o\s+(?:que\s+)?",
+                "",
+                clause,
+                flags=re.IGNORECASE,
+            )
         if clause:
             clauses.append(clause)
     return clauses
 
 
-def _consolidate_recommendations(requests):
+def _recommendation_recipient(origin):
+    entity = str(origin or "").strip()
+    if not entity:
+        return "à gestão"
+    if _plain(entity).startswith(("instituto", "orgao", "fundo", "conselho")):
+        return f"à gestão do {entity}"
+    if _plain(entity).startswith(("prefeitura", "secretaria", "camara")):
+        return f"à gestão da {entity}"
+    return f"à gestão de {entity}"
+
+
+def _consolidate_recommendations(requests, origin=""):
     positions = [
         index
         for index, request in enumerate(requests)
@@ -523,7 +645,7 @@ def _consolidate_recommendations(requests):
     if not positions:
         return list(requests)
     if len(positions) == 1 and _plain(requests[positions[0]]).startswith(
-        "recomendem-se, de forma consolidada, as seguintes providencias:"
+        "pela expedicao de recomendacao a gestao"
     ):
         return list(requests)
     clauses = []
@@ -537,7 +659,9 @@ def _consolidate_recommendations(requests):
     if not clauses:
         return [request for index, request in enumerate(requests) if index not in positions]
     consolidated = (
-        "Recomendem-se, de forma consolidada, as seguintes providências: "
+        "Pela expedição de recomendação "
+        + _recommendation_recipient(origin)
+        + ", no sentido de "
         + "; ".join(clauses)
         + "."
     )
@@ -1370,7 +1494,14 @@ class MinutasGenerationService:
                 "extração processada."
             )
 
-        return target, state, rows, grouped, target_sources
+        metadata = _resolved_header_metadata(target, target_sources)
+        return (
+            _target_with_header_metadata(target, metadata),
+            state,
+            rows,
+            grouped,
+            target_sources,
+        )
 
     def prepare_analysis_context(self, target_reference_id):
         target, state, _rows, _grouped, target_sources = self._target_bundle(
@@ -2698,7 +2829,7 @@ class MinutasGenerationService:
                     "ressalvas ou irregularidade no primeiro item do dispositivo."
                 )
         normalized["pedidos"] = _consolidate_recommendations(
-            normalized.get("pedidos", ())
+            normalized.get("pedidos", ()), target.get("origem")
         )
         return normalized, warnings
 
@@ -3152,8 +3283,14 @@ class MinutasGenerationService:
         if not isinstance(generated, dict):
             raise MinutasGenerationError("A IA não retornou uma minuta válida.")
         structure = self._validate_structure(generated.get("estrutura"))
+        header_metadata = _resolved_header_metadata(
+            target,
+            prepared["contexto"].get("documentos_processo_alvo", ()),
+            analysis,
+        )
+        header_target = _target_with_header_metadata(target, header_metadata)
         structure, normalization_warnings = self._normalize_structure(
-            structure, target, prepared["contexto"]
+            structure, header_target, prepared["contexto"]
         )
         structure = self._validate_structure(structure)
         warnings = [
@@ -3167,6 +3304,7 @@ class MinutasGenerationService:
             "estrutura": structure,
             "texto": self._structure_markdown(structure),
             "identificador_minuta": _draft_identifier(target),
+            "metadados_cabecalho": header_metadata,
             "advertencias_qualidade": warnings,
             "advertencias_documentais": deepcopy(conference["pendencias"]),
             "validation_policy_version": VALIDATION_POLICY_VERSION,

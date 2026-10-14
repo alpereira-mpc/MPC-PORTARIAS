@@ -262,7 +262,7 @@ def test_docx_preserves_formatting_and_groups_recommendations_in_one_item():
     recommendation = next(
         paragraph
         for paragraph in paragraphs
-        if paragraph.text.startswith("Recomendem-se, de forma consolidada")
+        if paragraph.text.startswith("Pela expedição de recomendação")
     )
 
     assert ementa.style.name == "Minuta Ementa"
@@ -298,11 +298,11 @@ def test_docx_keeps_already_consolidated_recommendation_idempotent():
     recommendations = [
         paragraph.text
         for paragraph in document.paragraphs
-        if paragraph.text.startswith("Recomendem-se, de forma consolidada")
+        if paragraph.text.startswith("Pela expedição de recomendação")
     ]
 
     assert len(recommendations) == 1
-    assert recommendations[0].count("Recomendem-se, de forma consolidada") == 1
+    assert recommendations[0].count("Pela expedição de recomendação") == 1
 
 
 def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
@@ -354,21 +354,28 @@ def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
 
 
 def test_docx_includes_authorized_origin_and_responsible_when_available():
-    target = _target(
-        origem="Instituto Municipal de Previdência",
-        responsavel="Gestora Responsável",
-        parecer_numero="999/2025",
-    )
+    target = _target(parecer_numero="999/2025")
+    analyzed, generated = _payload(target)
+    generated["metadados_cabecalho"] = {
+        "origem": "Instituto de Previdência do Município de Taperoá",
+        "responsavel": "André Batista de Queiroz",
+    }
 
-    document = Document(BytesIO(_export(target=target).content))
+    document = Document(
+        BytesIO(
+            MinutasDocxService(Library(target), source_summary=_summary).export(
+                target["id"], analyzed, generated
+            ).content
+        )
+    )
     texts = [paragraph.text for paragraph in document.paragraphs]
 
     assert texts[:5] == [
         "Parecer Nº",
         "Processo TC Nº 01653/26",
-        "Origem: Instituto Municipal de Previdência",
+        "Origem: Instituto de Previdência do Município de Taperoá",
         "Natureza: Prestação de Contas Anuais - exercício 2026",
-        "Responsável: Gestora Responsável",
+        "Responsável: André Batista de Queiroz",
     ]
     assert not any("MINUTA-TC-01653/26" in text for text in texts)
     assert not any("999/2025" in text for text in texts)
@@ -459,10 +466,10 @@ def test_export_revalidates_authorization_target_and_sources_but_accepts_warning
     body = "\n".join(
         paragraph.text for paragraph in Document(BytesIO(exported.content)).paragraphs
     )
-    assert "INFORMAÇÕES AUXILIARES PARA REVISÃO" in body
-    assert "18.3" in body
-    assert "auditoria.pdf, p. 4" in body
-    assert "não integram a fundamentação oficial" in body
+    assert "INFORMAÇÕES AUXILIARES PARA REVISÃO" not in body
+    assert "18.3" not in body
+    assert "auditoria.pdf, p. 4" not in body
+    assert "não integram a fundamentação oficial" not in body
 
 
 def test_docx_omits_auxiliary_review_section_without_warnings():
