@@ -150,28 +150,50 @@ class MinutasSpecialtiesStore:
 
     def dashboard(self):
         from services.minutas_extraction import EXTRACTOR_VERSION
+        catalog = self.catalog()
+        canonical_ids = tuple(row["id"] for row in catalog)
+        membership_ids = (*canonical_ids, *PREFEITURAS_LEGACY)
+        membership_placeholders = ",".join("?" for _ in membership_ids)
+        legacy_placeholders = ",".join("?" for _ in PREFEITURAS_LEGACY)
         with self.store.connection(read_only=True) as c:
             active = active_clause(separation_enabled(c, getattr(self.store, "backend", "")))
             rows = c.execute(
-                "SELECT s.id,COUNT(DISTINCT r.id) AS processos,"
-                "COUNT(DISTINCT CASE WHEN d.papel='parecer' THEN d.path END) AS pareceres,"
-                "COUNT(DISTINCT CASE WHEN d.papel IN ('auditoria','complementar') THEN d.path END) AS relatorios,"
-                "COUNT(DISTINCT CASE WHEN e.status='PROCESSADO' AND e.extrator_versao=? "
-                "THEN d.path END) AS indexados,MAX(mc.atualizado_em) AS ultima_atualizacao "
-                "FROM minutas_especialidades s LEFT JOIN minutas_acervo_vinculos v ON v.especialidade_id=s.id "
-                "LEFT JOIN minutas_classificacoes mc ON mc.referencia_id=v.referencia_id AND mc.estado='CLASSIFICADO' "
-                "LEFT JOIN minutas_referencias r ON r.id=mc.referencia_id AND r.procuradora_chave=s.procuradora_chave"
-                + active + " "
+                "WITH escopo AS ("
+                "SELECT CASE WHEN v.especialidade_id IN (" + legacy_placeholders + ") THEN ? "
+                "ELSE v.especialidade_id END AS especialidade_id,r.id AS referencia_id,d.id AS documento_id,"
+                "d.papel,e.status AS extracao_status,e.extrator_versao,mc.atualizado_em "
+                "FROM minutas_acervo_vinculos v "
+                "JOIN minutas_classificacoes mc ON mc.referencia_id=v.referencia_id AND mc.estado='CLASSIFICADO' "
+                "JOIN minutas_referencias r ON r.id=mc.referencia_id AND r.procuradora_chave=?" + active + " "
                 "LEFT JOIN minutas_documentos_catalogo d ON d.referencia_id=r.id "
                 "LEFT JOIN minutas_extracoes e ON e.arquivo_path=d.path AND e.referencia_id=r.id "
-                "WHERE s.procuradora_chave=? GROUP BY s.id", (EXTRACTOR_VERSION, PROSECUTOR_KEY),
+                "WHERE v.especialidade_id IN (" + membership_placeholders + ")"
+                ") SELECT especialidade_id,COUNT(DISTINCT referencia_id) AS processos,"
+                "COUNT(DISTINCT CASE WHEN papel='parecer' THEN documento_id END) AS pareceres,"
+                "COUNT(DISTINCT CASE WHEN papel IN ('auditoria','complementar') THEN documento_id END) AS relatorios,"
+                "COUNT(DISTINCT CASE WHEN extracao_status='PROCESSADO' AND extrator_versao=? "
+                "THEN documento_id END) AS indexados,MAX(atualizado_em) AS ultima_atualizacao "
+                "FROM escopo GROUP BY especialidade_id",
+                (*PREFEITURAS_LEGACY, PREFEITURAS, PROSECUTOR_KEY, *membership_ids, EXTRACTOR_VERSION),
             ).fetchall()
             pending = c.execute(
                 "SELECT COUNT(*) AS total FROM minutas_referencias r LEFT JOIN minutas_classificacoes mc "
                 "ON mc.referencia_id=r.id WHERE r.procuradora_chave=? "
                 "AND (mc.estado IS NULL OR mc.estado<>'CLASSIFICADO')" + active, (PROSECUTOR_KEY,),
             ).fetchone()["total"]
-        return {"especialidades": [dict(r) for r in rows], "pendentes": pending}
+        metrics = {row["especialidade_id"]: dict(row) for row in rows}
+        specialties = []
+        for profile in catalog:
+            row = metrics.get(profile["id"], {})
+            specialties.append({
+                "id": profile["id"],
+                "processos": row.get("processos", 0),
+                "pareceres": row.get("pareceres", 0),
+                "relatorios": row.get("relatorios", 0),
+                "indexados": row.get("indexados", 0),
+                "ultima_atualizacao": row.get("ultima_atualizacao"),
+            })
+        return {"especialidades": specialties, "pendentes": pending}
 
     def snapshot(self):
         """Inventário explícito: três leituras; texto carregado só no dry-run administrativo."""

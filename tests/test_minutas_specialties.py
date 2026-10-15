@@ -294,6 +294,60 @@ def test_prefectures_canonical_scope_reads_legacy_records_without_duplicate(envi
     assert [item["id"] for item in admin.catalog() if item["grupo"] == "PCA"].count(PREFEITURAS) == 1
 
 
+def test_dashboard_uses_canonical_specialties_and_distinct_document_counts(environment):
+    store, storage = environment
+    prefeitura = seed(store, process="02720/25", subtype="Prefeitura", entity="Prefeitura Municipal")
+    camara = seed(store, process="01499/26", subtype="Câmara Municipal", entity="Câmara Municipal")
+    fundo = seed(store, process="01999/26", subtype="Fundo", entity="Fundo Municipal")
+    admin = MinutasAcervoService(library(store, storage))
+    admin.classify(prefeitura["id"], PREFEITURAS, "PCA", "Prefeitura Municipal", "Classificação canônica")
+    admin.classify(camara["id"], CAMARAS, "PCA", "Câmara Municipal", "Classificação canônica")
+    admin.classify(fundo["id"], "elvira.pca.fundos", "PCA", "Fundo Municipal", "Classificação canônica")
+    with store.connection() as c:
+        for legacy_id, name in (
+            ("elvira.pca.governo", "Prefeituras / Contas de Governo"),
+            ("elvira.pca.gestao", "Prefeituras / Contas de Gestão"),
+        ):
+            c.execute(
+                "INSERT INTO minutas_especialidades "
+                "SELECT ?,procuradora_chave,grupo,?,?,estado,config_versao,motor,config_json,casos_testados,"
+                "ultima_validacao,pendencias,resultados_testes,revisao,atualizado_em,atualizado_por "
+                "FROM minutas_especialidades WHERE id=?",
+                (legacy_id, name, "PREFEITURA", PREFEITURAS),
+            )
+            c.execute("INSERT INTO minutas_acervo_vinculos VALUES(?,?,?)",
+                      (prefeitura["id"], legacy_id, "Vínculo histórico"))
+        c.execute(
+            "INSERT INTO minutas_acervo_documentos "
+            "(id,referencia_id,papel,tipo,descricao,posicao,data_documento,nome,mime,tamanho,path,sha256,"
+            "criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (str(uuid.uuid4()), camara["id"], "parecer", "Parecer complementar", "", 1, None,
+             "parecer-complementar.pdf", "application/pdf", 100, "camara/parecer-complementar.pdf",
+             sha256(b"parecer-complementar").hexdigest(), "1", "teste", "1", "teste"),
+        )
+        for specialty in (CAMARAS, SECRETARIAS_MUNICIPAIS, PREFEITURAS):
+            c.execute("UPDATE minutas_especialidades SET motor=?, estado=? WHERE id=?",
+                      (SHARED_INSTRUCTION_MOTOR, "Em testes", specialty))
+    dashboard = admin.repository.dashboard()
+    rows = {row["id"]: row for row in dashboard["especialidades"]}
+    assert len(rows) == 23
+    assert set(rows) == {profile["id"] for profile in admin.catalog()}
+    assert "elvira.pca.governo" not in rows and "elvira.pca.gestao" not in rows
+    assert tuple(rows[PREFEITURAS][key] for key in (
+        "processos", "pareceres", "relatorios", "indexados",
+    )) == (1, 1, 1, 2)
+    assert rows[CAMARAS]["processos"] == 1 and rows[CAMARAS]["pareceres"] == 2
+    assert rows[CAMARAS]["indexados"] == 2
+    assert rows["elvira.pca.fundos"]["indexados"] == 2
+    catalog = {profile["id"]: profile for profile in admin.catalog()}
+    assert catalog["elvira.pca.fundos"]["estado"] == "A iniciar"
+    assert catalog[PREFEITURAS]["estado"] == "Em testes"
+    assert catalog[PREFEITURAS]["motor"] == SHARED_INSTRUCTION_MOTOR
+    assert all(instruction_generation_allowed(catalog[specialty]) for specialty in (
+        RPPS, CAMARAS, SECRETARIAS_MUNICIPAIS, PREFEITURAS,
+    ))
+
+
 def test_chamber_upload_requires_reclassification_of_existing_other_scope_process(environment):
     store, storage = environment
     campina = seed(
@@ -619,10 +673,23 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not any(item.key == "minutas_specialty" for item in app.selectbox)
     app.button(key="minutas_initial_administration_open").click().run()
     assert app.button(key="minutas_initial_administration_back")
+    assert not any(item.key == "minutas_initial_administration_open" for item in app.button)
     administration = next(item for item in app.selectbox if item.label == "Administração")
     assert "Painel de especialidades" in administration.options
+    panel = app.dataframe[0].value
+    assert list(panel.columns) == [
+        "Especialidade", "ID", "Estado", "Geração", "Processos", "Pareceres",
+        "Relatórios", "Documentos indexados",
+    ]
+    assert len(panel) == 23
+    assert panel.loc[panel["ID"] == PREFEITURAS, "Especialidade"].tolist() == ["Prefeituras Municipais"]
+    assert not panel["ID"].isin(["elvira.pca.governo", "elvira.pca.gestao"]).any()
+    assert any("Especialidades vigentes: 23" in caption.value for caption in app.caption)
+    assert any("A iniciar" in caption.value for caption in app.caption)
     app.button(key="minutas_initial_administration_back").click().run()
     assert not any(item.key == "minutas_active_view" for item in app.radio)
+    assert app.button(key="minutas_initial_administration_open")
+    assert not any(item.key == "minutas_initial_administration_back" for item in app.button)
     assert storage.downloads == []
     assert not any("ts_headline" in query for query in store.queries)
 

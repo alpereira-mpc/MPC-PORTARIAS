@@ -58,6 +58,11 @@ def test_real_postgresql_migration_uuid_idempotence_fts_and_rls(specialized_pg):
     assert first["alterados"] == 3
     assert first["antes"] == first["depois"]
     assert admin.apply(admin.dry_run(), {"identificador": "backup-sintetico", "restauracao_verificada": True})["alterados"] == 0
+    dashboard = admin.repository.dashboard()
+    assert len(dashboard["especialidades"]) == 23
+    assert {row["id"] for row in dashboard["especialidades"]}.isdisjoint(
+        {"elvira.pca.governo", "elvira.pca.gestao"},
+    )
     results = MinutasSearchService(library).search("Conteúdo sintético")["resultados"]
     assert results and {row["referencia_id"] for row in results} == {target["id"]}
     assert library.repository.get(chamber["id"]) is None

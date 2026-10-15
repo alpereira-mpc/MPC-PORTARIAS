@@ -2125,8 +2125,6 @@ def render(store, identity):
     try:
         profile = selection(administrative_library)
         if profile is None:
-            if st.button("Administração do módulo", key="minutas_initial_administration_open"):
-                st.session_state["minutas_initial_administration"] = True
             if st.session_state.get("minutas_initial_administration"):
                 st.button(
                     "← Voltar à escolha de especialidade",
@@ -2134,6 +2132,12 @@ def render(store, identity):
                     on_click=lambda: st.session_state.pop("minutas_initial_administration", None),
                 )
                 administration(administrative_library)
+            else:
+                st.button(
+                    "Administração do módulo",
+                    key="minutas_initial_administration_open",
+                    on_click=lambda: st.session_state.__setitem__("minutas_initial_administration", True),
+                )
             return
         library = _service(store, identity)
         if library is None:

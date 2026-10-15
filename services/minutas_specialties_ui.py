@@ -558,12 +558,15 @@ def _administration(admin, profile):
         catalog = {row["id"]: row for row in admin.catalog()}
         rows = []
         for row in data["especialidades"]:
-            item = catalog.get(row["id"], {})
-            rows.append({"Especialidade": item.get("nome", row["id"]), "Estado": item.get("estado", ""),
+            item = catalog[row["id"]]
+            rows.append({"Especialidade": item["nome"], "ID": item["id"], "Estado": item["estado"],
+                "Geração": "Habilitada" if instruction_generation_allowed(item) else "Desabilitada",
                 "Processos": row.get("processos", 0), "Pareceres": row.get("pareceres", 0),
-                "Relatórios": row.get("relatorios", 0), "Indexados": row.get("indexados", 0)})
-        st.dataframe(rows, hide_index=True)
+                "Relatórios": row.get("relatorios", 0), "Documentos indexados": row.get("indexados", 0)})
+        st.caption(f"Especialidades vigentes: {len(rows)}")
+        st.dataframe(rows, hide_index=True, width="stretch")
         st.caption(f"Processos do acervo ativo sem classificação: {data['pendentes']}")
+        st.caption("“A iniciar” indica o estágio da especialidade; não significa ausência de documentos no Acervo nem falha de indexação.")
     elif operation == "Acervo legado":
         _legacy_archive(admin, admin.library)
     elif operation == "Inventário e reclassificação":
