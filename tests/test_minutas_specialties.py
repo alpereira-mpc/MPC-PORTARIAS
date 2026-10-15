@@ -156,8 +156,24 @@ def seed(store, *, process="TC 01653/26", subtype="Instituto/Autarquia", entity=
 
 
 def test_catalog_separates_classes_themes_and_only_preserves_rpps_engine():
+    catalog_ids = {profile["id"] for profile in CATALOG}
+    expected_ids = {
+        "elvira.pca.rpps", "elvira.pca.camaras", PREFEITURAS,
+        "elvira.pca.secretarias_municipais", "elvira.pca.orgaos_estaduais",
+        "elvira.pca.fundos", "elvira.pca.autarquias", "elvira.pca.outras",
+        "elvira.pessoal.aposentadorias", "elvira.pessoal.pensoes",
+        "elvira.pessoal.reformas", "elvira.pessoal.admissoes",
+        "elvira.tema.concursos", "elvira.inspecao", "elvira.tema.licitacoes",
+        "elvira.tema.contratos", "elvira.tema.convenios", "elvira.tce",
+        "elvira.denuncias", "elvira.representacoes", "elvira.consultas",
+        "elvira.recursos", "elvira.rescisorios",
+    }
     assert len(CATALOG) == 23
-    assert len({p["id"] for p in CATALOG}) == 23
+    assert catalog_ids == expected_ids
+    prefeituras_profiles = [profile for profile in CATALOG if profile["id"] == PREFEITURAS]
+    assert len(prefeituras_profiles) == 1
+    assert prefeituras_profiles[0]["nome"] == "Prefeituras Municipais"
+    assert not catalog_ids.intersection({"elvira.pca.governo", "elvira.pca.gestao"})
     assert [p["id"] for p in CATALOG if p["motor"]] == [RPPS]
     assert scope(RPPS)["estado"] == "Funcional com ajustes"
     assert all(p["estado"] == "A iniciar" for p in CATALOG if p["id"] != RPPS)
@@ -1178,7 +1194,7 @@ def test_legacy_stays_intact_while_active_archive_reuses_process_and_pdf(separat
     with pytest.raises(sqlite3.OperationalError):
         MinutasSearchService(active).search("parecer")
     assert any("r.acervo='ativo'" in sql for sql in captured)
-    assert len(CATALOG) == 24
+    assert len(CATALOG) == 23
 
 
 def test_outdated_text_does_not_automatically_classify_rpps(environment):
