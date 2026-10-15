@@ -762,6 +762,7 @@ def _profiled_library(specialty, *, motor="", estado="A iniciar"):
     from services.minutas_specialties import scope
 
     profile = dict(scope(specialty))
+    profile["id"] = specialty
     profile["motor"] = motor
     profile["estado"] = estado
     profile["config_versao"] = "1"
@@ -958,6 +959,122 @@ def test_secretarias_habilitada_usa_identidade_propria_e_julgamento_direto(estad
     body = "\n".join(paragraph.text for paragraph in Document(BytesIO(word.content)).paragraphs)
     assert "Secretaria Municipal de Educação de Exemplo" in body
     assert "Câmara Municipal" not in body
+    assert "Institutos Previdenciários" not in body
+
+
+@pytest.mark.parametrize(
+    ("texts", "requests", "has_precedent", "expected_primary"),
+    (
+        (
+            ("Contas de governo: a instrução não contém elementos de gestão.",),
+            ("Proponha-se a emissão de parecer contrário sobre as contas de governo.",),
+            False,
+            ("parecer contrário",),
+        ),
+        (
+            ("Contas de gestão: a instrução não contém elementos de governo.",),
+            ("Proponha-se a irregularidade das contas submetidas a julgamento.",),
+            True,
+            ("irregularidade das contas",),
+        ),
+        (
+            (
+                "Contas de governo: proposta de parecer prévio consta da instrução.",
+                "Contas de gestão: há objeto distinto submetido a julgamento direto.",
+            ),
+            (
+                "Proponha-se a emissão de parecer contrário sobre as contas de governo.",
+                "Proponha-se a irregularidade das contas submetidas a julgamento.",
+                "Aplique-se multa individualizada ao responsável pela irregularidade.",
+            ),
+            True,
+            ("parecer contrário", "irregularidade das contas"),
+        ),
+    ),
+)
+def test_prefeituras_habilitada_gera_parecer_unico_condicional_e_isolado(
+    texts, requests, has_precedent, expected_primary,
+):
+    from services.minutas_search import MinutasSearchService
+    from services.minutas_specialties import PREFEITURAS, SHARED_INSTRUCTION_MOTOR
+
+    documents = [
+        _doc(
+            f"instrucao-{index}.pdf", text,
+            "relatorio_inicial" if index == 1 else "complementacao",
+        )
+        for index, text in enumerate(texts, start=1)
+    ]
+    library = _profiled_library(
+        PREFEITURAS, motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
+    )
+    captured = {}
+
+    def search(_query, **kwargs):
+        captured["pesquisa"] = kwargs
+        rows = []
+        if has_precedent:
+            rows.append({
+                "papel": "parecer", "referencia_id": "prefeitura-1",
+                "processo_chave": "0999900", "numero_processo": "09999/00",
+                "trecho": "precedente de Prefeitura pertinente",
+            })
+        rows.append({
+            "papel": "parecer", "referencia_id": "alvo",
+            "processo_chave": "0210826", "trecho": "o próprio processo",
+        })
+        return {"resultados": rows}
+
+    def analyze(context):
+        captured["analise"] = context["processo_alvo"]
+        return {"analise": _analysis(documents[0])}
+
+    def generate(context):
+        captured["geracao"] = context
+        structure = _structure()
+        structure["pedidos"] = list(requests)
+        return {"estrutura": structure}
+
+    service = MinutasGenerationService(
+        library, analyze=analyze, generate=generate, search=search,
+    )
+    analyzed = service.analyze_instruction(
+        documents, processo="02108/26", exercicio=2025,
+        origem="Prefeitura Municipal de Exemplo",
+    )
+    generated = service.generate_instruction(
+        documents, analyzed, processo="02108/26", exercicio=2025,
+        origem="Prefeitura Municipal de Exemplo",
+    )
+
+    assert captured["analise"]["especialidade_id"] == PREFEITURAS
+    assert captured["analise"]["subtipo"] == "Prefeitura"
+    assert captured["geracao"]["orientacao_dispositivo"] == (
+        "PREFEITURA_CONDICIONAL_DUAS_COMPETENCIAS"
+    )
+    assert captured["pesquisa"]["exclude_process_key"] == "0210826"
+    assert [item["referencia_id"] for item in analyzed["referencias"]["referencias"]] == (
+        ["prefeitura-1"] if has_precedent else []
+    )
+    assert analyzed["referencias"]["estado"] == (
+        "RECUPERADO" if has_precedent else "SEM_RESULTADO"
+    )
+    assert all(
+        expected.casefold() in item.casefold()
+        for item, expected in zip(generated["estrutura"]["pedidos"], expected_primary)
+    )
+    assert len(generated["estrutura"]["pedidos"]) == len(requests)
+    MinutasSearchService(library).search("regularidade das contas")
+    assert library.searches == [PREFEITURAS]
+    if not ELVIRA_TEMPLATE.is_file():
+        pytest.skip("modelo Word indisponível")
+    word = MinutasDocxService(library, template_path=ELVIRA_TEMPLATE).export_instruction(
+        analyzed, generated, processo="02108/26", exercicio=2025,
+        origem="Prefeitura Municipal de Exemplo",
+    )
+    from docx import Document
+    body = "\n".join(paragraph.text for paragraph in Document(BytesIO(word.content)).paragraphs)
+    assert "Prefeitura Municipal de Exemplo" in body
     assert "Institutos Previdenciários" not in body
 
 

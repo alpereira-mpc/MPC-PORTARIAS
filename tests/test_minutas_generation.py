@@ -2292,6 +2292,30 @@ def test_city_pca_orders_two_existing_competences_without_inventing_them():
     assert any("duas manifestações" in warning for warning in warnings)
 
 
+def test_city_pca_keeps_only_one_conclusion_for_each_documented_competence():
+    target, _history, _other, _rows = _scenario()
+    target["subtipo"] = "Prefeitura"
+    structure = _draft_structure()
+    structure["pedidos"] = [
+        "Proponha-se a emissão de parecer contrário sobre as contas de governo.",
+        "Proponha-se a emissão de parecer favorável sobre as contas de governo.",
+        "Proponha-se a irregularidade das contas submetidas a julgamento.",
+        "Proponha-se a regularidade das contas submetidas a julgamento.",
+        "Aplique-se a multa fundamentada no tópico 18.1.",
+    ]
+
+    normalized, warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+
+    assert normalized["pedidos"] == [
+        "Proponha-se a emissão de parecer contrário sobre as contas de governo.",
+        "Proponha-se a irregularidade das contas submetidas a julgamento.",
+        "Aplique-se a multa fundamentada no tópico 18.1.",
+    ]
+    assert any("conclusões principais repetidas" in warning for warning in warnings)
+
+
 def test_quality_warnings_preserve_invalid_currency_and_accounting_code():
     target, history, other, rows = _scenario()
     accounting_code = "1.1.1.1.01.00"
@@ -2335,6 +2359,9 @@ def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
     assert "sequencia_processual_verificada" in prompt
     assert "página física do PDF" in prompt
     assert "DEMAIS_PCA_JULGAMENTO_DIRETO" in prompt
+    assert "PREFEITURA_CONDICIONAL_DUAS_COMPETENCIAS" in prompt
+    assert "LC nº 192/2024" in prompt
+    assert "Regimento Interno do TCE-PB" in prompt
     assert "o backend inserirá deterministicamente" in prompt
     assert "Integram a instrução processual" in prompt
     assert "nunca reutilize número do parecer definitivo" in prompt

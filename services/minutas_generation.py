@@ -3069,20 +3069,37 @@ class MinutasGenerationService:
         opinion_requests = [
             item for item in requests if _PRELIMINARY_OPINION_RE.search(item)
         ]
-        account_requests = [item for item in requests if _account_outcomes(item)]
         account_requests = [
             item
-            for item in account_requests
-            if not _PRELIMINARY_OPINION_RE.search(item)
+            for item in requests
+            if _account_outcomes(item)
+            and not _PRELIMINARY_OPINION_RE.search(item)
+            and _request_category(item) == 0
         ]
         subtype = str(target.get("subtipo") or "")
         if subtype == "Prefeitura":
-            if opinion_requests and account_requests:
-                ordered = [opinion_requests[0], account_requests[0]]
-                normalized["pedidos"] = ordered + [
-                    item for item in requests if item not in ordered
+            primary_requests = []
+            if opinion_requests:
+                primary_requests.append(opinion_requests[0])
+            if account_requests:
+                primary_requests.append(account_requests[0])
+            if primary_requests:
+                # A mesma PCA pode conter as duas competências, mas cada uma tem
+                # uma única conclusão principal. Pedidos acessórios (sanções,
+                # recomendações e remessas) continuam íntegros.
+                normalized["pedidos"] = primary_requests + [
+                    item
+                    for item in requests
+                    if not _PRELIMINARY_OPINION_RE.search(item)
+                    and item not in account_requests
                 ]
-            else:
+            if len(opinion_requests) > 1 or len(account_requests) > 1:
+                warnings.append(
+                    "Foram recebidas conclusões principais repetidas para PCA de "
+                    "Prefeitura; foi preservada uma conclusão por competência "
+                    "para revisão jurídica."
+                )
+            if not (opinion_requests and account_requests):
                 warnings.append(
                     "PCA de Prefeitura sem elementos suficientes para confirmar "
                     "se as duas manifestações dispositivas são cabíveis; revise a "

@@ -175,6 +175,16 @@ def test_catalog_separates_classes_themes_and_only_preserves_rpps_engine():
     assert instruction_generation_allowed(dict(secretarias, estado="Funcional com ajustes")) is True
     assert instruction_generation_allowed(dict(secretarias, estado="Validada")) is True
     assert instruction_generation_allowed(dict(secretarias, config_versao="2")) is False
+    prefeituras = dict(
+        scope(PREFEITURAS), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
+    )
+    assert instruction_generation_allowed(prefeituras) is True
+    assert instruction_generation_allowed(dict(prefeituras, estado="Funcional com ajustes")) is True
+    assert instruction_generation_allowed(dict(prefeituras, estado="Validada")) is True
+    assert instruction_generation_allowed(dict(prefeituras, estado="A iniciar")) is False
+    assert instruction_generation_allowed(dict(prefeituras, motor="")) is False
+    assert instruction_generation_allowed(dict(prefeituras, config_versao="")) is False
+    assert instruction_generation_allowed(dict(prefeituras, config_versao="2")) is False
     assert instruction_generation_allowed(dict(
         scope("elvira.pca.fundos"), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
     )) is False
@@ -601,7 +611,7 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not any("ts_headline" in query for query in store.queries)
 
 
-@pytest.mark.parametrize("specialty", (CAMARAS, SECRETARIAS_MUNICIPAIS))
+@pytest.mark.parametrize("specialty", (CAMARAS, SECRETARIAS_MUNICIPAIS, PREFEITURAS))
 def test_especialidade_compartilhada_habilitada_abre_geracao_e_desligar_nao_afeta_rpps(
     environment, monkeypatch, specialty,
 ):
