@@ -42,6 +42,15 @@ _PROFILES = {
     }
 }
 _ALINEA = re.compile(r"^\s*[a-z]\s*[).:-]\s*(.+)$", re.IGNORECASE)
+LOGO_FROM_TOP_CM = 0.81
+LOGO_AFTER_PT = 24
+IDENTIFICATION_AFTER_PT = 48
+EMENTA_AFTER_PT = 72
+CLOSING_BEFORE_PT = 24
+PEDIDO_LEFT_TWIPS = 2121
+PEDIDO_HANGING_TWIPS = 360
+ALINEA_LEFT_TWIPS = 2841
+ALINEA_HANGING_TWIPS = 360
 
 
 def _plain(value):
@@ -160,13 +169,14 @@ def _configure_styles(document, overrides=None):
         "Minuta Ementa",
         size=11,
         left_cm=6.752,
-        after_pt=36,
+        after_pt=EMENTA_AFTER_PT,
     )
     _configure_style(document, "Minuta Corpo", size=12, first_cm=3, after_pt=12)
     _configure_style(
         document,
         "Minuta Transição",
         size=12,
+        bold=True,
         first_cm=3,
         after_pt=12,
         keep_next=True,
@@ -193,20 +203,27 @@ def _configure_styles(document, overrides=None):
         document,
         "Minuta Pedido",
         size=12,
-        left_cm=3.741,
-        first_cm=-0.635,
+        left_cm=PEDIDO_LEFT_TWIPS / 567,
+        first_cm=-(PEDIDO_HANGING_TWIPS / 567),
         after_pt=6,
     )
     _configure_style(
         document,
         "Minuta Alínea",
         size=12,
-        left_cm=4.251,
+        left_cm=ALINEA_LEFT_TWIPS / 567,
         right_cm=0.13,
-        first_cm=-0.499,
+        first_cm=-(ALINEA_HANGING_TWIPS / 567),
         after_pt=6,
     )
-    _configure_style(document, "Minuta Encerramento", size=12, first_cm=3, after_pt=6)
+    _configure_style(
+        document,
+        "Minuta Encerramento",
+        size=12,
+        first_cm=3,
+        before_pt=CLOSING_BEFORE_PT,
+        after_pt=6,
+    )
     _configure_style(
         document,
         "Minuta Procuradora",
@@ -339,7 +356,9 @@ def read_visual_model(content):
     if body:
         styles["Minuta Corpo"] = {key: body[key] for key in ("size", "first_cm", "after_pt") if body.get(key) is not None}
     if ementa:
-        styles["Minuta Ementa"] = {key: ementa[key] for key in ("size", "left_cm", "after_pt") if ementa.get(key) is not None}
+        styles["Minuta Ementa"] = {
+            key: ementa[key] for key in ("size", "left_cm") if ementa.get(key) is not None
+        }
     if heading:
         styles["Minuta Irregularidade"] = {
             key: heading[key] for key in ("size", "left_cm", "after_pt") if heading.get(key) is not None
@@ -462,9 +481,23 @@ def _blocks(value, structured=None):
     ]
 
 
+def _is_report_transition(block):
+    from services.minutas_generation import REPORT_TRANSITION, _REPORT_TRANSITION_RE
+
+    text = re.sub(r"\s+", " ", str(block or "")).strip()
+    if not text:
+        return False, text
+    if text == REPORT_TRANSITION:
+        return True, REPORT_TRANSITION
+    if _REPORT_TRANSITION_RE.fullmatch(text):
+        return True, REPORT_TRANSITION
+    return False, text
+
+
 def _add_body(document, value, style="Minuta Corpo", *, paragraphs=None, size=12):
     for block in _blocks(value, paragraphs):
-        if block == "É o relatório. Passa-se a opinar.":
+        is_transition, block = _is_report_transition(block)
+        if is_transition:
             selected_style = "Minuta Transição"
         elif block.startswith(('"', "“", "‘", "'")):
             selected_style = "Minuta Transcrição"
@@ -475,6 +508,7 @@ def _add_body(document, value, style="Minuta Corpo", *, paragraphs=None, size=12
             paragraph,
             block,
             size=11 if selected_style == "Minuta Transcrição" else size,
+            bold=True if is_transition else None,
         )
 
 
@@ -501,8 +535,8 @@ def _add_requests(document, requests):
         document,
         kind="decimal",
         marker="%1.",
-        left_twips=2121,
-        hanging_twips=360,
+        left_twips=PEDIDO_LEFT_TWIPS,
+        hanging_twips=PEDIDO_HANGING_TWIPS,
     )
     for request in requests:
         lines = [line.strip() for line in str(request).splitlines() if line.strip()]
@@ -510,13 +544,13 @@ def _add_requests(document, requests):
             continue
         paragraph = document.add_paragraph(style="Minuta Pedido")
         _apply_numbering(paragraph, decimal_id)
-        _add_text(paragraph, lines[0], bold=True)
+        _add_text(paragraph, lines[0])
         alineas = []
         for line in lines[1:]:
             match = _ALINEA.match(line)
             if not match:
                 paragraph.add_run().add_break()
-                _add_text(paragraph, line, bold=True)
+                _add_text(paragraph, line)
                 continue
             alineas.append(match.group(1).strip())
         if alineas:
@@ -524,8 +558,8 @@ def _add_requests(document, requests):
                 document,
                 kind="lowerLetter",
                 marker="%1)",
-                left_twips=2410,
-                hanging_twips=283,
+                left_twips=ALINEA_LEFT_TWIPS,
+                hanging_twips=ALINEA_HANGING_TWIPS,
             )
             for item in alineas:
                 subparagraph = document.add_paragraph(style="Minuta Alínea")
@@ -557,7 +591,12 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
     section.bottom_margin = Cm((visual or {}).get("bottom_cm") or 2)
     section.left_margin = Cm((visual or {}).get("left_cm") or 2.75)
     section.right_margin = Cm((visual or {}).get("right_cm") or 1.75)
-    section.header_distance = Cm((visual or {}).get("header_cm") if (visual or {}).get("header_cm") is not None else 0.5)
+    header_cm = (
+        (visual or {}).get("header_cm")
+        if (visual or {}).get("header_cm") is not None
+        else 0.5
+    )
+    section.header_distance = Cm(header_cm)
     section.footer_distance = Cm((visual or {}).get("footer_cm") or 0)
     _configure_styles(document, (visual or {}).get("styles"))
 
@@ -567,8 +606,9 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
     paragraph.paragraph_format.left_indent = Cm(0)
     paragraph.paragraph_format.right_indent = Cm(0)
     paragraph.paragraph_format.first_line_indent = Cm(0)
-    paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.space_after = Pt(0)
+    logo_before_pt = max(0, (LOGO_FROM_TOP_CM - float(header_cm)) * 72 / 2.54)
+    paragraph.paragraph_format.space_before = Pt(logo_before_pt)
+    paragraph.paragraph_format.space_after = Pt(LOGO_AFTER_PT)
     run = paragraph.add_run()
     logo_bytes = (visual or {}).get("logo") or _template_logo(Path(profile["template"]))
     logo = run.add_picture(
@@ -578,6 +618,17 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
     logo._inline.docPr.set(
         "descr", "Logomarca do Ministério Público de Contas da Paraíba"
     )
+    extent = paragraph._p.xpath(".//wp:extent")
+    if extent:
+        logo_height_cm = int(extent[0].get("cy") or 0) / 914400 * 2.54
+        needed_top = (
+            float(header_cm)
+            + logo_before_pt * 2.54 / 72
+            + logo_height_cm
+            + LOGO_AFTER_PT * 2.54 / 72
+        )
+        configured_top = float((visual or {}).get("top_cm") or 6.35)
+        section.top_margin = Cm(max(configured_top, needed_top))
 
     footer = section.footer
     footer_paragraph = footer.paragraphs[0]
@@ -592,7 +643,7 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
         item = document.add_paragraph(style="Minuta Identificação")
         _add_text(item, line, bold=True)
         if index == len(header_lines) - 1:
-            item.paragraph_format.space_after = Pt(24)
+            item.paragraph_format.space_after = Pt(IDENTIFICATION_AFTER_PT)
 
     body_size = _style_size(visual, "Minuta Corpo", 12)
     ementa_size = _style_size(visual, "Minuta Ementa", 11)

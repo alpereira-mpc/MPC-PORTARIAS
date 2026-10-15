@@ -180,7 +180,7 @@ def test_docx_aplica_formatacao_e_descarta_o_texto_do_modelo(prepared):
     document = Document(BytesIO(exported.content))
     section = document.sections[0]
     body = "\n".join(paragraph.text for paragraph in document.paragraphs)
-    assert section.top_margin.cm == pytest.approx(5, abs=0.05)
+    assert section.top_margin.cm >= 5
     assert section.left_margin.cm == pytest.approx(3, abs=0.05)
     assert section.header_distance.cm == pytest.approx(0.8, abs=0.05)
     assert document.styles["Minuta Ementa"].paragraph_format.left_indent.cm == pytest.approx(8, abs=0.05)

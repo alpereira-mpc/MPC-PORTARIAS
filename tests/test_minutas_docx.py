@@ -9,10 +9,20 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from services.minutas_docx import (
     DOCX_MIME,
     ELVIRA_TEMPLATE,
+    IDENTIFICATION_AFTER_PT,
+    EMENTA_AFTER_PT,
+    LOGO_AFTER_PT,
+    LOGO_FROM_TOP_CM,
     MinutasDocxError,
     MinutasDocxService,
 )
-from services.minutas_generation import MinutasGenerationService, RAG_RECOVERY_VERSION
+from services.minutas_generation import (
+    DEVICE_INTRO_HARMONY,
+    DEVICE_INTRO_NEUTRAL,
+    MinutasGenerationService,
+    RAG_RECOVERY_VERSION,
+    REPORT_TRANSITION,
+)
 from services.minutas_library import MinutasAccessDenied
 
 
@@ -95,7 +105,9 @@ def _structure(*, long=False):
             }
         ],
         "conclusao_pedidos": (
-            "Ante o exposto, propõem-se os encaminhamentos.\n"
+            "Ante o exposto, o Ministério Público de Contas, em atuação no "
+            "âmbito do Tribunal de Contas, manifesta-se pelo julgamento das "
+            "contas com ressalvas.\n"
             "1. Julgue-se o feito conforme a fundamentação."
         ),
         "pedidos": [
@@ -196,15 +208,25 @@ def test_docx_reproduces_logo_header_and_spacing_without_empty_body_paragraphs()
     assert drawing_paragraph.paragraph_format.right_indent.cm == pytest.approx(0)
     assert int(extent.get("cx")) / 914400 == pytest.approx(2.62, abs=0.01)
     assert int(extent.get("cy")) / 914400 == pytest.approx(1.84, abs=0.01)
-    assert drawing_paragraph.paragraph_format.space_before.pt == pytest.approx(0)
-    assert responsible.paragraph_format.space_after.pt == pytest.approx(24)
-    assert ementa.style.paragraph_format.space_after.pt == pytest.approx(36)
-    logo_bottom_cm = (
+    logo_from_top_cm = (
         section.header_distance.cm
         + drawing_paragraph.paragraph_format.space_before.pt * 2.54 / 72
-        + int(extent.get("cy")) / 914400 * 2.54
     )
-    assert section.top_margin.cm - logo_bottom_cm >= 1.0
+    assert drawing_paragraph.paragraph_format.space_before.pt == pytest.approx(
+        (LOGO_FROM_TOP_CM - 0.5) * 72 / 2.54, abs=0.4
+    )
+    assert drawing_paragraph.paragraph_format.space_after.pt == pytest.approx(
+        LOGO_AFTER_PT
+    )
+    assert responsible.paragraph_format.space_after.pt == pytest.approx(
+        IDENTIFICATION_AFTER_PT
+    )
+    assert ementa.style.paragraph_format.space_after.pt == pytest.approx(
+        EMENTA_AFTER_PT
+    )
+    assert logo_from_top_cm == pytest.approx(LOGO_FROM_TOP_CM, abs=0.05)
+    logo_bottom_cm = logo_from_top_cm + int(extent.get("cy")) / 914400 * 2.54
+    assert section.top_margin.cm - logo_bottom_cm >= 0.8
     assert not any(not paragraph.text for paragraph in body_paragraphs)
 
 
@@ -265,8 +287,13 @@ def test_docx_preserves_formatting_and_groups_recommendations_in_one_item():
     recommendation = next(
         paragraph
         for paragraph in paragraphs
-        if paragraph.text.startswith("Pela expedição de recomendação")
+        if paragraph.text.startswith("Pela expedição de recomenda")
     )
+    alineas = [
+        paragraph
+        for paragraph in paragraphs
+        if paragraph.style.name == "Minuta Alínea"
+    ]
 
     assert ementa.style.name == "Minuta Ementa"
     assert ementa.style.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -278,17 +305,24 @@ def test_docx_preserves_formatting_and_groups_recommendations_in_one_item():
     assert transcription.style.name == "Minuta Transcrição"
     assert request._p.pPr.numPr is not None
     assert recommendation._p.pPr.numPr is not None
-    assert "mantenha os controles previdenciários" in recommendation.text
-    assert "documente as providências adotadas" in recommendation.text
-    assert not any(paragraph.style.name == "Minuta Alínea" for paragraph in paragraphs)
+    assert all(run.bold is not True for run in request.runs)
+    assert all(run.bold is not True for run in recommendation.runs)
+    assert "mantenha os controles previdenciários" in "\n".join(
+        paragraph.text for paragraph in [recommendation, *alineas]
+    )
+    assert "documente as providências adotadas" in "\n".join(
+        paragraph.text for paragraph in [recommendation, *alineas]
+    )
+    assert len(alineas) == 2
+    assert all(paragraph._p.pPr.numPr is not None for paragraph in alineas)
     assert all_text.count("Julgue-se o feito conforme a fundamentação.") == 1
     assert "R$ 1.234,56" in all_text
     assert "art. 37" in all_text
     with ZipFile(BytesIO(exported.content)) as package:
         numbering = package.read("word/numbering.xml").decode("utf-8")
     assert 'w:val="decimal"' in numbering
-    assert 'w:val="lowerLetter"' not in numbering
-    assert 'w:val="%1)"' not in numbering
+    assert 'w:val="lowerLetter"' in numbering
+    assert 'w:val="%1)"' in numbering
 
 
 def test_docx_keeps_already_consolidated_recommendation_idempotent():
@@ -301,11 +335,12 @@ def test_docx_keeps_already_consolidated_recommendation_idempotent():
     recommendations = [
         paragraph.text
         for paragraph in document.paragraphs
-        if paragraph.text.startswith("Pela expedição de recomendação")
+        if paragraph.text.startswith("Pela expedição de recomenda")
     ]
 
     assert len(recommendations) == 1
-    assert recommendations[0].count("Pela expedição de recomendação") == 1
+    assert recommendations[0].count("Pela expedição de recomenda") == 1
+    assert "no sentido de Recomendar" not in recommendations[0]
 
 
 def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
@@ -314,7 +349,8 @@ def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
     structure["relatorio_paragrafos"] = [
         "Apresentação do processo.",
         "Histórico da instrução.",
-        "É o relatório. Passa-se a opinar.",
+        "É o relatório. Passa-se a opinar.",  # variação da IA; o backend padroniza
+        REPORT_TRANSITION,
     ]
     structure["fundamentacao_geral_paragrafos"] = [
         "Premissas jurídicas gerais.",
@@ -338,13 +374,16 @@ def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
         "A análise ministerial confrontou os elementos.",
     ):
         assert texts.count(expected) == 1
-    assert texts.count("É o relatório. Passa-se a opinar.") == 1
+    assert texts.count(REPORT_TRANSITION) == 1
+    assert "Passa-se a opinar" not in "\n".join(texts)
     transition = next(
         paragraph
         for paragraph in document.paragraphs
-        if paragraph.text == "É o relatório. Passa-se a opinar."
+        if paragraph.text == REPORT_TRANSITION
     )
     assert transition.style.name == "Minuta Transição"
+    assert transition.runs
+    assert all(run.bold is True for run in transition.runs if run.text.strip())
 
     legacy = Document(BytesIO(_export(structure=_structure()).content))
     assert any(
@@ -352,7 +391,7 @@ def test_docx_prefers_structured_paragraphs_and_keeps_legacy_compatibility():
         for paragraph in legacy.paragraphs
     )
     assert [paragraph.text for paragraph in legacy.paragraphs].count(
-        "É o relatório. Passa-se a opinar."
+        REPORT_TRANSITION
     ) == 1
 
 
@@ -494,3 +533,104 @@ def test_export_requires_the_visual_template(tmp_path):
             source_summary=_summary,
             template_path=tmp_path / "ausente.docx",
         ).export(target["id"], analyzed, generated)
+
+
+def test_docx_device_intro_avoids_duplication_and_adapts_to_audit_position():
+    harmony = _structure()
+    harmony["conclusao_pedidos"] = (
+        "Ante o exposto, em harmonia com o entendimento do Órgão Técnico, "
+        "o Ministério Público de Contas opina pelo (a):\n"
+        "Julgue-se o feito conforme a fundamentação."
+    )
+    document = Document(BytesIO(_export(structure=harmony).content))
+    texts = [paragraph.text for paragraph in document.paragraphs if paragraph.text]
+    assert texts.count(DEVICE_INTRO_HARMONY) == 1
+    assert DEVICE_INTRO_NEUTRAL not in texts
+    assert not any(
+        "manifesta-se pelo julgamento" in text.casefold() for text in texts
+    )
+
+    divergence = _structure()
+    divergence["topicos_irregularidades"][0]["avaliacoes_irregularidades"][0][
+        "tratamento_ministerial_defesa"
+    ] = "PARCIALMENTE_ACOLHIDA"
+    divergence["conclusao_pedidos"] = (
+        "Ante o exposto, em harmonia com o entendimento do Órgão Técnico, "
+        "o Ministério Público de Contas opina pelo (a):"
+    )
+    divergent = Document(BytesIO(_export(structure=divergence).content))
+    divergent_texts = [
+        paragraph.text for paragraph in divergent.paragraphs if paragraph.text
+    ]
+    assert divergent_texts.count(DEVICE_INTRO_NEUTRAL) == 1
+    assert DEVICE_INTRO_HARMONY not in divergent_texts
+
+
+def test_docx_closing_spacing_and_request_runs_are_not_fully_bold():
+    structure = _structure()
+    structure["conclusao_pedidos"] = DEVICE_INTRO_HARMONY
+    structure["pedidos"] = [
+        "Regularidade com ressalvas das contas do responsável.",
+        (
+            "Pela expedição de recomendações à gestão, no sentido de que:\n"
+            "a) mantenha os controles previdenciários;\n"
+            "b) documente as providências adotadas."
+        ),
+        "Aplicação de multa proporcional à falha formal persistente.",
+    ]
+    document = Document(BytesIO(_export(structure=structure).content))
+    closing = next(
+        paragraph
+        for paragraph in document.paragraphs
+        if paragraph.text == "É o Parecer."
+    )
+    requests = [
+        paragraph
+        for paragraph in document.paragraphs
+        if paragraph.style.name == "Minuta Pedido"
+    ]
+    alineas = [
+        paragraph
+        for paragraph in document.paragraphs
+        if paragraph.style.name == "Minuta Alínea"
+    ]
+
+    assert closing.style.name == "Minuta Encerramento"
+    assert closing.style.paragraph_format.space_before.pt == pytest.approx(24)
+    assert closing.runs
+    assert all(run.bold is not True for run in closing.runs)
+    assert closing.style.paragraph_format.first_line_indent.cm == pytest.approx(
+        3, abs=0.02
+    )
+    assert len(requests) == 3
+    assert len(alineas) == 2
+    assert all(
+        run.bold is not True
+        for paragraph in requests
+        for run in paragraph.runs
+    )
+
+
+def test_docx_supports_short_and_long_ementa_with_optional_header_fields():
+    short = _structure()
+    short["ementa"] = "PCA."
+    long = _structure()
+    long["ementa"] = " ".join(["PRESTAÇÃO DE CONTAS ANUAIS."] * 40)
+    target = _target()
+    analyzed, generated = _payload(target)
+    generated["metadados_cabecalho"] = {"origem": "", "responsavel": ""}
+    generated["estrutura"] = short
+    short_doc = Document(
+        BytesIO(
+            MinutasDocxService(Library(target), source_summary=_summary)
+            .export(target["id"], analyzed, generated)
+            .content
+        )
+    )
+    long_doc = Document(BytesIO(_export(structure=long).content))
+    assert any(paragraph.text.startswith("Ementa: PCA.") for paragraph in short_doc.paragraphs)
+    assert any(
+        paragraph.text.startswith("Ementa:") and len(paragraph.text) > 200
+        for paragraph in long_doc.paragraphs
+    )
+    assert any("Origem: Não informada" in paragraph.text for paragraph in short_doc.paragraphs)

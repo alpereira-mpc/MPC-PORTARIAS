@@ -27,7 +27,12 @@ RAG_RECOVERY_VERSION = "3b5b1-relevance-v2"
 EVIDENCE_CORRECTION_VERSION = "3c3-assisted-evidence-v1"
 VALIDATION_POLICY_VERSION = "4-documentary-warnings-v1"
 LOGGER = logging.getLogger(__name__)
-REPORT_TRANSITION = "É o relatório. Passa-se a opinar."
+REPORT_TRANSITION = "É o Relatório. Passo a opinar."
+DEVICE_INTRO_HARMONY = (
+    "Ante o exposto, em harmonia com o entendimento do Órgão Técnico, "
+    "o Ministério Público de Contas opina pelo (a):"
+)
+DEVICE_INTRO_NEUTRAL = "Ante o exposto, o Ministério Público de Contas opina:"
 _VALIDATION_LINE_PATTERNS = (
     re.compile(r"^verifique\s+a\s+autenticidade\b.*$"),
     re.compile(r"^(?:codigo|código)\s+verificador\s*[:#-]\s*\S+.*$"),
@@ -224,6 +229,17 @@ _CATEGORICAL_CURE = re.compile(
 _REPORT_TRANSITION_RE = re.compile(
     r"\b[eé]\s+o\s+relat[oó]rio\s*\.\s*"
     r"(?:passo\s+a|passa-se\s+a)\s+opinar\s*\.?",
+    re.IGNORECASE,
+)
+_DEVICE_INTRO_RE = re.compile(
+    r"^\s*ante\s+o\s+exposto\b.*$"
+    r"|^\s*(?:diante|face)\s+(?:do|da)\s+(?:exposto|fundamenta[cç][aã]o)\b.*$",
+    re.IGNORECASE,
+)
+_REQUEST_LIKE_RE = re.compile(
+    r"\b(?:regularidade|irregularidade|ressalvas|multa|d[eé]bito|"
+    r"recomenda|determina|julg(?:ue|ue-se|amento)|aplique|afaste|"
+    r"expedi[cç][aã]o|envio de recomenda)\w*\b",
     re.IGNORECASE,
 )
 _STANDALONE_FOLIO_RE = re.compile(
@@ -585,6 +601,12 @@ def _draft_header_lines(target):
 def _recommendation_clauses(request):
     clauses = []
     for line in str(request or "").splitlines():
+        if re.search(
+            r"\bno\s+sentido\s+de(?:\s+que)?\s*:?\s*$",
+            line,
+            re.IGNORECASE,
+        ):
+            continue
         clause = re.sub(r"^\s*[a-z]\s*[).:-]\s*", "", line, flags=re.IGNORECASE)
         clause = re.sub(
             r"^\s*(?:expe[cç]am-se\s+)?recomenda[cç][oõ]es?\s*:?\s*",
@@ -598,7 +620,11 @@ def _recommendation_clauses(request):
             clause,
             flags=re.IGNORECASE,
         ).strip(" ;.")
-        no_sense = re.search(r"\bno\s+sentido\s+de\s+(.+)$", clause, re.IGNORECASE)
+        no_sense = re.search(
+            r"\bno\s+sentido\s+de(?:\s+que)?\s*:?\s*(.+)$",
+            clause,
+            re.IGNORECASE,
+        )
         if no_sense:
             clause = no_sense.group(1).strip(" ;.")
         else:
@@ -616,9 +642,47 @@ def _recommendation_clauses(request):
                 clause,
                 flags=re.IGNORECASE,
             )
+        clause = re.sub(r"^\s*recomendar\s+", "", clause, flags=re.IGNORECASE)
+        clause = clause.strip(" ;.")
         if clause:
             clauses.append(clause)
     return clauses
+
+
+def _format_recommendation_item(clauses, origin=""):
+    cleaned = []
+    seen = set()
+    for clause in clauses:
+        text = re.sub(r"^\s*recomendar\s+", "", str(clause or ""), flags=re.IGNORECASE)
+        text = text.strip(" ;.")
+        key = _normalized_support(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+    if not cleaned:
+        return ""
+    recipient = _recommendation_recipient(origin)
+    if len(cleaned) == 1:
+        body = cleaned[0]
+        if body[:1].isupper() and (len(body) == 1 or not body[1].isupper()):
+            body = body[0].lower() + body[1:]
+        return (
+            "Pela expedição de recomendação "
+            + recipient
+            + ", no sentido de que "
+            + body
+            + "."
+        )
+    lines = [
+        "Pela expedição de recomendações "
+        + recipient
+        + ", no sentido de que:"
+    ]
+    for index, clause in enumerate(cleaned):
+        ending = "." if index == len(cleaned) - 1 else ";"
+        lines.append(f"{chr(ord('a') + index)}) {clause}{ending}")
+    return "\n".join(lines)
 
 
 def _recommendation_recipient(origin):
@@ -640,10 +704,6 @@ def _consolidate_recommendations(requests, origin=""):
     ]
     if not positions:
         return list(requests)
-    if len(positions) == 1 and _plain(requests[positions[0]]).startswith(
-        "pela expedicao de recomendacao a gestao"
-    ):
-        return list(requests)
     clauses = []
     seen = set()
     for index in positions:
@@ -654,13 +714,9 @@ def _consolidate_recommendations(requests, origin=""):
                 clauses.append(clause)
     if not clauses:
         return [request for index, request in enumerate(requests) if index not in positions]
-    consolidated = (
-        "Pela expedição de recomendação "
-        + _recommendation_recipient(origin)
-        + ", no sentido de "
-        + "; ".join(clauses)
-        + "."
-    )
+    consolidated = _format_recommendation_item(clauses, origin)
+    if not consolidated:
+        return [request for index, request in enumerate(requests) if index not in positions]
     first = positions[0]
     result = []
     for index, request in enumerate(requests):
@@ -669,6 +725,47 @@ def _consolidate_recommendations(requests, origin=""):
         if index not in positions:
             result.append(request)
     return result
+
+
+def _ministry_diverges_from_audit(structure):
+    for topic in structure.get("topicos_irregularidades") or ():
+        if not isinstance(topic, dict):
+            continue
+        for assessment in topic.get("avaliacoes_irregularidades") or ():
+            if not isinstance(assessment, dict):
+                continue
+            if assessment.get("tratamento_ministerial_defesa") in {
+                "ACOLHIDA",
+                "PARCIALMENTE_ACOLHIDA",
+            }:
+                return True
+    return False
+
+
+def _normalized_device_introduction(structure):
+    intro = (
+        DEVICE_INTRO_NEUTRAL
+        if _ministry_diverges_from_audit(structure)
+        else DEVICE_INTRO_HARMONY
+    )
+    request_keys = {
+        _normalized_support(request) for request in structure.get("pedidos", ())
+    }
+    extras = []
+    for block in re.split(
+        r"\n\s*\n", str(structure.get("conclusao_pedidos") or "").strip()
+    ):
+        for line in block.splitlines():
+            unnumbered = re.sub(r"^\s*(?:\d+[.)]|[-*])\s*", "", line).strip()
+            if not unnumbered or _DEVICE_INTRO_RE.match(unnumbered):
+                continue
+            key = _normalized_support(unnumbered)
+            if key in request_keys:
+                continue
+            if _REQUEST_LIKE_RE.search(unnumbered):
+                extras.append(unnumbered)
+                request_keys.add(key)
+    return intro, extras
 
 
 def _sanitize_draft_structure(structure):
@@ -2920,6 +3017,14 @@ class MinutasGenerationService:
         normalized["pedidos"] = _consolidate_recommendations(
             normalized.get("pedidos", ()), target.get("origem")
         )
+        normalized["conclusao_pedidos"], extra_requests = _normalized_device_introduction(
+            normalized
+        )
+        if extra_requests:
+            normalized["pedidos"] = _consolidate_recommendations(
+                [*normalized["pedidos"], *extra_requests],
+                target.get("origem"),
+            )
         return normalized, warnings
 
     @staticmethod

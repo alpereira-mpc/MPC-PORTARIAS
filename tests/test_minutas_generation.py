@@ -7,6 +7,8 @@ from streamlit.testing.v1 import AppTest
 
 from services import ai_service
 from services.minutas_generation import (
+    DEVICE_INTRO_HARMONY,
+    DEVICE_INTRO_NEUTRAL,
     EVIDENCE_CORRECTION_VERSION,
     RAG_RECOVERY_VERSION,
     VALIDATION_POLICY_VERSION,
@@ -610,7 +612,7 @@ def test_context_preserves_verified_folios_without_converting_pdf_pages():
     assert "Relatório de Análise de Defesa (fl. 170)" not in report
     assert "Manifestação processual sem numeração" not in report
     assert "(fls. 1/2)" not in report
-    assert report.endswith("É o relatório. Passa-se a opinar.")
+    assert report.endswith("É o Relatório. Passo a opinar.")
 
 
 @pytest.mark.parametrize(
@@ -1700,7 +1702,12 @@ def test_quality_checks_warn_without_changing_legal_conclusion():
     assert "página sem correspondência" in warnings
     assert "inconsistência entre a ementa" in warnings
     assert result["estrutura"]["conclusao_pedidos"] == (
-        "Opina-se pela regularidade das contas."
+        "Ante o exposto, em harmonia com o entendimento do Órgão Técnico, "
+        "o Ministério Público de Contas opina pelo (a):"
+    )
+    assert any(
+        "regularidade das contas" in item.casefold()
+        for item in result["estrutura"]["pedidos"]
     )
 
 
@@ -1918,13 +1925,38 @@ def test_structured_paragraphs_are_used_without_breaking_legacy_structures():
 
     assert "Relatório legado." not in rendered
     assert (
-        "Apresentação do processo.\n\nÉ o relatório. Passa-se a opinar."
+        "Apresentação do processo.\n\nÉ o Relatório. Passo a opinar."
         in rendered
     )
-    assert rendered.count("É o relatório. Passa-se a opinar.") == 1
-    assert "É o relatório. Passo a opinar." not in rendered
+    assert rendered.count("É o Relatório. Passo a opinar.") == 1
+    assert "Passa-se a opinar" not in rendered
     assert "Constatação da Auditoria.\n\nAlegação da defesa." in rendered
     assert MinutasGenerationService._validate_structure(_draft_structure())
+
+
+def test_device_introduction_is_objective_and_follows_audit_position():
+    target = _record("target-taperoa", "TC 01653/26", "0165326")
+    harmony, _warnings = MinutasGenerationService._normalize_structure(
+        _draft_structure(), target
+    )
+    assert harmony["conclusao_pedidos"] == DEVICE_INTRO_HARMONY
+    assert harmony["conclusao_pedidos"].count("Ante o exposto") == 1
+    assert "regularidade" not in harmony["conclusao_pedidos"].casefold()
+
+    divergent_structure = _draft_structure(ministerial_treatment="ACOLHIDA")
+    divergent_structure["conclusao_pedidos"] = (
+        "Ante o exposto, em harmonia com o entendimento do Órgão Técnico, "
+        "o Ministério Público de Contas opina pelo (a):\n"
+        "Pela expedição de recomendação à gestão, no sentido de Recomendar "
+        "que aprimore o controle previdenciário."
+    )
+    divergent, _warnings = MinutasGenerationService._normalize_structure(
+        divergent_structure, target
+    )
+    assert divergent["conclusao_pedidos"] == DEVICE_INTRO_NEUTRAL
+    assert "harmonia" not in divergent["conclusao_pedidos"].casefold()
+    assert any("aprimore o controle previdenciário" in item for item in divergent["pedidos"])
+    assert all("no sentido de Recomendar" not in item for item in divergent["pedidos"])
 
 
 def test_draft_header_removes_bureaucratic_phrases_and_groups_recommendations():
@@ -1995,14 +2027,16 @@ def test_draft_header_removes_bureaucratic_phrases_and_groups_recommendations():
         item for item in structure["pedidos"] if "recomend" in item.casefold()
     ]
     assert len(recommendations) == 1
-    assert "\n" not in recommendations[0]
     assert recommendations[0].startswith(
-        "Pela expedição de recomendação à gestão do Instituto Municipal de Previdência"
+        "Pela expedição de recomendações à gestão do Instituto Municipal de Previdência"
     )
+    assert "no sentido de Recomendar" not in recommendations[0]
     assert "Recomendem-se, de forma consolidada" not in recommendations[0]
     assert "aprimore o controle previdenciário" in recommendations[0]
     assert "registre as providências adotadas" in recommendations[0]
     assert "acompanhe os prazos legais" in recommendations[0]
+    assert "\na) " in recommendations[0]
+    assert "\nb) " in recommendations[0]
     assert structure["pedidos"][0].startswith(
         "Proponha-se a regularidade com ressalvas"
     )
@@ -2244,6 +2278,8 @@ def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
     assert "não invente o conteúdo da análise técnica" in prompt
     assert "fundamentos jurídicos pertinentes" in prompt
     assert "reúna todas as recomendações em um único item" in prompt
+    assert "em harmonia com o entendimento do Órgão Técnico" in prompt
+    assert "expedição de recomendação no sentido de Recomendar" in prompt
     assert "relatorio_paragrafos" in schema["required"]
     assert "fundamentacao_geral_paragrafos" in schema["required"]
     topic_schema = schema["properties"]["topicos_irregularidades"]["items"]
