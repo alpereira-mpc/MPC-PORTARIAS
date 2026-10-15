@@ -168,6 +168,80 @@ def test_catalog_separates_classes_themes_and_only_preserves_rpps_engine():
     assert "LICITACAO" not in CLASSES
 
 
+def test_chamber_opinions_remain_accessible_in_their_own_specialty(environment):
+    store, storage = environment
+    ibiara = seed(
+        store,
+        process="TC 01168/26",
+        subtype="Câmara Municipal",
+        entity="Câmara Municipal de Ibiara",
+    )
+    cajazeiras = seed(
+        store,
+        process="TC 02036/25",
+        subtype="Câmara Municipal",
+        entity="Câmara Municipal de Cajazeiras",
+    )
+    admin = MinutasAcervoService(library(store, storage))
+    for record, entity in (
+        (ibiara, "Câmara Municipal de Ibiara"),
+        (cajazeiras, "Câmara Municipal de Cajazeiras"),
+    ):
+        admin.classify(record["id"], CAMARAS, "PCA", entity, "Identificação documental")
+
+    chamber_library = library(store, storage, CAMARAS)
+    assert {row["numero_processo"] for row in chamber_library.list()} == {
+        "TC 01168/26", "TC 02036/25",
+    }
+    assert chamber_library.get(ibiara["id"])["origem"] == "Câmara Municipal de Ibiara"
+    assert chamber_library.get(cajazeiras["id"])["origem"] == "Câmara Municipal de Cajazeiras"
+
+
+def test_chamber_upload_requires_reclassification_of_existing_other_scope_process(environment):
+    store, storage = environment
+    campina = seed(
+        store,
+        process="TC 02491/25",
+        subtype="Câmara Municipal",
+        entity="Câmara Municipal de Campina Grande",
+    )
+    admin = MinutasAcervoService(library(store, storage))
+    values = {
+        "numero_processo": "02491/25",
+        "exercicio": 2026,
+        "classe": "PCA",
+        "origem": "Câmara Municipal de Campina Grande",
+        "fundamento": "Parecer definitivo identificado",
+    }
+    preview = admin.preview_upload(
+        "proc_02491_25_parecer.pdf",
+        _text_pdf("Parecer da Câmara Municipal de Campina Grande."),
+        "parecer",
+        CAMARAS,
+    )
+    assert preview["processo"] == "02491/25"
+    assert preview["fonte"] == "nome do arquivo"
+    with pytest.raises(MinutasValidationError, match="outro escopo ou pendente"):
+        admin.add_file(CAMARAS, values, ("proc_02491_25_parecer.pdf", _pdf(b"novo")), role="complementar")
+
+    admin.classify(
+        campina["id"], RPPS, "PCA", "Instituto de Previdência", "Classificação anterior"
+    )
+    with pytest.raises(MinutasValidationError, match="outro escopo ou pendente"):
+        admin.add_file(CAMARAS, values, ("proc_02491_25_parecer.pdf", _pdf(b"novo")), role="complementar")
+
+    admin.classify(
+        campina["id"], CAMARAS, "PCA", "Câmara Municipal de Campina Grande",
+        "Correção humana da especialidade",
+    )
+    added = admin.add_file(
+        CAMARAS, values, ("proc_02491_25_parecer.pdf", _pdf(b"novo")), role="complementar"
+    )
+    assert added["estado"] == "CADASTRADO" and added["referencia_id"] == campina["id"]
+    assert len(library(store, storage, CAMARAS).list()) == 1
+    assert admin.repository.classification(campina["id"])["especialidade_id"] == CAMARAS
+
+
 @pytest.mark.parametrize(("entity", "subtype", "nature", "expected"), [
     ("Instituto de Previdência do Município de Taperoá", "Instituto/Autarquia", "PCA", RPPS),
     ("Câmara Municipal de Exemplo", "Câmara Municipal", "PCA", "elvira.pca.camaras"),
