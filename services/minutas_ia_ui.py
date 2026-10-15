@@ -1456,8 +1456,39 @@ def _drop_instruction(identifier):
     ]
 
 
+_INSTRUCTION_FIELDS = {
+    "processo": "minutas_instrucao_processo",
+    "exercicio": "minutas_instrucao_exercicio",
+    "origem": "minutas_instrucao_origem_processo",
+}
+
+
+def _apply_instruction_metadata(suggestion):
+    auto = dict(st.session_state.get("minutas_instrucao_autofill") or {})
+    for field, key in _INSTRUCTION_FIELDS.items():
+        suggested = suggestion.get(field)
+        if suggested in (None, ""):
+            continue
+        current = st.session_state.get(key)
+        last = auto.get(field)
+        if current in (None, "") or current == last:
+            st.session_state[key] = suggested
+            auto[field] = suggested
+    st.session_state["minutas_instrucao_autofill"] = auto
+    notes = [str(item).strip() for item in suggestion.get("advertencias") or () if str(item).strip()]
+    if notes:
+        st.session_state["minutas_instrucao_meta_notes"] = notes
+    else:
+        st.session_state.pop("minutas_instrucao_meta_notes", None)
+
+
 def _instruction_panel(generator, service):
-    from services.minutas_instrucao import TIPOS, receber_pdf, versao
+    from services.minutas_instrucao import (
+        TIPOS,
+        receber_pdf,
+        sugerir_metadados_instrucao,
+        versao,
+    )
 
     st.caption(
         "Envie um ou vários PDFs da instrução. Eles não entram no acervo "
@@ -1472,17 +1503,34 @@ def _instruction_panel(generator, service):
     )
     if st.button("Incluir na instrução", key="minutas_instrucao_incluir"):
         known = {item["sha256"] for item in documents}
+        added = []
         for upload in uploads or []:
             content = upload.getvalue()
             digest = sha256(content).hexdigest()
             if digest in known:
                 continue
             try:
-                documents.append(receber_pdf(upload.name, content, "relatorio_inicial"))
-                known.add(digest)
+                item = receber_pdf(upload.name, content, "relatorio_inicial")
             except Exception as exc:
                 _error(exc)
+                continue
+            documents.append(item)
+            known.add(digest)
+            added.append(item)
         st.session_state["minutas_instrucao_documentos"] = documents
+        processed = set(st.session_state.get("minutas_instrucao_meta_hashes") or ())
+        if added:
+            try:
+                suggestion = sugerir_metadados_instrucao(documents)
+                _apply_instruction_metadata(suggestion)
+                processed.update(item["sha256"] for item in documents)
+                st.session_state["minutas_instrucao_meta_hashes"] = processed
+                st.session_state.pop("minutas_instrucao_meta_error", None)
+            except Exception:
+                st.session_state["minutas_instrucao_meta_error"] = (
+                    "Não foi possível extrair automaticamente os dados processuais. "
+                    "Os documentos foram incluídos; complete o cadastro manualmente."
+                )
     if not documents:
         empty_state("Nenhum documento de instrução foi incluído.")
     for position, item in enumerate(documents):
@@ -1520,13 +1568,17 @@ def _instruction_panel(generator, service):
         st.session_state["minutas_instrucao_versao"] = current
         st.session_state.pop("minutas_instrucao_analise", None)
         st.session_state.pop("minutas_instrucao_minuta", None)
+    if error := st.session_state.get("minutas_instrucao_meta_error"):
+        st.warning(error)
+    for note in st.session_state.get("minutas_instrucao_meta_notes") or ():
+        st.caption(note)
     processo = st.text_input("Processo TC", key="minutas_instrucao_processo")
     exercicio = st.number_input(
         "Exercício das contas", min_value=1990, max_value=2100, value=None,
         key="minutas_instrucao_exercicio",
     )
     origem = st.text_input("Origem", key="minutas_instrucao_origem_processo")
-    if st.button("Analisar instrução", key="minutas_instrucao_analisar", disabled=not documents):
+    if st.button("Analisar fundamentos", key="minutas_instrucao_analisar", disabled=not documents):
         try:
             st.session_state["minutas_instrucao_analise"] = generator.analyze_instruction(
                 documents, processo=processo, exercicio=exercicio, origem=origem,
@@ -1575,6 +1627,19 @@ def _instruction_panel(generator, service):
 
 
 def _generator_tab(store, identity):
+    st.subheader("Gerar Minuta de Parecer")
+    st.caption(
+        "Inclua os PDFs da instrução, analise os fundamentos e gere a minuta "
+        "para revisão humana."
+    )
+    service = _service(store, identity)
+    if service is None:
+        return
+    _instruction_panel(MinutasGenerationService(service), service)
+
+
+def _historical_generator_panel(store, identity):
+    """Painel interno preservado para testes do motor histórico; fora da UI operacional."""
     st.subheader("Teste de Geração — Processo Histórico")
     st.caption(
         "Primeiro motor experimental para Prestação de Contas Anual, "
@@ -1584,15 +1649,6 @@ def _generator_tab(store, identity):
     if service is None:
         return
     generator = MinutasGenerationService(service)
-    mode = st.radio(
-        "Modo",
-        ("Processo do acervo", "Instrução do processo"),
-        horizontal=True,
-        key="minutas_generation_mode",
-    )
-    if mode == "Instrução do processo":
-        _instruction_panel(generator, service)
-        return
     try:
         targets = generator.targets()
     except Exception as exc:
@@ -1931,6 +1987,11 @@ def _search_tab(store, identity):
     stored = st.session_state.get("minutas_legal_search")
     if not stored:
         return
+    st.button(
+        "← Voltar",
+        key="minutas_search_back",
+        on_click=lambda: st.session_state.pop("minutas_legal_search", None),
+    )
     result = stored["result"]
     results = result["resultados"]
     if not results:
@@ -2074,8 +2135,10 @@ def render(store, identity):
     sections = (
         "Acervo",
         "Pesquisa Jurídica",
-        "Gerar Minuta",
+        "Gerar Minuta de Parecer",
     )
+    if st.session_state.get("minutas_active_view") == "Gerar Minuta":
+        st.session_state["minutas_active_view"] = sections[2]
     if st.session_state.get("minutas_active_view") not in sections:
         st.session_state["minutas_active_view"] = sections[0]
     active = st.radio(

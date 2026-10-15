@@ -100,8 +100,12 @@ def test_module_navigation_executes_only_the_active_view(monkeypatch):
     app = AppTest.from_function(page, default_timeout=30).run()
     assert calls == ["library"]
 
-    app.radio(key="minutas_active_view").set_value("Gerar Minuta").run()
-    assert calls == ["library", "generator"]
+    app.radio(key="minutas_active_view").set_value("Pesquisa Jurídica").run()
+    assert calls == ["library", "search"]
+    app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
+    assert calls == ["library", "search", "generator"]
+    app.radio(key="minutas_active_view").set_value("Acervo").run()
+    assert calls == ["library", "search", "generator", "library"]
 
 
 def test_configured_library_shows_phase_2a_fields(store, monkeypatch):

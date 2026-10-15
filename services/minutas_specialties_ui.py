@@ -46,10 +46,18 @@ def synchronize_scope(library, identity):
         st.session_state["minutas_scope_identity"] = email
     token = fingerprint([email, library.specialty_id, library.repository.scope_revision()])
     if st.session_state.get("minutas_scope_token") != token:
-        prefixes = ("minutas_generation_analysis_", "minutas_generation_result_", "minutas_generation_docx_cache_", "minutas_search_download_",
-                    "minutas_result_", "minutas_download_", "minutas_complement_download_")
+        prefixes = (
+            "minutas_generation_analysis_", "minutas_generation_result_",
+            "minutas_generation_docx_cache_", "minutas_search_download_",
+            "minutas_result_", "minutas_download_", "minutas_complement_download_",
+            "minutas_instrucao_",
+        )
+        drop = {
+            "minutas_legal_search", "minutas_active_panel", "minutas_open_reference",
+            "minutas_generation_target", "minutas_generation_mode",
+        }
         for key in list(st.session_state):
-            if key.startswith(prefixes) or key in {"minutas_legal_search", "minutas_active_panel", "minutas_open_reference", "minutas_generation_target"}:
+            if key.startswith(prefixes) or key in drop:
                 del st.session_state[key]
         st.session_state["minutas_scope_token"] = token
 
@@ -409,6 +417,10 @@ def _visual_model(library, profile):
         ))
 
 
+def _back_to_acervo_consult():
+    st.session_state["minutas_acervo_mode"] = "Consultar"
+
+
 def acervo(library, administrative_library, profile):
     admin = MinutasAcervoService(administrative_library)
     admin.library._authorize()
@@ -418,6 +430,8 @@ def acervo(library, administrative_library, profile):
         horizontal=True,
         key="minutas_acervo_mode",
     )
+    if mode != "Consultar":
+        st.button("← Voltar", key="minutas_acervo_back", on_click=_back_to_acervo_consult)
     if mode == "Modelo visual":
         _visual_model(library, profile)
         return
@@ -443,10 +457,16 @@ def acervo(library, administrative_library, profile):
         return
     options = {str(r["id"]): r for r in records}
     st.caption(f"{len(records)} processo(s) nesta página · até 25 por página")
+    record_key = "minutas_record_" + page_key
     identifier = st.selectbox("Processo", list(options), index=None, placeholder="Selecione para abrir os detalhes",
         format_func=lambda key: f"{options[key]['numero_processo']} · {options[key].get('origem') or 'Origem a conferir'}",
-        key="minutas_record_" + page_key)
+        key=record_key)
     if identifier:
+        st.button(
+            "← Voltar",
+            key="minutas_acervo_record_back",
+            on_click=lambda key=record_key: st.session_state.pop(key, None),
+        )
         record = library.get(identifier)
         _record_summary(options[identifier])
         detail = st.radio("Detalhes", ("Documentos", "Classificação"), horizontal=True, key="minutas_detail_" + identifier)
@@ -483,6 +503,11 @@ def _legacy_archive(admin, library):
         format_func=lambda key: f"{options[key]['numero_processo']} · exercício {options[key].get('exercicio') or '—'}",
         key="minutas_legacy_record")
     if identifier:
+        st.button(
+            "← Voltar",
+            key="minutas_legacy_back",
+            on_click=lambda: st.session_state.pop("minutas_legacy_record", None),
+        )
         _record_summary(options[identifier])
         _documents(library, library.get(identifier))
 

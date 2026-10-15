@@ -411,18 +411,24 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     app.radio(key="minutas_active_view").set_value("Pesquisa Jurídica").run()
     assert not app.exception
     assert app.selectbox(key="minutas_specialty").value == RPPS
-    app.radio(key="minutas_active_view").set_value("Gerar Minuta").run()
+    app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
     assert not app.exception and not app.error
+    assert not any(getattr(item, "key", None) == "minutas_generation_mode" for item in app.radio)
+    app.session_state["minutas_instrucao_documentos"] = [{"id": "tmp"}]
     app.session_state["minutas_legal_search"] = {"outro": "resultado antigo"}
     app.selectbox(key="minutas_specialty").set_value("elvira.pca.camaras").run()
     assert not app.exception
     assert "minutas_legal_search" not in app.session_state
+    assert "minutas_instrucao_documentos" not in app.session_state
     assert any("ainda não habilitada" in info.value for info in app.info)
     app.radio(key="minutas_active_view").set_value("Acervo").run()
     assert "Pendências de classificação" not in app.radio(key="minutas_acervo_mode").options
     app.radio(key="minutas_acervo_mode").set_value("Administração").run()
     assert not app.exception and not app.error
     assert any("sem classificação: 1" in caption.value for caption in app.caption)
+    assert app.button(key="minutas_acervo_back")
+    app.button(key="minutas_acervo_back").click().run()
+    assert app.radio(key="minutas_acervo_mode").value == "Consultar"
     assert storage.downloads == []
     assert not any("ts_headline" in query for query in store.queries)
 

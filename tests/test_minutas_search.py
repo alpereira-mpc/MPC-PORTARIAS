@@ -331,3 +331,8 @@ def test_search_ui_queries_only_after_submit_and_keeps_result_on_rerun(monkeypat
     assert any("Trecho histórico localizado" in item.value for item in app.markdown)
     app.run()
     assert len(calls) == 1
+    assert app.button(key="minutas_search_back")
+    app.button(key="minutas_search_back").click().run()
+    assert "minutas_legal_search" not in app.session_state
+    assert not any("Trecho histórico localizado" in item.value for item in app.markdown)
+    assert len(calls) == 1

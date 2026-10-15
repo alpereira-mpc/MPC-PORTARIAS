@@ -3307,9 +3307,9 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     _UI_HOLD.clear()
 
     def page():
-        from services.minutas_ia_ui import _generator_tab
+        from services.minutas_ia_ui import _historical_generator_panel
 
-        _generator_tab(None, {})
+        _historical_generator_panel(None, {})
 
     app = AppTest.from_function(page, default_timeout=30).run()
     assert analysis_calls == []
@@ -3553,9 +3553,9 @@ def test_ui_shows_document_warning_and_keeps_drafting_enabled(monkeypatch):
     _UI_HOLD.clear()
 
     def page():
-        from services.minutas_ia_ui import _generator_tab
+        from services.minutas_ia_ui import _historical_generator_panel
 
-        _generator_tab(None, {})
+        _historical_generator_panel(None, {})
 
     app = AppTest.from_function(page, default_timeout=30).run()
     app.button(key=f"minutas_analysis_submit_{TARGET_ID}").click().run()

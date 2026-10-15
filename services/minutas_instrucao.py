@@ -253,3 +253,97 @@ def montar_contexto(documentos, *, processo="", exercicio=None, origem="", budge
     }
     return {"contexto": context, "versao": versao(documentos), "fontes_alvo": len(sources),
             "advertencias": review["advertencias"], "omissoes": omissions}
+
+
+_CADASTRO_BREAK = re.compile(
+    r"(?i)\s+(?=(?:processo(?:\s+tc)?|subcategoria|jurisdicionado|origem|"
+    r"entidade(?:\s+fiscalizada)?|respons[aá]vel(?:es)?|relator(?:es)?|"
+    r"auditor(?:es)?(?:\s+de\s+contas)?|assunto|"
+    r"exerc[ií]cio(?:\s+das\s+contas|\s+financeiro)?)\s*:)"
+)
+
+
+def _cadastro_text(document):
+    raw = "\n".join(
+        str(unit.get("texto") or "") for unit in (document or {}).get("conteudo") or ()
+    )
+    return _CADASTRO_BREAK.sub("\n", raw)
+
+
+def sugerir_metadados_instrucao(documentos):
+    """Lê só dados cadastrais já extraídos. Não escolhe valor quando há conflito."""
+    from services.minutas_acervo import (
+        display_process_key,
+        identify_process_keys,
+        parse_report_header,
+        plain,
+    )
+
+    processes = {}
+    years = set()
+    origins = {}
+    warnings = []
+    for document in documentos or []:
+        name = str(document.get("nome") or "")
+        text = _cadastro_text(document)
+        header = parse_report_header(text)
+        name_keys, text_keys, year_set = identify_process_keys(name, text)
+        header_key = str(header.get("processo_chave") or "")
+        if header_key and name_keys and header_key not in name_keys:
+            warnings.append(
+                f"{name}: o cabeçalho e o nome do arquivo indicam processos diferentes."
+            )
+        elif header_key:
+            processes[header_key] = display_process_key(header_key)
+        elif len(name_keys) == 1:
+            key = next(iter(name_keys))
+            processes[key] = display_process_key(key)
+            warnings.append(
+                f"{name}: o processo foi lido do nome do arquivo. Confira o número."
+            )
+        elif len(name_keys) > 1:
+            warnings.append(
+                f"{name}: o nome do arquivo contém mais de um número de processo."
+            )
+        elif len(text_keys) == 1:
+            key = next(iter(text_keys))
+            processes[key] = display_process_key(key)
+        year = header.get("exercicio")
+        if year is None and len(year_set) == 1:
+            year = next(iter(year_set))
+        elif year is not None and year_set and year not in year_set:
+            warnings.append(
+                f"{name}: o exercício do cabeçalho não coincide com outras menções."
+            )
+            year = None
+        if year is not None:
+            years.add(int(year))
+        origin = str(header.get("origem") or "").strip()
+        if origin:
+            origins.setdefault(plain(origin), origin)
+    suggestion = {
+        "processo": "",
+        "exercicio": None,
+        "origem": "",
+        "advertencias": [],
+    }
+    if len(processes) == 1:
+        suggestion["processo"] = next(iter(processes.values()))
+    elif len(processes) > 1:
+        warnings.append(
+            "Os PDFs indicam processos distintos. Informe o processo manualmente."
+        )
+    if len(years) == 1:
+        suggestion["exercicio"] = next(iter(years))
+    elif len(years) > 1:
+        warnings.append(
+            "Os PDFs indicam exercícios distintos. Informe o exercício manualmente."
+        )
+    if len(origins) == 1:
+        suggestion["origem"] = next(iter(origins.values()))
+    elif len(origins) > 1:
+        warnings.append(
+            "Os PDFs indicam origens distintas. Informe a origem manualmente."
+        )
+    suggestion["advertencias"] = warnings
+    return suggestion

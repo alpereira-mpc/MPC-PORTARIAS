@@ -17,6 +17,7 @@ from services.minutas_instrucao import (
     consolidar,
     fontes,
     receber_pdf,
+    sugerir_metadados_instrucao,
     versao,
 )
 
@@ -568,3 +569,167 @@ def test_exportacao_da_instrucao_recebe_a_biblioteca():
     source = inspect.getsource(minutas_ia_ui._instruction_panel)
     assert "service.library" not in source
     assert "MinutasDocxService(service)" in source
+
+
+def _header_pdf(processo, origem, exercicio, extra="Relatório inicial."):
+    return _pdf(
+        f"Processo TC: {processo}\n"
+        f"Origem: {origem}\n"
+        f"Exercício das contas: {exercicio}\n"
+        f"{extra}"
+    )
+
+
+def test_sugerir_metadados_instrucao_consensus_conflict_and_absence():
+    same = _doc(
+        "a.pdf",
+        "Processo TC: 01653/26\nOrigem: Instituto Alfa\nExercício das contas: 2026\nTexto.",
+        "relatorio_inicial",
+    )
+    other = _doc(
+        "b.pdf",
+        "Processo TC: 02720/25\nOrigem: Instituto Beta\nExercício das contas: 2025\nTexto.",
+        "relatorio_inicial",
+    )
+    empty = _doc("c.pdf", "Sem identificação cadastral neste teor.", "relatorio_inicial")
+    agreed = sugerir_metadados_instrucao([same, empty])
+    assert agreed["processo"] == "01653/26"
+    assert agreed["exercicio"] == 2026
+    assert agreed["origem"] == "Instituto Alfa"
+    conflict = sugerir_metadados_instrucao([same, other])
+    assert conflict["processo"] == conflict["origem"] == ""
+    assert conflict["exercicio"] is None
+    assert any("processos distintos" in item for item in conflict["advertencias"])
+    absent = sugerir_metadados_instrucao([empty])
+    assert absent["processo"] == absent["origem"] == ""
+    assert absent["exercicio"] is None
+
+
+def test_generator_tab_uses_instruction_flow_without_historical_mode(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from services import minutas_ia_ui
+
+    calls = {"analyze": 0, "generate": 0, "export": 0}
+
+    class Generator:
+        def __init__(self, _library):
+            pass
+
+        def analyze_instruction(self, documents, **_kwargs):
+            calls["analyze"] += 1
+            return {
+                "analise": {
+                    "resumo_processual": "Análise da instrução.",
+                    "irregularidades": [],
+                    "pontos_atencao_gerais": [],
+                },
+                "modelo": "modelo-analise",
+                "duracao_ms": 1,
+                "tokens_total": 1,
+                "fontes_versao": "v1",
+            }
+
+        def generate_instruction(self, documents, analyzed, **_kwargs):
+            calls["generate"] += 1
+            assert analyzed["fontes_versao"] == "v1"
+            return {
+                "estrutura": {"ementa": "Ementa."},
+                "texto": "Minuta da instrução.",
+                "fontes_versao": "v1",
+            }
+
+    class Word:
+        def __init__(self, _library):
+            pass
+
+        def export_instruction(self, analyzed, generated, **_kwargs):
+            calls["export"] += 1
+            return type(
+                "Doc", (),
+                {"content": b"PK", "name": "MINUTA.docx", "mime": "application/vnd.word"},
+            )()
+
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_a, **_k: object())
+    monkeypatch.setattr(minutas_ia_ui, "MinutasGenerationService", Generator)
+    monkeypatch.setattr(minutas_ia_ui, "MinutasDocxService", Word)
+
+    def page():
+        from services.minutas_ia_ui import _generator_tab
+
+        _generator_tab(None, {})
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert not app.exception
+    assert not any(getattr(item, "key", None) == "minutas_generation_mode" for item in app.radio)
+    assert "Processo do acervo" not in " ".join(str(item.value) for item in app.radio)
+    assert any("Gerar Minuta de Parecer" in str(item.value) for item in app.subheader)
+    assert any(item.key == "minutas_instrucao_incluir" for item in app.button)
+    assert any(item.key == "minutas_instrucao_analisar" for item in app.button)
+    app.file_uploader(key="minutas_instrucao_upload").set_value([
+        ("relatorio.pdf", _header_pdf("01653/26", "Instituto Alfa", "2026"), "application/pdf"),
+    ]).run()
+    app.button(key="minutas_instrucao_incluir").click().run()
+    assert app.text_input(key="minutas_instrucao_processo").value == "01653/26"
+    assert app.text_input(key="minutas_instrucao_origem_processo").value == "Instituto Alfa"
+    assert int(app.number_input(key="minutas_instrucao_exercicio").value) == 2026
+    assert len(app.session_state["minutas_instrucao_documentos"]) == 1
+    app.button(key="minutas_instrucao_incluir").click().run()
+    assert len(app.session_state["minutas_instrucao_documentos"]) == 1
+    hashes = set(app.session_state["minutas_instrucao_meta_hashes"])
+    app.run()
+    assert set(app.session_state["minutas_instrucao_meta_hashes"]) == hashes
+    assert calls["analyze"] == 0
+    app.button(key="minutas_instrucao_analisar").click().run()
+    assert calls["analyze"] == 1
+    app.button(key="minutas_instrucao_gerar").click().run()
+    assert calls["generate"] == 1
+    assert calls["export"] >= 1
+    assert any(item.label == "Baixar DOCX" for item in app.get("download_button"))
+    exported = calls["export"]
+    app.run()
+    assert calls["analyze"] == 1
+    assert calls["generate"] == 1
+    assert calls["export"] >= exported
+
+
+def test_incluir_preserva_edicao_manual_conflito_e_falha_de_extracao(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from services import minutas_ia_ui
+    from services import minutas_instrucao as instrucao
+
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        minutas_ia_ui, "MinutasGenerationService", lambda _library: type("G", (), {})()
+    )
+
+    def page():
+        from services.minutas_ia_ui import _generator_tab
+
+        _generator_tab(None, {})
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    assert not app.exception
+    app.file_uploader(key="minutas_instrucao_upload").set_value([
+        ("a.pdf", _header_pdf("01653/26", "Instituto Alfa", "2026"), "application/pdf"),
+    ]).run()
+    app.button(key="minutas_instrucao_incluir").click().run()
+    app.text_input(key="minutas_instrucao_processo").set_value("09999/99").run()
+    app.file_uploader(key="minutas_instrucao_upload").set_value([
+        ("b.pdf", _header_pdf("02720/25", "Instituto Beta", "2025"), "application/pdf"),
+    ]).run()
+    app.button(key="minutas_instrucao_incluir").click().run()
+    assert app.text_input(key="minutas_instrucao_processo").value == "09999/99"
+    assert len(app.session_state["minutas_instrucao_documentos"]) == 2
+    assert any("processos distintos" in str(item.value) for item in app.caption)
+
+    def boom(_documents):
+        raise RuntimeError("falha sintética")
+
+    monkeypatch.setattr(instrucao, "sugerir_metadados_instrucao", boom)
+    app.file_uploader(key="minutas_instrucao_upload").set_value([
+        ("c.pdf", _header_pdf("01499/26", "Instituto Gama", "2024"), "application/pdf"),
+    ]).run()
+    app.button(key="minutas_instrucao_incluir").click().run()
+    assert len(app.session_state["minutas_instrucao_documentos"]) == 3
+    assert app.text_input(key="minutas_instrucao_processo").value == "09999/99"
+    assert any("Não foi possível extrair automaticamente" in item.value for item in app.warning)
