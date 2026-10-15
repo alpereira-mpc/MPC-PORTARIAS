@@ -2167,6 +2167,36 @@ def test_header_metadata_supports_another_jurisdiction_type():
     }
 
 
+def test_header_metadata_recovers_explicit_narrative_responsible_from_target_sources():
+    target, history, other, rows = _scenario()
+    target["subtipo"] = "Prefeitura"
+    target_source = next(
+        row for row in rows if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    target_text = (
+        "ENTIDADE: Prefeitura Municipal de São Bentinho\n"
+        "No exercício de 2025, esteve sob a responsabilidade da Prefeita Sra. "
+        "Giovana Leite Cavalcanti Olimpio.\n"
+        "O auditor João da Silva registrou o achado técnico."
+    )
+    target_source["texto_integral"] = target_text
+    target_source["unidades_json"] = json.dumps(
+        [{"pagina": 1, "texto": target_text}], ensure_ascii=False
+    )
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+    )
+    result = service.generate(target["id"], service.analyze(target["id"]))
+
+    assert result["metadados_cabecalho"] == {
+        "origem": "Prefeitura Municipal de São Bentinho",
+        "responsavel": "Giovana Leite Cavalcanti Olimpio",
+    }
+    assert "Responsável: Giovana Leite Cavalcanti Olimpio" in result["texto"]
+
+
 @pytest.mark.parametrize(
     "subtype",
     (
@@ -2258,28 +2288,24 @@ def test_rpps_orders_relief_and_rejects_debit_without_quantified_harm():
 
 
 def test_city_pca_orders_two_existing_competences_without_inventing_them():
-    target, history, other, rows = _scenario()
+    target, _history, _other, _rows = _scenario()
     target["subtipo"] = "Prefeitura"
+    target["especialidade_id"] = "elvira.pca.prefeituras"
+    target["origem"] = "Prefeitura Municipal de São Bentinho"
+    structure = _draft_structure()
+    structure["pedidos"] = [
+        "Aplique-se a multa fundamentada no tópico 18.1.",
+        "Proponha-se a irregularidade das contas submetidas a julgamento.",
+        "Proponha-se a emissão de parecer contrário sobre as contas de governo.",
+    ]
+    normalized, _warnings = MinutasGenerationService._normalize_structure(structure, target)
 
-    def generate(context):
-        structure = _draft_structure()
-        structure["pedidos"] = [
-            "Aplique-se a multa fundamentada no tópico 18.1.",
-            "Proponha-se a irregularidade das contas submetidas a julgamento.",
-            "Proponha-se a emissão de parecer contrário sobre as contas de governo.",
-        ]
-        return _draft_result(context, estrutura=structure)
-
-    service = MinutasGenerationService(
-        Library([target, history, other], rows),
-        analyze=_analysis_result,
-        generate=generate,
+    assert normalized["pedidos"][0] == (
+        "Pela emissão de parecer prévio contrário à aprovação das contas de governo "
+        "de Prefeitura Municipal de São Bentinho, relativas ao exercício de 2026, pelos fundamentos expostos."
     )
-    result = service.generate(target["id"], service.analyze(target["id"]))
-
-    assert "parecer contrário" in result["estrutura"]["pedidos"][0]
-    assert "irregularidade das contas" in result["estrutura"]["pedidos"][1]
-    assert "multa fundamentada" in result["estrutura"]["pedidos"][2]
+    assert "irregularidade das contas" in normalized["pedidos"][1]
+    assert "multa fundamentada" in normalized["pedidos"][2]
 
     structure = _draft_structure()
     structure["pedidos"] = [
@@ -2288,13 +2314,72 @@ def test_city_pca_orders_two_existing_competences_without_inventing_them():
     normalized, warnings = MinutasGenerationService._normalize_structure(
         structure, target
     )
+    assert normalized["pedidos"] == [
+        "Pela emissão de parecer prévio favorável à aprovação das contas de governo "
+        "de Prefeitura Municipal de São Bentinho, relativas ao exercício de 2026."
+    ]
+    assert not warnings
+
+
+@pytest.mark.parametrize(
+    ("device_request", "expected"),
+    (
+        (
+            "Proponha-se a emissão de parecer favorável sobre as contas de governo.",
+            "Pela emissão de parecer prévio favorável à aprovação das contas de governo "
+            "de Prefeitura Municipal de São Bentinho, relativas ao exercício de 2025.",
+        ),
+        (
+            "Proponha-se a emissão de parecer favorável, com ressalvas, sobre as contas de governo.",
+            "Pela emissão de parecer prévio favorável à aprovação, com ressalvas, das contas de governo "
+            "de Prefeitura Municipal de São Bentinho, relativas ao exercício de 2025, pelos fundamentos expostos.",
+        ),
+        (
+            "Proponha-se a emissão de parecer contrário sobre as contas de governo.",
+            "Pela emissão de parecer prévio contrário à aprovação das contas de governo "
+            "de Prefeitura Municipal de São Bentinho, relativas ao exercício de 2025, pelos fundamentos expostos.",
+        ),
+    ),
+)
+def test_prefectures_government_opinion_is_normalized_deterministically(device_request, expected):
+    target, _history, _other, _rows = _scenario()
+    target.update(
+        especialidade_id="elvira.pca.prefeituras",
+        subtipo="Prefeitura",
+        origem="Prefeitura Municipal de São Bentinho",
+        exercicio=2025,
+    )
+    structure = _draft_structure()
+    structure["pedidos"] = [device_request, "Aplique-se multa individualizada, quando fundamentada."]
+
+    normalized, warnings = MinutasGenerationService._normalize_structure(structure, target)
+    repeated, repeated_warnings = MinutasGenerationService._normalize_structure(normalized, target)
+
+    assert normalized["pedidos"] == [expected, structure["pedidos"][1]]
+    assert repeated["pedidos"] == normalized["pedidos"]
+    assert not warnings and not repeated_warnings
+
+
+def test_prefectures_management_only_does_not_invent_government_opinion():
+    target, _history, _other, _rows = _scenario()
+    target.update(especialidade_id="elvira.pca.prefeituras", subtipo="Prefeitura")
+    structure = _draft_structure()
+    structure["pedidos"] = [
+        "Proponha-se a irregularidade das contas submetidas a julgamento.",
+        "Aplique-se multa individualizada, quando fundamentada.",
+    ]
+
+    normalized, warnings = MinutasGenerationService._normalize_structure(structure, target)
+
     assert normalized["pedidos"] == structure["pedidos"]
-    assert any("duas manifestações" in warning for warning in warnings)
+    assert all("parecer prévio" not in item.casefold() for item in normalized["pedidos"])
+    assert any("apenas de gestão" in warning for warning in warnings)
 
 
 def test_city_pca_keeps_only_one_conclusion_for_each_documented_competence():
     target, _history, _other, _rows = _scenario()
     target["subtipo"] = "Prefeitura"
+    target["especialidade_id"] = "elvira.pca.prefeituras"
     structure = _draft_structure()
     structure["pedidos"] = [
         "Proponha-se a emissão de parecer contrário sobre as contas de governo.",

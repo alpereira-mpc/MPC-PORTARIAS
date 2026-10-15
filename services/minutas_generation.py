@@ -525,6 +525,45 @@ def _direct_account_request(value):
     return f"Julgamento das contas como {wording[next(iter(outcomes))]}."
 
 
+def _is_prefeituras_target(target):
+    return str((target or {}).get("especialidade_id") or "") == "elvira.pca.prefeituras"
+
+
+def _government_opinion_outcome(request):
+    """Return an outcome only for an explicit government-accounts opinion."""
+    text = str(request or "")
+    if not (
+        _PRELIMINARY_OPINION_RE.search(text)
+        and re.search(r"\bcontas?\s+de\s+governo\b", text, re.IGNORECASE)
+    ):
+        return ""
+    normalized = _plain(text)
+    if "contrario" in normalized:
+        return "IRREGULARIDADE"
+    if "favoravel" not in normalized:
+        return ""
+    return (
+        "REGULARIDADE_COM_RESSALVAS"
+        if "ressalv" in normalized
+        else "REGULARIDADE"
+    )
+
+
+def _government_opinion_request(outcome, target):
+    origin = str((target or {}).get("origem") or "").strip()
+    exercise = str((target or {}).get("exercicio") or "").strip()
+    if not origin or not exercise:
+        return ""
+    base = "das contas de governo de " + origin + ", relativas ao exercício de " + exercise
+    if outcome == "REGULARIDADE":
+        return "Pela emissão de parecer prévio favorável à aprovação " + base + "."
+    if outcome == "REGULARIDADE_COM_RESSALVAS":
+        return "Pela emissão de parecer prévio favorável à aprovação, com ressalvas, " + base + ", pelos fundamentos expostos."
+    if outcome == "IRREGULARIDADE":
+        return "Pela emissão de parecer prévio contrário à aprovação " + base + ", pelos fundamentos expostos."
+    return ""
+
+
 def _request_category(request):
     if (
         _account_outcomes(request)
@@ -604,8 +643,22 @@ _HEADER_METADATA_REJECTED = {
         "relatorio",
         "documento",
     ),
-    "responsavel": ("auditor", "procurador", "relator", "analista"),
+    "responsavel": ("auditor", "procurador", "relator", "analista", "advogado", "defensor"),
 }
+_RESPONSIBLE_NARRATIVE_PATTERNS = (
+    re.compile(
+        r"\bsob\s+a\s+responsabilidade\s+d[ao]\s+"
+        r"(?:(?:[Pp]refeit[oa]|[Gg]estor(?:a)?)\s+(?:[Ss]r(?:a)?\.?\s*)?"
+        r"|[Ss]r(?:a)?\.?\s+|(?![Pp]refeit[oa]\b|[Gg]estor(?:a)?\b|[Ss]r(?:a)?\b))"
+        r"(?P<value>[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]+(?:\s+[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]+){1,5})"
+        r"(?=[,.;\n]|$)"
+    ),
+    re.compile(
+        r"\b(?:[Pp]refeit[oa]|[Gg]estor(?:a)?\s+respons[aá]vel)\s+"
+        r"(?:[Ss]r(?:a)?\.?\s*)?(?P<value>[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]+"
+        r"(?:\s+[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]+){1,5})(?=[,.;\n]|$)"
+    ),
+)
 
 
 def _header_metadata_value(field, value):
@@ -634,6 +687,12 @@ def _header_metadata_from_text(field, text):
         value = _header_metadata_value(field, match.group("value"))
         if value:
             candidates.setdefault(_normalized_support(value), value)
+    if field == "responsavel":
+        for pattern in _RESPONSIBLE_NARRATIVE_PATTERNS:
+            for match in pattern.finditer(str(text or "")):
+                value = _header_metadata_value(field, match.group("value"))
+                if value:
+                    candidates.setdefault(_normalized_support(value), value)
     return candidates
 
 
@@ -645,18 +704,26 @@ def _resolved_header_metadata(target, sources=(), analysis=None):
         for unit in source.get("conteudo", ())
         if isinstance(unit, dict)
     )
-    analysis_text = json.dumps(analysis or {}, ensure_ascii=False)
     for field in ("origem", "responsavel"):
         structured = _header_metadata_value(field, target.get(field))
         if structured:
             metadata[field] = structured
             continue
-        candidates = {
-            **_header_metadata_from_text(field, source_text),
-            **_header_metadata_from_text(field, analysis_text),
-        }
+        candidates = _header_metadata_from_text(field, source_text)
         if len(candidates) == 1:
             metadata[field] = next(iter(candidates.values()))
+            continue
+        # A análise consolidada só desempata candidatos que já constem das
+        # fontes do processo-alvo; nunca cria metadado a partir da IA.
+        analysis_candidates = _header_metadata_from_text(
+            field, json.dumps(analysis or {}, ensure_ascii=False)
+        )
+        confirmed = {
+            key: candidates[key]
+            for key in candidates.keys() & analysis_candidates.keys()
+        }
+        if len(confirmed) == 1:
+            metadata[field] = next(iter(confirmed.values()))
     return metadata
 
 
@@ -3076,34 +3143,51 @@ class MinutasGenerationService:
             and not _PRELIMINARY_OPINION_RE.search(item)
             and _request_category(item) == 0
         ]
-        subtype = str(target.get("subtipo") or "")
-        if subtype == "Prefeitura":
+        if _is_prefeituras_target(target):
+            government_requests = [
+                (item, _government_opinion_outcome(item))
+                for item in opinion_requests
+                if _government_opinion_outcome(item)
+            ]
             primary_requests = []
-            if opinion_requests:
-                primary_requests.append(opinion_requests[0])
+            if government_requests:
+                government = _government_opinion_request(
+                    government_requests[0][1], target
+                )
+                if government:
+                    primary_requests.append(government)
+                else:
+                    warnings.append(
+                        "A conclusão de governo está expressa, mas faltam entidade ou "
+                        "exercício confirmados para normalizar o parecer prévio; revise "
+                        "humanamente antes da assinatura."
+                    )
+                    primary_requests.append(government_requests[0][0])
             if account_requests:
                 primary_requests.append(account_requests[0])
             if primary_requests:
-                # A mesma PCA pode conter as duas competências, mas cada uma tem
-                # uma única conclusão principal. Pedidos acessórios (sanções,
-                # recomendações e remessas) continuam íntegros.
+                # Governo vem antes. A gestão só permanece quando há pedido próprio;
+                # sanções, recomendações e comunicações não são conclusões principais.
                 normalized["pedidos"] = primary_requests + [
-                    item
-                    for item in requests
-                    if not _PRELIMINARY_OPINION_RE.search(item)
-                    and item not in account_requests
+                    item for item in requests
+                    if item not in opinion_requests and item not in account_requests
                 ]
-            if len(opinion_requests) > 1 or len(account_requests) > 1:
+            if len(government_requests) > 1 or len(account_requests) > 1:
                 warnings.append(
                     "Foram recebidas conclusões principais repetidas para PCA de "
                     "Prefeitura; foi preservada uma conclusão por competência "
                     "para revisão jurídica."
                 )
-            if not (opinion_requests and account_requests):
+            if account_requests and not government_requests:
                 warnings.append(
-                    "PCA de Prefeitura sem elementos suficientes para confirmar "
-                    "se as duas manifestações dispositivas são cabíveis; revise a "
-                    "competência e o objeto antes da assinatura."
+                    "PCA de Prefeitura com conclusão apenas de gestão, sem suporte "
+                    "documental explícito para parecer prévio sobre contas de governo; "
+                    "revise humanamente a competência e o objeto."
+                )
+            elif not government_requests and not account_requests:
+                warnings.append(
+                    "PCA de Prefeitura sem conclusão dispositiva identificável; revise "
+                    "humanamente a competência e o objeto antes da assinatura."
                 )
         else:
             if opinion_requests:
@@ -3806,6 +3890,9 @@ class MinutasGenerationService:
             "perfil": target.get("perfil") or "",
             "subtipo": target.get("subtipo") or "",
         })
+        for field in ("origem", "responsavel"):
+            if str(target.get(field) or "").strip():
+                process[field] = target[field]
         bound["processo_alvo"] = process
         return bound
 
@@ -3862,6 +3949,10 @@ class MinutasGenerationService:
             documentos, processo=target["numero_processo"], exercicio=exercicio,
             origem=origem,
         )
+        header_metadata = _resolved_header_metadata(
+            target, prepared["contexto"].get("documentos_processo_alvo", ())
+        )
+        target = _target_with_header_metadata(target, header_metadata)
         context = self._bind_instruction_context(prepared["contexto"], target)
         generated = self._analyze(context)
         analysis = self._validate_analysis(generated.get("analise"), context)
@@ -3887,6 +3978,7 @@ class MinutasGenerationService:
             "advertencias_instrucao": prepared["advertencias"],
             "consolidacao_contexto": prepared["omissoes"],
             "contexto_bytes": _serialized_size(prepared["contexto"]),
+            "metadados_cabecalho": header_metadata,
             **metrics,
         }
 
@@ -3943,6 +4035,12 @@ class MinutasGenerationService:
             )
         analysis = self._validate_analysis(analyzed.get("analise"), prepared["contexto"])
         conference = analysis.get("conferencia_documental") or {}
+        header_metadata = _resolved_header_metadata(
+            target,
+            prepared["contexto"].get("documentos_processo_alvo", ()),
+            analysis,
+        )
+        target = _target_with_header_metadata(target, header_metadata)
         context = self._bind_instruction_context(prepared["contexto"], target)
         context["orientacao_dispositivo"] = (
             "PREFEITURA_CONDICIONAL_DUAS_COMPETENCIAS"
@@ -4001,7 +4099,7 @@ class MinutasGenerationService:
             "processo_alvo_id": target["id"],
             "processo_alvo_chave": target["processo_chave"],
             "procuradora_chave": target["procuradora_chave"],
-            "metadados_cabecalho": generated.get("metadados_cabecalho") or {},
+            "metadados_cabecalho": header_metadata,
             "fontes_alvo": prepared["fontes_alvo"],
             "advertencias_documentais": deepcopy(conference.get("pendencias") or []),
             "referencias_historicas": len(context.get("referencias_historicas") or []),

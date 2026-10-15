@@ -969,7 +969,7 @@ def test_secretarias_habilitada_usa_identidade_propria_e_julgamento_direto(estad
             ("Contas de governo: a instrução não contém elementos de gestão.",),
             ("Proponha-se a emissão de parecer contrário sobre as contas de governo.",),
             False,
-            ("parecer contrário",),
+                ("parecer prévio contrário",),
         ),
         (
             ("Contas de gestão: a instrução não contém elementos de governo.",),
@@ -988,7 +988,7 @@ def test_secretarias_habilitada_usa_identidade_propria_e_julgamento_direto(estad
                 "Aplique-se multa individualizada ao responsável pela irregularidade.",
             ),
             True,
-            ("parecer contrário", "irregularidade das contas"),
+                ("parecer prévio contrário", "irregularidade das contas"),
         ),
     ),
 )
