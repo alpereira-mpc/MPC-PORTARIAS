@@ -104,6 +104,14 @@ def _structure(*, long=False):
                 ),
             }
         ],
+        "analise_sancionatoria": {
+            "conclusao": "MULTA_NAO_CABIVEL",
+            "irregularidades_ids": ["18.1"],
+            "fundamentos_legais": [],
+            "responsaveis": [],
+            "dano_ao_erario": "NAO_COMPROVADO_OU_NAO_QUANTIFICADO",
+            "texto": "Não há suporte suficiente para propor multa neste caso.",
+        },
         "conclusao_pedidos": (
             "Ante o exposto, o Ministério Público de Contas, em atuação no "
             "âmbito do Tribunal de Contas, manifesta-se pelo julgamento das "
@@ -252,6 +260,8 @@ def test_docx_uses_original_logo_and_contains_only_target_content():
     assert "Responsável: Não informado" in body_text
     assert "ELVIRA SAMARA PEREIRA DE OLIVEIRA" in body_text
     assert "Procuradora-Geral do Ministério Público de Contas" in body_text
+    assert "Análise sancionatória" in body_text
+    assert "Não há suporte suficiente para propor multa" in body_text
     assert "MINUTA EXPERIMENTAL — SUJEITA À REVISÃO HUMANA" in footer_text
     forbidden = ("bananeir", "02209/26", " ycn", "joão pessoa,")
     assert not any(item in body_text.casefold() for item in forbidden)

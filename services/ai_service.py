@@ -897,6 +897,41 @@ _MINUTA_OUTPUT_SCHEMA = {
                 ],
             },
         },
+        "analise_sancionatoria": {
+            "type": "OBJECT",
+            "properties": {
+                "conclusao": {
+                    "type": "STRING",
+                    "enum": [
+                        "MULTA_CABIVEL",
+                        "MULTA_NAO_CABIVEL",
+                        "REVISAO_HUMANA_NECESSARIA",
+                    ],
+                },
+                "irregularidades_ids": {
+                    "type": "ARRAY", "items": {"type": "STRING"},
+                },
+                "fundamentos_legais": {
+                    "type": "ARRAY", "items": {"type": "STRING"},
+                },
+                "responsaveis": {
+                    "type": "ARRAY", "items": {"type": "STRING"},
+                },
+                "dano_ao_erario": {
+                    "type": "STRING",
+                    "enum": [
+                        "NAO_COMPROVADO_OU_NAO_QUANTIFICADO",
+                        "COMPROVADO_E_QUANTIFICADO",
+                        "REVISAO_HUMANA_NECESSARIA",
+                    ],
+                },
+                "texto": {"type": "STRING"},
+            },
+            "required": [
+                "conclusao", "irregularidades_ids", "fundamentos_legais",
+                "responsaveis", "dano_ao_erario", "texto",
+            ],
+        },
         "conclusao_pedidos": {"type": "STRING"},
         "pedidos": {"type": "ARRAY", "items": {"type": "STRING"}},
         "encerramento": {"type": "STRING"},
@@ -904,7 +939,8 @@ _MINUTA_OUTPUT_SCHEMA = {
     "required": [
         "identificacao_processual", "ementa", "relatorio", "relatorio_paragrafos",
         "fundamentacao_geral", "fundamentacao_geral_paragrafos",
-        "topicos_irregularidades", "conclusao_pedidos", "pedidos", "encerramento",
+        "topicos_irregularidades", "analise_sancionatoria",
+        "conclusao_pedidos", "pedidos", "encerramento",
     ],
 }
 
@@ -928,6 +964,11 @@ Não transforme juntada de documento, alegação defensiva ou providência prome
 Produza uma verdadeira análise jurídica, sem apenas resumir ou copiar a Auditoria e sem presumir que entendimentos históricos sejam automaticamente aplicáveis.
 Não invente fatos, documentos, valores, datas, páginas, dispositivos legais, precedentes ou numeração oficial. Não atribua à Auditoria conclusões ausentes. Diferencie irregularidades, defesa, avaliação técnica e proposta de interpretação jurídica. Não transforme recomendações em sanções sem fundamentação. Preserve divergência fundamentada em relação à Auditoria.
 Distinga expressamente, quando cabíveis e apoiados nas fontes, ressalvas, recomendações, multas, imputação de débito e necessidade de complementação instrutória.
+Em PCA de Instituto Previdenciário (RPPS), trate as contas como contas de gestão sujeitas a julgamento pelo Tribunal. O primeiro pedido deve opinar pelo julgamento das contas como regulares, regulares com ressalva ou irregulares, conforme o art. 58 da Lei Complementar Estadual nº 192/2024 e os arts. 8º e 230 do Regimento Interno. Parecer prévio é próprio das contas de governo do Chefe do Poder Executivo, nos termos do art. 2º, I e II, da Lei Complementar Estadual nº 192/2024 e do art. 229 do Regimento Interno. Não use, no dispositivo de PCA de RPPS, "emissão de parecer prévio", "parecer prévio ou julgamento" nem fórmula ambígua equivalente. Não confunda o parecer ministerial, que contém a opinião do MPC, com o parecer prévio emitido pelo Tribunal.
+Preencha analise_sancionatoria em todos os casos, ainda que a conclusão seja pela não proposição de multa ou pela necessidade de revisão humana. Examine somente as irregularidades que permaneceram após a defesa e a análise final da Auditoria. Diferencie infração administrativa ou normativa, irregularidade das contas, dano ao erário comprovado e quantificado, déficit orçamentário ou atuarial, multa sancionatória por infração normativa e multa vinculada a débito efetivamente apurado. Considere a natureza e a gravidade da infração, os fundamentos normativos, a autoria, o nexo de responsabilidade, as circunstâncias do caso, a proporcionalidade e o devido processo legal, à luz dos arts. 98, 99 e 100 da Lei Complementar Estadual nº 192/2024 e dos arts. 292 e 295 do Regimento Interno. A hipótese do art. 100, I, da Lei Complementar Estadual nº 192/2024 exige infração a norma legal ou regulamentar de natureza contábil, financeira, orçamentária, operacional ou patrimonial. Não conclua pela multa automaticamente em razão da irregularidade das contas.
+Se houver fundamento suficiente e responsabilidade pessoal individualizada, use conclusao=MULTA_CABIVEL e inclua pedido autônomo de aplicação de multa depois do pedido de julgamento. Se autoria, nexo ou enquadramento legal permanecerem duvidosos, use conclusao=REVISAO_HUMANA_NECESSARIA, explique a dúvida e não invente responsável nem sanção. Se não houver suporte, use conclusao=MULTA_NAO_CABIVEL e fundamente. O MPC apenas opina; o Tribunal decide e fixa eventual sanção. Não calcule nem proponha valor, percentual, UFR-PB ou quantidade de multas.
+Só use dano_ao_erario=COMPROVADO_E_QUANTIFICADO e só proponha imputação de débito quando as fontes demonstrarem dano efetivo, valor quantificado e atribuição pessoal. Déficit orçamentário ou atuarial não equivale automaticamente a dano imputável. Os arts. 101 da Lei Complementar Estadual nº 192/2024 e 294 do Regimento Interno somente podem ser invocados nessa hipótese. O art. 295, II, do Regimento Interno contém remissão textual problemática ao parágrafo único do art. 62 da Lei Complementar Estadual nº 192/2024; não reproduza essa remissão nem a use como fundamento, sem alterar ou corrigir o texto normativo.
+No dispositivo, ordene, quando cabíveis: julgamento das contas; multa; imputação de débito; determinações e recomendações corretivas; comunicações, remessas ou juntadas. Não insira pedido sem suporte na fundamentação. Identifique o destinatário das determinações e recomendações, separando gestor ou Instituto, Prefeitura e outros órgãos. Não atribua ao gestor previdenciário obrigação exclusiva do Chefe do Executivo nem transfira automaticamente a responsabilidade deste. Distinga determinação de recomendação.
 Não reproduza carimbos, assinaturas, autenticações ou metadados do TRAMITA. Não presuma documentos ausentes. Quando faltar instrução, declare objetivamente a necessidade de complementação.
 Organize a minuta em: identificação sem inventar número oficial; origem, natureza e exercício; ementa; relatório processual; fundamentação jurídica; análise das irregularidades; conclusão; pedidos separados e numeráveis; e encerramento "É o Parecer.". Em identificacao_processual, nunca reutilize número do parecer definitivo; quando não houver número próprio da minuta, identifique-a expressamente como MINUTA. Não inclua fórmula própria de transição entre relatório e fundamentação: o backend inserirá deterministicamente, uma única vez, a expressão institucional obrigatória. Desenvolva a fundamentação, sem síntese excessiva, e cite normas específicas somente quando elas estiverem disponíveis no contexto.
 Não escreva "Integram a instrução processual: Relatório da Auditoria" nem fórmulas equivalentes que apenas enumerem documentos, peças ou elementos juntados aos autos. Mencione documento instrutório somente quando isso for juridicamente relevante para narrar um ato, confrontar prova, examinar a defesa ou sustentar a conclusão; não substitua a frase proibida por outra enumeração burocrática vazia.

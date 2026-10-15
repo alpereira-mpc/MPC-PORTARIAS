@@ -303,6 +303,17 @@ def _draft_structure(
                 "texto": "A defesa foi confrontada com a conclusão da Auditoria.",
             }
         ],
+        "analise_sancionatoria": {
+            "conclusao": "MULTA_NAO_CABIVEL",
+            "irregularidades_ids": list(ids),
+            "fundamentos_legais": [],
+            "responsaveis": [],
+            "dano_ao_erario": "NAO_COMPROVADO_OU_NAO_QUANTIFICADO",
+            "texto": (
+                "Não se propõe multa, pois os elementos disponíveis não permitem "
+                "individualizar responsabilidade sancionatória."
+            ),
+        },
         "conclusao_pedidos": "Conclusão ministerial sujeita à revisão humana.",
         "pedidos": ["Submeta-se a minuta à revisão jurídica humana."],
         "encerramento": "É o Parecer. Documento experimental sem caráter oficial.",
@@ -2194,6 +2205,58 @@ def test_other_pca_uses_direct_accounts_outcome_and_preserves_relief(subtype):
     assert any("multa fundamentada" in item for item in result["estrutura"]["pedidos"])
 
 
+def test_rpps_blocks_ambiguous_preliminary_opinion_request_only_in_device():
+    target, _history, _other, _rows = _scenario()
+    structure = _draft_structure()
+    legitimate_reference = (
+        "O parecer prévio é reservado às contas de governo e não se aplica ao RPPS."
+    )
+    structure["fundamentacao_geral"] = legitimate_reference
+    structure["pedidos"] = [
+        "Emissão de parecer prévio ou proposta de julgamento das contas como irregulares."
+    ]
+
+    normalized, warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+
+    assert normalized["fundamentacao_geral"] == legitimate_reference
+    assert normalized["pedidos"] == ["Julgamento das contas como irregulares."]
+    assert all(
+        "emissão de parecer prévio" not in item.casefold()
+        for item in normalized["pedidos"]
+    )
+    assert any("PCA de RPPS" in warning for warning in warnings)
+
+
+def test_rpps_orders_relief_and_rejects_debit_without_quantified_harm():
+    target, _history, _other, _rows = _scenario()
+    structure = _draft_structure()
+    structure["analise_sancionatoria"].update(
+        conclusao="MULTA_CABIVEL",
+        fundamentos_legais=["Art. 100, I, da LC nº 192/2024"],
+        responsaveis=["Gestor individualizado na fundamentação"],
+    )
+    structure["pedidos"] = [
+        "Remessa de cópia ao órgão competente.",
+        "Recomendação ao Instituto para corrigir a falha.",
+        "Imputação de débito ao gestor.",
+        "Aplicação de multa pela irregularidade e infração normativa individualizada.",
+        "Julgamento das contas como irregulares.",
+    ]
+
+    normalized, warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+
+    assert normalized["pedidos"][0] == "Julgamento das contas como irregulares."
+    assert "multa" in normalized["pedidos"][1].casefold()
+    assert all("débito" not in item.casefold() for item in normalized["pedidos"])
+    assert "recomenda" in normalized["pedidos"][2].casefold()
+    assert "remessa" in normalized["pedidos"][3].casefold()
+    assert any("dano ao erário comprovado" in warning for warning in warnings)
+
+
 def test_city_pca_orders_two_existing_competences_without_inventing_them():
     target, history, other, rows = _scenario()
     target["subtipo"] = "Prefeitura"
@@ -2280,6 +2343,12 @@ def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
     assert "reúna todas as recomendações em um único item" in prompt
     assert "em harmonia com o entendimento do Órgão Técnico" in prompt
     assert "expedição de recomendação no sentido de Recomendar" in prompt
+    assert "Preencha analise_sancionatoria em todos os casos" in prompt
+    assert "não reproduza essa remissão" in prompt
+    assert "déficit orçamentário ou atuarial" in prompt
+    assert "analise_sancionatoria" in schema["required"]
+    sanction_schema = schema["properties"]["analise_sancionatoria"]
+    assert "dano_ao_erario" in sanction_schema["required"]
     assert "relatorio_paragrafos" in schema["required"]
     assert "fundamentacao_geral_paragrafos" in schema["required"]
     topic_schema = schema["properties"]["topicos_irregularidades"]["items"]

@@ -25,7 +25,7 @@ MAX_RAG_PASSAGES_PER_OPINION = 2
 MAX_RAG_PASSAGE_CHARS = 1600
 RAG_RECOVERY_VERSION = "3b5b1-relevance-v2"
 EVIDENCE_CORRECTION_VERSION = "3c3-assisted-evidence-v1"
-VALIDATION_POLICY_VERSION = "4-documentary-warnings-v1"
+VALIDATION_POLICY_VERSION = "5-rpps-device-sanctions-v1"
 LOGGER = logging.getLogger(__name__)
 REPORT_TRANSITION = "É o Relatório. Passo a opinar."
 DEVICE_INTRO_HARMONY = (
@@ -252,6 +252,43 @@ _PRELIMINARY_OPINION_RE = re.compile(
     r"(?:favor[aá]vel|contr[aá]rio)\b",
     re.IGNORECASE,
 )
+_FORBIDDEN_RPPS_PRELIMINARY_REQUEST_RE = re.compile(
+    r"\bemiss[aã]o\s+de\s+parecer\s+pr[eé]vio\b"
+    r"|\bparecer\s+pr[eé]vio\s+ou\s+(?:proposta\s+de\s+)?julgamento\b",
+    re.IGNORECASE,
+)
+_MULTA_REQUEST_RE = re.compile(r"\bmulta\b", re.IGNORECASE)
+_ACCOUNT_JUDGMENT_REQUEST_RE = re.compile(
+    r"\b(?:julgamento|julg(?:ue|uem)-se)\b"
+    r"|\bcontas?\s+(?:como\s+)?(?:regulares?(?:\s+com\s+ressalvas)?|irregulares?)\b"
+    r"|\b(?:regularidade(?:\s+com\s+ressalvas)?|irregularidade)\s+das?\s+contas\b",
+    re.IGNORECASE,
+)
+_POSITIVE_DEBIT_REQUEST_RE = re.compile(
+    r"\b(?:imputa[cç][aã]o|impute-se|condena[cç][aã]o)\b.*\bd[eé]bito\b"
+    r"|\breposi[cç][aã]o\s+(?:do\s+dano|ao\s+er[aá]rio)\b",
+    re.IGNORECASE,
+)
+_NEGATIVE_REQUEST_RE = re.compile(
+    r"\b(?:afast(?:ar|amento|e-se)|n[aã]o\s+(?:aplicar|imputar|propor))\b",
+    re.IGNORECASE,
+)
+_CORRECTIVE_REQUEST_RE = re.compile(
+    r"\b(?:determina|recomenda)\w*\b", re.IGNORECASE
+)
+_COMMUNICATION_REQUEST_RE = re.compile(
+    r"\b(?:comunica|remessa|remeta|juntada|junte-se)\w*\b", re.IGNORECASE
+)
+_SANCTION_CONCLUSIONS = {
+    "MULTA_CABIVEL",
+    "MULTA_NAO_CABIVEL",
+    "REVISAO_HUMANA_NECESSARIA",
+}
+_DAMAGE_STATES = {
+    "NAO_COMPROVADO_OU_NAO_QUANTIFICADO",
+    "COMPROVADO_E_QUANTIFICADO",
+    "REVISAO_HUMANA_NECESSARIA",
+}
 _RECOMMENDATION_REQUEST_RE = re.compile(r"\brecomend\w*\b", re.IGNORECASE)
 _BUREAUCRATIC_INSTRUCTION_SENTENCE_RE = re.compile(
     r"^(?:"
@@ -270,21 +307,22 @@ _ACCOUNT_OUTCOME_PATTERNS = (
         "REGULARIDADE_COM_RESSALVAS",
         re.compile(
             r"\bregularidade\s+com\s+ressalvas\b"
-            r"|\bcontas?\s+regulares?\s+com\s+ressalvas\b",
+            r"|\bcontas?\s+(?:como\s+)?regulares?\s+com\s+ressalvas\b",
             re.IGNORECASE,
         ),
     ),
     (
         "IRREGULARIDADE",
         re.compile(
-            r"\birregularidade\b|\bcontas?\s+irregulares?\b", re.IGNORECASE
+            r"\birregularidade\b|\bcontas?\s+(?:como\s+)?irregulares?\b",
+            re.IGNORECASE,
         ),
     ),
     (
         "REGULARIDADE",
         re.compile(
             r"\bregularidade\b(?!\s+com\s+ressalvas)"
-            r"|\bcontas?\s+regulares?\b(?!\s+com\s+ressalvas)",
+            r"|\bcontas?\s+(?:como\s+)?regulares?\b(?!\s+com\s+ressalvas)",
             re.IGNORECASE,
         ),
     ),
@@ -465,6 +503,53 @@ def _account_outcomes(value):
     return {
         name for name, pattern in _ACCOUNT_OUTCOME_PATTERNS if pattern.search(text)
     }
+
+
+def _is_rpps_target(target):
+    specialty = str((target or {}).get("especialidade_id") or "").casefold()
+    subtype = _plain((target or {}).get("subtipo"))
+    return (
+        specialty.endswith(".pca.rpps") or specialty.endswith(".rpps")
+    ) and subtype != "prefeitura"
+
+
+def _direct_account_request(value):
+    outcomes = _account_outcomes(value)
+    if len(outcomes) != 1:
+        return ""
+    wording = {
+        "REGULARIDADE": "regulares",
+        "REGULARIDADE_COM_RESSALVAS": "regulares com ressalva",
+        "IRREGULARIDADE": "irregulares",
+    }
+    return f"Julgamento das contas como {wording[next(iter(outcomes))]}."
+
+
+def _request_category(request):
+    if (
+        _account_outcomes(request)
+        and _ACCOUNT_JUDGMENT_REQUEST_RE.search(request)
+        and not _PRELIMINARY_OPINION_RE.search(request)
+        and not _MULTA_REQUEST_RE.search(request)
+        and not _POSITIVE_DEBIT_REQUEST_RE.search(request)
+        and not _CORRECTIVE_REQUEST_RE.search(request)
+    ):
+        return 0
+    if _MULTA_REQUEST_RE.search(request):
+        return 1
+    if _POSITIVE_DEBIT_REQUEST_RE.search(request):
+        return 2
+    if _CORRECTIVE_REQUEST_RE.search(request):
+        return 3
+    if _COMMUNICATION_REQUEST_RE.search(request):
+        return 4
+    return 5
+
+
+def _order_rpps_requests(requests):
+    indexed = list(enumerate(requests))
+    indexed.sort(key=lambda item: (_request_category(item[1]), item[0]))
+    return [request for _index, request in indexed]
 
 
 def _canonical_process_key(value):
@@ -796,6 +881,11 @@ def _sanitize_draft_structure(structure):
                 for item in topic["paragrafos"]
                 if (cleaned := _without_bureaucratic_instruction(item))
             ]
+    sanction = sanitized.get("analise_sancionatoria")
+    if isinstance(sanction, dict):
+        sanction["texto"] = _without_bureaucratic_instruction(
+            sanction.get("texto")
+        )
     sanitized["pedidos"] = [
         cleaned
         for item in sanitized.get("pedidos", ())
@@ -2855,6 +2945,7 @@ class MinutasGenerationService:
             )
         topics = structure.get("topicos_irregularidades")
         requests = structure.get("pedidos")
+        sanction = structure.get("analise_sancionatoria")
         if not isinstance(requests, list) or not requests or any(
             not str(request or "").strip() for request in requests
         ):
@@ -2871,6 +2962,24 @@ class MinutasGenerationService:
         ):
             raise MinutasGenerationError(
                 "A IA não retornou fundamentação estruturada válida."
+            )
+        if (
+            not isinstance(sanction, dict)
+            or sanction.get("conclusao") not in _SANCTION_CONCLUSIONS
+            or sanction.get("dano_ao_erario") not in _DAMAGE_STATES
+            or not str(sanction.get("texto") or "").strip()
+            or any(
+                not isinstance(sanction.get(field), list)
+                or any(not str(item or "").strip() for item in sanction[field])
+                for field in (
+                    "irregularidades_ids",
+                    "fundamentos_legais",
+                    "responsaveis",
+                )
+            )
+        ):
+            raise MinutasGenerationError(
+                "A IA não retornou análise sancionatória estruturada válida."
             )
         for field in ("relatorio_paragrafos", "fundamentacao_geral_paragrafos"):
             paragraphs = structure.get(field)
@@ -3025,6 +3134,41 @@ class MinutasGenerationService:
                 [*normalized["pedidos"], *extra_requests],
                 target.get("origem"),
             )
+        if _is_rpps_target(target):
+            safe_requests = []
+            for request in normalized["pedidos"]:
+                if _FORBIDDEN_RPPS_PRELIMINARY_REQUEST_RE.search(request):
+                    direct_request = _direct_account_request(request)
+                    if direct_request:
+                        safe_requests.append(direct_request)
+                    warnings.append(
+                        "Foi removido pedido de emissão de parecer prévio em PCA de "
+                        "RPPS; as contas do Instituto estão sujeitas a julgamento."
+                    )
+                    continue
+                safe_requests.append(request)
+            damage_state = normalized["analise_sancionatoria"]["dano_ao_erario"]
+            if damage_state != "COMPROVADO_E_QUANTIFICADO":
+                filtered = []
+                for request in safe_requests:
+                    positive_debit = (
+                        _POSITIVE_DEBIT_REQUEST_RE.search(request)
+                        and not _NEGATIVE_REQUEST_RE.search(request)
+                    )
+                    if positive_debit:
+                        warnings.append(
+                            "Foi removido pedido de imputação de débito sem dano ao "
+                            "erário comprovado e quantificado na análise sancionatória."
+                        )
+                        continue
+                    filtered.append(request)
+                safe_requests = filtered
+            if not safe_requests:
+                safe_requests = [
+                    "Submeta-se o dispositivo à revisão jurídica humana quanto à "
+                    "classificação das contas."
+                ]
+            normalized["pedidos"] = _order_rpps_requests(safe_requests)
         return normalized, warnings
 
     @staticmethod
@@ -3062,6 +3206,10 @@ class MinutasGenerationService:
                     + "\n\n"
                     + topic_text
                 )
+        sanction = structure["analise_sancionatoria"]
+        sections.append(
+            "### Análise sancionatória\n\n" + str(sanction["texto"]).strip()
+        )
         request_texts = [request.strip() for request in structure["pedidos"]]
         request_keys = {_normalized_support(request) for request in request_texts}
         conclusion_lines = []
@@ -3190,6 +3338,69 @@ class MinutasGenerationService:
                 "Possível omissão: irregularidades sem avaliação ministerial estruturada: "
                 + ", ".join(missing_assessments)
                 + "."
+            )
+        sanction = structure["analise_sancionatoria"]
+        known_ids = {
+            str(item.get("id") or "")
+            for item in analysis.get("irregularidades", [])
+            if isinstance(item, dict)
+        }
+        unknown_sanction_ids = sorted(
+            set(sanction["irregularidades_ids"]) - known_ids
+        )
+        if unknown_sanction_ids:
+            warnings.append(
+                "A análise sancionatória referencia irregularidades inexistentes: "
+                + ", ".join(unknown_sanction_ids)
+                + "."
+            )
+        requests = structure.get("pedidos", [])
+        positive_multa_requests = [
+            request
+            for request in requests
+            if _MULTA_REQUEST_RE.search(request)
+            and not _NEGATIVE_REQUEST_RE.search(request)
+        ]
+        if sanction["conclusao"] == "MULTA_CABIVEL" and not positive_multa_requests:
+            warnings.append(
+                "A análise concluiu pelo cabimento de multa, mas o dispositivo não "
+                "contém pedido sancionatório autônomo."
+            )
+        if (
+            sanction["conclusao"] != "MULTA_CABIVEL"
+            and positive_multa_requests
+        ):
+            warnings.append(
+                "O dispositivo propõe multa sem conclusão sancionatória compatível."
+            )
+        sanction_text = "\n".join(
+            [
+                str(sanction["texto"]),
+                *map(str, sanction["fundamentos_legais"]),
+                *map(str, requests),
+            ]
+        )
+        if (
+            sanction["dano_ao_erario"] != "COMPROVADO_E_QUANTIFICADO"
+            and re.search(r"\bart(?:igo)?\.?\s*(?:101|294)\b", sanction_text, re.I)
+        ):
+            warnings.append(
+                "Os arts. 101 da LC nº 192/2024 ou 294 do Regimento foram invocados "
+                "sem dano ao erário comprovado e quantificado."
+            )
+        if re.search(r"R\$|\bUFR(?:-PB)?\b|\b\d+(?:[,.]\d+)?\s*%", sanction_text, re.I):
+            warnings.append(
+                "A análise ou o pedido sancionatório contém valor, percentual ou "
+                "UFR-PB; a minuta não deve calcular a multa."
+            )
+        if re.search(
+            r"Minist[eé]rio\s+P[uú]blico\s+de\s+Contas.{0,80}\baplica\w*\b",
+            sanction_text,
+            re.I | re.S,
+        ):
+            warnings.append(
+                "A redação pode atribuir ao MPC a aplicação da sanção; o MPC opina e "
+                "o Tribunal decide."
             )
         page_texts = MinutasGenerationService._source_page_texts(target_context)
         source_pages = {
