@@ -55,7 +55,7 @@ def selection(library):
         for index, (key, (label, description, availability, generation)) in enumerate(categories.items()):
             column = columns[index % len(columns)]
             with column:
-                with st.container(border=True, key="minutas_category_card_" + key.lower()):
+                with st.container(border=True, key="mpc_card_operational_minutas_category_" + key.lower()):
                     render_record(
                         label,
                         badges_html=badges(
@@ -111,19 +111,21 @@ def selection(library):
         for index, (label, value) in enumerate(choices.items()):
             column = columns[index % len(columns)]
             profile = catalog.get(value)
-            state = profile.get("estado") if profile else "Escolha complementar"
+            is_secretariats = value == "SECRETARIAS"
+            state = profile.get("estado") if profile else "Complementar"
             generation = (
-                "Geração habilitada" if profile and instruction_generation_allowed(profile)
+                "Municipais ou estaduais" if is_secretariats
+                else "Geração habilitada" if profile and instruction_generation_allowed(profile)
                 else "Acervo e pesquisa"
             )
             key = value.replace("elvira.", "").replace(".", "_").lower()
             with column:
-                with st.container(border=True, key="minutas_pca_card_" + key):
+                with st.container(border=True, key="mpc_card_operational_minutas_pca_" + key):
                     render_record(
                         label,
                         badges_html=badges((state, status_tone(state))),
                         secondary=generation,
-                        meta=("Defina a abrangência municipal ou estadual." if value == "SECRETARIAS" else ""),
+                        meta="",
                         accent="brand",
                     )
                     st.button(
@@ -655,7 +657,7 @@ def _administration(admin, profile):
         remaining = [row for row in rows if row["ID"] not in prioritized_ids]
         enabled = sum(row["Geração"] == "Habilitada" for row in operational)
         testing = sum(row["Estado"] == "Em testes" for row in operational)
-        with st.container(border=True, key="minutas_admin_summary"):
+        with st.container(border=True, key="mpc_card_operational_minutas_admin_summary"):
             st.caption("Visão geral da operação priorizada")
             total, motors, in_testing, pending = st.columns(4)
             total.metric("Categorias operacionais", 4)

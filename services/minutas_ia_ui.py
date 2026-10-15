@@ -2103,7 +2103,7 @@ def _block_specialties(detail=""):
 
 def render(store, identity):
     started = perf_counter()
-    with st.container(border=True, key="minutas_module_header"):
+    with st.container(border=True, key="mpc_card_operational_minutas_module_header"):
         st.title("Gerador de Minutas de Pareceres — Projeto-Piloto")
         render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
         st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
@@ -2167,7 +2167,7 @@ def render(store, identity):
         st.session_state["minutas_active_view"] = sections[2]
     if st.session_state.get("minutas_active_view") not in sections:
         st.session_state["minutas_active_view"] = sections[0]
-    with st.container(border=True, key="minutas_specialty_context"):
+    with st.container(border=True, key="mpc_card_operational_minutas_specialty_context"):
         st.subheader(profile["nome"])
         render_html(
             badge(profile["estado"], status_tone(profile["estado"]))
