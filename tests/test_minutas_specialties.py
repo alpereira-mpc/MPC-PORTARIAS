@@ -670,6 +670,10 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not any(item.key == "minutas_specialty" for item in app.selectbox)
     assert not any(item.key == "minutas_active_view" for item in app.radio)
     assert len([item for item in app.button if item.key.startswith("minutas_category_")]) == 4
+    assert app.button(key="minutas_initial_administration_open")
+    app.button(key="minutas_category_PCA").click().run()
+    assert len([item for item in app.button if item.key.startswith("minutas_pca_option_")]) == 4
+    assert not any(item.key == "minutas_initial_administration_open" for item in app.button)
     _choose_specialty(app)
     assert app.session_state["minutas_specialty"] == RPPS
     assert app.radio(key="minutas_active_view").value == "Acervo"
@@ -692,9 +696,9 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
         assert not app.exception
     app.radio(key="minutas_active_view").set_value("Acervo").run()
     assert "Pendências de classificação" not in app.radio(key="minutas_acervo_mode").options
-    app.radio(key="minutas_acervo_mode").set_value("Administração").run()
+    assert "Administração" not in app.radio(key="minutas_acervo_mode").options
+    app.radio(key="minutas_acervo_mode").set_value("Modelo visual").run()
     assert not app.exception and not app.error
-    assert any("sem classificação: 0" in caption.value for caption in app.caption)
     assert app.button(key="minutas_acervo_back")
     app.button(key="minutas_acervo_back").click().run()
     assert app.radio(key="minutas_acervo_mode").value == "Consultar"
@@ -706,15 +710,23 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not any(item.key == "minutas_initial_administration_open" for item in app.button)
     administration = next(item for item in app.selectbox if item.label == "Administração")
     assert "Painel de especialidades" in administration.options
+    assert "Evolução das especialidades" in administration.options
     panel = app.dataframe[0].value
+    technical = app.dataframe[1].value
     assert list(panel.columns) == [
         "Especialidade", "ID", "Estado", "Geração", "Processos", "Pareceres",
         "Relatórios", "Documentos indexados",
     ]
-    assert len(panel) == 23
+    assert len(panel) == 8
+    assert set(panel["ID"]) == {
+        PREFEITURAS, CAMARAS, RPPS, SECRETARIAS_MUNICIPAIS,
+        "elvira.pca.orgaos_estaduais", "elvira.denuncias",
+        "elvira.pessoal.aposentadorias", "elvira.pessoal.pensoes",
+    }
+    assert len(panel) + len(technical) == 23
     assert panel.loc[panel["ID"] == PREFEITURAS, "Especialidade"].tolist() == ["Prefeituras Municipais"]
-    assert not panel["ID"].isin(["elvira.pca.governo", "elvira.pca.gestao"]).any()
-    assert any("Especialidades vigentes: 23" in caption.value for caption in app.caption)
+    assert not any(frame["ID"].isin(["elvira.pca.governo", "elvira.pca.gestao"]).any() for frame in (panel, technical))
+    assert any("Catálogo técnico preservado: 23" in caption.value for caption in app.caption)
     assert any("A iniciar" in caption.value for caption in app.caption)
     app.button(key="minutas_initial_administration_back").click().run()
     assert not any(item.key == "minutas_active_view" for item in app.radio)

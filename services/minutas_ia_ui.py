@@ -1751,7 +1751,7 @@ def _historical_generator_panel(store, identity):
     section_label("Etapa 1 — Analisar processo")
     st.caption("A análise documental é assistida e não produz manifestação oficial sem revisão humana.")
     if st.button(
-        "Analisar fundamentos",
+        "Analisar fundamentos com IA",
         type="primary",
         icon=":material/fact_check:",
         key=f"minutas_analysis_submit_{target['id']}",
@@ -1766,7 +1766,8 @@ def _historical_generator_panel(store, identity):
             _error(exc)
     analysis = st.session_state.get(analysis_key)
     if analysis:
-        st.caption("Fundamentos analisados. Confira os pontos de revisão antes de solicitar a minuta.")
+        st.success("Análise concluída. Fundamentos identificados com sucesso.")
+        st.caption("Confira os pontos de revisão antes de solicitar a minuta.")
         show_details = st.toggle(
             "Mostrar análise detalhada e precedentes",
             value=False,
@@ -1819,7 +1820,7 @@ def _historical_generator_panel(store, identity):
             "registradas para a revisão do Assessor."
         )
     if st.button(
-        "Gerar minuta",
+        "Gerar minuta com IA",
         type="primary",
         icon=":material/auto_awesome:",
         key=f"minutas_generation_submit_{target['id']}",
@@ -1865,11 +1866,11 @@ def _historical_generator_panel(store, identity):
     section_label("Minuta gerada")
     quality_warnings = result.get("advertencias_qualidade") or ()
     if quality_warnings:
-        st.info("Geração concluída com pontos disponíveis para conferência facultativa.")
+        st.info("Geração concluída com pontos disponíveis para conferência facultativa. Minuta pronta para revisão humana.")
     else:
         st.success(
-            "Geração concluída sem advertências determinísticas de insuficiência "
-            "jurídica. A revisão humana permanece obrigatória."
+            "Minuta gerada com sucesso e pronta para revisão humana. "
+            "Não foram identificadas advertências determinísticas de insuficiência jurídica."
         )
     _generated_review_panel(result)
     with st.container(border=True):
@@ -2102,9 +2103,10 @@ def _block_specialties(detail=""):
 
 def render(store, identity):
     started = perf_counter()
-    st.title("Gerador de Minutas de Pareceres — Projeto-Piloto")
-    render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
-    st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
+    with st.container(border=True, key="minutas_module_header"):
+        st.title("Gerador de Minutas de Pareceres — Projeto-Piloto")
+        render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
+        st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
     from database.minutas_especialidades import MinutasSpecialtiesStore
     from services.minutas_specialties_ui import (
         acervo, administration, clear_specialty_session, selection, synchronize_scope,
@@ -2113,7 +2115,10 @@ def render(store, identity):
     administrative_library = _service(store, identity, administrative=True)
     if administrative_library is None:
         return
-    st.button("Início do módulo", key="minutas_module_home", on_click=clear_specialty_session)
+    if any(st.session_state.get(key) for key in (
+        "minutas_nav_category", "minutas_specialty", "minutas_initial_administration",
+    )):
+        st.button("Início do módulo", key="minutas_module_home", on_click=clear_specialty_session)
     repository_store = getattr(getattr(administrative_library, "repository", None), "store", None)
     if getattr(repository_store, "backend", None) in {"postgresql", "sqlite"}:
         try:
@@ -2127,16 +2132,17 @@ def render(store, identity):
             _block_specialties("Relações ausentes ou invisíveis: " + ", ".join(missing) + ".")
             return
     try:
+        if st.session_state.get("minutas_initial_administration"):
+            st.button(
+                "← Voltar à escolha de especialidade",
+                key="minutas_initial_administration_back",
+                on_click=lambda: st.session_state.pop("minutas_initial_administration", None),
+            )
+            administration(administrative_library)
+            return
         profile = selection(administrative_library)
         if profile is None:
-            if st.session_state.get("minutas_initial_administration"):
-                st.button(
-                    "← Voltar à escolha de especialidade",
-                    key="minutas_initial_administration_back",
-                    on_click=lambda: st.session_state.pop("minutas_initial_administration", None),
-                )
-                administration(administrative_library)
-            else:
+            if not st.session_state.get("minutas_nav_category"):
                 st.button(
                     "Administração do módulo",
                     key="minutas_initial_administration_open",

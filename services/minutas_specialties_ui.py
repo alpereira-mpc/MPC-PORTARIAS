@@ -42,23 +42,26 @@ def selection(library):
         st.warning("Catálogo não provisionado. Execute o roteiro de implantação com backup.")
         return None
     categories = {
-        "PCA": ("Prestação de Contas Anual (PCA)", "Contas municipais, RPPS e Secretarias.", "Geração disponível em especialidades configuradas."),
-        "DENUNCIAS": ("Denúncias", "Acervo e pesquisa jurídica de denúncias.", "Geração especializada não habilitada."),
-        "APOSENTADORIAS": ("Aposentadorias", "Acervo e pesquisa jurídica de atos de pessoal.", "Geração especializada não habilitada."),
-        "PENSOES": ("Pensões", "Acervo e pesquisa jurídica de atos de pessoal.", "Geração especializada não habilitada."),
+        "PCA": ("Prestação de Contas Anual (PCA)", "Contas municipais, RPPS e Secretarias.", "Geração disponível em especialidades configuradas.", "Geração disponível"),
+        "DENUNCIAS": ("Denúncias", "Acervo e pesquisa jurídica de denúncias.", "Geração especializada não habilitada.", "Somente consulta"),
+        "APOSENTADORIAS": ("Aposentadorias", "Acervo e pesquisa jurídica de atos de pessoal.", "Geração especializada não habilitada.", "Somente consulta"),
+        "PENSOES": ("Pensões", "Acervo e pesquisa jurídica de atos de pessoal.", "Geração especializada não habilitada.", "Somente consulta"),
     }
     selected_category = st.session_state.get("minutas_nav_category")
     if not selected_category:
         st.caption("Procuradora: Elvira Samara Pereira de Oliveira")
         st.subheader("Escolha o ambiente de trabalho")
         columns = st.columns(2)
-        for index, (key, (label, description, availability)) in enumerate(categories.items()):
+        for index, (key, (label, description, availability, generation)) in enumerate(categories.items()):
             column = columns[index % len(columns)]
             with column:
                 with st.container(border=True, key="minutas_category_card_" + key.lower()):
                     render_record(
                         label,
-                        badges_html=badges(("Ambiente de consulta", "info")),
+                        badges_html=badges(
+                            ("PCA" if key == "PCA" else "Categoria operacional", "brand"),
+                            (generation, "success" if key == "PCA" else "muted"),
+                        ),
                         secondary=description,
                         meta=availability,
                         accent="brand",
@@ -535,7 +538,7 @@ def acervo(library, administrative_library, profile):
     admin.library._authorize()
     mode = st.radio(
         "Operação do acervo",
-        ("Consultar", "Adicionar documentos", "Modelo visual", "Administração"),
+        ("Consultar", "Adicionar documentos", "Modelo visual"),
         horizontal=True,
         key="minutas_acervo_mode",
     )
@@ -548,9 +551,6 @@ def acervo(library, administrative_library, profile):
         if not admin.repository.separation_enabled():
             st.caption("A separação do acervo legado ainda não está aplicada. Não recadastre um número que já exista: o arquivo seria gravado no registro histórico.")
         _uploads(admin, library, profile)
-        return
-    if mode == "Administração":
-        _administration(admin, profile)
         return
     query = st.text_input("Processo ou entidade", key="minutas_query_" + profile["id"])
     role = st.selectbox("Tipo documental", ("Todos", "parecer", "auditoria", "complementar", "modelo"))
@@ -629,9 +629,7 @@ def administration(library):
 
 
 def _administration(admin, profile):
-    operations = ["Painel de especialidades", "Inventário e reclassificação"]
-    if profile is not None:
-        operations.append("Evolução da especialidade")
+    operations = ["Painel de especialidades", "Inventário e reclassificação", "Evolução das especialidades"]
     if admin.repository.separation_enabled():
         operations.append("Acervo legado")
     st.subheader("Administração do Minutas IA")
@@ -647,21 +645,32 @@ def _administration(admin, profile):
                 "Geração": "Habilitada" if instruction_generation_allowed(item) else "Desabilitada",
                 "Processos": row.get("processos", 0), "Pareceres": row.get("pareceres", 0),
                 "Relatórios": row.get("relatorios", 0), "Documentos indexados": row.get("indexados", 0)})
-        enabled = sum(row["Geração"] == "Habilitada" for row in rows)
-        testing = sum(row["Estado"] == "Em testes" for row in rows)
+        prioritized_ids = (
+            "elvira.pca.prefeituras", "elvira.pca.camaras", RPPS,
+            "elvira.pca.secretarias_municipais", "elvira.pca.orgaos_estaduais",
+            "elvira.denuncias", "elvira.pessoal.aposentadorias", "elvira.pessoal.pensoes",
+        )
+        by_id = {row["ID"]: row for row in rows}
+        operational = [by_id[identifier] for identifier in prioritized_ids]
+        remaining = [row for row in rows if row["ID"] not in prioritized_ids]
+        enabled = sum(row["Geração"] == "Habilitada" for row in operational)
+        testing = sum(row["Estado"] == "Em testes" for row in operational)
         with st.container(border=True, key="minutas_admin_summary"):
-            st.caption("Visão geral do catálogo vigente")
+            st.caption("Visão geral da operação priorizada")
             total, motors, in_testing, pending = st.columns(4)
-            total.metric("Especialidades vigentes", len(rows))
+            total.metric("Categorias operacionais", 4)
             motors.metric("Geração habilitada", enabled)
             in_testing.metric("Em testes", testing)
             pending.metric("Sem classificação", data["pendentes"])
-        st.caption(f"Especialidades vigentes: {len(rows)}")
-        st.subheader("Painel de especialidades")
+        st.caption(f"Especialidades operacionais: {len(operational)} · Catálogo técnico preservado: {len(rows)}")
+        st.subheader("Especialidades operacionais")
         st.caption("Indicadores calculados por processos e documentos distintos no escopo de cada especialidade.")
-        st.dataframe(rows, hide_index=True, width="stretch")
+        st.dataframe(operational, hide_index=True, width="stretch")
         st.caption(f"Processos do acervo ativo sem classificação: {data['pendentes']}")
         st.caption("“A iniciar” indica o estágio da especialidade; não significa ausência de documentos no Acervo nem falha de indexação.")
+        with st.expander(f"Demais especialidades técnicas ({len(remaining)})"):
+            st.caption("Catálogo completo mantido para administração técnica, sem ampliar a navegação operacional.")
+            st.dataframe(remaining, hide_index=True, width="stretch")
     elif operation == "Acervo legado":
         _legacy_archive(admin, admin.library)
     elif operation == "Inventário e reclassificação":
@@ -678,7 +687,14 @@ def _administration(admin, profile):
                 result = admin.apply(plan, {"identificador": backup, "restauracao_verificada": verified})
                 st.success(f"{result['alterados']} classificação(ões) aplicada(s); contagens reconciliadas.")
                 del st.session_state["minutas_migration_plan"]
-    else:
+    elif operation == "Evolução das especialidades":
+        profiles = admin.catalog()
+        selected_profile = st.selectbox(
+            "Especialidade técnica",
+            [item["id"] for item in profiles],
+            format_func=lambda identifier: next(item["nome"] for item in profiles if item["id"] == identifier),
+        )
+        profile = next(item for item in profiles if item["id"] == selected_profile)
         with st.form("minutas_evolution_" + profile["id"]):
             state = st.selectbox("Estado", STATES, index=STATES.index(profile["estado"]))
             cases = st.number_input("Casos testados", 0, value=int(profile["casos_testados"]))
