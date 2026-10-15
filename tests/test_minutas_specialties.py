@@ -49,8 +49,26 @@ class SyntheticStore:
 
 
 def _choose_specialty(app, specialty=RPPS):
-    app.selectbox(key="minutas_class_group").set_value(scope(specialty)["grupo"]).run()
-    app.selectbox(key="minutas_specialty").set_value(specialty).run()
+    state_secretariats = (SECRETARIAS_MUNICIPAIS, "elvira.pca.orgaos_estaduais")
+    if specialty in (RPPS, CAMARAS, PREFEITURAS, *state_secretariats):
+        if any(item.key == "minutas_category_PCA" for item in app.button):
+            app.button(key="minutas_category_PCA").click().run()
+        if specialty not in state_secretariats and any(item.key == "minutas_nav_back_pca" for item in app.button):
+            app.button(key="minutas_nav_back_pca").click().run()
+        if specialty in state_secretariats:
+            if any(item.key == "minutas_pca_choice" for item in app.radio):
+                app.radio(key="minutas_pca_choice").set_value("SECRETARIAS").run()
+                app.run()
+            app.radio(key="minutas_specialty").set_value(specialty).run()
+        else:
+            app.radio(key="minutas_pca_choice").set_value(specialty).run()
+    else:
+        category = {
+            "elvira.denuncias": "DENUNCIAS",
+            "elvira.pessoal.aposentadorias": "APOSENTADORIAS",
+            "elvira.pessoal.pensoes": "PENSOES",
+        }[specialty]
+        app.button(key="minutas_category_" + category).click().run()
 
 
 class Storage:
@@ -474,7 +492,11 @@ def test_manual_correction_reversal_controlled_links_and_selective_revision(envi
     assert admin.link(target["id"], "elvira.tema.contratos", "Mesmo vínculo") is False
     admin.classify(target["id"], "elvira.pca.autarquias", "PCA", "Autarquia", "Correção humana")
     assert scoped.list() == []
-    event = admin.repository.events(target["id"])[0]
+    event = next(
+        item for item in admin.repository.events(target["id"])
+        if item["acao"] == "CLASSIFICAR"
+        and json.loads(item["posterior_json"])["especialidade_id"] == "elvira.pca.autarquias"
+    )
     admin.restore(event["id"])
     assert len(scoped.list()) == 1
     assert len(library(store, storage, "elvira.tema.contratos").list()) == 1
@@ -645,21 +667,25 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not any(item.key == "minutas_specialty" for item in app.selectbox)
     assert not any(item.key == "minutas_active_view" for item in app.radio)
     _choose_specialty(app)
-    assert app.selectbox(key="minutas_specialty").value == RPPS
+    assert app.session_state["minutas_specialty"] == RPPS
     assert app.radio(key="minutas_active_view").value == "Acervo"
     app.radio(key="minutas_active_view").set_value("Pesquisa Jurídica").run()
     assert not app.exception
-    assert app.selectbox(key="minutas_specialty").value == RPPS
+    assert app.session_state["minutas_specialty"] == RPPS
     app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
     assert not app.exception and not app.error
     assert not any(getattr(item, "key", None) == "minutas_generation_mode" for item in app.radio)
     app.session_state["minutas_instrucao_documentos"] = [{"id": "tmp"}]
     app.session_state["minutas_legal_search"] = {"outro": "resultado antigo"}
-    app.selectbox(key="minutas_specialty").set_value("elvira.pca.camaras").run()
+    _choose_specialty(app, "elvira.pca.camaras")
     assert not app.exception
     assert "minutas_legal_search" not in app.session_state
     assert "minutas_instrucao_documentos" not in app.session_state
     assert any("ainda não habilitada" in info.value for info in app.info)
+    for specialty in (PREFEITURAS, RPPS, SECRETARIAS_MUNICIPAIS, "elvira.pca.orgaos_estaduais", CAMARAS):
+        _choose_specialty(app, specialty)
+        assert app.session_state["minutas_specialty"] == specialty
+        assert not app.exception
     app.radio(key="minutas_active_view").set_value("Acervo").run()
     assert "Pendências de classificação" not in app.radio(key="minutas_acervo_mode").options
     app.radio(key="minutas_acervo_mode").set_value("Administração").run()
@@ -734,7 +760,7 @@ def test_especialidade_compartilhada_habilitada_abre_geracao_e_desligar_nao_afet
     app.run()
     assert any("ainda não habilitada" in info.value for info in app.info)
     assert not any(item.key == "minutas_instrucao_incluir" for item in app.button)
-    app.selectbox(key="minutas_specialty").set_value(RPPS).run()
+    _choose_specialty(app, RPPS)
     app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
     assert any(item.key == "minutas_instrucao_incluir" for item in app.button)
 

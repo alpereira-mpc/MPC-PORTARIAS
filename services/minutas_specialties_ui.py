@@ -23,7 +23,8 @@ def clear_specialty_session():
         "minutas_batch_",
     )
     transient_keys = {
-        "minutas_specialty", "minutas_class_group", "minutas_scope_token",
+        "minutas_specialty", "minutas_pca_choice", "minutas_class_group", "minutas_scope_token",
+        "minutas_nav_category", "minutas_nav_pca_secretarias",
         "minutas_legal_search", "minutas_active_panel", "minutas_open_reference",
         "minutas_generation_target", "minutas_generation_mode", "minutas_active_view",
         "minutas_initial_administration",
@@ -34,29 +35,72 @@ def clear_specialty_session():
 
 
 def selection(library):
-    """Catálogo pequeno; não abre PDFs, extrações nem consulta o RAG."""
+    """Navegação operacional curta; o catálogo técnico permanece integral."""
     admin = MinutasAcervoService(library)
-    catalog = admin.catalog()
+    catalog = {item["id"]: item for item in admin.catalog()}
     if not catalog:
         st.warning("Catálogo não provisionado. Execute o roteiro de implantação com backup.")
         return None
-    st.caption("Procuradora: Elvira Samara Pereira de Oliveira")
-    groups = list(dict.fromkeys(item["grupo"] for item in catalog))
-    groups.sort(key=lambda group: (group != "PCA", group))
-    group = st.selectbox("Classe processual / grupo temático", groups, index=None,
-        placeholder="Selecione a classe ou grupo",
-        format_func=lambda value: CLASSES.get(value, "Temas na classe efetiva do processo"), key="minutas_class_group")
-    if not group:
-        st.info("Escolha a classe processual e, em seguida, a especialidade para acessar o Acervo, a pesquisa e o gerador.")
+    categories = {
+        "PCA": ("Prestação de Contas Anual (PCA)", "Selecione a natureza da conta."),
+        "DENUNCIAS": ("Denúncias", "Acervo e pesquisa jurídica."),
+        "APOSENTADORIAS": ("Aposentadorias", "Acervo e pesquisa jurídica."),
+        "PENSOES": ("Pensões", "Acervo e pesquisa jurídica."),
+    }
+    selected_category = st.session_state.get("minutas_nav_category")
+    if not selected_category:
+        st.caption("Procuradora: Elvira Samara Pereira de Oliveira")
+        st.subheader("Selecione a categoria")
+        for column, (key, (label, description)) in zip(st.columns(4), categories.items()):
+            with column:
+                st.button(label, key="minutas_category_" + key,
+                    help=description,
+                    on_click=lambda value=key: st.session_state.__setitem__("minutas_nav_category", value))
         return None
-    available = {item["id"]: item for item in catalog if item["grupo"] == group}
-    options = sorted(available, key=lambda value: (value != RPPS, available[value]["nome"]))
-    selected = st.selectbox("Especialidade", options, index=None,
-        placeholder="Selecione a especialidade",
-        format_func=lambda value: available[value]["nome"], key="minutas_specialty")
-    if not selected:
+    def back_to_categories():
+        for key in ("minutas_nav_category", "minutas_nav_pca_secretarias", "minutas_pca_choice", "minutas_specialty"):
+            st.session_state.pop(key, None)
+
+    st.button("← Voltar às categorias", key="minutas_nav_back_categories", on_click=back_to_categories)
+    direct = {
+        "DENUNCIAS": "elvira.denuncias",
+        "APOSENTADORIAS": "elvira.pessoal.aposentadorias",
+        "PENSOES": "elvira.pessoal.pensoes",
+    }
+    if selected_category in direct:
+        selected = direct[selected_category]
+        st.session_state["minutas_specialty"] = selected
+    else:
+        choices = {
+            "Prefeituras Municipais": "elvira.pca.prefeituras",
+            "Câmaras Municipais": "elvira.pca.camaras",
+            "Institutos Previdenciários (RPPS)": RPPS,
+            "Secretarias": "SECRETARIAS",
+        }
+        if st.session_state.get("minutas_nav_pca_secretarias"):
+            choices = {
+                "Secretarias Municipais": "elvira.pca.secretarias_municipais",
+                "Secretarias Estaduais": "elvira.pca.orgaos_estaduais",
+            }
+            def back_to_pca():
+                for key in ("minutas_nav_pca_secretarias", "minutas_specialty"):
+                    st.session_state.pop(key, None)
+
+            st.button("← Voltar a PCA", key="minutas_nav_back_pca", on_click=back_to_pca)
+        st.subheader("Especialidades de PCA")
+        selected = st.radio("Especialidade", list(choices.values()), index=None,
+            format_func=lambda value: next((label for label, item in choices.items() if item == value), value),
+            key="minutas_specialty" if st.session_state.get("minutas_nav_pca_secretarias") else "minutas_pca_choice")
+        if selected == "SECRETARIAS":
+            st.session_state["minutas_nav_pca_secretarias"] = True
+            return None
+        if not selected:
+            return None
+        if not st.session_state.get("minutas_nav_pca_secretarias"):
+            st.session_state["minutas_specialty"] = selected
+    if selected not in catalog:
         return None
-    profile = available[selected]
+    profile = catalog[selected]
     st.caption(f"{profile['estado']} · Configuração {profile['config_versao']}")
     if not instruction_generation_allowed(profile):
         st.info("Acervo e pesquisa disponíveis. Esta especialidade ainda não possui motor especializado habilitado.")
