@@ -672,6 +672,18 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
             size=body_size,
         )
 
+    responsibility = structure.get("responsabilizacao_administrativa")
+    if isinstance(responsibility, dict) and str(responsibility.get("texto") or "").strip():
+        heading = document.add_paragraph(style="Minuta Irregularidade")
+        _add_text(
+            heading,
+            str(responsibility.get("titulo") or "Responsabilização administrativa"),
+            bold=True,
+            italic=True,
+            size=heading_size,
+        )
+        _add_body(document, responsibility["texto"], size=body_size)
+
     sanction = structure.get("analise_sancionatoria")
     if isinstance(sanction, dict) and str(sanction.get("texto") or "").strip():
         heading = document.add_paragraph(style="Minuta Irregularidade")
@@ -819,10 +831,21 @@ class MinutasDocxService:
         from services.minutas_library import PROCURADORA
 
         self.library._authorize()
+        from services.minutas_aposentadorias import is_aposentadoria_profile
+        from services.minutas_specialties import instruction_profile
         try:
-            target = MinutasGenerationService(self.library)._instruction_target(
-                processo, exercicio, origem,
-            )
+            profile_motor = instruction_profile(self.library)
+        except Exception as exc:
+            raise MinutasDocxError(str(exc)) from exc
+        retirement = is_aposentadoria_profile(profile_motor)
+        try:
+            if retirement:
+                from services.minutas_aposentadorias import build_target
+                target = build_target(profile_motor, processo, origem, "", "")
+            else:
+                target = MinutasGenerationService(self.library)._instruction_target(
+                    processo, exercicio, origem,
+                )
         except MinutasGenerationError as exc:
             raise MinutasDocxError(str(exc)) from exc
         target = dict(target)
@@ -844,14 +867,25 @@ class MinutasDocxService:
             raise MinutasDocxError("Não há modelo Word autorizado para esta Procuradora.")
         if self.template_path:
             profile["template"] = self.template_path
-        structure = MinutasGenerationService._validate_structure(generated.get("estrutura"))
-        header_target = _target_with_header_metadata(
-            target, generated.get("metadados_cabecalho")
-        )
-        structure, _warnings = MinutasGenerationService._normalize_structure(
-            structure, header_target
-        )
-        structure = MinutasGenerationService._validate_structure(structure)
+        if retirement:
+            from services.minutas_aposentadorias import header_lines, validate_structure
+            metadata = generated.get("metadados_cabecalho") or {}
+            header_target = dict(target)
+            for field in ("origem", "beneficiario", "ato"):
+                if metadata.get(field):
+                    header_target[field] = metadata[field]
+            structure = validate_structure(generated.get("estrutura"))
+            lines = header_lines(header_target)
+        else:
+            structure = MinutasGenerationService._validate_structure(generated.get("estrutura"))
+            header_target = _target_with_header_metadata(
+                target, generated.get("metadados_cabecalho")
+            )
+            structure, _warnings = MinutasGenerationService._normalize_structure(
+                structure, header_target
+            )
+            structure = MinutasGenerationService._validate_structure(structure)
+            lines = _draft_header_lines(header_target)
         return MinutaDocx(
             name=_filename(target),
             mime=DOCX_MIME,
@@ -859,7 +893,7 @@ class MinutasDocxService:
                 target,
                 structure,
                 profile,
-                _draft_header_lines(header_target),
+                lines,
                 self._active_visual(),
             ),
         )

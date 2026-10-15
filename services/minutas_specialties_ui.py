@@ -41,10 +41,19 @@ def selection(library):
     if not catalog:
         st.warning("Catálogo não provisionado. Execute o roteiro de implantação com backup.")
         return None
+    aposentadorias = catalog.get("elvira.pessoal.aposentadorias")
+    aposentadorias_prontas = instruction_generation_allowed(aposentadorias)
     categories = {
         "PCA": ("Prestação de Contas Anual (PCA)", "Contas municipais, RPPS e Secretarias.", "Geração disponível em especialidades configuradas.", "Geração disponível"),
         "DENUNCIAS": ("Denúncias", "Acervo e pesquisa jurídica de denúncias.", "Geração especializada não habilitada.", "Somente consulta"),
-        "APOSENTADORIAS": ("Aposentadorias", "Acervo e pesquisa jurídica de atos de pessoal.", "Geração especializada não habilitada.", "Somente consulta"),
+        "APOSENTADORIAS": (
+            "Aposentadorias",
+            "Acervo, pesquisa jurídica e minuta de parecer de aposentadoria."
+            if aposentadorias_prontas else "Acervo e pesquisa jurídica de atos de pessoal.",
+            "Geração disponível nesta especialidade."
+            if aposentadorias_prontas else "Geração especializada não habilitada.",
+            "Geração disponível" if aposentadorias_prontas else "Somente consulta",
+        ),
         "PENSOES": ("Pensões", "Acervo e pesquisa jurídica de atos de pessoal.", "Geração especializada não habilitada.", "Somente consulta"),
     }
     selected_category = st.session_state.get("minutas_nav_category")
@@ -60,7 +69,7 @@ def selection(library):
                         label,
                         badges_html=badges(
                             ("PCA" if key == "PCA" else "Categoria operacional", "brand"),
-                            (generation, "success" if key == "PCA" else "muted"),
+                            (generation, "success" if key == "PCA" or (key == "APOSENTADORIAS" and aposentadorias_prontas) else "muted"),
                         ),
                         secondary=description,
                         meta=availability,

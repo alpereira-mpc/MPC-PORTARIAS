@@ -13,6 +13,8 @@ SECRETARIAS_MUNICIPAIS = "elvira.pca.secretarias_municipais"
 PREFEITURAS = "elvira.pca.prefeituras"
 PREFEITURAS_LEGACY = ("elvira.pca.governo", "elvira.pca.gestao")
 SHARED_INSTRUCTION_MOTOR = "pca-rpps-v1"
+APOSENTADORIAS = "elvira.pessoal.aposentadorias"
+APOSENTADORIAS_MOTOR = "aposentadorias-v1"
 INSTRUCTION_READY_STATES = ("Em testes", "Funcional com ajustes", "Validada")
 INSTRUCTION_EXPERIMENTAL_SPECIALTIES = (
     CAMARAS,
@@ -104,14 +106,21 @@ def instruction_pca_subtype(profile):
 
 
 def instruction_generation_allowed(profile):
-    """Habilitação operacional da geração por PDFs no motor compartilhado."""
+    """Habilitação operacional da geração por PDFs, isolada por motor."""
     if not isinstance(profile, dict):
         return False
     motor = str(profile.get("motor") or "")
     version = str(profile.get("config_versao") or "")
+    identifier = str(profile.get("id") or "")
+    if identifier == APOSENTADORIAS or motor == APOSENTADORIAS_MOTOR:
+        return (
+            identifier == APOSENTADORIAS
+            and motor == APOSENTADORIAS_MOTOR
+            and version == "1"
+            and str(profile.get("estado") or "") in INSTRUCTION_READY_STATES
+        )
     if motor != SHARED_INSTRUCTION_MOTOR or version != "1":
         return False
-    identifier = str(profile.get("id") or "")
     if identifier == RPPS:
         return True
     if identifier in INSTRUCTION_EXPERIMENTAL_SPECIALTIES:

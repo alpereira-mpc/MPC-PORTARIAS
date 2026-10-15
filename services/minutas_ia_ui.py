@@ -1119,6 +1119,23 @@ def _analysis_panel(analysis_result, *, show_details=True):
             if attention:
                 st.markdown("**Pontos que exigem atenção**")
                 st.markdown("\n".join(f"- {item}" for item in attention))
+    questions = analysis.get("questoes") or ()
+    if show_details and not irregularities and questions:
+        dimensions = analysis.get("dimensoes") or {}
+        st.caption(
+            "Legalidade: "
+            + str(dimensions.get("legalidade") or "—")
+            + " · Cumprimento de decisão: "
+            + str(dimensions.get("cumprimento") or "—")
+            + " · Responsabilização: "
+            + str(dimensions.get("responsabilizacao") or "—")
+        )
+        for index, question in enumerate(questions, 1):
+            with st.expander(f"{index}. {question.get('apontamento') or 'Questão'}"):
+                st.caption(
+                    f"Tema: {question.get('tema') or '—'} · "
+                    f"Saneamento: {question.get('saneamento') or '—'}"
+                )
     general_attention = (
         analysis.get("pontos_atencao_gerais") or () if show_details else ()
     )
@@ -1482,7 +1499,19 @@ def _apply_instruction_metadata(suggestion):
         st.session_state.pop("minutas_instrucao_meta_notes", None)
 
 
+def _instruction_profile(generator):
+    from services.minutas_specialties import RPPS, instruction_profile, scope
+    library = getattr(generator, "library", None)
+    if library is None:
+        return scope(RPPS)
+    try:
+        return instruction_profile(library)
+    except Exception:
+        return scope(getattr(library, "specialty_id", None) or RPPS)
+
+
 def _instruction_panel(generator, service):
+    from services.minutas_aposentadorias import is_aposentadoria_profile
     from services.minutas_instrucao import (
         TIPOS,
         receber_pdf,
@@ -1490,7 +1519,11 @@ def _instruction_panel(generator, service):
         versao,
     )
 
+    retirement = is_aposentadoria_profile(_instruction_profile(generator))
     st.caption(
+        "Envie um ou vários PDFs da instrução de aposentadoria. Eles não entram no acervo "
+        "e não são usados como precedente. A minuta é experimental e depende de revisão humana."
+        if retirement else
         "Envie um ou vários PDFs da instrução. Eles não entram no acervo "
         "e não são usados como precedente."
     )
@@ -1573,16 +1606,37 @@ def _instruction_panel(generator, service):
     for note in st.session_state.get("minutas_instrucao_meta_notes") or ():
         st.caption(note)
     processo = st.text_input("Processo TC", key="minutas_instrucao_processo")
-    exercicio = st.number_input(
-        "Exercício das contas", min_value=1990, max_value=2100, value=None,
-        key="minutas_instrucao_exercicio",
-    )
+    if retirement:
+        exercicio = None
+        st.caption("Natureza: Aposentadoria. O exercício das contas não é exigido.")
+    else:
+        exercicio = st.number_input(
+            "Exercício das contas", min_value=1990, max_value=2100, value=None,
+            key="minutas_instrucao_exercicio",
+        )
     origem = st.text_input("Origem", key="minutas_instrucao_origem_processo")
-    if st.button("Analisar fundamentos", key="minutas_instrucao_analisar", disabled=not documents):
+    beneficiario = ""
+    ato = ""
+    if retirement:
+        beneficiario = st.text_input(
+            "Beneficiário(a) — somente se já conferido",
+            key="minutas_instrucao_beneficiario",
+        )
+        ato = st.text_input(
+            "Ato concessivo ou revisional",
+            key="minutas_instrucao_ato",
+        )
+    analyze_label = "Analisar fundamentos com IA" if retirement else "Analisar fundamentos"
+    if st.button(analyze_label, key="minutas_instrucao_analisar", disabled=not documents):
         try:
-            st.session_state["minutas_instrucao_analise"] = generator.analyze_instruction(
-                documents, processo=processo, exercicio=exercicio, origem=origem,
-            )
+            with st.spinner(
+                "Analisando os fundamentos da aposentadoria..."
+                if retirement else "Analisando os fundamentos..."
+            ):
+                st.session_state["minutas_instrucao_analise"] = generator.analyze_instruction(
+                    documents, processo=processo, exercicio=exercicio, origem=origem,
+                    beneficiario=beneficiario, ato=ato,
+                )
             st.session_state.pop("minutas_instrucao_minuta", None)
         except Exception as exc:
             _error(exc)
@@ -1604,15 +1658,24 @@ def _instruction_panel(generator, service):
         elif precedents.get("estado"):
             st.caption(f"Precedentes históricos: {precedents['estado']}.")
         _analysis_panel(analyzed)
-    if st.button("Gerar minuta", key="minutas_instrucao_gerar", disabled=not analyzed):
+    generate_label = "Gerar minuta com IA" if retirement else "Gerar minuta"
+    if st.button(generate_label, key="minutas_instrucao_gerar", disabled=not analyzed):
         try:
-            st.session_state["minutas_instrucao_minuta"] = generator.generate_instruction(
-                documents, analyzed, processo=processo, exercicio=exercicio, origem=origem,
-            )
+            with st.spinner(
+                "Gerando a minuta de aposentadoria..." if retirement else "Gerando a minuta..."
+            ):
+                st.session_state["minutas_instrucao_minuta"] = generator.generate_instruction(
+                    documents, analyzed, processo=processo, exercicio=exercicio, origem=origem,
+                    beneficiario=beneficiario, ato=ato,
+                )
         except Exception as exc:
             _error(exc, etapa="geracao_instrucao")
     generated = st.session_state.get("minutas_instrucao_minuta")
     if generated and analyzed:
+        for note in generated.get("advertencias_qualidade") or ():
+            st.warning(note)
+        if retirement:
+            st.caption("Minuta experimental. Revise a fundamentação, os pedidos e o beneficiário antes de protocolar.")
         try:
             word = MinutasDocxService(service).export_instruction(
                 analyzed, generated, processo=processo, exercicio=exercicio, origem=origem,
@@ -1964,7 +2027,15 @@ def _search_tab(store, identity):
         with filters[2]:
             year = st.text_input("Exercício", placeholder="Todos")
         with filters[3]:
-            subtype = st.selectbox("Subtipo", ("Todos", *SUBTIPOS))
+            if selected["grupo"] == "PCA":
+                subtype = st.selectbox("Subtipo", ("Todos", *SUBTIPOS))
+            else:
+                subtype = "Todos"
+                st.text_input(
+                    "Natureza",
+                    value="Aposentadoria" if "aposentadorias" in selected["id"] else selected["nome"],
+                    disabled=True,
+                )
         submitted = st.form_submit_button(
             "Pesquisar", type="primary", icon=":material/search:"
         )

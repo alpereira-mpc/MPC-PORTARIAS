@@ -1020,6 +1020,16 @@ def _minuta_metrics(raw, model, started, payload):
     }
 
 
+def _minuta_contract(contexto, kind):
+    """PCA permanece no contrato histórico. Aposentadoria usa o motor próprio."""
+    if isinstance(contexto, dict) and contexto.get("motor") == "aposentadorias-v1":
+        from services.minutas_aposentadorias import analysis_contract, generation_contract
+        return analysis_contract() if kind == "analise" else generation_contract()
+    if kind == "analise":
+        return PROMPT_ANALISE_MINUTA, _MINUTA_ANALYSIS_SCHEMA
+    return PROMPT_MINUTA_PARECER, _MINUTA_OUTPUT_SCHEMA
+
+
 def analisar_fundamentos_minuta(contexto):
     """Return structured evidence analysis using target-process sources only."""
     if not isinstance(contexto, dict):
@@ -1029,9 +1039,10 @@ def analisar_fundamentos_minuta(contexto):
         raise GeminiErro("Os documentos do processo excedem o limite seguro de análise.")
     primary, fallback = _minutas_models()
     started = time.perf_counter()
+    prompt, schema = _minuta_contract(contexto, "analise")
     raw, model = _executar(
         lambda key, selected: _request_texto(
-            text, key, PROMPT_ANALISE_MINUTA, selected, _MINUTA_ANALYSIS_SCHEMA,
+            text, key, prompt, selected, schema,
             max_output_tokens=MINUTA_ANALYSIS_MAX_OUTPUT_TOKENS,
         ),
         "análise probatória da minuta",
@@ -1058,13 +1069,14 @@ def gerar_minuta_parecer(contexto):
     LOGGER.info("MINUTAS_IA | etapa=contexto | bytes=%s", context_bytes)
     started = time.perf_counter()
     primary, fallback = _minutas_models()
+    prompt, schema = _minuta_contract(contexto, "geracao")
     raw, model = _executar(
         lambda key, selected: _request_texto(
             text,
             key,
-            PROMPT_MINUTA_PARECER,
+            prompt,
             selected,
-            _MINUTA_OUTPUT_SCHEMA,
+            schema,
             max_output_tokens=MINUTA_MAX_OUTPUT_TOKENS,
         ),
         "geração experimental de minuta",

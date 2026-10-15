@@ -3941,9 +3941,18 @@ class MinutasGenerationService:
             "consultas": queries,
         }
 
-    def analyze_instruction(self, documentos, *, processo, exercicio=None, origem=""):
+    def analyze_instruction(
+        self, documentos, *, processo, exercicio=None, origem="", beneficiario="", ato="",
+    ):
+        from services.minutas_aposentadorias import is_aposentadoria_profile
         from services.minutas_instrucao import montar_contexto
         self.library._authorize()
+        if is_aposentadoria_profile(self._instruction_profile()):
+            from services import minutas_aposentadorias as retirement
+            return retirement.analyze(
+                self, documentos, processo=processo, origem=origem,
+                beneficiario=beneficiario, ato=ato,
+            )
         target = self._instruction_target(processo, exercicio, origem)
         prepared = montar_contexto(
             documentos, processo=target["numero_processo"], exercicio=exercicio,
@@ -4021,9 +4030,19 @@ class MinutasGenerationService:
             })
         return opinions, passages
 
-    def generate_instruction(self, documentos, analyzed, *, processo, exercicio=None, origem="", use_rag=True):
+    def generate_instruction(
+        self, documentos, analyzed, *, processo, exercicio=None, origem="",
+        beneficiario="", ato="", use_rag=True,
+    ):
+        from services.minutas_aposentadorias import is_aposentadoria_profile
         from services.minutas_instrucao import montar_contexto
         self.library._authorize()
+        if is_aposentadoria_profile(self._instruction_profile()):
+            from services import minutas_aposentadorias as retirement
+            return retirement.generate(
+                self, documentos, analyzed, processo=processo, origem=origem,
+                beneficiario=beneficiario, ato=ato, use_rag=use_rag,
+            )
         target = self._instruction_target(processo, exercicio, origem)
         prepared = montar_contexto(
             documentos, processo=target["numero_processo"], exercicio=exercicio,

@@ -101,7 +101,9 @@ class MinutasSearchService:
                     "documento_id": str(row["documento_id"]),
                     "procuradora": row["procuradora"],
                     "processo": row["numero_processo"],
-                    "exercicio": int(row["exercicio"]),
+                    "exercicio": (
+                        int(row["exercicio"]) if row.get("exercicio") not in (None, "") else None
+                    ),
                     "natureza": CLASSES.get(selected["grupo"], "Classe efetiva do processo"),
                     "especialidade_id": selected["id"],
                     "subtipo": row["subtipo"],
