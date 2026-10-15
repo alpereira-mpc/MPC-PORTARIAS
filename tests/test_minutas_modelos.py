@@ -152,6 +152,44 @@ def test_selecao_por_especialidade_e_fallback(prepared):
     ).digest()
 
 
+def test_exportacao_instrucao_camara_prioriza_modelo_da_especialidade(prepared):
+    from services.minutas_specialties import CAMARAS, SHARED_INSTRUCTION_MOTOR
+    from tests.test_minutas_instrucao import _structure
+
+    store, storage, scoped = prepared
+    with store.connection() as connection:
+        connection.execute(
+            "UPDATE minutas_especialidades SET motor=?, estado=? WHERE id=?",
+            (SHARED_INSTRUCTION_MOTOR, "Em testes", CAMARAS),
+        )
+    camaras = library(store, storage, CAMARAS)
+    analyzed = {"fontes_versao": "v", "processo_alvo_id": "instrucao-0210826"}
+    generated = {
+        "fontes_versao": "v",
+        "processo_alvo_id": "instrucao-0210826",
+        "estrutura": _structure(),
+    }
+    fallback = MinutasDocxService(camaras).export_instruction(
+        analyzed, generated, processo="02108/26", exercicio=2025,
+        origem="Câmara Municipal de Exemplo",
+    )
+    fallback_doc = Document(BytesIO(fallback.content))
+    assert fallback_doc.sections[0].left_margin.cm == pytest.approx(2.75, abs=0.05)
+    MinutasModeloVisualService(scoped).save(RPPS, _model("rpps.docx", top=5))
+    MinutasModeloVisualService(camaras).save(CAMARAS, _model("camara.docx", top=4))
+    exported = MinutasDocxService(camaras).export_instruction(
+        analyzed, generated, processo="02108/26", exercicio=2025,
+        origem="Câmara Municipal de Exemplo",
+    )
+    document = Document(BytesIO(exported.content))
+    assert document.sections[0].left_margin.cm == pytest.approx(3, abs=0.05)
+    assert document.styles["Minuta Ementa"].paragraph_format.left_indent.cm == pytest.approx(8, abs=0.05)
+    body = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "Câmara Municipal de Exemplo" in body
+    assert POISON not in body and "Bananeiras" not in body
+    assert "RPPS" not in body
+
+
 def test_sem_tabela_o_cadastro_nao_grava_e_a_exportacao_segue(tmp_path):
     store = build_store(tmp_path / "minutas.db")
     _install(store, models=False)

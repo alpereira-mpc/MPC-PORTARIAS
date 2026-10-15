@@ -2103,7 +2103,7 @@ def render(store, identity):
     st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
     from database.minutas_especialidades import MinutasSpecialtiesStore
     from services.minutas_specialties_ui import selection, synchronize_scope, acervo
-    from services.minutas_specialties import RPPS
+    from services.minutas_specialties import instruction_generation_allowed
     administrative_library = _service(store, identity, administrative=True)
     if administrative_library is None:
         return
@@ -2153,7 +2153,7 @@ def render(store, identity):
             acervo(library, administrative_library, profile)
         elif active == sections[1]:
             _search_tab(store, identity)
-        elif profile["id"] == RPPS and profile["motor"] == "pca-rpps-v1":
+        elif instruction_generation_allowed(profile):
             _generator_tab(store, identity)
         else:
             st.info("Geração especializada ainda não habilitada. Alimente e pesquise o acervo desta especialidade.")

@@ -19,7 +19,10 @@ from services.minutas_acervo import (
 )
 from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionService
 from services.minutas_library import MinutasLibraryService, MinutasAccessDenied, MinutasValidationError
-from services.minutas_specialties import CATALOG, CLASSES, PROSECUTOR_KEY, RPPS, scope, suggest
+from services.minutas_specialties import (
+    CATALOG, CAMARAS, CLASSES, PROSECUTOR_KEY, RPPS, SHARED_INSTRUCTION_MOTOR,
+    instruction_generation_allowed, scope, suggest,
+)
 from tests.access_testing import TEST_IDENTITY
 from tests.test_minutas_extraction import _pdf as _text_pdf
 from tests.test_minutas_library import _docx, _pdf
@@ -153,6 +156,14 @@ def test_catalog_separates_classes_themes_and_only_preserves_rpps_engine():
     assert [p["id"] for p in CATALOG if p["motor"]] == [RPPS]
     assert scope(RPPS)["estado"] == "Funcional com ajustes"
     assert all(p["estado"] == "A iniciar" for p in CATALOG if p["id"] != RPPS)
+    assert instruction_generation_allowed(scope(RPPS)) is True
+    assert instruction_generation_allowed(scope(CAMARAS)) is False
+    enabled = dict(scope(CAMARAS), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes")
+    assert instruction_generation_allowed(enabled) is True
+    assert instruction_generation_allowed(dict(enabled, estado="A iniciar")) is False
+    assert instruction_generation_allowed(dict(
+        scope("elvira.pca.governo"), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
+    )) is False
     assert scope("elvira.tema.licitacoes")["grupo"] == "TEMATICO"
     assert "LICITACAO" not in CLASSES
 
@@ -431,6 +442,48 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert app.radio(key="minutas_acervo_mode").value == "Consultar"
     assert storage.downloads == []
     assert not any("ts_headline" in query for query in store.queries)
+
+
+def test_camaras_habilitada_abre_geracao_e_desligar_nao_afeta_rpps(environment, monkeypatch):
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+    from services import minutas_ia_ui, ai_service
+    store, storage = environment
+    seed(store)
+    monkeypatch.setattr(ai_service, "analisar_fundamentos_minuta", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("IA")))
+    monkeypatch.setattr(ai_service, "gerar_minuta_parecer", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("IA")))
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *args, administrative=False:
+        library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
+
+    def page():
+        from services.minutas_ia_ui import render
+        from tests.access_testing import TEST_IDENTITY
+        render(None, TEST_IDENTITY)
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.selectbox(key="minutas_specialty").set_value(CAMARAS).run()
+    app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
+    assert any("ainda não habilitada" in info.value for info in app.info)
+    assert not any(item.key == "minutas_instrucao_incluir" for item in app.button)
+    with store.connection() as connection:
+        connection.execute(
+            "UPDATE minutas_especialidades SET motor=?, estado=? WHERE id=?",
+            (SHARED_INSTRUCTION_MOTOR, "Em testes", CAMARAS),
+        )
+    app.run()
+    assert any(item.key == "minutas_instrucao_incluir" for item in app.button)
+    assert not any("ainda não habilitada" in info.value for info in app.info)
+    with store.connection() as connection:
+        connection.execute(
+            "UPDATE minutas_especialidades SET motor='', estado='A iniciar' WHERE id=?",
+            (CAMARAS,),
+        )
+    app.run()
+    assert any("ainda não habilitada" in info.value for info in app.info)
+    assert not any(item.key == "minutas_instrucao_incluir" for item in app.button)
+    app.selectbox(key="minutas_specialty").set_value(RPPS).run()
+    app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
+    assert any(item.key == "minutas_instrucao_incluir" for item in app.button)
 
 
 def test_batch_processing_summary_declares_total_success_only_when_every_required_step_succeeds():

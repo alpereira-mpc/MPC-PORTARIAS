@@ -3529,7 +3529,23 @@ class MinutasGenerationService:
         )
         return response
 
+    def _instruction_profile(self):
+        from services.minutas_specialties import (
+            instruction_generation_allowed,
+            instruction_profile,
+        )
+
+        profile = instruction_profile(self.library)
+        if not instruction_generation_allowed(profile):
+            raise MinutasGenerationError(
+                "Esta especialidade ainda não possui motor habilitado."
+            )
+        return profile
+
     def _instruction_target(self, processo, exercicio, origem):
+        from services.minutas_specialties import instruction_pca_subtype
+
+        profile = self._instruction_profile()
         key = _canonical_process_key(processo)
         if len(key) != 7:
             raise MinutasGenerationError(
@@ -3543,12 +3559,27 @@ class MinutasGenerationService:
             "origem": origem or "",
             "procuradora": PROCURADORA,
             "procuradora_chave": PROCURADORA.casefold(),
-            "especialidade_id": "elvira.pca.rpps",
+            "especialidade_id": profile["id"],
+            "classe": profile.get("grupo") or "",
+            "perfil": profile.get("perfil") or "",
             "classificacao_estado": "CLASSIFICADO",
-            "subtipo": "Instituto/Autarquia",
+            "subtipo": instruction_pca_subtype(profile),
             "parecer_definitivo": False,
             "instrucao_local": True,
         }
+
+    @staticmethod
+    def _bind_instruction_context(context, target):
+        bound = deepcopy(context)
+        process = dict(bound.get("processo_alvo") or {})
+        process.update({
+            "especialidade_id": target["especialidade_id"],
+            "classe": target.get("classe") or "",
+            "perfil": target.get("perfil") or "",
+            "subtipo": target.get("subtipo") or "",
+        })
+        bound["processo_alvo"] = process
+        return bound
 
     def _instruction_precedents(self, analysis, process_key):
         """Recupera somente pareceres definitivos de outros processos."""
@@ -3603,8 +3634,9 @@ class MinutasGenerationService:
             documentos, processo=target["numero_processo"], exercicio=exercicio,
             origem=origem,
         )
-        generated = self._analyze(prepared["contexto"])
-        analysis = self._validate_analysis(generated.get("analise"), prepared["contexto"])
+        context = self._bind_instruction_context(prepared["contexto"], target)
+        generated = self._analyze(context)
+        analysis = self._validate_analysis(generated.get("analise"), context)
         precedents = self._instruction_precedents(analysis, target["processo_chave"])
         conference = analysis.get("conferencia_documental") or {}
         metrics = {
@@ -3683,7 +3715,7 @@ class MinutasGenerationService:
             )
         analysis = self._validate_analysis(analyzed.get("analise"), prepared["contexto"])
         conference = analysis.get("conferencia_documental") or {}
-        context = deepcopy(prepared["contexto"])
+        context = self._bind_instruction_context(prepared["contexto"], target)
         context["orientacao_dispositivo"] = (
             "PREFEITURA_CONDICIONAL_DUAS_COMPETENCIAS"
             if target.get("subtipo") == "Prefeitura"

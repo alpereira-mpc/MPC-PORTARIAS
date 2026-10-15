@@ -8,7 +8,17 @@ import unicodedata
 
 PROSECUTOR_KEY = "elvira samara"
 RPPS = "elvira.pca.rpps"
+CAMARAS = "elvira.pca.camaras"
+SHARED_INSTRUCTION_MOTOR = "pca-rpps-v1"
+INSTRUCTION_READY_STATES = ("Em testes", "Funcional com ajustes", "Validada")
 STATES = ("A iniciar", "Em alimentação", "Em testes", "Funcional com ajustes", "Validada")
+_PCA_SUBTYPE = {
+    "RPPS": "Instituto/Autarquia",
+    "CAMARA": "Câmara Municipal",
+    "PREFEITURA": "Prefeitura",
+    "SECRETARIA_MUNICIPAL": "Secretaria Municipal ou Estadual",
+    "ORGAO_ESTADUAL": "Secretaria Municipal ou Estadual",
+}
 CLASSES = {
     "PCA": "Prestação de Contas Anual",
     "ATOS_PESSOAL": "Atos de pessoal sujeitos a registro",
@@ -68,6 +78,40 @@ def scope(value):
     if profile is None:
         raise ValueError("Selecione uma especialidade jurídica válida.")
     return profile
+
+
+def instruction_pca_subtype(profile):
+    return _PCA_SUBTYPE.get(str((profile or {}).get("perfil") or ""), "")
+
+
+def instruction_generation_allowed(profile):
+    """Habilitação operacional da geração por PDFs. O motor histórico permanece só no RPPS."""
+    if not isinstance(profile, dict):
+        return False
+    motor = str(profile.get("motor") or "")
+    version = str(profile.get("config_versao") or "1")
+    if motor != SHARED_INSTRUCTION_MOTOR or version != "1":
+        return False
+    identifier = str(profile.get("id") or "")
+    if identifier == RPPS:
+        return True
+    if identifier == CAMARAS:
+        return str(profile.get("estado") or "") in INSTRUCTION_READY_STATES
+    return False
+
+
+def instruction_profile(library):
+    """Perfil efetivo da sessão: banco quando existir, senão o catálogo."""
+    repository = getattr(library, "repository", None)
+    specialty = getattr(library, "specialty_id", None)
+    if specialty is None:
+        specialty = getattr(repository, "specialty_id", None)
+    if repository is not None and callable(getattr(repository, "profile", None)):
+        try:
+            return repository.profile()
+        except Exception:
+            pass
+    return scope(specialty or RPPS)
 
 
 def plain(value):

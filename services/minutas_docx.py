@@ -799,29 +799,23 @@ class MinutasDocxService:
     def export_instruction(self, analyzed, generated, *, processo, exercicio=None, origem=""):
         """DOCX da minuta gerada sobre a instrução local, sem consultar o acervo."""
         from services.minutas_generation import (
+            MinutasGenerationError,
             MinutasGenerationService,
-            _canonical_process_key as canonical_process_key,
             _draft_header_lines,
             _target_with_header_metadata,
         )
         from services.minutas_library import PROCURADORA
 
         self.library._authorize()
-        key = canonical_process_key(processo)
-        if len(key) != 7:
-            raise MinutasDocxError("Informe o processo TC no formato 00000/00.")
-        target = {
-            "id": f"instrucao-{key}",
-            "numero_processo": f"{key[:5]}/{key[5:]}",
-            "processo_chave": key,
-            "exercicio": exercicio,
-            "origem": origem or "",
-            "procuradora": PROCURADORA,
-            "procuradora_chave": PROCURADORA.casefold(),
-            "especialidade_id": "elvira.pca.rpps",
-            "classificacao_estado": "CLASSIFICADO",
-            "subtipo": "Instituto/Autarquia",
-        }
+        try:
+            target = MinutasGenerationService(self.library)._instruction_target(
+                processo, exercicio, origem,
+            )
+        except MinutasGenerationError as exc:
+            raise MinutasDocxError(str(exc)) from exc
+        target = dict(target)
+        target["origem"] = origem or target.get("origem") or ""
+        target["exercicio"] = exercicio if exercicio not in (None, "") else target.get("exercicio")
         if not isinstance(analyzed, dict) or not isinstance(generated, dict):
             raise MinutasDocxError("Gere novamente a minuta antes de exportar.")
         if analyzed.get("fontes_versao") != generated.get("fontes_versao"):

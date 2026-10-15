@@ -108,6 +108,36 @@ def test_module_navigation_executes_only_the_active_view(monkeypatch):
     assert calls == ["library", "search", "generator", "library"]
 
 
+def test_camaras_so_abre_geracao_quando_habilitada(monkeypatch):
+    from services import minutas_ia_ui
+    from services import minutas_specialties_ui
+    from services.minutas_specialties import (
+        CAMARAS, SHARED_INSTRUCTION_MOTOR, scope,
+    )
+
+    calls = []
+    profile = dict(scope(CAMARAS), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes")
+    monkeypatch.setattr(minutas_specialties_ui, "acervo", lambda *_args: calls.append("library"))
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(minutas_specialties_ui, "selection", lambda *_args: profile)
+    monkeypatch.setattr(minutas_specialties_ui, "synchronize_scope", lambda *_args: None)
+    monkeypatch.setattr(minutas_ia_ui, "_search_tab", lambda *_args: calls.append("search"))
+    monkeypatch.setattr(minutas_ia_ui, "_generator_tab", lambda *_args: calls.append("generator"))
+
+    def page():
+        from services import minutas_ia_ui as ui
+        ui.render(None, {})
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
+    assert calls[-1] == "generator"
+    profile["motor"] = ""
+    profile["estado"] = "A iniciar"
+    calls.clear()
+    app.run()
+    assert "generator" not in calls
+
+
 def test_configured_library_shows_phase_2a_fields(store, monkeypatch):
     from services import minutas_ia_ui
     from services.minutas_library import SUBTIPOS

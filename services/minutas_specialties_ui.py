@@ -7,7 +7,9 @@ import streamlit as st
 
 from services.minutas_acervo import MinutasAcervoService
 from services.minutas_extraction import MinutasExtractionService
-from services.minutas_specialties import CLASSES, RPPS, STATES, fingerprint, scope
+from services.minutas_specialties import (
+    CLASSES, RPPS, STATES, fingerprint, instruction_generation_allowed, scope,
+)
 from services.ui_theme import badges, render_record
 
 
@@ -31,7 +33,7 @@ def selection(library):
         format_func=lambda value: available[value]["nome"], key="minutas_specialty")
     profile = available[selected]
     st.caption(f"{profile['estado']} · Configuração {profile['config_versao']}")
-    if selected != RPPS or profile["motor"] != "pca-rpps-v1":
+    if not instruction_generation_allowed(profile):
         st.info("Acervo e pesquisa disponíveis. Esta especialidade ainda não possui motor especializado habilitado.")
     return profile
 
