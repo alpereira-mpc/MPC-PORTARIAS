@@ -198,6 +198,10 @@ class Store:
 
 
 def test_postgresql_query_filters_valid_opinions_and_blocks_cross_prosecutor_linkage():
+    from database.postgresql import parameters
+    from psycopg._queries import PostgresQuery
+    from psycopg.adapt import Transformer
+
     store = Store()
     repository = MinutasReferenciasStore(store)
 
@@ -244,6 +248,9 @@ def test_postgresql_query_filters_valid_opinions_and_blocks_cross_prosecutor_lin
         PROCURADORA.casefold(),
     )
     assert store.connection_instance.parameters[-2:] == (11, 0)
+    adapted = PostgresQuery(Transformer())
+    adapted.convert(parameters(sql), store.connection_instance.parameters)
+    assert len(adapted.params) == len(store.connection_instance.parameters)
 
 
 def test_result_context_uses_ranked_fragments_around_distinct_occurrences():

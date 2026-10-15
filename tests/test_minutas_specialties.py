@@ -182,6 +182,40 @@ def test_catalog_separates_classes_themes_and_only_preserves_rpps_engine():
     assert "LICITACAO" not in CLASSES
 
 
+def test_specialty_membership_sql_is_exact_and_psycopg3_adapts_it():
+    from database.minutas_especialidades import scoped_clause, specialty_membership_clause, scoped_parameters
+    from database.postgresql import parameters
+    from psycopg._queries import PostgresQuery
+    from psycopg.adapt import Transformer
+
+    clause = specialty_membership_clause("mv.especialidade_id")
+    assert "LIKE" not in clause and "%" not in clause
+    for logical, accepted, rejected in (
+        (RPPS, (RPPS,), (CAMARAS, "elvira.pca.governo")),
+        (PREFEITURAS, (PREFEITURAS, "elvira.pca.governo", "elvira.pca.gestao"), (RPPS, CAMARAS)),
+    ):
+        for physical in accepted + rejected:
+            with sqlite3.connect(":memory:") as connection:
+                found = connection.execute(
+                    "SELECT 1 FROM (SELECT ? AS especialidade_id) mv WHERE " + clause,
+                    (physical, *scoped_parameters(logical)),
+                ).fetchone()
+            assert bool(found) is (physical in accepted)
+
+        adapted = PostgresQuery(Transformer())
+        adapted.convert(parameters("SELECT 1 FROM minutas_acervo_vinculos mv WHERE " + clause),
+                        scoped_parameters(logical))
+        assert adapted.query.count(b"$1") == 1 and adapted.query.count(b"$2") == 1
+        assert len(adapted.params) == 2
+
+        scope_query = PostgresQuery(Transformer())
+        scope_query.convert(
+            parameters("SELECT COUNT(*) FROM minutas_referencias r WHERE " + scoped_clause()),
+            (PROSECUTOR_KEY, *scoped_parameters(logical)),
+        )
+        assert len(scope_query.params) == 3
+
+
 def test_chamber_opinions_remain_accessible_in_their_own_specialty(environment):
     store, storage = environment
     ibiara = seed(
@@ -610,6 +644,34 @@ def test_especialidade_compartilhada_habilitada_abre_geracao_e_desligar_nao_afet
     app.selectbox(key="minutas_specialty").set_value(RPPS).run()
     app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
     assert any(item.key == "minutas_instrucao_incluir" for item in app.button)
+
+
+def test_prefeituras_abre_acervo_e_pesquisa_mas_mantem_geracao_bloqueada(environment, monkeypatch):
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+    from services import minutas_ia_ui
+
+    store, storage = environment
+    seed(store, process="02720/25", subtype="Prefeitura", entity="Prefeitura Municipal de Exemplo")
+    admin = MinutasAcervoService(library(store, storage))
+    admin.apply(admin.dry_run(), {"identificador": "teste", "restauracao_verificada": True})
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *args, administrative=False:
+        library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
+
+    def page():
+        from services.minutas_ia_ui import render
+        from tests.access_testing import TEST_IDENTITY
+        render(None, TEST_IDENTITY)
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    _choose_specialty(app, PREFEITURAS)
+    assert app.radio(key="minutas_active_view").value == "Acervo"
+    assert any("1 processo(s) nesta página" in item.value for item in app.caption)
+    app.radio(key="minutas_active_view").set_value("Pesquisa Jurídica").run()
+    assert not app.exception and any(item.label == "Pesquisar pareceres" for item in app.text_input)
+    app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
+    assert any("ainda não habilitada" in item.value for item in app.info)
+    assert not any(item.key == "minutas_instrucao_incluir" for item in app.button)
 
 
 def test_batch_processing_summary_declares_total_success_only_when_every_required_step_succeeds():

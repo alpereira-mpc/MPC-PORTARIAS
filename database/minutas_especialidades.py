@@ -50,10 +50,9 @@ def active_clause(enabled, alias="r"):
 
 def specialty_membership_clause(column):
     """Compatibilidade temporária para vínculos legados de Prefeituras."""
-    identifiers = ",".join((PREFEITURAS, *PREFEITURAS_LEGACY))
     return (
-        "(',' || CASE WHEN ?='" + PREFEITURAS + "' THEN '" + identifiers
-        + "' ELSE ? END || ',') LIKE '%,' || " + column + " || ',%'"
+        "(" + column + "=? OR (?='" + PREFEITURAS + "' AND " + column
+        + " IN ('" + "','".join(PREFEITURAS_LEGACY) + "')))"
     )
 
 
