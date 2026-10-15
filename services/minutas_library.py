@@ -68,6 +68,14 @@ def _validate_year(value):
     return year
 
 
+def coerce_account_year(value, *, required):
+    if value in (None, ""):
+        if required:
+            raise MinutasValidationError("Informe um exercício válido.")
+        return None
+    return _validate_year(value)
+
+
 def _validate_file(kind, upload):
     if not isinstance(upload, (tuple, list)) or len(upload) != 2:
         raise MinutasValidationError("Selecione os dois documentos obrigatórios.")

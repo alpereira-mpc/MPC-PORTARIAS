@@ -30,7 +30,9 @@ from services.minutas_library import (
     PROCURADORA,
     SUBTIPOS,
 )
+from services.minutas_acervo import optional_exercise_label
 from services.minutas_search import MinutasSearchService, SEARCH_NATURE
+from services.minutas_specialties import requires_account_year
 from services.minutas_extraction import (
     MinutasExtractionError,
     MinutasExtractionService,
@@ -938,7 +940,12 @@ def _delete_reference_panel(service, record):
 
 
 def _reference_card(service, extractor, record, expanded=False):
-    title = f"Processo {record['numero_processo']} · Exercício {record['exercicio']}"
+    title = " · ".join(
+        part for part in (
+            f"Processo {record['numero_processo']}",
+            optional_exercise_label(record),
+        ) if part
+    )
     with st.expander(title, expanded=expanded):
         header, reference_actions = st.columns(
             [5, 1.3], vertical_alignment="center"
@@ -1051,10 +1058,12 @@ def _library_tab(store, identity):
     selected_id = st.selectbox(
         "Processo para administrar",
         tuple(records_by_id),
-        format_func=lambda identifier: (
-            f"{records_by_id[identifier]['numero_processo']} · "
-            f"{records_by_id[identifier]['subtipo']} · "
-            f"Exercício {records_by_id[identifier]['exercicio']}"
+        format_func=lambda identifier: " · ".join(
+            part for part in (
+                records_by_id[identifier]["numero_processo"],
+                records_by_id[identifier]["subtipo"],
+                optional_exercise_label(records_by_id[identifier]),
+            ) if part
         ),
         key=selector_key,
     )
@@ -1728,9 +1737,12 @@ def _historical_generator_panel(store, identity):
     target = st.selectbox(
         "Processo histórico",
         targets,
-        format_func=lambda item: (
-            f"{item['numero_processo']} · {item['subtipo']} · "
-            f"Exercício {item['exercicio']}"
+        format_func=lambda item: " · ".join(
+            part for part in (
+                item["numero_processo"],
+                item["subtipo"],
+                optional_exercise_label(item),
+            ) if part
         ),
         key="minutas_generation_target",
     )
@@ -2025,7 +2037,11 @@ def _search_tab(store, identity):
             selected = scope(library.specialty_id)
             st.text_input("Classe / grupo", value=CLASSES.get(selected["grupo"], "Temas na classe efetiva"), disabled=True)
         with filters[2]:
-            year = st.text_input("Exercício", placeholder="Todos")
+            if requires_account_year(selected["id"]):
+                year = st.text_input("Exercício", placeholder="Todos")
+            else:
+                year = ""
+                st.caption("A pesquisa não exige exercício financeiro.")
         with filters[3]:
             if selected["grupo"] == "PCA":
                 subtype = st.selectbox("Subtipo", ("Todos", *SUBTIPOS))
@@ -2086,8 +2102,14 @@ def _search_tab(store, identity):
         with st.container(border=True):
             st.markdown(f"**Processo {item['processo']}** · {item['subtipo']}")
             st.caption(
-                f"{item['procuradora']} · Exercício {item['exercicio']} · "
-                f"{item['documento']} · {location}"
+                " · ".join(
+                    part for part in (
+                        item["procuradora"],
+                        optional_exercise_label(item),
+                        item["documento"],
+                        location,
+                    ) if part
+                )
             )
             st.write(item["trecho"])
             st.caption(

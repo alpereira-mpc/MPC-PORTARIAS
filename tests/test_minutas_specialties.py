@@ -15,13 +15,16 @@ from database.minutas_especialidades import MinutasSpecialtiesStore
 from database.minutas_referencias import MinutasReferenciasStore, COLUMNS, COMPLEMENT_COLUMNS, EXTRACTION_COLUMNS
 from services.minutas_acervo import (
     MinutasAcervoService, display_process_key, identify_process_keys, inventory, migration_plan,
-    parse_report_header,
+    optional_exercise_label, parse_report_header,
 )
 from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionService
-from services.minutas_library import MinutasLibraryService, MinutasAccessDenied, MinutasValidationError
+from services.minutas_library import (
+    MinutasLibraryService, MinutasAccessDenied, MinutasValidationError, coerce_account_year,
+)
 from services.minutas_specialties import (
-    CATALOG, CAMARAS, CLASSES, PREFEITURAS, PROSECUTOR_KEY, RPPS, SHARED_INSTRUCTION_MOTOR,
-    SECRETARIAS_MUNICIPAIS, instruction_generation_allowed, scope, suggest,
+    APOSENTADORIAS, CATALOG, CAMARAS, CLASSES, PREFEITURAS, PROSECUTOR_KEY, RPPS,
+    SHARED_INSTRUCTION_MOTOR, SECRETARIAS_MUNICIPAIS, instruction_generation_allowed,
+    requires_account_year, scope, suggest,
 )
 from tests.access_testing import TEST_IDENTITY
 from tests.test_minutas_extraction import _pdf as _text_pdf
@@ -1365,3 +1368,205 @@ def test_acervo_storage_keeps_original_names_and_does_not_rewrite_legacy_objects
     assert model_file.name == "modelo - decisão e instrução.docx"
     assert scoped.download_path(legacy["id"], legacy_path).content == _pdf(b"legado")
     assert legacy_path in storage.objects and storage.objects[legacy_path] == _pdf(b"legado")
+
+
+def _aposentadoria_pdf(processo, origem, extra=""):
+    return _text_pdf(
+        f"Processo TC: {processo}\nOrigem: {origem}\nNatureza: Aposentadoria\n"
+        "Parecer ministerial sobre a legalidade do ato de aposentadoria.\n"
+        + extra
+    )
+
+
+def test_aposentadorias_acervo_accepts_null_exercise_and_keeps_pca_required(environment, monkeypatch):
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+    from services import minutas_ia_ui
+
+    store, storage = environment
+    admin = MinutasAcervoService(library(store, storage, APOSENTADORIAS))
+    pca_admin = MinutasAcervoService(library(store, storage, RPPS))
+    assert requires_account_year(APOSENTADORIAS) is False
+    assert requires_account_year(RPPS) is True
+    assert coerce_account_year(None, required=False) is None
+    with pytest.raises(MinutasValidationError, match="exercício"):
+        coerce_account_year(None, required=True)
+    assert coerce_account_year(2024, required=True) == 2024
+
+    first_origin = "Instituto de Previdência de Alfa"
+    second_origin = "Instituto de Previdência de Beta"
+    first_pdf = _aposentadoria_pdf("01559/24", first_origin)
+    second_pdf = _aposentadoria_pdf("01593/24", second_origin)
+    preview = admin.preview_upload(
+        "proc_01559_24_parecer.pdf", first_pdf, "parecer", APOSENTADORIAS,
+    )
+    assert preview["processo"] == "01559/24"
+    assert preview["origem"] == first_origin
+    assert preview["exercicio"] is None
+    labeled = admin.preview_upload(
+        "proc_01559_24_parecer.pdf",
+        _aposentadoria_pdf("01559/24", first_origin, "Exercício das contas: 2024\n"),
+        "parecer",
+        APOSENTADORIAS,
+    )
+    assert labeled["exercicio"] is None and labeled["processo"] == "01559/24"
+    pca_preview = pca_admin.preview_upload(
+        "proc_01559_24_parecer.pdf",
+        _aposentadoria_pdf("01559/24", first_origin, "Exercício das contas: 2024\n"),
+        "parecer",
+        RPPS,
+    )
+    assert pca_preview["exercicio"] == 2024
+
+    values = {
+        "numero_processo": "01559/24",
+        "classe": "ATOS_PESSOAL",
+        "origem": first_origin,
+        "fundamento": "Parecer definitivo de aposentadoria",
+    }
+    created = admin.add_file(
+        APOSENTADORIAS, values, ("proc_01559_24_parecer.pdf", first_pdf), role="parecer",
+    )
+    assert created["estado"] == "CADASTRADO"
+    with store.connection() as c:
+        stored = dict(c.execute(
+            "SELECT exercicio, numero_processo FROM minutas_referencias WHERE id=?",
+            (created["referencia_id"],),
+        ).fetchone())
+    assert stored["exercicio"] is None and stored["numero_processo"] == "TC 01559/24"
+
+    second = admin.add_file(
+        APOSENTADORIAS,
+        {
+            "numero_processo": "01593/24",
+            "classe": "ATOS_PESSOAL",
+            "origem": second_origin,
+            "fundamento": "Parecer definitivo de aposentadoria",
+        },
+        ("proc_01593_24_parecer.pdf", second_pdf),
+        role="parecer",
+    )
+    assert second["estado"] == "CADASTRADO"
+    listed = admin.repository.list_records(APOSENTADORIAS)
+    assert {row["numero_processo"] for row in listed} == {"TC 01559/24", "TC 01593/24"}
+    assert all(row.get("exercicio") is None for row in listed)
+    assert optional_exercise_label({"exercicio": None}) == ""
+    assert "None" not in optional_exercise_label(listed[0])
+
+    recovered = admin.preview_upload(
+        "proc_01559_24_instrucao.pdf",
+        _aposentadoria_pdf("01559/24", first_origin),
+        "auditoria",
+        APOSENTADORIAS,
+    )
+    assert recovered["recuperado"] and recovered["referencia_id"] == created["referencia_id"]
+    assert recovered["exercicio"] is None
+    attached = admin.add_file(
+        APOSENTADORIAS,
+        {**values, "referencia_id": created["referencia_id"]},
+        ("proc_01559_24_instrucao.pdf", _aposentadoria_pdf("01559/24", first_origin, "Instrução complementar.\n")),
+        role="auditoria",
+    )
+    assert attached["estado"] == "CADASTRADO" and attached["referencia_id"] == created["referencia_id"]
+    duplicate = admin.add_file(
+        APOSENTADORIAS, values, ("copia.pdf", first_pdf), role="parecer",
+    )
+    assert duplicate["estado"] == "DUPLICADO" and duplicate["referencia_id"] == created["referencia_id"]
+    with pytest.raises(MinutasValidationError, match="outro processo"):
+        admin.add_file(
+            APOSENTADORIAS,
+            {
+                "numero_processo": "09999/24",
+                "classe": "ATOS_PESSOAL",
+                "origem": "Outra origem",
+                "fundamento": "Cópia indevida",
+            },
+            ("copia-outra.pdf", first_pdf),
+            role="parecer",
+        )
+    with pytest.raises(MinutasValidationError, match="outro escopo ou pendente"):
+        pca_admin.add_file(
+            RPPS,
+            {
+                "numero_processo": "01559/24",
+                "exercicio": 2024,
+                "classe": "PCA",
+                "origem": first_origin,
+                "fundamento": "Tentativa de reclassificar",
+            },
+            ("pca.pdf", _pdf(b"pca-distinto")),
+            role="parecer",
+        )
+    with pytest.raises(MinutasValidationError, match="exercício"):
+        pca_admin.add_file(
+            RPPS,
+            {
+                "numero_processo": "01653/26",
+                "classe": "PCA",
+                "origem": "Instituto de Previdência",
+                "fundamento": "Sem exercício",
+            },
+            ("sem-ano.pdf", _pdf(b"pca-sem-ano")),
+            role="parecer",
+        )
+    pca_ok = pca_admin.add_file(
+        RPPS,
+        {
+            "numero_processo": "01653/26",
+            "exercicio": 2025,
+            "classe": "PCA",
+            "origem": "Instituto de Previdência",
+            "fundamento": "Com exercício",
+        },
+        ("com-ano.pdf", _pdf(b"pca-com-ano")),
+        role="parecer",
+    )
+    assert pca_ok["estado"] == "CADASTRADO"
+    with store.connection() as c:
+        pca_year = c.execute(
+            "SELECT exercicio FROM minutas_referencias WHERE id=?",
+            (pca_ok["referencia_id"],),
+        ).fetchone()["exercicio"]
+    assert pca_year == 2025
+    with pytest.raises(MinutasValidationError, match="exercício"):
+        admin.add_file(
+            "elvira.pessoal.pensoes",
+            {
+                "numero_processo": "01111/24",
+                "classe": "ATOS_PESSOAL",
+                "origem": "Instituto de Previdência",
+                "fundamento": "Pensão",
+            },
+            ("pensao.pdf", _pdf(b"pensao")),
+            role="parecer",
+        )
+
+    monkeypatch.setattr(
+        minutas_ia_ui,
+        "_service",
+        lambda *args, administrative=False: library(
+            store, storage, None if administrative else st.session_state.get("minutas_specialty"),
+        ),
+    )
+
+    def page():
+        from services.minutas_ia_ui import render
+        from tests.access_testing import TEST_IDENTITY
+        render(None, TEST_IDENTITY)
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    _choose_specialty(app, APOSENTADORIAS)
+    captions = " ".join(item.value for item in app.caption)
+    titles = " ".join(item.value for item in app.markdown)
+    labels = " ".join(str(item.options) for item in app.selectbox)
+    visible = captions + titles + labels
+    assert "2 processo(s) nesta página" in captions
+    assert "01559/24" in visible and "01593/24" in visible
+    assert "Exercício None" not in visible
+    assert "Exercício das contas" not in visible
+    app.radio(key="minutas_active_view").set_value("Pesquisa Jurídica").run()
+    assert not any(item.label == "Exercício" for item in app.text_input)
+    assert any("não exige exercício" in item.value.casefold() for item in app.caption)
+    app.radio(key="minutas_active_view").set_value("Acervo").run()
+    app.radio(key="minutas_acervo_mode").set_value("Adicionar documentos").run()
+    assert not any(item.label == "Exercício das contas" for item in app.number_input)

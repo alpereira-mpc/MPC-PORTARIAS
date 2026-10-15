@@ -8,8 +8,12 @@ import logging
 
 from database.store import now
 from database.minutas_especialidades import MinutasSpecialtiesStore
-from services.minutas_specialties import PROSECUTOR_KEY, CLASSES, plain, scope, suggest, fingerprint
-from services.minutas_library import MinutasValidationError, _validate_file, _normalize_process, _validate_year
+from services.minutas_specialties import (
+    PROSECUTOR_KEY, CLASSES, plain, scope, suggest, fingerprint, requires_account_year,
+)
+from services.minutas_library import (
+    MinutasValidationError, _validate_file, _normalize_process, coerce_account_year,
+)
 
 
 _PROCESS_IN_NAME = re.compile(r"(?i)(?:proc(?:esso)?|tc)[_ \-.]*(\d{5})[_/\-](\d{2})(?!\d)")
@@ -90,6 +94,16 @@ def normalize_process_token(raw):
 def _exercise_value(raw):
     text = str(raw or "").strip().rstrip(".")
     return int(text) if re.fullmatch(r"20\d{2}", text) else None
+
+
+def _stored_year(record):
+    value = (record or {}).get("exercicio")
+    return int(value) if value not in (None, "") else None
+
+
+def optional_exercise_label(record, prefix="Exercício"):
+    year = _stored_year(record)
+    return f"{prefix} {year}" if year is not None else ""
 
 
 def _same_text(left, right):
@@ -293,7 +307,15 @@ class MinutasAcervoService:
         if not processo and filename_key:
             processo = display_process_key(filename_key)
             fonte = "nome do arquivo"
-            warnings.append("O processo foi lido do nome do arquivo porque o cabeçalho não trouxe um número seguro. Confira o exercício e a origem.")
+            check = (
+                "Confira o processo e a origem."
+                if specialty and not requires_account_year(specialty)
+                else "Confira o exercício e a origem."
+            )
+            warnings.append(
+                "O processo foi lido do nome do arquivo porque o cabeçalho não trouxe um número seguro. "
+                + check
+            )
         name_conflict = bool(header["processo"] and filename_key and header["processo_chave"] != filename_key)
         if name_conflict:
             warnings.append(
@@ -304,7 +326,14 @@ class MinutasAcervoService:
         if specialty and not name_conflict and (header["processo_chave"] or (fonte == "nome do arquivo" and filename_key)):
             recovered = self.find_active_process(specialty, header["processo_chave"] or filename_key)
         conflito = name_conflict
-        if recovered and header["exercicio"] is not None and int(recovered.get("exercicio") or 0) != header["exercicio"]:
+        recovered_year = _stored_year(recovered)
+        if (
+            specialty
+            and requires_account_year(specialty)
+            and recovered
+            and header["exercicio"] is not None
+            and recovered_year != header["exercicio"]
+        ):
             warnings.append(
                 f"Exercício do cabeçalho: {header['exercicio']}. Exercício cadastrado: {recovered.get('exercicio')}. "
                 "O cadastro existente não será alterado; confirme a vinculação."
@@ -325,16 +354,18 @@ class MinutasAcervoService:
         if recovered and not conflito:
             processo = recovered.get("numero_processo") or display_process_key(
                 stable_process_key(recovered.get("processo_chave")))
-            exercicio = int(recovered["exercicio"]) if recovered.get("exercicio") not in (None, "") else header["exercicio"]
+            exercicio = recovered_year
             origem = recovered.get("origem") or header["origem"]
             classe = recovered.get("classe") or header["classe"]
             referencia_id = str(recovered["id"])
             suggestion = "Processo identificado no acervo — relatório será adicionado ao processo existente."
         else:
-            exercicio = header["exercicio"]
+            omit_year = bool(specialty) and not requires_account_year(specialty)
+            exercicio = None if omit_year else header["exercicio"]
             origem = header["origem"]
             classe = header["classe"]
             referencia_id = None
+            fill = "Preencha processo e origem." if omit_year else "Preencha processo, exercício e origem."
             if header["processo"]:
                 suggestion = "Dados extraídos do cabeçalho do relatório."
             elif fonte == "nome do arquivo":
@@ -344,9 +375,9 @@ class MinutasAcervoService:
                     [{"referencia_id": "preview", "procuradora_chave": PROSECUTOR_KEY,
                       "texto_integral": extracted.get("texto_integral") or ""}])
                 origem = origem or classified.get("entidade") or ""
-                suggestion = classified.get("especialidade_id") or "Preencha processo, exercício e origem."
+                suggestion = classified.get("especialidade_id") or fill
             else:
-                suggestion = "Preencha processo, exercício e origem."
+                suggestion = fill
         return {"nome": name, "sha256": sha256(content).hexdigest(),
                 "processo": processo, "exercicio": exercicio, "origem": origem, "classe": classe,
                 "fonte": fonte, "referencia_id": referencia_id, "recuperado": bool(recovered and not conflito),
@@ -375,11 +406,11 @@ class MinutasAcervoService:
             raise MinutasValidationError("Conteúdo já vinculado a outro processo; confira os vínculos antes de cadastrar uma cópia.")
         if not record:
             return None, False, []
-        if int(record["exercicio"]) != year:
-            raise MinutasValidationError("Exercício divergente do processo cadastrado; confira os metadados antes do upload.")
         classification = c.execute("SELECT * FROM minutas_classificacoes WHERE referencia_id=?", (record["id"],)).fetchone()
         if not classification or classification["estado"] != "CLASSIFICADO" or classification["especialidade_id"] != specialty:
             raise MinutasValidationError("Processo existente em outro escopo ou pendente; confira sua classificação antes do upload.")
+        if requires_account_year(specialty) and _stored_year(record) != year:
+            raise MinutasValidationError("Exercício divergente do processo cadastrado; confira os metadados antes do upload.")
         if known:
             return record, True, []
         if not confirm_version and c.execute("SELECT id FROM minutas_documentos_catalogo WHERE referencia_id=? AND nome=?",
@@ -412,7 +443,9 @@ class MinutasAcervoService:
         key = re.sub(r"^(?:processo)?(?:tc)?", "", key)
         if not re.fullmatch(r"\d{7}", key):
             raise MinutasValidationError("Informe o processo com cinco dígitos e ano de dois dígitos.")
-        year = _validate_year(values.get("exercicio"))
+        year = coerce_account_year(
+            values.get("exercicio"), required=requires_account_year(specialty),
+        )
         file = _validate_file("auditoria" if role == "auditoria" else "parecer", upload)
         digest = sha256(file["content"]).hexdigest()
         from services.minutas_storage import acervo_object_path

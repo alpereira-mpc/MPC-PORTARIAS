@@ -5,10 +5,11 @@ from datetime import date
 
 import streamlit as st
 
-from services.minutas_acervo import MinutasAcervoService
+from services.minutas_acervo import MinutasAcervoService, optional_exercise_label
 from services.minutas_extraction import MinutasExtractionService
 from services.minutas_specialties import (
-    CLASSES, RPPS, STATES, fingerprint, instruction_generation_allowed, scope,
+    CLASSES, RPPS, STATES, fingerprint, instruction_generation_allowed,
+    requires_account_year, scope,
 )
 from services.ui_theme import badges, render_record, status_tone
 
@@ -373,7 +374,7 @@ def _uploads(admin, library, profile):
             st.session_state[f"minutas_batch_process_{signature}_{index}"] = item.get("processo") or ""
             st.session_state[f"minutas_batch_origin_{signature}_{index}"] = item.get("origem") or ""
             year_key = f"minutas_batch_year_{signature}_{index}"
-            if item.get("exercicio"):
+            if requires_account_year(profile["id"]) and item.get("exercicio"):
                 st.session_state[year_key] = int(item["exercicio"])
             else:
                 st.session_state.pop(year_key, None)
@@ -403,7 +404,13 @@ def _uploads(admin, library, profile):
                 format_func=lambda key, rows=existing_by_id: (
                     "Informar manualmente"
                     if not key
-                    else f"{rows[key]['numero_processo']} · exercício {rows[key].get('exercicio') or '—'} · {rows[key].get('origem') or 'origem a conferir'}"
+                    else " · ".join(
+                        part for part in (
+                            rows[key]["numero_processo"],
+                            optional_exercise_label(rows[key], "exercício"),
+                            rows[key].get("origem") or "origem a conferir",
+                        ) if part
+                    )
                 ),
                 key=link_key,
             )
@@ -413,12 +420,24 @@ def _uploads(admin, library, profile):
             render_record(
                 str(chosen.get("numero_processo") or "Processo"),
                 secondary=chosen.get("origem") or "Origem a conferir",
-                meta=f"Exercício das contas {chosen.get('exercicio') or '—'} · {CLASSES.get(chosen.get('classe') or '', chosen.get('classe') or 'Classe a conferir')}",
+                meta=" · ".join(
+                    part for part in (
+                        optional_exercise_label(chosen, "Exercício das contas"),
+                        CLASSES.get(chosen.get("classe") or "", chosen.get("classe") or "Classe a conferir"),
+                    ) if part
+                ),
                 accent="brand",
                 boxed=True,
             )
         else:
-            st.caption(item.get("sugestao") or "Preencha processo, exercício e origem.")
+            st.caption(
+                item.get("sugestao")
+                or (
+                    "Preencha processo e origem."
+                    if not requires_account_year(profile["id"])
+                    else "Preencha processo, exercício e origem."
+                )
+            )
             if item.get("fonte") == "nome do arquivo":
                 st.caption("A origem desta identificação é o nome do arquivo.")
             if item.get("classe"):
@@ -440,16 +459,21 @@ def _uploads(admin, library, profile):
                     "referencia_id": str(chosen["id"])})
                 continue
             st.write(item["nome"])
-            fields = st.columns(3)
             process_key = f"minutas_batch_process_{signature}_{index}"
             year_key = f"minutas_batch_year_{signature}_{index}"
             origin_key = f"minutas_batch_origin_{signature}_{index}"
+            needs_year = requires_account_year(profile["id"])
+            fields = st.columns(3 if needs_year else 2)
             process = fields[0].text_input("Processo TC", key=process_key)
-            if year_key in st.session_state:
-                year = fields[1].number_input("Exercício das contas", 1900, date.today().year + 1, step=1, key=year_key)
+            if needs_year:
+                if year_key in st.session_state:
+                    year = fields[1].number_input("Exercício das contas", 1900, date.today().year + 1, step=1, key=year_key)
+                else:
+                    year = fields[1].number_input("Exercício das contas", min_value=1900, max_value=date.today().year + 1, value=None, step=1, key=year_key)
+                entity = fields[2].text_input("Origem", key=origin_key)
             else:
-                year = fields[1].number_input("Exercício das contas", min_value=1900, max_value=date.today().year + 1, value=None, step=1, key=year_key)
-            entity = fields[2].text_input("Origem", key=origin_key)
+                year = None
+                entity = fields[1].text_input("Origem", key=origin_key)
             values.append({"numero_processo": process, "exercicio": year, "origem": entity,
                 "classe": item.get("classe") or formal, "referencia_id": ""})
         reason = st.text_input("Fundamento / conferência da classificação do lote")
@@ -488,10 +512,14 @@ def _uploads(admin, library, profile):
 def _record_summary(record):
     st.markdown(f"**Processo {record.get('numero_processo') or '—'}**")
     st.caption(
-        f"Exercício {record.get('exercicio') or '—'} · "
-        f"{record.get('origem') or 'Origem a conferir'} · "
-        f"{record.get('classe') or 'Classe a conferir'} · "
-        f"{record.get('classificacao_estado') or 'Sem classificação'}"
+        " · ".join(
+            part for part in (
+                optional_exercise_label(record),
+                record.get("origem") or "Origem a conferir",
+                record.get("classe") or "Classe a conferir",
+                record.get("classificacao_estado") or "Sem classificação",
+            ) if part
+        )
     )
 
 
@@ -620,7 +648,12 @@ def _legacy_archive(admin, library):
     st.caption(f"{len(records)} processo(s) legado(s)")
     identifier = st.selectbox("Processo legado", list(options), index=None,
         placeholder="Selecione para consultar os documentos",
-        format_func=lambda key: f"{options[key]['numero_processo']} · exercício {options[key].get('exercicio') or '—'}",
+        format_func=lambda key: " · ".join(
+            part for part in (
+                options[key]["numero_processo"],
+                optional_exercise_label(options[key], "exercício"),
+            ) if part
+        ),
         key="minutas_legacy_record")
     if identifier:
         st.button(

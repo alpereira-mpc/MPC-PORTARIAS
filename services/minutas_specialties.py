@@ -105,6 +105,11 @@ def instruction_pca_subtype(profile):
     return _PCA_SUBTYPE.get(str((profile or {}).get("perfil") or ""), "")
 
 
+def requires_account_year(specialty_id):
+    """Somente Aposentadorias omite o exercício financeiro das contas."""
+    return canonical_specialty_id(specialty_id) != APOSENTADORIAS
+
+
 def instruction_generation_allowed(profile):
     """Habilitação operacional da geração por PDFs, isolada por motor."""
     if not isinstance(profile, dict):

@@ -150,6 +150,16 @@ def test_search_isolated_by_prosecutor_and_authorized_server_side():
     assert allowed.downloads == [("reference-1", "parecer")]
 
 
+def test_search_recovers_opinion_without_exercise_in_aposentadorias():
+    library = Library([_result(exercicio=None, subtipo=None)])
+    library.specialty_id = "elvira.pessoal.aposentadorias"
+    response = MinutasSearchService(library).search("registro de aposentadoria")
+    assert response["especialidade_id"] == "elvira.pessoal.aposentadorias"
+    assert response["resultados"][0]["exercicio"] is None
+    assert library.repository.calls[0][3]["year"] is None
+    assert library.repository.calls[0][3]["specialty_id"] == "elvira.pessoal.aposentadorias"
+
+
 def test_four_pilot_processes_remain_searchable():
     processes = ("TC 01653/26", "TC 01499/26", "TC 02720/25", "TC 02650/25")
     rows = [
