@@ -21,7 +21,7 @@ from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionServ
 from services.minutas_library import MinutasLibraryService, MinutasAccessDenied, MinutasValidationError
 from services.minutas_specialties import (
     CATALOG, CAMARAS, CLASSES, PROSECUTOR_KEY, RPPS, SHARED_INSTRUCTION_MOTOR,
-    instruction_generation_allowed, scope, suggest,
+    SECRETARIAS_MUNICIPAIS, instruction_generation_allowed, scope, suggest,
 )
 from tests.access_testing import TEST_IDENTITY
 from tests.test_minutas_extraction import _pdf as _text_pdf
@@ -158,9 +158,17 @@ def test_catalog_separates_classes_themes_and_only_preserves_rpps_engine():
     assert all(p["estado"] == "A iniciar" for p in CATALOG if p["id"] != RPPS)
     assert instruction_generation_allowed(scope(RPPS)) is True
     assert instruction_generation_allowed(scope(CAMARAS)) is False
+    assert instruction_generation_allowed(scope(SECRETARIAS_MUNICIPAIS)) is False
     enabled = dict(scope(CAMARAS), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes")
     assert instruction_generation_allowed(enabled) is True
     assert instruction_generation_allowed(dict(enabled, estado="A iniciar")) is False
+    secretarias = dict(
+        scope(SECRETARIAS_MUNICIPAIS), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
+    )
+    assert instruction_generation_allowed(secretarias) is True
+    assert instruction_generation_allowed(dict(secretarias, estado="Funcional com ajustes")) is True
+    assert instruction_generation_allowed(dict(secretarias, estado="Validada")) is True
+    assert instruction_generation_allowed(dict(secretarias, config_versao="2")) is False
     assert instruction_generation_allowed(dict(
         scope("elvira.pca.governo"), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
     )) is False
@@ -518,7 +526,10 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not any("ts_headline" in query for query in store.queries)
 
 
-def test_camaras_habilitada_abre_geracao_e_desligar_nao_afeta_rpps(environment, monkeypatch):
+@pytest.mark.parametrize("specialty", (CAMARAS, SECRETARIAS_MUNICIPAIS))
+def test_especialidade_compartilhada_habilitada_abre_geracao_e_desligar_nao_afeta_rpps(
+    environment, monkeypatch, specialty,
+):
     import streamlit as st
     from streamlit.testing.v1 import AppTest
     from services import minutas_ia_ui, ai_service
@@ -535,14 +546,14 @@ def test_camaras_habilitada_abre_geracao_e_desligar_nao_afeta_rpps(environment, 
         render(None, TEST_IDENTITY)
 
     app = AppTest.from_function(page, default_timeout=30).run()
-    app.selectbox(key="minutas_specialty").set_value(CAMARAS).run()
+    app.selectbox(key="minutas_specialty").set_value(specialty).run()
     app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
     assert any("ainda não habilitada" in info.value for info in app.info)
     assert not any(item.key == "minutas_instrucao_incluir" for item in app.button)
     with store.connection() as connection:
         connection.execute(
             "UPDATE minutas_especialidades SET motor=?, estado=? WHERE id=?",
-            (SHARED_INSTRUCTION_MOTOR, "Em testes", CAMARAS),
+            (SHARED_INSTRUCTION_MOTOR, "Em testes", specialty),
         )
     app.run()
     assert any(item.key == "minutas_instrucao_incluir" for item in app.button)
@@ -550,7 +561,7 @@ def test_camaras_habilitada_abre_geracao_e_desligar_nao_afeta_rpps(environment, 
     with store.connection() as connection:
         connection.execute(
             "UPDATE minutas_especialidades SET motor='', estado='A iniciar' WHERE id=?",
-            (CAMARAS,),
+            (specialty,),
         )
     app.run()
     assert any("ainda não habilitada" in info.value for info in app.info)

@@ -797,7 +797,7 @@ def _profiled_library(specialty, *, motor="", estado="A iniciar"):
 
 
 def test_camaras_desabilitada_e_outras_especialidades_nao_geram():
-    from services.minutas_specialties import CAMARAS, SHARED_INSTRUCTION_MOTOR
+    from services.minutas_specialties import CAMARAS, SECRETARIAS_MUNICIPAIS, SHARED_INSTRUCTION_MOTOR
     document = _doc(
         "inicial.pdf",
         "Relatório inicial da Câmara Municipal sem irregularidades.",
@@ -806,6 +806,8 @@ def test_camaras_desabilitada_e_outras_especialidades_nao_geram():
     blocked = [
         _profiled_library(CAMARAS),
         _profiled_library(CAMARAS, motor=SHARED_INSTRUCTION_MOTOR, estado="A iniciar"),
+        _profiled_library(SECRETARIAS_MUNICIPAIS),
+        _profiled_library(SECRETARIAS_MUNICIPAIS, motor=SHARED_INSTRUCTION_MOTOR, estado="A iniciar"),
         _profiled_library(
             "elvira.pca.governo", motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
         ),
@@ -893,6 +895,70 @@ def test_camaras_habilitada_usa_identidade_propria_sem_misturar_rpps():
     assert "elvira.pca.rpps" not in body
     assert "Institutos Previdenciários" not in body
     assert "RPPS" not in body
+
+
+@pytest.mark.parametrize("estado", ("Em testes", "Funcional com ajustes", "Validada"))
+def test_secretarias_habilitada_usa_identidade_propria_e_julgamento_direto(estado):
+    from services.minutas_search import MinutasSearchService
+    from services.minutas_specialties import SECRETARIAS_MUNICIPAIS, SHARED_INSTRUCTION_MOTOR
+
+    document = _doc(
+        "inicial.pdf",
+        "Relatório inicial da Secretaria Municipal de Educação sem irregularidades.",
+        "relatorio_inicial",
+    )
+    library = _profiled_library(
+        SECRETARIAS_MUNICIPAIS, motor=SHARED_INSTRUCTION_MOTOR, estado=estado,
+    )
+    captured = {}
+
+    def search(_query, **kwargs):
+        captured["pesquisa"] = kwargs
+        return {"resultados": [
+            {"papel": "parecer", "referencia_id": "secretaria-1", "processo_chave": "0999900",
+             "numero_processo": "09999/00", "trecho": "parecer de secretaria"},
+            {"papel": "parecer", "referencia_id": "alvo", "processo_chave": "0210826",
+             "trecho": "o proprio processo"},
+        ]}
+
+    def analyze(context):
+        captured["analise"] = context["processo_alvo"]
+        return {"analise": _analysis(document)}
+
+    def generate(context):
+        captured["geracao"] = context["processo_alvo"]
+        captured["dispositivo"] = context["orientacao_dispositivo"]
+        return {"estrutura": _structure()}
+
+    service = MinutasGenerationService(library, analyze=analyze, generate=generate, search=search)
+    analyzed = service.analyze_instruction(
+        [document], processo="02108/26", exercicio=2025,
+        origem="Secretaria Municipal de Educação de Exemplo",
+    )
+    generated = service.generate_instruction(
+        [document], analyzed, processo="02108/26", exercicio=2025,
+        origem="Secretaria Municipal de Educação de Exemplo",
+    )
+    assert captured["analise"]["especialidade_id"] == SECRETARIAS_MUNICIPAIS
+    assert captured["analise"]["classe"] == "PCA"
+    assert captured["analise"]["subtipo"] == "Secretaria Municipal ou Estadual"
+    assert captured["geracao"]["especialidade_id"] == SECRETARIAS_MUNICIPAIS
+    assert captured["dispositivo"] == "DEMAIS_PCA_JULGAMENTO_DIRETO"
+    assert captured["pesquisa"]["exclude_process_key"] == "0210826"
+    assert [item["referencia_id"] for item in analyzed["referencias"]["referencias"]] == ["secretaria-1"]
+    MinutasSearchService(library).search("regularidade das contas")
+    assert library.searches == [SECRETARIAS_MUNICIPAIS]
+    if not ELVIRA_TEMPLATE.is_file():
+        pytest.skip("modelo Word indisponível")
+    word = MinutasDocxService(library, template_path=ELVIRA_TEMPLATE).export_instruction(
+        analyzed, generated, processo="02108/26", exercicio=2025,
+        origem="Secretaria Municipal de Educação de Exemplo",
+    )
+    from docx import Document
+    body = "\n".join(paragraph.text for paragraph in Document(BytesIO(word.content)).paragraphs)
+    assert "Secretaria Municipal de Educação de Exemplo" in body
+    assert "Câmara Municipal" not in body
+    assert "Institutos Previdenciários" not in body
 
 
 def test_desabilitar_camaras_nao_afeta_rpps():

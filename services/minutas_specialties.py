@@ -9,8 +9,10 @@ import unicodedata
 PROSECUTOR_KEY = "elvira samara"
 RPPS = "elvira.pca.rpps"
 CAMARAS = "elvira.pca.camaras"
+SECRETARIAS_MUNICIPAIS = "elvira.pca.secretarias_municipais"
 SHARED_INSTRUCTION_MOTOR = "pca-rpps-v1"
 INSTRUCTION_READY_STATES = ("Em testes", "Funcional com ajustes", "Validada")
+INSTRUCTION_EXPERIMENTAL_SPECIALTIES = (CAMARAS, SECRETARIAS_MUNICIPAIS)
 STATES = ("A iniciar", "Em alimentação", "Em testes", "Funcional com ajustes", "Validada")
 _PCA_SUBTYPE = {
     "RPPS": "Instituto/Autarquia",
@@ -85,7 +87,7 @@ def instruction_pca_subtype(profile):
 
 
 def instruction_generation_allowed(profile):
-    """Habilitação operacional da geração por PDFs. O motor histórico permanece só no RPPS."""
+    """Habilitação operacional da geração por PDFs no motor compartilhado."""
     if not isinstance(profile, dict):
         return False
     motor = str(profile.get("motor") or "")
@@ -95,7 +97,7 @@ def instruction_generation_allowed(profile):
     identifier = str(profile.get("id") or "")
     if identifier == RPPS:
         return True
-    if identifier == CAMARAS:
+    if identifier in INSTRUCTION_EXPERIMENTAL_SPECIALTIES:
         return str(profile.get("estado") or "") in INSTRUCTION_READY_STATES
     return False
 
