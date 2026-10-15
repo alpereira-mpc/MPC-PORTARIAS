@@ -40,7 +40,7 @@ from services.minutas_storage import (
     StorageOperationError,
     SupabaseMinutasStorage,
 )
-from services.ui_theme import badge, empty_state, render_html, section_label
+from services.ui_theme import badge, empty_state, render_html, section_label, status_tone
 
 
 LOGGER = logging.getLogger(__name__)
@@ -1749,6 +1749,7 @@ def _historical_generator_panel(store, identity):
         )
 
     section_label("Etapa 1 — Analisar processo")
+    st.caption("A análise documental é assistida e não produz manifestação oficial sem revisão humana.")
     if st.button(
         "Analisar fundamentos",
         type="primary",
@@ -1759,12 +1760,13 @@ def _historical_generator_panel(store, identity):
         st.session_state.pop(analysis_key, None)
         _clear_generated_result(result_key, docx_cache_key)
         try:
-            with st.spinner("Analisando fatos, defesa e conclusões da Auditoria..."):
+            with st.spinner("Analisando fundamentos, defesa e conclusões da Auditoria..."):
                 st.session_state[analysis_key] = generator.analyze(target["id"])
         except Exception as exc:
             _error(exc)
     analysis = st.session_state.get(analysis_key)
     if analysis:
+        st.caption("Fundamentos analisados. Confira os pontos de revisão antes de solicitar a minuta.")
         show_details = st.toggle(
             "Mostrar análise detalhada e precedentes",
             value=False,
@@ -1795,6 +1797,7 @@ def _historical_generator_panel(store, identity):
                 )
 
     section_label("Etapa 2 — Gerar minuta")
+    st.caption("A geração pode recuperar precedentes do Acervo e sempre exige revisão humana antes do uso oficial.")
     use_rag = st.checkbox(
         "Usar referências jurídicas recuperadas nesta geração",
         value=True,
@@ -1826,7 +1829,7 @@ def _historical_generator_panel(store, identity):
         generation_analysis = analysis
         if use_rag and rag_stale:
             try:
-                with st.spinner("Atualizando referências jurídicas..."):
+                with st.spinner("Recuperando precedentes jurídicos do Acervo..."):
                     generation_analysis = generator.refresh_legal_recovery(
                         target["id"], analysis
                     )
@@ -1844,7 +1847,7 @@ def _historical_generator_panel(store, identity):
         if generation_analysis is not None:
             try:
                 with st.spinner(
-                    "Redigindo a minuta com os pontos de revisão sinalizados..."
+                    "Gerando minuta com os pontos de revisão sinalizados..."
                 ):
                     st.session_state[result_key] = generator.generate(
                         target["id"], generation_analysis, use_rag=use_rag
@@ -1890,6 +1893,7 @@ def _historical_generator_panel(store, identity):
     except Exception as exc:
         _error(exc)
     else:
+        st.caption("DOCX disponível para download após a geração.")
         st.download_button(
             "Baixar minuta em Word",
             data=word.content,
@@ -2157,6 +2161,16 @@ def render(store, identity):
         st.session_state["minutas_active_view"] = sections[2]
     if st.session_state.get("minutas_active_view") not in sections:
         st.session_state["minutas_active_view"] = sections[0]
+    with st.container(border=True, key="minutas_specialty_context"):
+        st.subheader(profile["nome"])
+        render_html(
+            badge(profile["estado"], status_tone(profile["estado"]))
+            + badge(
+                "Geração habilitada" if instruction_generation_allowed(profile) else "Geração não habilitada",
+                "success" if instruction_generation_allowed(profile) else "muted",
+            )
+        )
+        st.caption("Ambiente especializado: Acervo, Pesquisa Jurídica e geração assistida quando configurada.")
     active = st.radio(
         "Área do módulo",
         sections,

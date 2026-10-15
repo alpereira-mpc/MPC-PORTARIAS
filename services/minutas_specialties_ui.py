@@ -10,7 +10,7 @@ from services.minutas_extraction import MinutasExtractionService
 from services.minutas_specialties import (
     CLASSES, RPPS, STATES, fingerprint, instruction_generation_allowed, scope,
 )
-from services.ui_theme import badges, render_record
+from services.ui_theme import badges, render_record, status_tone
 
 
 def clear_specialty_session():
@@ -42,20 +42,33 @@ def selection(library):
         st.warning("Catálogo não provisionado. Execute o roteiro de implantação com backup.")
         return None
     categories = {
-        "PCA": ("Prestação de Contas Anual (PCA)", "Selecione a natureza da conta."),
-        "DENUNCIAS": ("Denúncias", "Acervo e pesquisa jurídica."),
-        "APOSENTADORIAS": ("Aposentadorias", "Acervo e pesquisa jurídica."),
-        "PENSOES": ("Pensões", "Acervo e pesquisa jurídica."),
+        "PCA": ("Prestação de Contas Anual (PCA)", "Contas municipais, RPPS e Secretarias.", "Geração disponível em especialidades configuradas."),
+        "DENUNCIAS": ("Denúncias", "Acervo e pesquisa jurídica de denúncias.", "Geração especializada não habilitada."),
+        "APOSENTADORIAS": ("Aposentadorias", "Acervo e pesquisa jurídica de atos de pessoal.", "Geração especializada não habilitada."),
+        "PENSOES": ("Pensões", "Acervo e pesquisa jurídica de atos de pessoal.", "Geração especializada não habilitada."),
     }
     selected_category = st.session_state.get("minutas_nav_category")
     if not selected_category:
         st.caption("Procuradora: Elvira Samara Pereira de Oliveira")
-        st.subheader("Selecione a categoria")
-        for column, (key, (label, description)) in zip(st.columns(4), categories.items()):
+        st.subheader("Escolha o ambiente de trabalho")
+        columns = st.columns(2)
+        for index, (key, (label, description, availability)) in enumerate(categories.items()):
+            column = columns[index % len(columns)]
             with column:
-                st.button(label, key="minutas_category_" + key,
-                    help=description,
-                    on_click=lambda value=key: st.session_state.__setitem__("minutas_nav_category", value))
+                with st.container(border=True, key="minutas_category_card_" + key.lower()):
+                    render_record(
+                        label,
+                        badges_html=badges(("Ambiente de consulta", "info")),
+                        secondary=description,
+                        meta=availability,
+                        accent="brand",
+                    )
+                    st.button(
+                        "Abrir categoria",
+                        key="minutas_category_" + key,
+                        help=description,
+                        on_click=lambda value=key: st.session_state.__setitem__("minutas_nav_category", value),
+                    )
         return None
     def back_to_categories():
         for key in ("minutas_nav_category", "minutas_nav_pca_secretarias", "minutas_pca_choice", "minutas_specialty"):
@@ -77,7 +90,8 @@ def selection(library):
             "Institutos Previdenciários (RPPS)": RPPS,
             "Secretarias": "SECRETARIAS",
         }
-        if st.session_state.get("minutas_nav_pca_secretarias"):
+        secretariats = st.session_state.get("minutas_nav_pca_secretarias")
+        if secretariats:
             choices = {
                 "Secretarias Municipais": "elvira.pca.secretarias_municipais",
                 "Secretarias Estaduais": "elvira.pca.orgaos_estaduais",
@@ -88,20 +102,44 @@ def selection(library):
 
             st.button("← Voltar a PCA", key="minutas_nav_back_pca", on_click=back_to_pca)
         st.subheader("Especialidades de PCA")
-        selected = st.radio("Especialidade", list(choices.values()), index=None,
-            format_func=lambda value: next((label for label, item in choices.items() if item == value), value),
-            key="minutas_specialty" if st.session_state.get("minutas_nav_pca_secretarias") else "minutas_pca_choice")
+        st.caption("Escolha uma especialidade para abrir o Acervo, a Pesquisa Jurídica e, quando habilitada, a geração assistida.")
+        selected = st.session_state.get("minutas_specialty" if secretariats else "minutas_pca_choice")
+        columns = st.columns(2)
+        for index, (label, value) in enumerate(choices.items()):
+            column = columns[index % len(columns)]
+            profile = catalog.get(value)
+            state = profile.get("estado") if profile else "Escolha complementar"
+            generation = (
+                "Geração habilitada" if profile and instruction_generation_allowed(profile)
+                else "Acervo e pesquisa"
+            )
+            key = value.replace("elvira.", "").replace(".", "_").lower()
+            with column:
+                with st.container(border=True, key="minutas_pca_card_" + key):
+                    render_record(
+                        label,
+                        badges_html=badges((state, status_tone(state))),
+                        secondary=generation,
+                        meta=("Defina a abrangência municipal ou estadual." if value == "SECRETARIAS" else ""),
+                        accent="brand",
+                    )
+                    st.button(
+                        "Selecionar",
+                        key="minutas_pca_option_" + key,
+                        on_click=lambda choice=value, state_key=("minutas_specialty" if secretariats else "minutas_pca_choice"):
+                            st.session_state.__setitem__(state_key, choice),
+                    )
         if selected == "SECRETARIAS":
+            st.session_state.pop("minutas_pca_choice", None)
             st.session_state["minutas_nav_pca_secretarias"] = True
-            return None
+            st.rerun()
         if not selected:
             return None
-        if not st.session_state.get("minutas_nav_pca_secretarias"):
+        if not secretariats:
             st.session_state["minutas_specialty"] = selected
     if selected not in catalog:
         return None
     profile = catalog[selected]
-    st.caption(f"{profile['estado']} · Configuração {profile['config_versao']}")
     if not instruction_generation_allowed(profile):
         st.info("Acervo e pesquisa disponíveis. Esta especialidade ainda não possui motor especializado habilitado.")
     return profile
@@ -596,6 +634,8 @@ def _administration(admin, profile):
         operations.append("Evolução da especialidade")
     if admin.repository.separation_enabled():
         operations.append("Acervo legado")
+    st.subheader("Administração do Minutas IA")
+    st.caption("Acompanhamento do catálogo, inventário e evolução, sem alterar o acervo por esta tela.")
     operation = st.selectbox("Administração", operations)
     if operation == "Painel de especialidades":
         data = admin.repository.dashboard()
@@ -607,7 +647,18 @@ def _administration(admin, profile):
                 "Geração": "Habilitada" if instruction_generation_allowed(item) else "Desabilitada",
                 "Processos": row.get("processos", 0), "Pareceres": row.get("pareceres", 0),
                 "Relatórios": row.get("relatorios", 0), "Documentos indexados": row.get("indexados", 0)})
+        enabled = sum(row["Geração"] == "Habilitada" for row in rows)
+        testing = sum(row["Estado"] == "Em testes" for row in rows)
+        with st.container(border=True, key="minutas_admin_summary"):
+            st.caption("Visão geral do catálogo vigente")
+            total, motors, in_testing, pending = st.columns(4)
+            total.metric("Especialidades vigentes", len(rows))
+            motors.metric("Geração habilitada", enabled)
+            in_testing.metric("Em testes", testing)
+            pending.metric("Sem classificação", data["pendentes"])
         st.caption(f"Especialidades vigentes: {len(rows)}")
+        st.subheader("Painel de especialidades")
+        st.caption("Indicadores calculados por processos e documentos distintos no escopo de cada especialidade.")
         st.dataframe(rows, hide_index=True, width="stretch")
         st.caption(f"Processos do acervo ativo sem classificação: {data['pendentes']}")
         st.caption("“A iniciar” indica o estágio da especialidade; não significa ausência de documentos no Acervo nem falha de indexação.")

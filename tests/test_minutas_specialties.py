@@ -50,18 +50,21 @@ class SyntheticStore:
 
 def _choose_specialty(app, specialty=RPPS):
     state_secretariats = (SECRETARIAS_MUNICIPAIS, "elvira.pca.orgaos_estaduais")
+    def option_key(value):
+        return "minutas_pca_option_" + value.replace("elvira.", "").replace(".", "_").lower()
+
     if specialty in (RPPS, CAMARAS, PREFEITURAS, *state_secretariats):
         if any(item.key == "minutas_category_PCA" for item in app.button):
             app.button(key="minutas_category_PCA").click().run()
         if specialty not in state_secretariats and any(item.key == "minutas_nav_back_pca" for item in app.button):
             app.button(key="minutas_nav_back_pca").click().run()
         if specialty in state_secretariats:
-            if any(item.key == "minutas_pca_choice" for item in app.radio):
-                app.radio(key="minutas_pca_choice").set_value("SECRETARIAS").run()
+            if any(item.key == option_key("SECRETARIAS") for item in app.button):
+                app.button(key=option_key("SECRETARIAS")).click().run()
                 app.run()
-            app.radio(key="minutas_specialty").set_value(specialty).run()
+            app.button(key=option_key(specialty)).click().run()
         else:
-            app.radio(key="minutas_pca_choice").set_value(specialty).run()
+            app.button(key=option_key(specialty)).click().run()
     else:
         category = {
             "elvira.denuncias": "DENUNCIAS",
@@ -666,6 +669,7 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not app.exception and not app.error
     assert not any(item.key == "minutas_specialty" for item in app.selectbox)
     assert not any(item.key == "minutas_active_view" for item in app.radio)
+    assert len([item for item in app.button if item.key.startswith("minutas_category_")]) == 4
     _choose_specialty(app)
     assert app.session_state["minutas_specialty"] == RPPS
     assert app.radio(key="minutas_active_view").value == "Acervo"
