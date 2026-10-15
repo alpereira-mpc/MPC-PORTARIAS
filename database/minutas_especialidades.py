@@ -3,7 +3,10 @@
 import json
 import uuid
 from database.store import now, unwrap_store
-from services.minutas_specialties import PROSECUTOR_KEY, STATES, scope, fingerprint
+from services.minutas_specialties import (
+    PREFEITURAS, PREFEITURAS_LEGACY, PROSECUTOR_KEY, STATES, canonical_specialty_id,
+    fingerprint, scope,
+)
 
 
 REQUIRED_RELATIONS = (
@@ -45,13 +48,27 @@ def active_clause(enabled, alias="r"):
     return f" AND {column}='ativo'"
 
 
+def specialty_membership_clause(column):
+    """Compatibilidade temporária para vínculos legados de Prefeituras."""
+    identifiers = ",".join((PREFEITURAS, *PREFEITURAS_LEGACY))
+    return (
+        "(',' || CASE WHEN ?='" + PREFEITURAS + "' THEN '" + identifiers
+        + "' ELSE ? END || ',') LIKE '%,' || " + column + " || ',%'"
+    )
+
+
+def scoped_parameters(specialty):
+    canonical = canonical_specialty_id(specialty)
+    return (canonical, canonical)
+
+
 def scoped_clause(alias="r"):
     return (f"{alias}.procuradora_chave=? AND EXISTS (SELECT 1 FROM minutas_classificacoes mc "
             f"JOIN minutas_acervo_vinculos mv ON mv.referencia_id=mc.referencia_id "
             "JOIN minutas_especialidades ms ON ms.id=mv.especialidade_id "
             f"WHERE mc.referencia_id={alias}.id AND mc.estado='CLASSIFICADO' "
             f"AND ms.procuradora_chave={alias}.procuradora_chave AND (ms.grupo='TEMATICO' OR mc.classe=ms.grupo) "
-            "AND mv.especialidade_id=?)")
+            "AND " + specialty_membership_clause("mv.especialidade_id") + ")")
 
 
 class MinutasSpecialtiesStore:
@@ -74,10 +91,20 @@ class MinutasSpecialtiesStore:
 
     def catalog(self):
         with self.store.connection(read_only=True) as c:
-            return [dict(row) for row in c.execute(
+            rows = [dict(row) for row in c.execute(
                 "SELECT * FROM minutas_especialidades WHERE procuradora_chave=? ORDER BY grupo,nome",
                 (PROSECUTOR_KEY,),
             ).fetchall()]
+        canonical = next((row for row in rows if row["id"] == PREFEITURAS), None)
+        legacy = [row for row in rows if row["id"] in PREFEITURAS_LEGACY]
+        rows = [row for row in rows if row["id"] not in PREFEITURAS_LEGACY]
+        if canonical is None and legacy:
+            canonical = dict(legacy[0])
+            canonical.update(scope(PREFEITURAS))
+            canonical["id"] = PREFEITURAS
+        if canonical is not None and not any(row["id"] == PREFEITURAS for row in rows):
+            rows.append(canonical)
+        return sorted(rows, key=lambda row: (row["grupo"], row["nome"]))
 
     def classification(self, identifier):
         with self.store.connection(read_only=True) as c:
@@ -96,7 +123,7 @@ class MinutasSpecialtiesStore:
         args = [PROSECUTOR_KEY]
         if specialty:
             where = scoped_clause()
-            args.append(specialty)
+            args.extend(scoped_parameters(specialty))
         if pending:
             where += " AND (mc.estado IS NULL OR mc.estado<>'CLASSIFICADO')"
         if query:

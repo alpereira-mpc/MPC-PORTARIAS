@@ -10,6 +10,8 @@ PROSECUTOR_KEY = "elvira samara"
 RPPS = "elvira.pca.rpps"
 CAMARAS = "elvira.pca.camaras"
 SECRETARIAS_MUNICIPAIS = "elvira.pca.secretarias_municipais"
+PREFEITURAS = "elvira.pca.prefeituras"
+PREFEITURAS_LEGACY = ("elvira.pca.governo", "elvira.pca.gestao")
 SHARED_INSTRUCTION_MOTOR = "pca-rpps-v1"
 INSTRUCTION_READY_STATES = ("Em testes", "Funcional com ajustes", "Validada")
 INSTRUCTION_EXPERIMENTAL_SPECIALTIES = (CAMARAS, SECRETARIAS_MUNICIPAIS)
@@ -37,8 +39,7 @@ CLASSES = {
 _PROFILES = (
     ("pca.rpps", "PCA", "Institutos Previdenciários (RPPS)", "RPPS"),
     ("pca.camaras", "PCA", "Câmaras Municipais", "CAMARA"),
-    ("pca.governo", "PCA", "Prefeituras / Contas de Governo", "PREFEITURA"),
-    ("pca.gestao", "PCA", "Prefeituras / Contas de Gestão", "PREFEITURA"),
+    ("pca.prefeituras", "PCA", "Prefeituras Municipais", "PREFEITURA"),
     ("pca.secretarias_municipais", "PCA", "Secretarias Municipais", "SECRETARIA_MUNICIPAL"),
     ("pca.orgaos_estaduais", "PCA", "Secretarias e Órgãos Estaduais", "ORGAO_ESTADUAL"),
     ("pca.fundos", "PCA", "Fundos Públicos", "FUNDO"),
@@ -75,8 +76,20 @@ CATALOG = tuple({
 } for key, group, name, profile in _PROFILES)
 
 
+def canonical_specialty_id(value):
+    """Mantém IDs históricos de Prefeituras legíveis durante a transição manual."""
+    value = str(value or "")
+    return PREFEITURAS if value in PREFEITURAS_LEGACY else value
+
+
+def specialty_memberships(value):
+    """IDs físicos aceitos para uma especialidade lógica, sem duplicar resultados."""
+    canonical = canonical_specialty_id(value)
+    return (PREFEITURAS, *PREFEITURAS_LEGACY) if canonical == PREFEITURAS else (canonical,)
+
+
 def scope(value):
-    profile = next((item for item in CATALOG if item["id"] == value), None)
+    profile = next((item for item in CATALOG if item["id"] == canonical_specialty_id(value)), None)
     if profile is None:
         raise ValueError("Selecione uma especialidade jurídica válida.")
     return profile
@@ -183,9 +196,13 @@ def suggest(record, extractions):
         if re.search(r"secretaria (?:de estado|estadual)|orgao estadual", e): matches.append("pca.orgaos_estaduais")
         if "fundo " in e and not matches: matches.append("pca.fundos")
         modality = plain(" ".join(sorted(fields.get("modalidade", set()))) + " " + formal)
+        prefeitura_dimensions = []
         if legacy == "Prefeitura" or "prefeitura" in e:
-            if "contas de governo" in modality: matches.append("pca.governo")
-            if "contas de gestao" in modality: matches.append("pca.gestao")
+            matches.append("pca.prefeituras")
+            if "contas de governo" in modality:
+                prefeitura_dimensions.append("Contas de Governo")
+            if "contas de gestao" in modality:
+                prefeitura_dimensions.append("Contas de Gestão")
         if len(matches) == 1:
             selected = "elvira." + matches[0]
         elif matches or legacy:
@@ -193,7 +210,7 @@ def suggest(record, extractions):
         expected = {"pca.rpps": "Instituto/Autarquia", "pca.camaras": "Câmara Municipal",
                     "pca.secretarias_municipais": "Secretaria Municipal ou Estadual",
                     "pca.orgaos_estaduais": "Secretaria Municipal ou Estadual",
-                    "pca.governo": "Prefeitura", "pca.gestao": "Prefeitura"}
+                    "pca.prefeituras": "Prefeitura"}
         if selected and legacy and expected.get(selected[7:], legacy) != legacy:
             selected = None
             result.update(estado="PENDENTE", motivo="Subtipo cadastrado conflita com identificação documental.")
@@ -220,6 +237,7 @@ def suggest(record, extractions):
     if selected:
         profile = scope(selected)
         result.update(estado="CLASSIFICADO", especialidade_id=selected, perfil=profile["perfil"],
-                      modalidade=profile["nome"], evidencia=[entity or legacy, formal or "Cadastro legado de PCA"],
+                      modalidade=" e ".join(prefeitura_dimensions) if selected == PREFEITURAS and prefeitura_dimensions else profile["nome"],
+                      evidencia=[entity or legacy, formal or "Cadastro legado de PCA"],
                       motivo="Identificação expressa e compatível com os vínculos existentes.")
     return result

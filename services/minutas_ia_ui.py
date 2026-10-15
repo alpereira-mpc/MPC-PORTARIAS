@@ -2102,11 +2102,14 @@ def render(store, identity):
     render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
     st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
     from database.minutas_especialidades import MinutasSpecialtiesStore
-    from services.minutas_specialties_ui import selection, synchronize_scope, acervo
+    from services.minutas_specialties_ui import (
+        acervo, administration, clear_specialty_session, selection, synchronize_scope,
+    )
     from services.minutas_specialties import instruction_generation_allowed
     administrative_library = _service(store, identity, administrative=True)
     if administrative_library is None:
         return
+    st.button("Início do módulo", key="minutas_module_home", on_click=clear_specialty_session)
     repository_store = getattr(getattr(administrative_library, "repository", None), "store", None)
     if getattr(repository_store, "backend", None) in {"postgresql", "sqlite"}:
         try:
@@ -2122,6 +2125,15 @@ def render(store, identity):
     try:
         profile = selection(administrative_library)
         if profile is None:
+            if st.button("Administração do módulo", key="minutas_initial_administration_open"):
+                st.session_state["minutas_initial_administration"] = True
+            if st.session_state.get("minutas_initial_administration"):
+                st.button(
+                    "← Voltar à escolha de especialidade",
+                    key="minutas_initial_administration_back",
+                    on_click=lambda: st.session_state.pop("minutas_initial_administration", None),
+                )
+                administration(administrative_library)
             return
         library = _service(store, identity)
         if library is None:

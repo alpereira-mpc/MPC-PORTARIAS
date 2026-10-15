@@ -13,6 +13,26 @@ from services.minutas_specialties import (
 from services.ui_theme import badges, render_record
 
 
+def clear_specialty_session():
+    """Retorna à entrada neutra, preservando somente dados já persistidos."""
+    transient_prefixes = (
+        "minutas_generation_analysis_", "minutas_generation_result_",
+        "minutas_generation_docx_cache_", "minutas_search_download_",
+        "minutas_result_", "minutas_download_", "minutas_complement_download_",
+        "minutas_instrucao_", "minutas_upload_preview_", "minutas_uploads_",
+        "minutas_batch_",
+    )
+    transient_keys = {
+        "minutas_specialty", "minutas_class_group", "minutas_scope_token",
+        "minutas_legal_search", "minutas_active_panel", "minutas_open_reference",
+        "minutas_generation_target", "minutas_generation_mode", "minutas_active_view",
+        "minutas_initial_administration",
+    }
+    for key in list(st.session_state):
+        if key in transient_keys or key.startswith(transient_prefixes):
+            del st.session_state[key]
+
+
 def selection(library):
     """Catálogo pequeno; não abre PDFs, extrações nem consulta o RAG."""
     admin = MinutasAcervoService(library)
@@ -23,14 +43,19 @@ def selection(library):
     st.caption("Procuradora: Elvira Samara Pereira de Oliveira")
     groups = list(dict.fromkeys(item["grupo"] for item in catalog))
     groups.sort(key=lambda group: (group != "PCA", group))
-    group = st.selectbox("Classe processual / grupo temático", groups,
+    group = st.selectbox("Classe processual / grupo temático", groups, index=None,
+        placeholder="Selecione a classe ou grupo",
         format_func=lambda value: CLASSES.get(value, "Temas na classe efetiva do processo"), key="minutas_class_group")
+    if not group:
+        st.info("Escolha a classe processual e, em seguida, a especialidade para acessar o Acervo, a pesquisa e o gerador.")
+        return None
     available = {item["id"]: item for item in catalog if item["grupo"] == group}
     options = sorted(available, key=lambda value: (value != RPPS, available[value]["nome"]))
-    if st.session_state.get("minutas_specialty") not in available:
-        st.session_state["minutas_specialty"] = options[0]
-    selected = st.selectbox("Especialidade", options,
+    selected = st.selectbox("Especialidade", options, index=None,
+        placeholder="Selecione a especialidade",
         format_func=lambda value: available[value]["nome"], key="minutas_specialty")
+    if not selected:
+        return None
     profile = available[selected]
     st.caption(f"{profile['estado']} · Configuração {profile['config_versao']}")
     if not instruction_generation_allowed(profile):
@@ -514,8 +539,17 @@ def _legacy_archive(admin, library):
         _documents(library, library.get(identifier))
 
 
+def administration(library):
+    """Acesso administrativo sem criar uma especialidade de trabalho implícita."""
+    admin = MinutasAcervoService(library)
+    admin.library._authorize()
+    _administration(admin, None)
+
+
 def _administration(admin, profile):
-    operations = ["Painel de especialidades", "Inventário e reclassificação", "Evolução da especialidade"]
+    operations = ["Painel de especialidades", "Inventário e reclassificação"]
+    if profile is not None:
+        operations.append("Evolução da especialidade")
     if admin.repository.separation_enabled():
         operations.append("Acervo legado")
     operation = st.selectbox("Administração", operations)

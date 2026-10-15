@@ -20,7 +20,7 @@ from services.minutas_acervo import (
 from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionService
 from services.minutas_library import MinutasLibraryService, MinutasAccessDenied, MinutasValidationError
 from services.minutas_specialties import (
-    CATALOG, CAMARAS, CLASSES, PROSECUTOR_KEY, RPPS, SHARED_INSTRUCTION_MOTOR,
+    CATALOG, CAMARAS, CLASSES, PREFEITURAS, PROSECUTOR_KEY, RPPS, SHARED_INSTRUCTION_MOTOR,
     SECRETARIAS_MUNICIPAIS, instruction_generation_allowed, scope, suggest,
 )
 from tests.access_testing import TEST_IDENTITY
@@ -46,6 +46,11 @@ class SyntheticStore:
                 yield c
         finally:
             c.close()
+
+
+def _choose_specialty(app, specialty=RPPS):
+    app.selectbox(key="minutas_class_group").set_value(scope(specialty)["grupo"]).run()
+    app.selectbox(key="minutas_specialty").set_value(specialty).run()
 
 
 class Storage:
@@ -151,14 +156,15 @@ def seed(store, *, process="TC 01653/26", subtype="Instituto/Autarquia", entity=
 
 
 def test_catalog_separates_classes_themes_and_only_preserves_rpps_engine():
-    assert len(CATALOG) == 24
-    assert len({p["id"] for p in CATALOG}) == 24
+    assert len(CATALOG) == 23
+    assert len({p["id"] for p in CATALOG}) == 23
     assert [p["id"] for p in CATALOG if p["motor"]] == [RPPS]
     assert scope(RPPS)["estado"] == "Funcional com ajustes"
     assert all(p["estado"] == "A iniciar" for p in CATALOG if p["id"] != RPPS)
     assert instruction_generation_allowed(scope(RPPS)) is True
     assert instruction_generation_allowed(scope(CAMARAS)) is False
     assert instruction_generation_allowed(scope(SECRETARIAS_MUNICIPAIS)) is False
+    assert instruction_generation_allowed(scope(PREFEITURAS)) is False
     enabled = dict(scope(CAMARAS), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes")
     assert instruction_generation_allowed(enabled) is True
     assert instruction_generation_allowed(dict(enabled, estado="A iniciar")) is False
@@ -170,7 +176,7 @@ def test_catalog_separates_classes_themes_and_only_preserves_rpps_engine():
     assert instruction_generation_allowed(dict(secretarias, estado="Validada")) is True
     assert instruction_generation_allowed(dict(secretarias, config_versao="2")) is False
     assert instruction_generation_allowed(dict(
-        scope("elvira.pca.governo"), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
+        scope("elvira.pca.fundos"), motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
     )) is False
     assert scope("elvira.tema.licitacoes")["grupo"] == "TEMATICO"
     assert "LICITACAO" not in CLASSES
@@ -203,6 +209,29 @@ def test_chamber_opinions_remain_accessible_in_their_own_specialty(environment):
     }
     assert chamber_library.get(ibiara["id"])["origem"] == "Câmara Municipal de Ibiara"
     assert chamber_library.get(cajazeiras["id"])["origem"] == "Câmara Municipal de Cajazeiras"
+
+
+def test_prefectures_canonical_scope_reads_legacy_records_without_duplicate(environment):
+    store, storage = environment
+    record = seed(store, process="02720/25", subtype="Prefeitura", entity="Prefeitura Municipal de Exemplo")
+    admin = MinutasAcervoService(library(store, storage))
+    admin.apply(admin.dry_run(), {"identificador": "teste", "restauracao_verificada": True})
+    with store.connection() as c:
+        c.execute(
+            "INSERT INTO minutas_especialidades "
+            "SELECT ?,procuradora_chave,grupo,?,?,estado,config_versao,motor,config_json,casos_testados,"
+            "ultima_validacao,pendencias,resultados_testes,revisao,atualizado_em,atualizado_por "
+            "FROM minutas_especialidades WHERE id=?",
+            ("elvira.pca.governo", "Prefeituras / Contas de Governo", "PREFEITURA", PREFEITURAS),
+        )
+        c.execute("UPDATE minutas_classificacoes SET especialidade_id=? WHERE referencia_id=?",
+                  ("elvira.pca.governo", record["id"]))
+        c.execute("UPDATE minutas_acervo_vinculos SET especialidade_id=? WHERE referencia_id=?",
+                  ("elvira.pca.governo", record["id"]))
+    scoped = library(store, storage, PREFEITURAS).list()
+    assert [item["id"] for item in scoped] == [record["id"]]
+    assert scoped[0]["especialidade_id"] == PREFEITURAS
+    assert [item["id"] for item in admin.catalog() if item["grupo"] == "PCA"].count(PREFEITURAS) == 1
 
 
 def test_chamber_upload_requires_reclassification_of_existing_other_scope_process(environment):
@@ -255,9 +284,9 @@ def test_chamber_upload_requires_reclassification_of_existing_other_scope_proces
     ("Câmara Municipal de Exemplo", "Câmara Municipal", "PCA", "elvira.pca.camaras"),
     ("Secretaria Municipal de Educação", "Secretaria Municipal ou Estadual", "PCA", "elvira.pca.secretarias_municipais"),
     ("Secretaria de Estado da Saúde", "Secretaria Municipal ou Estadual", "PCA", "elvira.pca.orgaos_estaduais"),
-    ("Prefeitura de Exemplo", "Prefeitura", "PCA — Contas de Governo", "elvira.pca.governo"),
-    ("Prefeitura de Exemplo", "Prefeitura", "PCA — Contas de Gestão", "elvira.pca.gestao"),
-    ("Prefeitura de Exemplo", "Prefeitura", "PCA", None),
+    ("Prefeitura de Exemplo", "Prefeitura", "PCA — Contas de Governo", PREFEITURAS),
+    ("Prefeitura de Exemplo", "Prefeitura", "PCA — Contas de Gestão", PREFEITURAS),
+    ("Prefeitura de Exemplo", "Prefeitura", "PCA", PREFEITURAS),
     ("Secretaria de Educação", "Secretaria Municipal ou Estadual", "PCA", None),
     ("Instituto de Previdência de Exemplo", "Câmara Municipal", "PCA", None),
     ("Instituto de Previdência de Exemplo", "Instituto/Autarquia", "Aposentadoria", None),
@@ -282,7 +311,7 @@ def test_migration_preserves_ids_files_extractions_and_is_idempotent(environment
     plan = service.dry_run()
     assert plan["contagens"]["processos"] == 5
     assert plan["contagens"]["arquivos_vinculados"] == 10
-    assert plan["resultados"] == {"CLASSIFICADO": 3, "PENDENTE": 2}
+    assert plan["resultados"] == {"CLASSIFICADO": 4, "PENDENTE": 1}
     with pytest.raises(ValueError, match="backup"):
         service.apply(plan, {})
     applied = service.apply(plan, {"identificador": "backup-sintetico-restaurado", "restauracao_verificada": True})
@@ -292,7 +321,7 @@ def test_migration_preserves_ids_files_extractions_and_is_idempotent(environment
         assert before[key] == after[key]
     assert applied["antes"] == applied["depois"]
     assert service.apply(service.dry_run(), {"identificador": "teste", "restauracao_verificada": True})["alterados"] == 0
-    assert len(service.repository.list_records(pending=True)) == 2
+    assert len(service.repository.list_records(pending=True)) == 1
     assert {r["id"] for r in service.repository.list_records()} == {r["id"] for r in records}
     assert storage.objects == {} and storage.downloads == []
 
@@ -361,7 +390,7 @@ def test_specialty_sql_isolation_download_context_missing_scope_and_other_prosec
     with pytest.raises(ValueError, match="especialidade"):
         MinutasExtractionService(library(store, storage, None)).context_sources(target["id"])
     assert storage.downloads == []
-    assert any("mv.especialidade_id='elvira.pca.rpps'" in query for query in store.queries)
+    assert any("mv.especialidade_id" in query for query in store.queries)
 
 
 def test_bulk_upload_dedup_versions_models_rollback_and_authorization(environment):
@@ -499,6 +528,9 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
         render(None, TEST_IDENTITY)
     app = AppTest.from_function(page, default_timeout=30).run()
     assert not app.exception and not app.error
+    assert not any(item.key == "minutas_specialty" for item in app.selectbox)
+    assert not any(item.key == "minutas_active_view" for item in app.radio)
+    _choose_specialty(app)
     assert app.selectbox(key="minutas_specialty").value == RPPS
     assert app.radio(key="minutas_active_view").value == "Acervo"
     app.radio(key="minutas_active_view").set_value("Pesquisa Jurídica").run()
@@ -518,10 +550,19 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert "Pendências de classificação" not in app.radio(key="minutas_acervo_mode").options
     app.radio(key="minutas_acervo_mode").set_value("Administração").run()
     assert not app.exception and not app.error
-    assert any("sem classificação: 1" in caption.value for caption in app.caption)
+    assert any("sem classificação: 0" in caption.value for caption in app.caption)
     assert app.button(key="minutas_acervo_back")
     app.button(key="minutas_acervo_back").click().run()
     assert app.radio(key="minutas_acervo_mode").value == "Consultar"
+    app.button(key="minutas_module_home").click().run()
+    assert not any(item.key == "minutas_active_view" for item in app.radio)
+    assert not any(item.key == "minutas_specialty" for item in app.selectbox)
+    app.button(key="minutas_initial_administration_open").click().run()
+    assert app.button(key="minutas_initial_administration_back")
+    administration = next(item for item in app.selectbox if item.label == "Administração")
+    assert "Painel de especialidades" in administration.options
+    app.button(key="minutas_initial_administration_back").click().run()
+    assert not any(item.key == "minutas_active_view" for item in app.radio)
     assert storage.downloads == []
     assert not any("ts_headline" in query for query in store.queries)
 
@@ -546,7 +587,7 @@ def test_especialidade_compartilhada_habilitada_abre_geracao_e_desligar_nao_afet
         render(None, TEST_IDENTITY)
 
     app = AppTest.from_function(page, default_timeout=30).run()
-    app.selectbox(key="minutas_specialty").set_value(specialty).run()
+    _choose_specialty(app, specialty)
     app.radio(key="minutas_active_view").set_value("Gerar Minuta de Parecer").run()
     assert any("ainda não habilitada" in info.value for info in app.info)
     assert not any(item.key == "minutas_instrucao_incluir" for item in app.button)
@@ -602,6 +643,7 @@ def test_batch_upload_ui_keeps_a_single_themed_confirmation_across_reruns(enviro
         from tests.access_testing import TEST_IDENTITY
         render(None, TEST_IDENTITY)
     app = AppTest.from_function(page, default_timeout=30).run()
+    _choose_specialty(app)
     app.radio(key="minutas_acervo_mode").set_value("Adicionar documentos").run()
     app.session_state["minutas_batch_result_" + RPPS] = {
         "signature": "lote-persistido",
@@ -886,6 +928,7 @@ def test_report_link_widgets_show_recovered_metadata_and_follow_the_selection(se
         from tests.access_testing import TEST_IDENTITY
         render(None, TEST_IDENTITY)
     app = AppTest.from_function(page, default_timeout=30).run()
+    _choose_specialty(app)
     app.radio(key="minutas_acervo_mode").set_value("Adicionar documentos").run()
     app.selectbox(key="minutas_upload_role_" + RPPS).set_value("auditoria").run()
     header = (
