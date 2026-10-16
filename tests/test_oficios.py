@@ -532,6 +532,76 @@ def test_oficio_detail_uses_conditional_sections(store, monkeypatch):
     )
 
 
+def test_received_complementary_documents_use_real_service_from_ui(store, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    from database.store import ROOT
+    from services.oficios import open_service
+    from tests.access_testing import enable_login
+
+    service = ready(store)
+    member = next(
+        item["membro_id"] for item in service.series() if item["sigla"] == "PROGE"
+    )
+    identifier = service.save(
+        {
+            "direcao": "RECEBIDO",
+            "numero_externo": "45/2026",
+            "remetente": "Remetente",
+            "instituicao": "Instituição",
+            "data": "2026-09-10",
+            "data_recebimento": "2026-09-11",
+            "membros": [member],
+            "assunto": "Documento complementar pela interface",
+        },
+        uploads=[("principal.pdf", _blank_pdf())],
+    )
+    real_service = open_service(store)
+    assert type(real_service) is type(service)
+    assert callable(real_service.add_received_complementary_files)
+    assert callable(real_service.download_received_complementary_file)
+    assert callable(real_service.delete_received_complementary_file)
+
+    enable_login(monkeypatch, store)
+    monkeypatch.setattr("database.store.Store", lambda: store)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.button(key="open_oficios").click().run()
+    app.button(key="gabinete_PROGE").click().run()
+    app.radio(key="oficio_page").set_value("Recebidos").run()
+    app.button(key="open_oficio_" + identifier).click().run()
+    app.radio(key="oficio_detail_section_" + identifier).set_value("Documentos").run()
+    app.file_uploader(key="oficio_received_complement_uploads_" + identifier).set_value(
+        [("complementar.pdf", _blank_pdf(), "application/pdf")]
+    ).run()
+    app.text_input(
+        key="oficio_received_complement_description_" + identifier + "_0"
+    ).set_value("Documento relacionado")
+    next(
+        button
+        for button in app.button
+        if button.label == "Adicionar documentos complementares"
+    ).click().run()
+
+    assert not app.exception and not app.error
+    complementary = next(
+        item
+        for item in real_service.files(identifier)
+        if item["papel"] == "COMPLEMENTAR"
+    )
+    assert complementary["descricao"] == "Documento relacionado"
+    assert real_service.download_received_complementary_file(
+        identifier, complementary["id"]
+    ) == _blank_pdf()
+
+    app.checkbox(key="oficio_complement_delete_confirm_" + complementary["id"]).check()
+    app.button(key="oficio_complement_delete_" + complementary["id"]).click().run()
+    assert not app.exception and not app.error
+    assert not any(
+        item["papel"] == "COMPLEMENTAR"
+        for item in real_service.files(identifier)
+    )
+
+
 @pytest.mark.parametrize(
     "scenario",
     [
