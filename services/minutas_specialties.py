@@ -17,6 +17,8 @@ APOSENTADORIAS = "elvira.pessoal.aposentadorias"
 APOSENTADORIAS_MOTOR = "aposentadorias-v1"
 DENUNCIAS = "elvira.denuncias"
 DENUNCIAS_MOTOR = "denuncias-v1"
+RECURSOS = "elvira.recursos"
+RECURSOS_MOTOR = "recursos-v1"
 INSTRUCTION_READY_STATES = ("Em testes", "Funcional com ajustes", "Validada")
 INSTRUCTION_EXPERIMENTAL_SPECIALTIES = (
     CAMARAS,
@@ -108,8 +110,8 @@ def instruction_pca_subtype(profile):
 
 
 def requires_account_year(specialty_id):
-    """PCA exige exercício; instruções locais de Aposentadoria e Denúncia não."""
-    return canonical_specialty_id(specialty_id) not in (APOSENTADORIAS, DENUNCIAS)
+    """PCA exige exercício; motores processuais especializados não."""
+    return canonical_specialty_id(specialty_id) not in (APOSENTADORIAS, DENUNCIAS, RECURSOS)
 
 
 def instruction_generation_allowed(profile):
@@ -123,6 +125,14 @@ def instruction_generation_allowed(profile):
         return (
             identifier == DENUNCIAS
             and motor == DENUNCIAS_MOTOR
+            and version == "1"
+            and str(profile.get("procuradora_chave") or "") == PROSECUTOR_KEY
+            and str(profile.get("estado") or "") in INSTRUCTION_READY_STATES
+        )
+    if identifier == RECURSOS or motor == RECURSOS_MOTOR:
+        return (
+            identifier == RECURSOS
+            and motor == RECURSOS_MOTOR
             and version == "1"
             and str(profile.get("procuradora_chave") or "") == PROSECUTOR_KEY
             and str(profile.get("estado") or "") in INSTRUCTION_READY_STATES

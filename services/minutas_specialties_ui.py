@@ -8,7 +8,7 @@ import streamlit as st
 from services.minutas_acervo import MinutasAcervoService, optional_exercise_label
 from services.minutas_extraction import MinutasExtractionService
 from services.minutas_specialties import (
-    CLASSES, RPPS, STATES, fingerprint, instruction_generation_allowed,
+    CLASSES, RECURSOS, RPPS, STATES, fingerprint, instruction_generation_allowed,
     requires_account_year, scope,
 )
 from services.ui_theme import badges, render_record, status_tone
@@ -25,6 +25,7 @@ def clear_specialty_session():
     )
     transient_keys = {
         "minutas_specialty", "minutas_pca_choice", "minutas_class_group", "minutas_scope_token",
+        "minutas_recurso_modalidade",
         "minutas_nav_category", "minutas_nav_pca_secretarias",
         "minutas_legal_search", "minutas_active_panel", "minutas_open_reference",
         "minutas_generation_target", "minutas_generation_mode", "minutas_active_view",
@@ -46,6 +47,8 @@ def selection(library):
     aposentadorias_prontas = instruction_generation_allowed(aposentadorias)
     denuncias = catalog.get("elvira.denuncias")
     denuncias_prontas = instruction_generation_allowed(denuncias)
+    recursos = catalog.get(RECURSOS)
+    recursos_prontos = instruction_generation_allowed(recursos)
     categories = {
         "PCA": ("Prestação de Contas Anual (PCA)", "Contas municipais, RPPS e Secretarias.", "Geração disponível em especialidades configuradas.", "Geração disponível"),
         "DENUNCIAS": (
@@ -65,6 +68,14 @@ def selection(library):
             "Geração disponível" if aposentadorias_prontas else "Somente consulta",
         ),
         "PENSOES": ("Pensões", "Acervo e pesquisa jurídica de atos de pessoal.", "Geração especializada não habilitada.", "Somente consulta"),
+        "RECURSOS": (
+            "Recursos",
+            "Acervo, pesquisa jurídica e minutas de Apelação e Recurso Ordinário."
+            if recursos_prontos else "Acervo e pesquisa jurídica de recursos.",
+            "Geração disponível nas duas modalidades."
+            if recursos_prontos else "Geração especializada não habilitada.",
+            "Geração disponível" if recursos_prontos else "Somente consulta",
+        ),
     }
     selected_category = st.session_state.get("minutas_nav_category")
     if not selected_category:
@@ -79,7 +90,7 @@ def selection(library):
                         label,
                         badges_html=badges(
                             ("PCA" if key == "PCA" else "Categoria operacional", "brand"),
-                            (generation, "success" if key == "PCA" or (key == "APOSENTADORIAS" and aposentadorias_prontas) or (key == "DENUNCIAS" and denuncias_prontas) else "muted"),
+                            (generation, "success" if key == "PCA" or (key == "APOSENTADORIAS" and aposentadorias_prontas) or (key == "DENUNCIAS" and denuncias_prontas) or (key == "RECURSOS" and recursos_prontos) else "muted"),
                         ),
                         secondary=description,
                         meta=availability,
@@ -101,6 +112,7 @@ def selection(library):
         "DENUNCIAS": "elvira.denuncias",
         "APOSENTADORIAS": "elvira.pessoal.aposentadorias",
         "PENSOES": "elvira.pessoal.pensoes",
+        "RECURSOS": RECURSOS,
     }
     if selected_category in direct:
         selected = direct[selected_category]
@@ -211,12 +223,28 @@ def _classification(admin, record, catalog):
         formal = st.selectbox("Classe efetiva", list(CLASSES), format_func=CLASSES.get,
                               index=list(CLASSES).index(initial_class) if initial_class in CLASSES else 0)
         entity = st.text_input("Entidade fiscalizada", value=current.get("entidade", ""))
+        modality = ""
+        profile_value = ""
+        if selected == RECURSOS:
+            from services.minutas_recursos import MODALIDADES
+            labels = tuple(MODALIDADES.values())
+            stored_modality = current.get("modalidade")
+            modality = st.selectbox(
+                "Modalidade recursal", labels,
+                index=labels.index(stored_modality) if stored_modality in labels else 0,
+            )
+            profile_value = st.text_input(
+                "Matéria originária", value=current.get("perfil", ""),
+            )
         themes = st.text_input("Temas (separados por ponto e vírgula)", value="; ".join(json.loads(current.get("temas_json", "[]"))))
         reason = st.text_area("Fundamento documental da classificação", value="")
         save = st.form_submit_button("Confirmar classificação")
     if save:
-        admin.classify(identifier, selected, formal, entity, reason,
-                       [term.strip() for term in themes.split(";") if term.strip()])
+        admin.classify(
+            identifier, selected, formal, entity, reason,
+            [term.strip() for term in themes.split(";") if term.strip()],
+            modality=modality, profile_value=profile_value,
+        )
         st.rerun()
     if current.get("estado") == "CLASSIFICADO":
         st.caption("O vínculo adicional inclui o processo e seus documentos no acervo escolhido. Confirme a pertinência jurídica de todo esse conjunto.")
@@ -453,6 +481,23 @@ def _uploads(admin, library, profile):
                 st.caption("Classe processual: " + CLASSES.get(item["classe"], item["classe"]))
         prepared.append({"item": item, "chosen": chosen})
     with st.form("minutas_batch_" + profile["id"]):
+        recurso = profile["id"] == RECURSOS
+        modalidade_recurso = ""
+        materia_originaria = ""
+        teses = []
+        descricao = ""
+        if recurso:
+            from services.minutas_recursos import MODALIDADES
+            modality_key = st.selectbox(
+                "Modalidade recursal do lote",
+                tuple(MODALIDADES),
+                format_func=MODALIDADES.get,
+            )
+            modalidade_recurso = MODALIDADES[modality_key]
+            materia_originaria = st.text_input("Matéria originária")
+            theses_text = st.text_input("Teses jurídicas (separadas por ponto e vírgula)")
+            teses = [item.strip() for item in theses_text.split(";") if item.strip()]
+            descricao = st.text_input("Descrição dos documentos — opcional")
         formal = profile["grupo"]
         if formal == "TEMATICO":
             formal = st.selectbox("Classe processual efetiva do lote", list(CLASSES), format_func=CLASSES.get)
@@ -484,7 +529,19 @@ def _uploads(admin, library, profile):
                 year = None
                 entity = fields[1].text_input("Origem", key=origin_key)
             values.append({"numero_processo": process, "exercicio": year, "origem": entity,
-                "classe": item.get("classe") or formal, "referencia_id": ""})
+                "classe": item.get("classe") or formal, "referencia_id": "",
+                "modalidade_recurso": modalidade_recurso,
+                "materia_originaria": materia_originaria, "teses": teses,
+                "descricao": descricao})
+        if recurso:
+            for metadata in values:
+                if metadata is not None:
+                    metadata.update(
+                        modalidade_recurso=modalidade_recurso,
+                        materia_originaria=materia_originaria,
+                        teses=teses,
+                        descricao=descricao,
+                    )
         reason = st.text_input("Fundamento / conferência da classificação do lote")
         versions = st.checkbox("Preservar como nova versão quando o nome já existir")
         confirmed = st.form_submit_button("Confirmar cadastro e processamento local", type="primary")
@@ -702,6 +759,7 @@ def _administration(admin, profile):
             "elvira.pca.prefeituras", "elvira.pca.camaras", RPPS,
             "elvira.pca.secretarias_municipais", "elvira.pca.orgaos_estaduais",
             "elvira.denuncias", "elvira.pessoal.aposentadorias", "elvira.pessoal.pensoes",
+            RECURSOS,
         )
         by_id = {row["ID"]: row for row in rows}
         operational = [by_id[identifier] for identifier in prioritized_ids]
@@ -711,7 +769,7 @@ def _administration(admin, profile):
         with st.container(border=True, key="mpc_card_operational_minutas_admin_summary"):
             st.caption("Visão geral da operação priorizada")
             total, motors, in_testing, pending = st.columns(4)
-            total.metric("Categorias operacionais", 4)
+            total.metric("Categorias operacionais", 5)
             motors.metric("Geração habilitada", enabled)
             in_testing.metric("Em testes", testing)
             pending.metric("Sem classificação", data["pendentes"])

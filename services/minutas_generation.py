@@ -3943,11 +3943,20 @@ class MinutasGenerationService:
 
     def analyze_instruction(
         self, documentos, *, processo, exercicio=None, origem="", beneficiario="", ato="", periodo_fatos="",
+        modalidade_recurso="", materia_originaria="", data_decisao="",
     ):
+        from services.minutas_recursos import is_recurso_profile
         from services.minutas_denuncias import is_denuncia_profile
         from services.minutas_aposentadorias import is_aposentadoria_profile
         from services.minutas_instrucao import montar_contexto
         self.library._authorize()
+        if is_recurso_profile(self._instruction_profile()):
+            from services import minutas_recursos as recursos
+            return recursos.analyze(
+                self, documentos, processo=processo, origem=origem,
+                modalidade=modalidade_recurso, materia_originaria=materia_originaria,
+                data_decisao=data_decisao,
+            )
         if is_aposentadoria_profile(self._instruction_profile()):
             from services import minutas_aposentadorias as retirement
             return retirement.analyze(
@@ -4038,12 +4047,21 @@ class MinutasGenerationService:
 
     def generate_instruction(
         self, documentos, analyzed, *, processo, exercicio=None, origem="",
-        beneficiario="", ato="", periodo_fatos="", use_rag=True,
+        beneficiario="", ato="", periodo_fatos="", modalidade_recurso="",
+        materia_originaria="", data_decisao="", use_rag=True,
     ):
+        from services.minutas_recursos import is_recurso_profile
         from services.minutas_denuncias import is_denuncia_profile
         from services.minutas_aposentadorias import is_aposentadoria_profile
         from services.minutas_instrucao import montar_contexto
         self.library._authorize()
+        if is_recurso_profile(self._instruction_profile()):
+            from services import minutas_recursos as recursos
+            return recursos.generate(
+                self, documentos, analyzed, processo=processo, origem=origem,
+                modalidade=modalidade_recurso, materia_originaria=materia_originaria,
+                data_decisao=data_decisao, use_rag=use_rag,
+            )
         if is_aposentadoria_profile(self._instruction_profile()):
             from services import minutas_aposentadorias as retirement
             return retirement.generate(

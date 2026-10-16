@@ -1022,6 +1022,9 @@ def _minuta_metrics(raw, model, started, payload):
 
 def _minuta_contract(contexto, kind):
     """Cada motor especializado usa contrato próprio; PCA permanece histórico."""
+    if isinstance(contexto, dict) and contexto.get("motor") == "recursos-v1":
+        from services.minutas_recursos import analysis_contract, generation_contract
+        return analysis_contract() if kind == "analise" else generation_contract()
     if isinstance(contexto, dict) and contexto.get("motor") == "denuncias-v1":
         from services.minutas_denuncias import analysis_contract, generation_contract
         return analysis_contract() if kind == "analise" else generation_contract()

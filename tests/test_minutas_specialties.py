@@ -22,7 +22,7 @@ from services.minutas_library import (
     MinutasLibraryService, MinutasAccessDenied, MinutasValidationError, coerce_account_year,
 )
 from services.minutas_specialties import (
-    APOSENTADORIAS, CATALOG, CAMARAS, CLASSES, PREFEITURAS, PROSECUTOR_KEY, RPPS,
+    APOSENTADORIAS, CATALOG, CAMARAS, CLASSES, PREFEITURAS, PROSECUTOR_KEY, RECURSOS, RPPS,
     SHARED_INSTRUCTION_MOTOR, SECRETARIAS_MUNICIPAIS, instruction_generation_allowed,
     requires_account_year, scope, suggest,
 )
@@ -73,6 +73,7 @@ def _choose_specialty(app, specialty=RPPS):
             "elvira.denuncias": "DENUNCIAS",
             "elvira.pessoal.aposentadorias": "APOSENTADORIAS",
             "elvira.pessoal.pensoes": "PENSOES",
+            RECURSOS: "RECURSOS",
         }[specialty]
         app.button(key="minutas_category_" + category).click().run()
 
@@ -672,7 +673,7 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not app.exception and not app.error
     assert not any(item.key == "minutas_specialty" for item in app.selectbox)
     assert not any(item.key == "minutas_active_view" for item in app.radio)
-    assert len([item for item in app.button if item.key.startswith("minutas_category_")]) == 4
+    assert len([item for item in app.button if item.key.startswith("minutas_category_")]) == 5
     assert app.button(key="minutas_initial_administration_open")
     app.button(key="minutas_category_PCA").click().run()
     assert len([item for item in app.button if item.key.startswith("minutas_pca_option_")]) == 4
@@ -720,11 +721,12 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
         "Especialidade", "ID", "Estado", "Geração", "Processos", "Pareceres",
         "Relatórios", "Documentos indexados",
     ]
-    assert len(panel) == 8
+    assert len(panel) == 9
     assert set(panel["ID"]) == {
         PREFEITURAS, CAMARAS, RPPS, SECRETARIAS_MUNICIPAIS,
         "elvira.pca.orgaos_estaduais", "elvira.denuncias",
         "elvira.pessoal.aposentadorias", "elvira.pessoal.pensoes",
+        RECURSOS,
     }
     assert len(panel) + len(technical) == 23
     assert panel.loc[panel["ID"] == PREFEITURAS, "Especialidade"].tolist() == ["Prefeituras Municipais"]

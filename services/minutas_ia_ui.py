@@ -1077,8 +1077,12 @@ def _library_tab(store, identity):
 
 
 def _analysis_panel(analysis_result, *, show_details=True):
+    from services.minutas_recursos import MOTOR as RECURSOS_MOTOR
     from services.minutas_denuncias import MOTOR as DENUNCIAS_MOTOR
 
+    if analysis_result.get("motor") == RECURSOS_MOTOR:
+        _recursos_analysis_panel(analysis_result, show_details=show_details)
+        return
     if analysis_result.get("motor") == DENUNCIAS_MOTOR:
         _denuncias_analysis_panel(analysis_result, show_details=show_details)
         return
@@ -1236,6 +1240,58 @@ def _denuncias_analysis_panel(analysis_result, *, show_details=True):
                 if rows:
                     st.markdown("**" + label + "**")
                     st.markdown("\n".join("- " + item for item in rows))
+    st.caption(
+        f"Modelo: {analysis_result.get('modelo') or '—'} · "
+        f"Tokens: {analysis_result.get('tokens_total') or 'não informado'} · "
+        f"Duração: {analysis_result.get('duracao_ms', 0) / 1000:.1f} s"
+    )
+
+
+def _recursos_analysis_panel(analysis_result, *, show_details=True):
+    """Apresenta o contrato próprio de Apelação e Recurso Ordinário."""
+    section_label("Etapa 1 — Análise Recursal")
+    analysis = analysis_result.get("analise") or {}
+    if analysis.get("resumo_processual"):
+        st.caption(analysis["resumo_processual"])
+    st.caption(
+        "Modalidade: " + str(analysis.get("modalidade") or "—")
+        + " · Conclusão: " + str(analysis.get("conclusao") or "—")
+    )
+    decision = analysis.get("decisao_recorrida") or {}
+    if decision:
+        st.markdown("**Decisão recorrida**")
+        st.markdown(str(decision.get("fundamentos") or "Fundamentos não identificados."))
+    admissibility = analysis.get("admissibilidade") or {}
+    if admissibility:
+        with st.expander("Admissibilidade"):
+            for field, label in (
+                ("cabimento", "Cabimento"), ("tempestividade", "Tempestividade"),
+                ("legitimidade", "Legitimidade"), ("interesse", "Interesse"),
+                ("demais_requisitos", "Demais requisitos"),
+            ):
+                item = admissibility.get(field) or {}
+                st.markdown(f"**{label}:** {item.get('conclusao') or '—'}")
+                if item.get("fundamentacao"):
+                    st.caption(str(item["fundamentacao"]))
+            st.markdown("**Regime temporal**")
+            st.caption(str(admissibility.get("regime_temporal") or "Não identificado."))
+    if show_details:
+        for index, argument in enumerate(analysis.get("razoes_recursais") or (), 1):
+            if not isinstance(argument, dict):
+                continue
+            with st.expander(f"{index}. {argument.get('argumento') or 'Razão recursal'}"):
+                st.markdown("**Fundamento da decisão:** " + str(argument.get("fundamento_decisao") or "—"))
+                st.markdown("**Confronto:** " + str(argument.get("confronto") or "—"))
+                st.caption("Conclusão: " + str(argument.get("conclusao") or "—"))
+    for label, field in (
+        ("Questões processuais", "questoes_processuais"),
+        ("Possíveis nulidades", "nulidades"),
+        ("Informações ausentes", "lacunas_documentais"),
+    ):
+        values = [str(item).strip() for item in analysis.get(field) or () if str(item).strip()]
+        if values:
+            st.markdown("**" + label + "**")
+            st.markdown("\n".join("- " + item for item in values))
     st.caption(
         f"Modelo: {analysis_result.get('modelo') or '—'} · "
         f"Tokens: {analysis_result.get('tokens_total') or 'não informado'} · "
@@ -1582,6 +1638,7 @@ def _instruction_profile(generator):
 
 
 def _instruction_panel(generator, service):
+    from services.minutas_recursos import MODALIDADES, is_recurso_profile
     from services.minutas_denuncias import is_denuncia_profile
     from services.minutas_aposentadorias import is_aposentadoria_profile
     from services.minutas_instrucao import (
@@ -1593,10 +1650,14 @@ def _instruction_panel(generator, service):
 
     retirement = is_aposentadoria_profile(_instruction_profile(generator))
     denuncia = is_denuncia_profile(_instruction_profile(generator))
+    recurso = is_recurso_profile(_instruction_profile(generator))
     st.caption(
         "Envie um ou vários PDFs da instrução de aposentadoria. Eles não entram no acervo "
         "e não são usados como precedente. A minuta é experimental e depende de revisão humana."
         if retirement else
+        "Envie a decisão recorrida, as razões recursais, a manifestação da Auditoria e os demais PDFs relevantes. "
+        "Eles não entram no acervo e não são usados como precedentes."
+        if recurso else
         "Envie um ou vários PDFs da instrução. Eles não entram no acervo "
         "e não são usados como precedente."
     )
@@ -1679,11 +1740,13 @@ def _instruction_panel(generator, service):
     for note in st.session_state.get("minutas_instrucao_meta_notes") or ():
         st.caption(note)
     processo = st.text_input("Processo TC", key="minutas_instrucao_processo")
-    if retirement or denuncia:
+    if retirement or denuncia or recurso:
         exercicio = None
         st.caption(
             "Natureza: Aposentadoria. O exercício das contas não é exigido."
             if retirement else
+            "Natureza: Recurso. O exercício das contas não é exigido."
+            if recurso else
             "Natureza: Denúncia. Informe o período dos fatos nos documentos ou na descrição; o exercício das contas não é exigido."
         )
     else:
@@ -1692,6 +1755,26 @@ def _instruction_panel(generator, service):
             key="minutas_instrucao_exercicio",
         )
     origem = st.text_input("Origem", key="minutas_instrucao_origem_processo")
+    modalidade_recurso = ""
+    materia_originaria = ""
+    data_decisao = ""
+    if recurso:
+        modalidade_recurso = st.radio(
+            "Modalidade recursal",
+            tuple(MODALIDADES),
+            format_func=MODALIDADES.get,
+            horizontal=True,
+            key="minutas_recurso_modalidade",
+        )
+        materia_originaria = st.text_input(
+            "Matéria originária — opcional",
+            key="minutas_instrucao_materia_originaria",
+        )
+        data_decisao = st.text_input(
+            "Data da decisão recorrida — se identificada",
+            placeholder="AAAA-MM-DD",
+            key="minutas_instrucao_data_decisao",
+        )
     periodo_fatos = ""
     if denuncia:
         periodo_fatos = st.text_input(
@@ -1719,6 +1802,8 @@ def _instruction_panel(generator, service):
                 st.session_state["minutas_instrucao_analise"] = generator.analyze_instruction(
                     documents, processo=processo, exercicio=exercicio, origem=origem,
                     beneficiario=beneficiario, ato=ato, periodo_fatos=periodo_fatos,
+                    modalidade_recurso=modalidade_recurso,
+                    materia_originaria=materia_originaria, data_decisao=data_decisao,
                 )
             st.session_state.pop("minutas_instrucao_minuta", None)
         except Exception as exc:
@@ -1740,6 +1825,9 @@ def _instruction_panel(generator, service):
             )
         elif precedents.get("estado"):
             st.caption(f"Precedentes históricos: {precedents['estado']}.")
+        contextual = precedents.get("pesquisa_contextual") or {}
+        if contextual.get("estado") == "INDISPONIVEL":
+            st.caption("Pesquisa contextual nas demais especialidades indisponível nesta execução.")
         _analysis_panel(analyzed)
     generate_label = "Gerar minuta com IA" if retirement else "Gerar minuta"
     if st.button(generate_label, key="minutas_instrucao_gerar", disabled=not analyzed):
@@ -1750,6 +1838,8 @@ def _instruction_panel(generator, service):
                 st.session_state["minutas_instrucao_minuta"] = generator.generate_instruction(
                     documents, analyzed, processo=processo, exercicio=exercicio, origem=origem,
                     beneficiario=beneficiario, ato=ato, periodo_fatos=periodo_fatos,
+                    modalidade_recurso=modalidade_recurso,
+                    materia_originaria=materia_originaria, data_decisao=data_decisao,
                 )
         except Exception as exc:
             _error(exc, etapa="geracao_instrucao")
@@ -1762,6 +1852,8 @@ def _instruction_panel(generator, service):
         try:
             word = MinutasDocxService(service).export_instruction(
                 analyzed, generated, processo=processo, exercicio=exercicio, origem=origem,
+                modalidade_recurso=modalidade_recurso,
+                materia_originaria=materia_originaria, data_decisao=data_decisao,
             )
         except Exception as exc:
             _error(exc, etapa="exportacao_instrucao")

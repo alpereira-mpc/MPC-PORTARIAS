@@ -246,16 +246,25 @@ class MinutasAcervoService:
         if before != after: raise MinutasValidationError("Divergência de reconciliação; confira o relatório operacional.")
         return {"alterados": changed, "antes": before, "depois": after}
 
-    def classify(self, identifier, specialty, formal_class, entity, reason, themes=()):
+    def classify(
+        self, identifier, specialty, formal_class, entity, reason, themes=(),
+        *, modality="", profile_value="",
+    ):
         actor = self.library._authorize()
         profile = scope(specialty)
         if formal_class not in CLASSES: raise MinutasValidationError("Informe a classe processual efetiva.")
         if profile["grupo"] != "TEMATICO" and formal_class != profile["grupo"]:
             raise MinutasValidationError("Classe incompatível com a especialidade.")
         if not reason.strip(): raise MinutasValidationError("Registre o fundamento da classificação.")
+        from services.minutas_specialties import RECURSOS
+        if specialty == RECURSOS:
+            from services.minutas_recursos import MODALIDADES
+            if modality not in set(MODALIDADES.values()) or not str(profile_value or "").strip() or not tuple(themes):
+                raise MinutasValidationError("Confirme modalidade, matéria originária e teses do recurso.")
         return self.repository.classify({"referencia_id": identifier, "especialidade_id": specialty,
             "estado": "CLASSIFICADO", "classe": formal_class, "entidade": entity.strip(),
-            "perfil": profile["perfil"], "modalidade": profile["nome"], "temas": list(themes),
+            "perfil": str(profile_value or "").strip() if specialty == RECURSOS else profile["perfil"],
+            "modalidade": modality if specialty == RECURSOS else profile["nome"], "temas": list(themes),
             "evidencia": [reason.strip()], "motivo": reason.strip()}, actor)
 
     def update_state(self, specialty, values):
@@ -437,6 +446,15 @@ class MinutasAcervoService:
             raise MinutasValidationError("Confirme a classe processual efetiva.")
         if role not in ("auditoria", "complementar", "parecer", "modelo"):
             raise MinutasValidationError("Finalidade inválida.")
+        from services.minutas_specialties import RECURSOS
+        if specialty == RECURSOS:
+            from services.minutas_recursos import MODALIDADES
+            if values.get("modalidade_recurso") not in set(MODALIDADES.values()):
+                raise MinutasValidationError("Informe Apelação ou Recurso Ordinário para o parecer.")
+            if not str(values.get("materia_originaria") or "").strip():
+                raise MinutasValidationError("Informe a matéria originária do recurso.")
+            if not [item for item in values.get("teses") or () if str(item).strip()]:
+                raise MinutasValidationError("Informe ao menos uma tese jurídica do parecer.")
         if not values.get("fundamento", "").strip(): raise MinutasValidationError("Confirme o fundamento da classificação.")
         _process, key = _normalize_process(values.get("numero_processo"))
         # Novos registros usam chave estável independente da grafia TC.
@@ -497,8 +515,12 @@ class MinutasAcervoService:
                             "exercicio,subtipo,criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                             (identifier, PROCURADORA, PROSECUTOR_KEY, "TC " + key[:5] + "/" + key[5:], key, year, subtype, stamp, actor, stamp, actor))
                     record = {"id": identifier}
+                    recurso = specialty == RECURSOS
                     self.repository._classify(c, {"referencia_id": identifier, "estado": "CLASSIFICADO", "especialidade_id": specialty,
-                        "classe": formal, "modalidade": profile["nome"], "perfil": profile["perfil"],
+                        "classe": formal,
+                        "modalidade": values.get("modalidade_recurso", "") if recurso else profile["nome"],
+                        "perfil": values.get("materia_originaria", "") if recurso else profile["perfil"],
+                        "temas": values.get("teses", []) if recurso else [],
                         "entidade": values.get("origem", ""), "motivo": values["fundamento"]}, actor)
                 identifier = str(record["id"])
                 position = c.execute("SELECT COALESCE(MAX(posicao),0)+1 AS next FROM ("

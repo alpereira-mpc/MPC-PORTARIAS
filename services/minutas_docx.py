@@ -656,6 +656,10 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
         paragraphs=structure.get("relatorio_paragrafos"),
         size=body_size,
     )
+    if str(structure.get("admissibilidade") or "").strip():
+        heading = document.add_paragraph(style="Minuta Irregularidade")
+        _add_text(heading, "Admissibilidade", bold=True, italic=True, size=heading_size)
+        _add_body(document, structure["admissibilidade"], size=body_size)
     _add_body(
         document,
         structure["fundamentacao_geral"],
@@ -820,7 +824,10 @@ class MinutasDocxService:
             ),
         )
 
-    def export_instruction(self, analyzed, generated, *, processo, exercicio=None, origem=""):
+    def export_instruction(
+        self, analyzed, generated, *, processo, exercicio=None, origem="",
+        modalidade_recurso="", materia_originaria="", data_decisao="",
+    ):
         """DOCX da minuta gerada sobre a instrução local, sem consultar o acervo."""
         from services.minutas_generation import (
             MinutasGenerationError,
@@ -831,6 +838,7 @@ class MinutasDocxService:
         from services.minutas_library import PROCURADORA
 
         self.library._authorize()
+        from services.minutas_recursos import is_recurso_profile
         from services.minutas_denuncias import is_denuncia_profile
         from services.minutas_aposentadorias import is_aposentadoria_profile
         from services.minutas_specialties import instruction_profile
@@ -840,8 +848,15 @@ class MinutasDocxService:
             raise MinutasDocxError(str(exc)) from exc
         retirement = is_aposentadoria_profile(profile_motor)
         denuncia = is_denuncia_profile(profile_motor)
+        recurso = is_recurso_profile(profile_motor)
         try:
-            if retirement:
+            if recurso:
+                from services.minutas_recursos import build_target
+                target = build_target(
+                    profile_motor, processo, origem, modalidade_recurso,
+                    materia_originaria, data_decisao,
+                )
+            elif retirement:
                 from services.minutas_aposentadorias import build_target
                 target = build_target(profile_motor, processo, origem, "", "")
             elif denuncia:
@@ -867,7 +882,17 @@ class MinutasDocxService:
             or str(generated.get("processo_alvo_id") or "") != target["id"]
         ):
             raise MinutasDocxError("A minuta não pertence ao processo informado.")
-        if denuncia:
+        if recurso:
+            metadata = generated.get("metadados_cabecalho") or {}
+            for field in ("modalidade", "materia_originaria", "data_decisao"):
+                expected = {
+                    "modalidade": target.get("modalidade_recurso"),
+                    "materia_originaria": target.get("materia_originaria"),
+                    "data_decisao": target.get("data_decisao"),
+                }[field]
+                if str(metadata.get(field) or "") != str(expected or ""):
+                    raise MinutasDocxError("Os metadados recursais foram alterados. Analise e gere novamente.")
+        elif denuncia:
             target["periodo_fatos"] = str(
                 (generated.get("metadados_cabecalho") or {}).get("periodo_fatos") or ""
             )
@@ -876,7 +901,13 @@ class MinutasDocxService:
             raise MinutasDocxError("Não há modelo Word autorizado para esta Procuradora.")
         if self.template_path:
             profile["template"] = self.template_path
-        if retirement:
+        if recurso:
+            from services.minutas_recursos import header_lines, normalize_structure
+            structure, _warnings = normalize_structure(
+                generated.get("estrutura"), target, {}, analyzed.get("analise") or {},
+            )
+            lines = header_lines(target)
+        elif retirement:
             from services.minutas_aposentadorias import header_lines, validate_structure
             metadata = generated.get("metadados_cabecalho") or {}
             header_target = dict(target)
