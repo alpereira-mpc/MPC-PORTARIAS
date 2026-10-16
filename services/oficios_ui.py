@@ -1124,6 +1124,9 @@ def _render_detail_documents(service, r):
     ]
     attachments = [f for f in files if f.get("papel") == "ANEXO"]
     complementary = [f for f in files if f.get("papel") == "COMPLEMENTAR"]
+    if r["direcao"] == "RECEBIDO":
+        _render_received_documents(service, r, principal_files, attachments, complementary)
+        return
     for title, items in (
         ("Documento principal", principal_files),
         (f"Anexos ({len(attachments)})", attachments),
@@ -1145,30 +1148,92 @@ def _render_detail_documents(service, r):
                     on_click=audit_download_oficio,
                     args=(r, f, "solicitado"),
                 )
-    if r["direcao"] != "RECEBIDO":
-        return
-    section_label("Documentos Complementares")
-    with st.form("oficio_received_complement_upload_" + r["id"], clear_on_submit=True):
-        uploads = st.file_uploader(
-            "Adicionar PDFs complementares",
-            type=["pdf"],
-            accept_multiple_files=True,
-            key="oficio_received_complement_uploads_" + r["id"],
-        )
-        descriptions = []
-        for index, upload in enumerate(uploads or ()):
-            descriptions.append(
-                st.text_input(
-                    "Descrição opcional: " + upload.name,
-                    key=(
-                        "oficio_received_complement_description_"
-                        + r["id"]
-                        + "_"
-                        + str(index)
-                    ),
+
+
+def _received_document_title(title, count=None):
+    total = f'<span class="mpc-oficios-documents-count">{count}</span>' if count is not None else ""
+    render_html(
+        '<div class="mpc-oficios-documents-title">'
+        f'<span>{html_text(title)}</span>{total}</div>'
+    )
+
+
+def _received_document_summary(file, description=None):
+    date_added = format_date_br(str(file.get("incluida") or "")[:10])
+    details = f"PDF · {date_added} · {int(file.get('tamanho') or 0):,} bytes"
+    description_html = (
+        f'<div class="mpc-oficios-document-description">{html_text(description)}</div>'
+        if description
+        else ""
+    )
+    render_html(
+        '<div class="mpc-oficios-document-summary">'
+        '<span class="mpc-oficios-document-icon" aria-hidden="true">PDF</span>'
+        '<div class="mpc-oficios-document-copy">'
+        f'<div class="mpc-oficios-document-name" title="{html_text(file["nome"])}">'
+        f'{html_text(file["nome"])}</div>'
+        f'<div class="mpc-oficios-document-meta">{html_text(details)}</div>'
+        f"{description_html}</div></div>"
+    )
+
+
+def _render_received_documents(service, r, principal_files, attachments, complementary):
+    with st.container(key="oficios_received_documents_" + r["id"]):
+        render_html('<div class="mpc-oficios-documents-mark"></div>')
+        if principal_files:
+            _received_document_title("Documento principal")
+        for file in principal_files:
+            with st.container(key="oficio_received_principal_" + file["id"]):
+                details, action = st.columns([9, 1], vertical_alignment="center")
+                with details:
+                    _received_document_summary(file)
+                with action:
+                    if st.button(
+                        "↓",
+                        key="oficio_file_" + file["id"],
+                        help="Preparar download do documento principal",
+                    ):
+                        audit_download_oficio(r, file, "preparado")
+                        st.download_button(
+                            "↓",
+                            service.download(file["id"]),
+                            file["nome"],
+                            mime=file["tipo"],
+                            key="oficio_download_" + file["id"],
+                            help="Baixar documento principal",
+                            on_click=audit_download_oficio,
+                            args=(r, file, "solicitado"),
+                        )
+        if attachments:
+            _received_document_title("Anexos", len(attachments))
+            for file in attachments:
+                st.caption(file["nome"])
+        _received_document_title("Documentos Complementares", len(complementary))
+        with st.container(key="oficio_received_complement_upload_area_" + r["id"]):
+            with st.form(
+                "oficio_received_complement_upload_" + r["id"], clear_on_submit=True
+            ):
+                st.caption("PDFs relacionados · até 10 MB por arquivo")
+                uploads = st.file_uploader(
+                    "Adicionar PDFs complementares",
+                    type=["pdf"],
+                    accept_multiple_files=True,
+                    key="oficio_received_complement_uploads_" + r["id"],
                 )
-            )
-        add = st.form_submit_button("Adicionar documentos complementares")
+                descriptions = []
+                for index, upload in enumerate(uploads or ()):
+                    descriptions.append(
+                        st.text_input(
+                            "Descrição opcional: " + upload.name,
+                            key=(
+                                "oficio_received_complement_description_"
+                                + r["id"]
+                                + "_"
+                                + str(index)
+                            ),
+                        )
+                    )
+                add = st.form_submit_button("Adicionar documentos complementares")
     if add:
         try:
             service.add_received_complementary_files(
@@ -1190,49 +1255,50 @@ def _render_detail_documents(service, r):
             done("Documentos complementares incluídos.")
     if not complementary:
         st.caption("Nenhum documento complementar cadastrado.")
-    for f in complementary:
-        description = f.get("descricao") or "Sem descrição."
-        st.caption(
-            f"{f['nome']} · {description} · {f['incluida'][:10]} · {f['tamanho']:,} bytes"
-        )
-        actions, removal = st.columns(2)
-        with actions:
-            if st.button(
-                "Preparar download: " + f["nome"],
-                key="oficio_complement_file_" + f["id"],
-            ):
-                audit_download_oficio(r, f, "preparado")
-                st.download_button(
-                    "Baixar arquivo",
-                    service.download_received_complementary_file(r["id"], f["id"]),
-                    f["nome"],
-                    mime=f["tipo"],
-                    key="oficio_complement_download_" + f["id"],
-                    on_click=audit_download_oficio,
-                    args=(r, f, "solicitado"),
-                )
-        with removal:
-            with st.expander("Excluir documento"):
-                confirmed = st.checkbox(
-                    "Confirmo a exclusão deste documento complementar.",
-                    key="oficio_complement_delete_confirm_" + f["id"],
-                )
-                if st.button("Excluir", key="oficio_complement_delete_" + f["id"]):
-                    if not confirmed:
-                        st.error("Confirme a exclusão do documento complementar.")
-                    else:
-                        try:
-                            service.delete_received_complementary_file(r["id"], f["id"])
-                        except ValueError as exc:
-                            st.error(str(exc))
+    for file in complementary:
+        with st.container(key="oficio_received_complement_" + file["id"]):
+            details, download, removal = st.columns([8, 1, 1], vertical_alignment="center")
+            with details:
+                _received_document_summary(file, file.get("descricao") or None)
+            with download:
+                if st.button(
+                    "↓",
+                    key="oficio_complement_file_" + file["id"],
+                    help="Preparar download do documento complementar",
+                ):
+                    audit_download_oficio(r, file, "preparado")
+                    st.download_button(
+                        "↓",
+                        service.download_received_complementary_file(r["id"], file["id"]),
+                        file["nome"],
+                        mime=file["tipo"],
+                        key="oficio_complement_download_" + file["id"],
+                        help="Baixar documento complementar",
+                        on_click=audit_download_oficio,
+                        args=(r, file, "solicitado"),
+                    )
+            with removal:
+                with st.popover("⌫", help="Excluir documento complementar"):
+                    confirmed = st.checkbox(
+                        "Confirmo a exclusão deste documento complementar.",
+                        key="oficio_complement_delete_confirm_" + file["id"],
+                    )
+                    if st.button("Excluir", key="oficio_complement_delete_" + file["id"]):
+                        if not confirmed:
+                            st.error("Confirme a exclusão do documento complementar.")
                         else:
-                            audit_oficio(
-                                "OFICIO_DOCUMENTO_COMPLEMENTAR",
-                                "EXCLUIR",
-                                r,
-                                extra={"arquivo": f["nome"]},
-                            )
-                            done("Documento complementar excluído.")
+                            try:
+                                service.delete_received_complementary_file(r["id"], file["id"])
+                            except ValueError as exc:
+                                st.error(str(exc))
+                            else:
+                                audit_oficio(
+                                    "OFICIO_DOCUMENTO_COMPLEMENTAR",
+                                    "EXCLUIR",
+                                    r,
+                                    extra={"arquivo": file["nome"]},
+                                )
+                                done("Documento complementar excluído.")
 
 
 def _render_detail_movements(service, r):
