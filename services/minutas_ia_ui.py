@@ -1077,6 +1077,12 @@ def _library_tab(store, identity):
 
 
 def _analysis_panel(analysis_result, *, show_details=True):
+    from services.minutas_denuncias import MOTOR as DENUNCIAS_MOTOR
+
+    if analysis_result.get("motor") == DENUNCIAS_MOTOR:
+        _denuncias_analysis_panel(analysis_result, show_details=show_details)
+        return
+
     def source_suffix(item):
         sources = item.get("fontes") or ()
         if not sources:
@@ -1174,6 +1180,62 @@ def _analysis_panel(analysis_result, *, show_details=True):
                     f"{issue.get('categoria') or 'Campo não informado'}** · "
                     f"{location}: {issue.get('natureza') or 'conferência necessária'}"
                 )
+    st.caption(
+        f"Modelo: {analysis_result.get('modelo') or '—'} · "
+        f"Tokens: {analysis_result.get('tokens_total') or 'não informado'} · "
+        f"Duração: {analysis_result.get('duracao_ms', 0) / 1000:.1f} s"
+    )
+
+
+def _denuncias_analysis_panel(analysis_result, *, show_details=True):
+    """Apresenta apenas o contrato probatório do motor denuncias-v1."""
+    section_label("Etapa 1 — Análise de Denúncia")
+    analysis = analysis_result.get("analise") or {}
+    if analysis.get("resumo_processual"):
+        st.caption(analysis["resumo_processual"])
+    if analysis.get("objeto_denunciado"):
+        st.markdown("**Objeto denunciado**")
+        st.markdown(str(analysis["objeto_denunciado"]))
+    st.caption(
+        "Admissibilidade: " + str(analysis.get("admissibilidade") or "—")
+        + " · Mérito: " + str(analysis.get("merito") or "—")
+    )
+    if show_details:
+        for index, question in enumerate(analysis.get("questoes") or (), 1):
+            if not isinstance(question, dict):
+                continue
+            with st.expander(f"{index}. {question.get('objeto') or 'Questão denunciada'}"):
+                for label, field in (
+                    ("Alegações", "alegacoes"),
+                    ("Lacunas documentais", "lacunas_documentais"),
+                    ("Conclusões da Auditoria", "conclusao_auditoria"),
+                ):
+                    values = [str(item).strip() for item in question.get(field) or () if str(item).strip()]
+                    if values:
+                        st.markdown("**" + label + "**")
+                        st.markdown("\n".join("- " + item for item in values))
+                facts = [item for item in question.get("fatos_comprovados") or () if isinstance(item, dict)]
+                if facts:
+                    st.markdown("**Fatos comprovados**")
+                    st.markdown("\n".join(
+                        "- " + str(item.get("trecho") or "Fato documentado")
+                        + " _(fonte " + str(item.get("fonte_id") or "—")
+                        + ", p. " + str(item.get("pagina") if item.get("pagina") is not None else "—") + ")_"
+                        for item in facts
+                    ))
+    complementary = (
+        ("Manifestações dos interessados", analysis.get("manifestacoes_interessados")),
+        ("Providências cabíveis", analysis.get("providencias_cabiveis")),
+    )
+    if any(values for _label, values in complementary) or analysis.get("saneamento"):
+        with st.expander("Elementos complementares"):
+            if analysis.get("saneamento"):
+                st.caption("Saneamento: " + str(analysis["saneamento"]))
+            for label, values in complementary:
+                rows = [str(item).strip() for item in values or () if str(item).strip()]
+                if rows:
+                    st.markdown("**" + label + "**")
+                    st.markdown("\n".join("- " + item for item in rows))
     st.caption(
         f"Modelo: {analysis_result.get('modelo') or '—'} · "
         f"Tokens: {analysis_result.get('tokens_total') or 'não informado'} · "

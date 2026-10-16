@@ -241,6 +241,11 @@ def analyze(service, documentos, *, processo, origem="", periodo_fatos=""):
     generated = service._analyze(context)
     analysis = validate_analysis((generated or {}).get("analise"), context)
     precedents = recover_precedents(service, analysis, target["processo_chave"])
+    metrics = {
+        key: generated[key]
+        for key in ("modelo", "duracao_ms", "tokens_entrada", "tokens_saida", "tokens_total")
+        if isinstance(generated, dict) and generated.get(key) is not None
+    }
     return {
         "analise": analysis, "fontes_versao": prepared["versao"],
         "processo_alvo_id": target["id"], "processo_alvo_chave": target["processo_chave"],
@@ -250,6 +255,7 @@ def analyze(service, documentos, *, processo, origem="", periodo_fatos=""):
         "contexto_bytes": _serialized_size(prepared["contexto"]),
         "metadados_cabecalho": {"periodo_fatos": target["periodo_fatos"]},
         "motor": MOTOR, "config_versao": CONFIG_VERSION,
+        **metrics,
     }
 
 

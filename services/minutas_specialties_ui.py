@@ -44,9 +44,18 @@ def selection(library):
         return None
     aposentadorias = catalog.get("elvira.pessoal.aposentadorias")
     aposentadorias_prontas = instruction_generation_allowed(aposentadorias)
+    denuncias = catalog.get("elvira.denuncias")
+    denuncias_prontas = instruction_generation_allowed(denuncias)
     categories = {
         "PCA": ("Prestação de Contas Anual (PCA)", "Contas municipais, RPPS e Secretarias.", "Geração disponível em especialidades configuradas.", "Geração disponível"),
-        "DENUNCIAS": ("Denúncias", "Acervo e pesquisa jurídica de denúncias.", "Geração especializada não habilitada.", "Somente consulta"),
+        "DENUNCIAS": (
+            "Denúncias",
+            "Acervo, pesquisa jurídica e geração de minutas de parecer de Denúncias."
+            if denuncias_prontas else "Acervo e pesquisa jurídica de denúncias.",
+            "Geração disponível nesta especialidade."
+            if denuncias_prontas else "Geração especializada não habilitada.",
+            "Geração disponível" if denuncias_prontas else "Somente consulta",
+        ),
         "APOSENTADORIAS": (
             "Aposentadorias",
             "Acervo, pesquisa jurídica e minuta de parecer de aposentadoria."
@@ -70,7 +79,7 @@ def selection(library):
                         label,
                         badges_html=badges(
                             ("PCA" if key == "PCA" else "Categoria operacional", "brand"),
-                            (generation, "success" if key == "PCA" or (key == "APOSENTADORIAS" and aposentadorias_prontas) else "muted"),
+                            (generation, "success" if key == "PCA" or (key == "APOSENTADORIAS" and aposentadorias_prontas) or (key == "DENUNCIAS" and denuncias_prontas) else "muted"),
                         ),
                         secondary=description,
                         meta=availability,

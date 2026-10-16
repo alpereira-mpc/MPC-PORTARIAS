@@ -1119,9 +1119,11 @@ def _render_detail_documents(service, r):
     files = list(service.files(r["id"]))
     if not files:
         guidance_note("Nenhum documento vinculado a este Ofício.")
-        return
-    principal_files = [f for f in files if f.get("papel") != "ANEXO"]
+    principal_files = [
+        f for f in files if f.get("papel") not in ("ANEXO", "COMPLEMENTAR")
+    ]
     attachments = [f for f in files if f.get("papel") == "ANEXO"]
+    complementary = [f for f in files if f.get("papel") == "COMPLEMENTAR"]
     for title, items in (
         ("Documento principal", principal_files),
         (f"Anexos ({len(attachments)})", attachments),
@@ -1143,6 +1145,94 @@ def _render_detail_documents(service, r):
                     on_click=audit_download_oficio,
                     args=(r, f, "solicitado"),
                 )
+    if r["direcao"] != "RECEBIDO":
+        return
+    section_label("Documentos Complementares")
+    with st.form("oficio_received_complement_upload_" + r["id"], clear_on_submit=True):
+        uploads = st.file_uploader(
+            "Adicionar PDFs complementares",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key="oficio_received_complement_uploads_" + r["id"],
+        )
+        descriptions = []
+        for index, upload in enumerate(uploads or ()):
+            descriptions.append(
+                st.text_input(
+                    "Descrição opcional: " + upload.name,
+                    key=(
+                        "oficio_received_complement_description_"
+                        + r["id"]
+                        + "_"
+                        + str(index)
+                    ),
+                )
+            )
+        add = st.form_submit_button("Adicionar documentos complementares")
+    if add:
+        try:
+            service.add_received_complementary_files(
+                r["id"],
+                [
+                    (upload.name, upload.getvalue(), descriptions[index])
+                    for index, upload in enumerate(uploads or ())
+                ],
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            audit_oficio(
+                "OFICIO_DOCUMENTO_COMPLEMENTAR",
+                "INCLUIR",
+                r,
+                extra={"quantidade": len(uploads or ())},
+            )
+            done("Documentos complementares incluídos.")
+    if not complementary:
+        st.caption("Nenhum documento complementar cadastrado.")
+    for f in complementary:
+        description = f.get("descricao") or "Sem descrição."
+        st.caption(
+            f"{f['nome']} · {description} · {f['incluida'][:10]} · {f['tamanho']:,} bytes"
+        )
+        actions, removal = st.columns(2)
+        with actions:
+            if st.button(
+                "Preparar download: " + f["nome"],
+                key="oficio_complement_file_" + f["id"],
+            ):
+                audit_download_oficio(r, f, "preparado")
+                st.download_button(
+                    "Baixar arquivo",
+                    service.download_received_complementary_file(r["id"], f["id"]),
+                    f["nome"],
+                    mime=f["tipo"],
+                    key="oficio_complement_download_" + f["id"],
+                    on_click=audit_download_oficio,
+                    args=(r, f, "solicitado"),
+                )
+        with removal:
+            with st.expander("Excluir documento"):
+                confirmed = st.checkbox(
+                    "Confirmo a exclusão deste documento complementar.",
+                    key="oficio_complement_delete_confirm_" + f["id"],
+                )
+                if st.button("Excluir", key="oficio_complement_delete_" + f["id"]):
+                    if not confirmed:
+                        st.error("Confirme a exclusão do documento complementar.")
+                    else:
+                        try:
+                            service.delete_received_complementary_file(r["id"], f["id"])
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        else:
+                            audit_oficio(
+                                "OFICIO_DOCUMENTO_COMPLEMENTAR",
+                                "EXCLUIR",
+                                r,
+                                extra={"arquivo": f["nome"]},
+                            )
+                            done("Documento complementar excluído.")
 
 
 def _render_detail_movements(service, r):

@@ -88,7 +88,12 @@ def test_denuncias_pdf_fluxo_rag_isolado_sem_exercicio_e_docx(request_text):
         return {"estrutura": _draft(request_text)}
 
     service = MinutasGenerationService(
-        library, analyze=lambda _context: {"analise": _analysis(documents[0])}, generate=generate, search=search,
+        library,
+        analyze=lambda _context: {
+            "analise": _analysis(documents[0]), "modelo": "mock-denuncias",
+            "duracao_ms": 321, "tokens_entrada": 10, "tokens_saida": 20, "tokens_total": 30,
+        },
+        generate=generate, search=search,
     )
     analyzed = service.analyze_instruction(
         documents, processo="02108/26", origem="Município de Exemplo", periodo_fatos="2023 a 2025",
@@ -97,6 +102,10 @@ def test_denuncias_pdf_fluxo_rag_isolado_sem_exercicio_e_docx(request_text):
         documents, analyzed, processo="02108/26", origem="Município de Exemplo", periodo_fatos="2023 a 2025",
     )
     assert analyzed["referencias"]["estado"] == "RECUPERADO"
+    assert {key: analyzed[key] for key in ("modelo", "duracao_ms", "tokens_entrada", "tokens_saida", "tokens_total")} == {
+        "modelo": "mock-denuncias", "duracao_ms": 321, "tokens_entrada": 10,
+        "tokens_saida": 20, "tokens_total": 30,
+    }
     assert [item["referencia_id"] for item in analyzed["referencias"]["referencias"]] == ["denuncia-1"]
     assert captured["search"]["exclude_process_key"] == "0210826"
     assert captured["context"]["motor"] == MOTOR
@@ -169,3 +178,79 @@ def test_ui_denuncias_so_libera_geracao_com_perfil_correto(tmp_path, monkeypatch
         )
     app.run()
     assert any(item.key == "minutas_instrucao_incluir" for item in app.button)
+
+
+def test_painel_denuncias_exibe_contrato_proprio_sem_campos_de_pca(monkeypatch):
+    from contextlib import nullcontext
+    from services import minutas_ia_ui
+
+    class Streamlit:
+        def __init__(self):
+            self.markdowns, self.captions = [], []
+
+        def markdown(self, value, **_kwargs):
+            self.markdowns.append(value)
+
+        def caption(self, value, **_kwargs):
+            self.captions.append(value)
+
+        def expander(self, *_args, **_kwargs):
+            return nullcontext()
+
+    streamlit = Streamlit()
+    monkeypatch.setattr(minutas_ia_ui, "st", streamlit)
+    monkeypatch.setattr(minutas_ia_ui, "section_label", lambda value: streamlit.markdowns.append(value))
+    minutas_ia_ui._analysis_panel({
+        "motor": MOTOR, "modelo": "mock-denuncias", "duracao_ms": 321, "tokens_total": 30,
+        "analise": _analysis({"fonte_id": "fonte-denuncia"}),
+    })
+    rendered = "\n".join([*streamlit.markdowns, *streamlit.captions])
+    assert "Objeto denunciado" in rendered
+    assert "Fatos comprovados" in rendered and "fonte-denuncia, p. 1" in rendered
+    assert "Admissibilidade: CONHECIMENTO" in rendered and "Mérito: PROCEDENTE" in rendered
+    assert "Tema:" not in rendered and "Legalidade:" not in rendered
+    assert "Modelo: mock-denuncias" in rendered and "Tokens: 30" in rendered
+
+
+def test_categoria_denuncias_reflete_habilitacao_do_perfil(monkeypatch):
+    from contextlib import nullcontext
+    from services import minutas_specialties_ui
+
+    enabled = dict(scope(DENUNCIAS), id=DENUNCIAS, motor=MOTOR, estado="Em testes", config_versao="1")
+    catalog = [enabled, dict(scope("elvira.pessoal.aposentadorias"))]
+    captured = []
+    badge_calls = []
+
+    class Streamlit:
+        session_state = {}
+
+        def caption(self, *_args, **_kwargs): pass
+        def subheader(self, *_args, **_kwargs): pass
+        def warning(self, *_args, **_kwargs): pass
+        def columns(self, _count): return (nullcontext(), nullcontext())
+        def container(self, **_kwargs): return nullcontext()
+        def button(self, *_args, **_kwargs): return False
+
+    class Admin:
+        def __init__(self, _library): pass
+        def catalog(self): return catalog
+
+    monkeypatch.setattr(minutas_specialties_ui, "st", Streamlit())
+    monkeypatch.setattr(minutas_specialties_ui, "MinutasAcervoService", Admin)
+    monkeypatch.setattr(minutas_specialties_ui, "render_record", lambda label, **kwargs: captured.append((label, kwargs)))
+    monkeypatch.setattr(
+        minutas_specialties_ui, "badges",
+        lambda *args: (badge_calls.append(args), "badges")[1],
+    )
+    minutas_specialties_ui.selection(object())
+    denuncia = next(item for item in captured if item[0] == "Denúncias")[1]
+    assert denuncia["secondary"] == "Acervo, pesquisa jurídica e geração de minutas de parecer de Denúncias."
+    assert denuncia["meta"] == "Geração disponível nesta especialidade."
+    assert any(("Geração disponível", "success") in call for call in badge_calls)
+    catalog[0] = dict(enabled, motor="", estado="A iniciar")
+    captured.clear()
+    badge_calls.clear()
+    minutas_specialties_ui.selection(object())
+    denuncia = next(item for item in captured if item[0] == "Denúncias")[1]
+    assert denuncia["meta"] == "Geração especializada não habilitada."
+    assert any(("Somente consulta", "muted") in call for call in badge_calls)

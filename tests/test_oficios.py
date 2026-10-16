@@ -159,6 +159,7 @@ def control(store):
         "tamanho",
         "incluida",
         "papel",
+        "descricao",
     }
     assert metadata[0]["papel"] == "DOCUMENTO"
     assert "conteudo" not in str(s.list()) and "payload" not in s.list()[0]
@@ -177,6 +178,83 @@ def control(store):
     )
     assert not s.list(direction="RECEBIDO", search="inexistente")
     assert s.overview(2026)["recebidos"] == 1
+
+
+def test_received_complementary_pdfs_persist_are_isolated_and_do_not_replace_principal(store):
+    service = ready(store)
+    member = service.series()[0]["membro_id"]
+    record = dict(
+        direcao="RECEBIDO",
+        numero_externo="12/2026",
+        remetente="Pessoa",
+        instituicao="Órgão",
+        data="2026-09-01",
+        data_recebimento="2026-09-10",
+        membros=[member],
+        assunto="Assunto recebido",
+    )
+    principal = _blank_pdf()
+    first = service.save(record, uploads=[("principal.pdf", principal)])
+    second = service.save(
+        {**record, "numero_externo": "13/2026"},
+        uploads=[("outro-principal.pdf", principal)],
+    )
+
+    first_attachment = _blank_pdf()
+    second_attachment = _blank_pdf()
+    service.add_received_complementary_files(
+        first,
+        [
+            ("anterior.pdf", first_attachment, "Ofício anterior"),
+            ("parecer.pdf", second_attachment, ""),
+        ],
+    )
+
+    stored = service.files(first)
+    assert [item["papel"] for item in stored] == [
+        "DOCUMENTO",
+        "COMPLEMENTAR",
+        "COMPLEMENTAR",
+    ]
+    assert stored[0]["nome"] == "principal.pdf"
+    assert service.download(stored[0]["id"]) == principal
+    complementary = stored[1:]
+    previous = next(item for item in complementary if item["nome"] == "anterior.pdf")
+    assert previous["descricao"] == "Ofício anterior"
+    assert service.download_received_complementary_file(
+        first, previous["id"]
+    ) == first_attachment
+    with pytest.raises(ValueError, match="não encontrado"):
+        service.download_received_complementary_file(second, previous["id"])
+    with pytest.raises(ValueError, match="não encontrado"):
+        service.delete_received_complementary_file(second, previous["id"])
+
+    service.delete_received_complementary_file(first, previous["id"])
+    remaining = service.files(first)
+    assert [item["papel"] for item in remaining] == ["DOCUMENTO", "COMPLEMENTAR"]
+    assert service.download(remaining[0]["id"]) == principal
+
+
+def test_received_complementary_files_require_valid_pdf(store):
+    service = ready(store)
+    member = service.series()[0]["membro_id"]
+    identifier = service.save(
+        dict(
+            direcao="RECEBIDO",
+            numero_externo="12/2026",
+            remetente="Pessoa",
+            instituicao="Órgão",
+            data="2026-09-01",
+            data_recebimento="2026-09-10",
+            membros=[member],
+            assunto="Assunto recebido",
+        )
+    )
+    with pytest.raises(ValueError):
+        service.add_received_complementary_files(
+            identifier, [("arquivo.docx", _blank_docx(), "")]
+        )
+    assert service.files(identifier) == []
 
 
 def test_baseline_safeguards(store):

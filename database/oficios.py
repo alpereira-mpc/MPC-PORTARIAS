@@ -53,7 +53,7 @@ class OficiosStore:
                 "CREATE TABLE IF NOT EXISTS oficio_sequencias (serie TEXT NOT NULL REFERENCES oficio_series(sigla), ano INTEGER NOT NULL CHECK(ano BETWEEN 1000 AND 9999), proximo INTEGER NOT NULL CHECK(proximo>0), confirmada TEXT NOT NULL, PRIMARY KEY(serie,ano))",
                 "CREATE TABLE IF NOT EXISTS oficios (id TEXT PRIMARY KEY, direcao TEXT NOT NULL CHECK(direcao IN ('ENVIADO','RECEBIDO')), serie TEXT REFERENCES oficio_series(sigla), ano INTEGER NOT NULL, numero INTEGER CHECK(numero>0), status TEXT NOT NULL, data TEXT NOT NULL, prazo TEXT, membro_id INTEGER REFERENCES procuradores(id), assunto TEXT NOT NULL, destinatario TEXT NOT NULL, numero_externo TEXT NOT NULL, responde_a TEXT REFERENCES oficios(id), payload TEXT NOT NULL, criada TEXT NOT NULL, atualizada TEXT NOT NULL, data_envio TEXT, cancelada TEXT, aguarda_resposta INTEGER NOT NULL DEFAULT 0 CHECK(aguarda_resposta IN (0,1)), data_esperada_resposta TEXT, UNIQUE(serie,ano,numero), CHECK(numero IS NULL OR (direcao='ENVIADO' AND serie IS NOT NULL AND status!='Rascunho')))",
                 "CREATE TABLE IF NOT EXISTS oficio_destinatarios (oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, membro_id INTEGER NOT NULL REFERENCES procuradores(id), PRIMARY KEY(oficio_id,membro_id))",
-                f"CREATE TABLE IF NOT EXISTS oficio_arquivos (id TEXT PRIMARY KEY, oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, nome TEXT NOT NULL, tipo TEXT NOT NULL, tamanho INTEGER NOT NULL, incluida TEXT NOT NULL, conteudo {binary} NOT NULL)",
+                f"CREATE TABLE IF NOT EXISTS oficio_arquivos (id TEXT PRIMARY KEY, oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, nome TEXT NOT NULL, tipo TEXT NOT NULL, tamanho INTEGER NOT NULL, incluida TEXT NOT NULL, conteudo {binary} NOT NULL, papel TEXT NOT NULL DEFAULT 'DOCUMENTO', nome_original TEXT, descricao TEXT NOT NULL DEFAULT '')",
                 "CREATE TABLE IF NOT EXISTS oficio_movimentacoes (id TEXT PRIMARY KEY, oficio_id TEXT NOT NULL REFERENCES oficios(id) ON DELETE CASCADE, instante TEXT NOT NULL, anterior TEXT NOT NULL, novo TEXT NOT NULL, observacao TEXT NOT NULL)",
                 "CREATE INDEX IF NOT EXISTS oficio_data_idx ON oficios(direcao,data DESC,id)",
                 "CREATE INDEX IF NOT EXISTS oficio_prazo_idx ON oficios(status,prazo)",
@@ -377,21 +377,106 @@ class OficiosStore:
             )
             return identifier
 
-    def _file(self, c, identifier, name, mime, content, role="DOCUMENTO", original_name=None):
+    def _file(
+        self,
+        c,
+        identifier,
+        name,
+        mime,
+        content,
+        role="DOCUMENTO",
+        original_name=None,
+        description="",
+    ):
+        if description and not self._has_file_description(c):
+            raise ValueError("A migração de documentos complementares ainda não foi aplicada.")
+        description_column = self._has_file_description(c)
+        columns = "id,oficio_id,nome,tipo,tamanho,incluida,conteudo,papel,nome_original"
+        values = [
+            uuid.uuid4().hex,
+            identifier,
+            name,
+            mime,
+            len(content),
+            now(),
+            content,
+            role,
+            original_name or name,
+        ]
+        if description_column:
+            columns += ",descricao"
+            values.append(description)
         c.execute(
-            "INSERT INTO oficio_arquivos(id,oficio_id,nome,tipo,tamanho,incluida,conteudo,papel,nome_original) VALUES(?,?,?,?,?,?,?,?,?)",
-            (
-                uuid.uuid4().hex,
-                identifier,
-                name,
-                mime,
-                len(content),
-                now(),
-                content,
-                role,
-                original_name or name,
-            ),
+            f"INSERT INTO oficio_arquivos({columns}) VALUES({','.join('?' for _ in values)})",
+            values,
         )
+
+    def _has_file_description(self, c):
+        if self.store.backend == "postgresql":
+            return bool(
+                c.execute(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() AND table_name='oficio_arquivos' "
+                    "AND column_name='descricao'"
+                ).fetchone()
+            )
+        return any(row[1] == "descricao" for row in c.execute("PRAGMA table_info(oficio_arquivos)"))
+
+    def add_received_complementary_files(self, identifier, uploads):
+        """Persist validated PDF attachments only for the selected received office."""
+        documents = []
+        for name, content, description in uploads or ():
+            safe, mime = validate_upload(name, content)
+            if mime != "application/pdf":
+                raise ValueError("Documentos complementares aceitam apenas PDF.")
+            description = str(description or "").strip()
+            if len(description) > 1000:
+                raise ValueError("A descrição deve ter no máximo 1000 caracteres.")
+            documents.append((safe, mime, name, content, description))
+        if not documents:
+            raise ValueError("Selecione ao menos um PDF.")
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            record = self._get(c, identifier)
+            if record["direcao"] != "RECEBIDO":
+                raise ValueError("Documentos complementares são permitidos apenas em ofícios recebidos.")
+            if not self._has_file_description(c):
+                raise ValueError("A migração de documentos complementares ainda não foi aplicada.")
+            for safe, mime, original_name, content, description in documents:
+                self._file(
+                    c,
+                    identifier,
+                    safe,
+                    mime,
+                    content,
+                    "COMPLEMENTAR",
+                    original_name,
+                    description,
+                )
+
+    def delete_received_complementary_file(self, identifier, file_id):
+        """Delete one complementary attachment, constrained to its received office."""
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            record = self._get(c, identifier)
+            if record["direcao"] != "RECEBIDO":
+                raise ValueError("Documento complementar não encontrado.")
+            deleted = c.execute(
+                "DELETE FROM oficio_arquivos WHERE id=? AND oficio_id=? AND papel='COMPLEMENTAR'",
+                (file_id, identifier),
+            ).rowcount
+            if not deleted:
+                raise ValueError("Documento complementar não encontrado.")
+
+    def download_received_complementary_file(self, identifier, file_id):
+        with self.store.connection(read_only=True) as c:
+            row = c.execute(
+                "SELECT conteudo FROM oficio_arquivos WHERE id=? AND oficio_id=? AND papel='COMPLEMENTAR'",
+                (file_id, identifier),
+            ).fetchone()
+            if not row:
+                raise ValueError("Documento complementar não encontrado.")
+            return bytes(row["conteudo"])
 
     def finalize_reviewed(self, identifier, document, series, preview_hash):
         from services.oficios import fingerprint
@@ -805,14 +890,18 @@ class OficiosStore:
 
     def files(self, identifier):
         with self.store.connection(read_only=True) as c:
+            description = "COALESCE(descricao,'') AS descricao," if self._has_file_description(c) else "'' AS descricao,"
             return [
                 dict(r)
                 for r in c.execute(
-                    "SELECT id,COALESCE(nome_original,nome) AS nome,tipo,tamanho,incluida,"
-                    "COALESCE(papel,'DOCUMENTO') AS papel FROM oficio_arquivos "
-                    "WHERE oficio_id=? ORDER BY "
-                    "CASE COALESCE(papel,'DOCUMENTO') WHEN 'PRINCIPAL' THEN 0 "
-                    "WHEN 'DOCUMENTO' THEN 0 ELSE 1 END,incluida,id",
+                    (
+                        "SELECT id,COALESCE(nome_original,nome) AS nome,tipo,tamanho,incluida,"
+                        + description
+                        + "COALESCE(papel,'DOCUMENTO') AS papel FROM oficio_arquivos "
+                        "WHERE oficio_id=? ORDER BY "
+                        "CASE COALESCE(papel,'DOCUMENTO') WHEN 'PRINCIPAL' THEN 0 "
+                        "WHEN 'DOCUMENTO' THEN 0 WHEN 'ANEXO' THEN 1 ELSE 2 END,incluida,id"
+                    ),
                     (identifier,),
                 )
             ]
