@@ -15,6 +15,8 @@ PREFEITURAS_LEGACY = ("elvira.pca.governo", "elvira.pca.gestao")
 SHARED_INSTRUCTION_MOTOR = "pca-rpps-v1"
 APOSENTADORIAS = "elvira.pessoal.aposentadorias"
 APOSENTADORIAS_MOTOR = "aposentadorias-v1"
+DENUNCIAS = "elvira.denuncias"
+DENUNCIAS_MOTOR = "denuncias-v1"
 INSTRUCTION_READY_STATES = ("Em testes", "Funcional com ajustes", "Validada")
 INSTRUCTION_EXPERIMENTAL_SPECIALTIES = (
     CAMARAS,
@@ -106,8 +108,8 @@ def instruction_pca_subtype(profile):
 
 
 def requires_account_year(specialty_id):
-    """Somente Aposentadorias omite o exercício financeiro das contas."""
-    return canonical_specialty_id(specialty_id) != APOSENTADORIAS
+    """PCA exige exercício; instruções locais de Aposentadoria e Denúncia não."""
+    return canonical_specialty_id(specialty_id) not in (APOSENTADORIAS, DENUNCIAS)
 
 
 def instruction_generation_allowed(profile):
@@ -117,6 +119,14 @@ def instruction_generation_allowed(profile):
     motor = str(profile.get("motor") or "")
     version = str(profile.get("config_versao") or "")
     identifier = str(profile.get("id") or "")
+    if identifier == DENUNCIAS or motor == DENUNCIAS_MOTOR:
+        return (
+            identifier == DENUNCIAS
+            and motor == DENUNCIAS_MOTOR
+            and version == "1"
+            and str(profile.get("procuradora_chave") or "") == PROSECUTOR_KEY
+            and str(profile.get("estado") or "") in INSTRUCTION_READY_STATES
+        )
     if identifier == APOSENTADORIAS or motor == APOSENTADORIAS_MOTOR:
         return (
             identifier == APOSENTADORIAS

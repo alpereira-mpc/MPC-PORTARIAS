@@ -1520,6 +1520,7 @@ def _instruction_profile(generator):
 
 
 def _instruction_panel(generator, service):
+    from services.minutas_denuncias import is_denuncia_profile
     from services.minutas_aposentadorias import is_aposentadoria_profile
     from services.minutas_instrucao import (
         TIPOS,
@@ -1529,6 +1530,7 @@ def _instruction_panel(generator, service):
     )
 
     retirement = is_aposentadoria_profile(_instruction_profile(generator))
+    denuncia = is_denuncia_profile(_instruction_profile(generator))
     st.caption(
         "Envie um ou vários PDFs da instrução de aposentadoria. Eles não entram no acervo "
         "e não são usados como precedente. A minuta é experimental e depende de revisão humana."
@@ -1615,15 +1617,25 @@ def _instruction_panel(generator, service):
     for note in st.session_state.get("minutas_instrucao_meta_notes") or ():
         st.caption(note)
     processo = st.text_input("Processo TC", key="minutas_instrucao_processo")
-    if retirement:
+    if retirement or denuncia:
         exercicio = None
-        st.caption("Natureza: Aposentadoria. O exercício das contas não é exigido.")
+        st.caption(
+            "Natureza: Aposentadoria. O exercício das contas não é exigido."
+            if retirement else
+            "Natureza: Denúncia. Informe o período dos fatos nos documentos ou na descrição; o exercício das contas não é exigido."
+        )
     else:
         exercicio = st.number_input(
             "Exercício das contas", min_value=1990, max_value=2100, value=None,
             key="minutas_instrucao_exercicio",
         )
     origem = st.text_input("Origem", key="minutas_instrucao_origem_processo")
+    periodo_fatos = ""
+    if denuncia:
+        periodo_fatos = st.text_input(
+            "Período dos fatos — opcional (aceita múltiplos exercícios)",
+            key="minutas_instrucao_periodo_fatos",
+        )
     beneficiario = ""
     ato = ""
     if retirement:
@@ -1644,7 +1656,7 @@ def _instruction_panel(generator, service):
             ):
                 st.session_state["minutas_instrucao_analise"] = generator.analyze_instruction(
                     documents, processo=processo, exercicio=exercicio, origem=origem,
-                    beneficiario=beneficiario, ato=ato,
+                    beneficiario=beneficiario, ato=ato, periodo_fatos=periodo_fatos,
                 )
             st.session_state.pop("minutas_instrucao_minuta", None)
         except Exception as exc:
@@ -1675,7 +1687,7 @@ def _instruction_panel(generator, service):
             ):
                 st.session_state["minutas_instrucao_minuta"] = generator.generate_instruction(
                     documents, analyzed, processo=processo, exercicio=exercicio, origem=origem,
-                    beneficiario=beneficiario, ato=ato,
+                    beneficiario=beneficiario, ato=ato, periodo_fatos=periodo_fatos,
                 )
         except Exception as exc:
             _error(exc, etapa="geracao_instrucao")

@@ -9,6 +9,7 @@ from services.minutas_library import MinutasValidationError, _validate_file
 
 
 TIPOS = (
+    ("denuncia_inicial", "Denúncia Inicial", "complementar"),
     ("relatorio_inicial", "Relatório Inicial de Auditoria", "auditoria"),
     ("analise_defesa", "Relatório de Análise de Defesa", "auditoria"),
     ("complementacao", "Relatório de Complementação", "auditoria"),
@@ -16,6 +17,7 @@ TIPOS = (
     ("despacho", "Despacho", "complementar"),
     ("manifestacao", "Manifestação ou Defesa", "complementar"),
     ("informacao", "Informação Técnica", "complementar"),
+    ("decisao", "Decisão ou Acórdão", "complementar"),
     ("outros", "Outros documentos processuais", "complementar"),
 )
 TIPO_POR_CHAVE = {item[0]: item for item in TIPOS}

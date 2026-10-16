@@ -3942,8 +3942,9 @@ class MinutasGenerationService:
         }
 
     def analyze_instruction(
-        self, documentos, *, processo, exercicio=None, origem="", beneficiario="", ato="",
+        self, documentos, *, processo, exercicio=None, origem="", beneficiario="", ato="", periodo_fatos="",
     ):
+        from services.minutas_denuncias import is_denuncia_profile
         from services.minutas_aposentadorias import is_aposentadoria_profile
         from services.minutas_instrucao import montar_contexto
         self.library._authorize()
@@ -3952,6 +3953,11 @@ class MinutasGenerationService:
             return retirement.analyze(
                 self, documentos, processo=processo, origem=origem,
                 beneficiario=beneficiario, ato=ato,
+            )
+        if is_denuncia_profile(self._instruction_profile()):
+            from services import minutas_denuncias as denuncias
+            return denuncias.analyze(
+                self, documentos, processo=processo, origem=origem, periodo_fatos=periodo_fatos,
             )
         target = self._instruction_target(processo, exercicio, origem)
         prepared = montar_contexto(
@@ -4032,8 +4038,9 @@ class MinutasGenerationService:
 
     def generate_instruction(
         self, documentos, analyzed, *, processo, exercicio=None, origem="",
-        beneficiario="", ato="", use_rag=True,
+        beneficiario="", ato="", periodo_fatos="", use_rag=True,
     ):
+        from services.minutas_denuncias import is_denuncia_profile
         from services.minutas_aposentadorias import is_aposentadoria_profile
         from services.minutas_instrucao import montar_contexto
         self.library._authorize()
@@ -4042,6 +4049,12 @@ class MinutasGenerationService:
             return retirement.generate(
                 self, documentos, analyzed, processo=processo, origem=origem,
                 beneficiario=beneficiario, ato=ato, use_rag=use_rag,
+            )
+        if is_denuncia_profile(self._instruction_profile()):
+            from services import minutas_denuncias as denuncias
+            return denuncias.generate(
+                self, documentos, analyzed, processo=processo, origem=origem,
+                periodo_fatos=periodo_fatos, use_rag=use_rag,
             )
         target = self._instruction_target(processo, exercicio, origem)
         prepared = montar_contexto(

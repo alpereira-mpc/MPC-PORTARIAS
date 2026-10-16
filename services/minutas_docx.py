@@ -831,6 +831,7 @@ class MinutasDocxService:
         from services.minutas_library import PROCURADORA
 
         self.library._authorize()
+        from services.minutas_denuncias import is_denuncia_profile
         from services.minutas_aposentadorias import is_aposentadoria_profile
         from services.minutas_specialties import instruction_profile
         try:
@@ -838,10 +839,14 @@ class MinutasDocxService:
         except Exception as exc:
             raise MinutasDocxError(str(exc)) from exc
         retirement = is_aposentadoria_profile(profile_motor)
+        denuncia = is_denuncia_profile(profile_motor)
         try:
             if retirement:
                 from services.minutas_aposentadorias import build_target
                 target = build_target(profile_motor, processo, origem, "", "")
+            elif denuncia:
+                from services.minutas_denuncias import build_target
+                target = build_target(profile_motor, processo, origem)
             else:
                 target = MinutasGenerationService(self.library)._instruction_target(
                     processo, exercicio, origem,
@@ -862,6 +867,10 @@ class MinutasDocxService:
             or str(generated.get("processo_alvo_id") or "") != target["id"]
         ):
             raise MinutasDocxError("A minuta não pertence ao processo informado.")
+        if denuncia:
+            target["periodo_fatos"] = str(
+                (generated.get("metadados_cabecalho") or {}).get("periodo_fatos") or ""
+            )
         profile = dict(_PROFILES.get(PROCURADORA) or {})
         if not profile:
             raise MinutasDocxError("Não há modelo Word autorizado para esta Procuradora.")
@@ -876,6 +885,12 @@ class MinutasDocxService:
                     header_target[field] = metadata[field]
             structure = validate_structure(generated.get("estrutura"))
             lines = header_lines(header_target)
+        elif denuncia:
+            from services.minutas_denuncias import header_lines, normalize_structure
+            structure, _warnings = normalize_structure(
+                generated.get("estrutura"), target, {}, analyzed.get("analise") or {},
+            )
+            lines = header_lines(target)
         else:
             structure = MinutasGenerationService._validate_structure(generated.get("estrutura"))
             header_target = _target_with_header_metadata(
