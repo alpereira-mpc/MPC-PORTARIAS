@@ -185,7 +185,7 @@ def _rag_shim(analysis):
 
 
 def recover_precedents(service, analysis, process_key):
-    """Prioriza Recursos; a busca contextual permanece restrita ao acervo da Elvira."""
+    """Prioriza Recursos e permanece no acervo do Procurador da operação."""
     primary = service._instruction_precedents(_rag_shim(analysis), process_key)
     rows = list(primary.get("referencias") or ())
     if len(rows) >= 6:
@@ -210,9 +210,12 @@ def recover_precedents(service, analysis, process_key):
                 continue
             scoped_repository = MinutasReferenciasStore(
                 repository.store, specialty_id=specialty_id, include_acervo=True,
+                procuradora_chave=library.procurador.chave,
             )
             scoped_library = MinutasLibraryService(
                 scoped_repository, library.storage, library.identity, library.secrets,
+                procurador=library.procurador,
+                principal=getattr(library, "principal", None),
             )
             response = MinutasSearchService(scoped_library).search(
                 query, page_size=min(3, 6 - len(rows)), exclude_process_key=process_key,

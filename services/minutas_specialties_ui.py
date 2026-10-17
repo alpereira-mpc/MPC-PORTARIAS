@@ -27,7 +27,8 @@ def clear_specialty_session():
         "minutas_generation_docx_cache_", "minutas_search_download_",
         "minutas_result_", "minutas_download_", "minutas_complement_download_",
         "minutas_instrucao_", "minutas_upload_preview_", "minutas_uploads_",
-        "minutas_batch_",
+        "minutas_batch_", "minutas_query_", "minutas_page_", "minutas_record_",
+        "minutas_detail_", "minutas_legacy_", "minutas_acervo_role_",
     )
     transient_keys = {
         "minutas_specialty", "minutas_pca_choice", "minutas_class_group", "minutas_scope_token",
@@ -35,7 +36,7 @@ def clear_specialty_session():
         "minutas_nav_category", "minutas_nav_pca_secretarias",
         "minutas_legal_search", "minutas_active_panel", "minutas_open_reference",
         "minutas_generation_target", "minutas_generation_mode", "minutas_active_view",
-        "minutas_initial_administration",
+        "minutas_initial_administration", "minutas_acervo_mode",
     }
     for key in list(st.session_state):
         if key in transient_keys or key.startswith(transient_prefixes):
@@ -687,9 +688,15 @@ def acervo(library, administrative_library, profile):
             st.caption("A separação do acervo legado ainda não está aplicada. Não recadastre um número que já exista: o arquivo seria gravado no registro histórico.")
         _uploads(admin, library, profile)
         return
-    query = st.text_input("Processo ou entidade", key="minutas_query_" + profile["id"])
-    role = st.selectbox("Tipo documental", ("Todos", "parecer", "auditoria", "complementar", "modelo"))
-    page_key = "minutas_page_" + fingerprint([profile["id"], query, role])
+    sigla = administrative_library.procurador.sigla
+    query = st.text_input(
+        "Processo ou entidade", key=f"minutas_query_{sigla}_{profile['id']}",
+    )
+    role = st.selectbox(
+        "Tipo documental", ("Todos", "parecer", "auditoria", "complementar", "modelo"),
+        key=f"minutas_acervo_role_{sigla}_{profile['id']}",
+    )
+    page_key = "minutas_page_" + fingerprint([sigla, profile["id"], query, role])
     page = st.number_input("Página", min_value=1, value=1, step=1, key=page_key)
     records = admin.repository.list_records(profile["id"], query=query,
                                            role=None if role == "Todos" else role, page=page)

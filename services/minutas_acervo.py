@@ -225,8 +225,16 @@ def migration_plan(snapshot):
 
 class MinutasAcervoService:
     def __init__(self, library):
+        from services.minutas_procuradores import MinutasContextoError
+
         self.library = library
-        self.repository = MinutasSpecialtiesStore(library.repository.store)
+        procurador = getattr(library, "procurador", None)
+        if procurador is None or not getattr(procurador, "chave", None):
+            raise MinutasContextoError("Selecione o Procurador antes de continuar.")
+        self.repository = MinutasSpecialtiesStore(
+            library.repository.store,
+            procuradora_chave=procurador.chave,
+        )
 
     def catalog(self):
         self.library._authorize()
@@ -498,8 +506,7 @@ class MinutasAcervoService:
             with self.library.repository.store.connection() as c:
                 c.execute("BEGIN IMMEDIATE")
                 if getattr(self.library.repository.store, "backend", "") == "postgresql":
-                    from services.minutas_procuradores import legado_espo
-                    pessoa_lock = getattr(self.library, "procurador", None) or legado_espo()
+                    pessoa_lock = self.library.procurador
                     c.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (pessoa_lock.chave + key,))
                 record, duplicate, current_unhashed = self._upload_existing(c, *parameters)
                 if duplicate:
@@ -511,8 +518,8 @@ class MinutasAcervoService:
                 if not record:
                     identifier = str(uuid.uuid4())
                     stamp = now()
-                    from services.minutas_procuradores import legado_espo
-                    pessoa = getattr(self.library, "procurador", None) or legado_espo()
+                    from database.minutas_referencias import MinutasReferenciasStore
+                    pessoa = self.library.procurador
                     subtype = {"RPPS": "Instituto/Autarquia", "CAMARA": "Câmara Municipal",
                         "PREFEITURA": "Prefeitura", "SECRETARIA_MUNICIPAL": "Secretaria Municipal ou Estadual",
                         "ORGAO_ESTADUAL": "Secretaria Municipal ou Estadual"}.get(profile["perfil"])
@@ -525,6 +532,7 @@ class MinutasAcervoService:
                         c.execute("INSERT INTO minutas_referencias (id,procuradora,procuradora_chave,numero_processo,processo_chave,"
                             "exercicio,subtipo,criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                             (identifier, pessoa.nome_exibicao, pessoa.chave, "TC " + key[:5] + "/" + key[5:], key, year, subtype, stamp, actor, stamp, actor))
+                    MinutasReferenciasStore._associar_sigla(c, {"id": identifier, "procuradora_chave": pessoa.chave})
                     record = {"id": identifier}
                     recurso = specialty == RECURSOS
                     self.repository._classify(c, {"referencia_id": identifier, "estado": "CLASSIFICADO", "especialidade_id": specialty,

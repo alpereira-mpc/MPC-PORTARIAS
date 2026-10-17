@@ -65,26 +65,44 @@ class MinutasReferenciasStore:
         from services.minutas_procuradores import procurador_da_chave
 
         pessoa = procurador_da_chave(record.get("procuradora_chave"))
-        if pessoa is None:
+        if pessoa is None or not MinutasReferenciasStore._tem_coluna_sigla(connection):
             return
+        connection.execute(
+            "UPDATE minutas_referencias SET procurador_sigla=? "
+            "WHERE id=? AND (procurador_sigla IS NULL OR procurador_sigla=?)",
+            (pessoa.sigla, record["id"], pessoa.sigla),
+        )
+
+    @staticmethod
+    def _tem_coluna_sigla(connection):
         try:
-            connection.execute("SAVEPOINT minutas_sigla")
+            connection.execute("SAVEPOINT minutas_sigla_coluna")
             column = connection.execute(
                 "SELECT 1 FROM information_schema.columns "
-                "WHERE table_name='minutas_referencias' AND column_name='procurador_sigla'"
+                "WHERE table_name='minutas_referencias' AND column_name='procurador_sigla' "
+                "AND table_schema NOT IN ('pg_catalog', 'information_schema')"
             ).fetchone()
-            if column:
-                connection.execute(
-                    "UPDATE minutas_referencias SET procurador_sigla=? "
-                    "WHERE id=? AND (procurador_sigla IS NULL OR procurador_sigla=?)",
-                    (pessoa.sigla, record["id"], pessoa.sigla),
-                )
-            connection.execute("RELEASE SAVEPOINT minutas_sigla")
+            connection.execute("RELEASE SAVEPOINT minutas_sigla_coluna")
+            return column is not None
         except Exception:
             try:
-                connection.execute("ROLLBACK TO SAVEPOINT minutas_sigla")
+                connection.execute("ROLLBACK TO SAVEPOINT minutas_sigla_coluna")
             except Exception:
                 pass
+        try:
+            connection.execute("SAVEPOINT minutas_sigla_pragma")
+            rows = connection.execute("PRAGMA table_info(minutas_referencias)").fetchall()
+            connection.execute("RELEASE SAVEPOINT minutas_sigla_pragma")
+        except Exception:
+            try:
+                connection.execute("ROLLBACK TO SAVEPOINT minutas_sigla_pragma")
+            except Exception:
+                pass
+            return False
+        return any(
+            (row["name"] if hasattr(row, "keys") else row[1]) == "procurador_sigla"
+            for row in rows
+        )
 
     def profile(self):
         from services.minutas_specialties import PREFEITURAS, PREFEITURAS_LEGACY, scope
