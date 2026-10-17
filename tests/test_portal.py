@@ -181,7 +181,8 @@ def test_home_is_default_and_never_initializes_database(monkeypatch):
     assert "Ainda não possui acesso?" in visible
     assert "Cadastre-se" not in visible
     assert (
-        "Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br." in visible
+        "Acesso autorizado a servidores do TCE-PB e estagiários cadastrados do MPC-PB. "
+        "Utilize a Conta Google associada ao seu cadastro." in visible
     )
     app.button(key="access_request_open").click().run()
     assert not app.exception and not app.error

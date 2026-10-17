@@ -37,6 +37,11 @@ SUCCESS_BODY = (
     "Após a análise e liberação do cadastro, você poderá acessar o portal "
     "utilizando sua conta institucional @tce.pb.gov.br."
 )
+SUCCESS_BODY_ESTAGIARIO = (
+    "Sua solicitação foi encaminhada à administração do MPC-PB. "
+    "O acesso ao Minutas IA só será liberado depois da autorização administrativa "
+    "e da confirmação do vínculo de estágio. O envio não cria usuário nem libera o login."
+)
 MISSING_ADMIN = "Administrador não identificado."
 FILTER_PENDING = "Pendentes"
 FILTER_APPROVED = "Aprovadas"
@@ -60,41 +65,59 @@ class AccessRequestOutcome:
     record: dict | None = None
 
 
-def normalize_request_email(value):
+def normalize_request_email(value, tipo="INSTITUCIONAL"):
+    from services.estagiarios_acesso import TIPO_ESTAGIARIO
+
     email = normalize_email(value)
+    local, separator, domain = email.partition("@")
+    if tipo == TIPO_ESTAGIARIO:
+        if not email or not EMAIL_RE.match(email) or not separator or not local or not domain:
+            raise ValueError("Informe o e-mail da Conta Google.")
+        return email
     if not email or not EMAIL_RE.match(email):
         raise ValueError("Informe um e-mail institucional válido.")
-    local, separator, domain = email.partition("@")
     if not separator or not local or domain != INSTITUTIONAL_DOMAIN:
         raise ValueError("Informe um e-mail do domínio @tce.pb.gov.br.")
     return email
 
 
-def validate_access_request(nome, email, gabinete, unidade_outro=None):
+def validate_access_request(nome, email, gabinete, unidade_outro=None, tipo="INSTITUCIONAL"):
+    from services.estagiarios_acesso import TIPO_ESTAGIARIO, sigla_da_opcao
+
     name = " ".join((nome or "").split())
     if not name or len(name) < MIN_NAME_LENGTH:
         raise ValueError("Informe o nome completo.")
-    address = normalize_request_email(email)
+    if tipo not in ("INSTITUCIONAL", TIPO_ESTAGIARIO):
+        raise ValueError("Tipo de solicitante inválido.")
+    address = normalize_request_email(email, tipo)
     office = (gabinete or "").strip()
-    if office not in GABINETE_OPTIONS:
-        raise ValueError("Selecione o gabinete ou unidade.")
     extra = " ".join((unidade_outro or "").split())
-    if office == OTHER_UNIT:
-        if not extra or len(extra) < MIN_UNIT_LENGTH:
-            raise ValueError("Informe a unidade.")
-    else:
+    if tipo == TIPO_ESTAGIARIO:
+        sigla = sigla_da_opcao(office)
+        if not sigla:
+            raise ValueError("Selecione o gabinete de estágio.")
+        office = sigla
         extra = None
+    else:
+        if office not in GABINETE_OPTIONS:
+            raise ValueError("Selecione o gabinete ou unidade.")
+        if office == OTHER_UNIT:
+            if not extra or len(extra) < MIN_UNIT_LENGTH:
+                raise ValueError("Informe a unidade.")
+        else:
+            extra = None
     return {
         "nome": name,
         "email": address,
         "gabinete": office,
         "unidade_outro": extra,
+        "tipo_solicitante": tipo,
     }
 
 
-def submit_access_request(store, nome, email, gabinete, unidade_outro=None):
+def submit_access_request(store, nome, email, gabinete, unidade_outro=None, tipo="INSTITUCIONAL"):
     try:
-        payload = validate_access_request(nome, email, gabinete, unidade_outro)
+        payload = validate_access_request(nome, email, gabinete, unidade_outro, tipo)
     except ValueError as exc:
         return AccessRequestOutcome(False, "invalid", str(exc))
     if AccessStore(store).get_by_email(payload["email"]):
@@ -108,10 +131,14 @@ def submit_access_request(store, nome, email, gabinete, unidade_outro=None):
             payload["email"],
             payload["gabinete"],
             payload["unidade_outro"],
+            payload["tipo_solicitante"],
         )
     except ValueError as exc:
         return AccessRequestOutcome(False, "duplicate_pending", str(exc))
-    return AccessRequestOutcome(True, "created", SUCCESS_BODY, SUCCESS_TITLE, record)
+    from services.estagiarios_acesso import TIPO_ESTAGIARIO
+
+    mensagem = SUCCESS_BODY_ESTAGIARIO if payload["tipo_solicitante"] == TIPO_ESTAGIARIO else SUCCESS_BODY
+    return AccessRequestOutcome(True, "created", mensagem, SUCCESS_TITLE, record)
 
 
 def _actor_email(processed_by):
@@ -211,3 +238,49 @@ def delete_access_request(store, identifier, processed_by=None):
             },
         )
     return removed
+
+
+def autorizar_estagiario(store, identifier, lotacao_id, processed_by):
+    """Aprova a solicitação e cria o usuário restrito ao Minutas IA."""
+    from database.access import AccessStore
+    from services.audit import registrar_evento
+    from services.estagiarios_acesso import TIPO_ESTAGIARIO, carregar_vinculo
+
+    email = _actor_email(processed_by)
+    pedido = AccessRequestStore(store).get(identifier)
+    if not pedido or pedido.get("status") != STATUS_PENDING:
+        raise ValueError("Solicitação pendente não encontrada.")
+    if pedido.get("tipo_solicitante") != TIPO_ESTAGIARIO:
+        raise ValueError("Esta solicitação não é de estagiário.")
+    if AccessStore(store).get_by_email(pedido["email"]):
+        raise ValueError(ALREADY_REGISTERED)
+    vinculo = carregar_vinculo(store, lotacao_id)
+    usuario = AccessStore(store).save_user(
+        {
+            "nome": pedido["nome"],
+            "email": pedido["email"],
+            "perfil": "USUARIO",
+            "ativo": True,
+            "categoria_acesso": TIPO_ESTAGIARIO,
+            "estagio_lotacao_id": lotacao_id,
+            "minutas_gabinetes": [vinculo["lotacao"]] if vinculo else [],
+            "pode_admin": True,
+        }
+    )
+    record = approve_access_request(store, identifier, email)
+    registrar_evento(
+        store,
+        evento="ESTAGIARIO_ACESSO_AUTORIZADO",
+        modulo="admin",
+        acao="AUTORIZACAO",
+        identity={"email": email, "name": email},
+        entidade_tipo="usuario",
+        entidade_id=usuario,
+        detalhes={
+            "usuario_alvo": pedido["email"],
+            "nome_alvo": pedido["nome"],
+            "estagio_lotacao_id": lotacao_id,
+            "gabinete": (vinculo or {}).get("lotacao"),
+        },
+    )
+    return {"solicitacao": record, "usuario_id": usuario}

@@ -47,6 +47,10 @@ class Principal:
     pode_peticoes_concluir: bool = False
     pode_comunicacoes_configurar_destinatarios: bool = False
     pode_comunicacoes_enviar_teste: bool = False
+    categoria_acesso: str = "INSTITUCIONAL"
+    estagio_lotacao_id: int | None = None
+    minutas_gabinetes: tuple = ()
+    estagio_vigente: bool = True
     _authorization_version: tuple | None = field(default=None, repr=False, compare=False)
     _store: object = field(default=None, repr=False, compare=False)
 
@@ -104,6 +108,56 @@ def principal_from_record(record, store=None):
         record.get("atualizado_em"),
     )
     source = unwrap_store(store) if store is not None else None
+    from services.estagiarios_acesso import (
+        CATEGORIA_ESTAGIARIO,
+        carregar_vinculo,
+        categoria_de,
+        gabinetes_autorizados,
+        vinculo_vigente,
+    )
+
+    categoria = categoria_de(record)
+    if source is not None:
+        version = AccessStore(source).authorization_version(record["email"])
+    else:
+        from services.estagiarios_acesso import hoje_institucional
+
+        version = (
+            int(record["id"]),
+            bool(record["ativo"]),
+            record.get("atualizado_em"),
+            categoria,
+            record.get("estagio_lotacao_id"),
+            None,
+            hoje_institucional().isoformat() if categoria == CATEGORIA_ESTAGIARIO else None,
+        )
+    if categoria == CATEGORIA_ESTAGIARIO:
+        vinculo = carregar_vinculo(source, record.get("estagio_lotacao_id")) if source is not None else None
+        vigentes = vinculo_vigente(vinculo)
+        gabinetes_minutas = gabinetes_autorizados(source, record["id"], vinculo) if source is not None else ()
+        return Principal(
+            id=record["id"],
+            nome=record["nome"],
+            email=record["email"],
+            perfil="USUARIO",
+            ativo=record["ativo"],
+            pode_portarias=False,
+            pode_agenda=False,
+            pode_oficios=False,
+            pode_memorandos=False,
+            pode_relatorios=False,
+            pode_representacoes=False,
+            pode_peticoes=False,
+            pode_ouvidoria=False,
+            pode_admin=False,
+            gabinetes=(),
+            categoria_acesso=CATEGORIA_ESTAGIARIO,
+            estagio_lotacao_id=record.get("estagio_lotacao_id"),
+            minutas_gabinetes=gabinetes_minutas,
+            estagio_vigente=bool(vigentes and gabinetes_minutas),
+            _authorization_version=version,
+            _store=source,
+        )
     if record["perfil"] == "ADMINISTRADOR":
         return Principal(
             id=record["id"],
@@ -126,6 +180,7 @@ def principal_from_record(record, store=None):
             pode_comunicacoes_enviar_teste=True,
             pode_admin=True,
             gabinetes=tuple(GABINETES),
+            categoria_acesso="INSTITUCIONAL",
             _authorization_version=version,
             _store=source,
         )
@@ -155,6 +210,7 @@ def principal_from_record(record, store=None):
         pode_comunicacoes_enviar_teste=bool(record.get("pode_comunicacoes_enviar_teste", False)),
         pode_admin=bool(record["pode_admin"]),
         gabinetes=gabinetes,
+        categoria_acesso="INSTITUCIONAL",
         _authorization_version=version,
         _store=source,
     )
@@ -163,11 +219,17 @@ def principal_from_record(record, store=None):
 def resolve_principal(store, identity):
     if not identity or not identity.get("email"):
         return None
+    from services.estagiarios_acesso import email_externo_confirmado, eh_estagiario
+
     access = AccessStore(store)
     record = access.get_by_email(identity["email"])
     if not record or not record["ativo"]:
         return None
-    return principal_from_record(record, access.store)
+    principal = principal_from_record(record, access.store)
+    if eh_estagiario(principal):
+        if not email_externo_confirmado(identity) or not principal.estagio_vigente:
+            return None
+    return principal
 
 
 def confirm_principal(principal, store=None):
@@ -186,7 +248,12 @@ def confirm_principal(principal, store=None):
     record = access.get_by_email(principal.email)
     if not record or not record["ativo"]:
         return None
-    return principal_from_record(record, access.store)
+    from services.estagiarios_acesso import eh_estagiario
+
+    atual = principal_from_record(record, access.store)
+    if eh_estagiario(atual) and not atual.estagio_vigente:
+        return None
+    return atual
 
 
 @contextmanager
@@ -243,6 +310,8 @@ def current_user(store):
     identity = oidc_identity()
     if identity is None:
         return None
+    from services.estagiarios_acesso import eh_estagiario, email_externo_confirmado
+
     cache = None
     try:
         import streamlit as st
@@ -263,6 +332,8 @@ def current_user(store):
         principal = confirm_principal(cache.get("principal"), store)
     else:
         principal = resolve_principal(store, identity)
+    if eh_estagiario(principal) and not email_externo_confirmado(identity):
+        return None
     try:
         import streamlit as st
 
@@ -292,8 +363,8 @@ def has_permission(principal, module):
             )
         )
     if module == "alertas":
-        # Tarefas is always allowed for active accounts and must not open Alertas
-        # by itself. Same rule as docs/ALERTAS_INTERNOS.md: Ofícios, Agenda or Memorandos.
+        # Tarefas must not open Alertas by itself. Same rule as
+        # docs/ALERTAS_INTERNOS.md: Ofícios, Agenda or Memorandos.
         return any(
             has_permission(principal, name)
             for name in ("oficios", "agenda", "memorandos")
@@ -306,8 +377,19 @@ def has_permission(principal, module):
         return principal.pode_oficios
     if module == "memorandos":
         return principal.pode_memorandos
+    from services.estagiarios_acesso import CATEGORIA_ESTAGIARIO
+
+    estagiario = getattr(principal, "categoria_acesso", "INSTITUCIONAL") == CATEGORIA_ESTAGIARIO
+    if module == "minutas":
+        if estagiario:
+            return bool(principal.estagio_vigente and principal.minutas_gabinetes)
+        return True
+    if module == "busca":
+        return not estagiario
+    if estagiario:
+        return False
     if module == "tarefas":
-        # Personal tasks are available to every authenticated active account.
+        # Personal tasks stay available to every active institutional account.
         return True
     if module == "relatorios":
         return principal.administrator or principal.pode_relatorios

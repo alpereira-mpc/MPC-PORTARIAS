@@ -272,6 +272,155 @@ def _invalidate_alerts():
         pass
 
 
+def _vinculos_estagio(store):
+    from database.estagiarios import EstagiariosStore
+
+    try:
+        return EstagiariosStore(store).list(include_inactive=True)
+    except Exception:
+        LOGGER.exception("Falha ao consultar vínculos de estágio")
+        return []
+
+
+def _rotulo_vinculo(row):
+    situacao = "ativo" if row.get("ativo") else "inativo"
+    if row.get("data_encerramento"):
+        situacao = "encerrado"
+    return (
+        f"{row.get('nome') or 'Sem nome'} — {row.get('lotacao')} — "
+        f"{row.get('data_inicio')} a {row.get('data_limite')} ({situacao})"
+    )
+
+
+def _formulario_estagiario(store, principal, current, selected, prefix):
+    from services.estagiarios_acesso import LOTACOES
+
+    vinculos = _vinculos_estagio(store)
+    vigentes = [
+        row
+        for row in vinculos
+        if row.get("ativo") and not row.get("data_encerramento")
+    ]
+    if not vigentes:
+        st.warning(
+            "Conclua o cadastro de estágio antes de liberar o acesso. "
+            "Nenhum vínculo ativo foi encontrado."
+        )
+        return
+    opcoes = {row["id"]: _rotulo_vinculo(row) for row in vigentes}
+    atual = current.get("estagio_lotacao_id")
+    ids = list(opcoes)
+    if atual in opcoes:
+        indice = ids.index(atual)
+    else:
+        indice = 0
+    with st.form("acesso_estagiario_" + str(selected)):
+        form_mark()
+        nome = st.text_input("Nome", value=current.get("nome") or "", key=prefix + "nome_estagio")
+        email = st.text_input(
+            "E-mail da Conta Google",
+            value=current.get("email") or "",
+            key=prefix + "email_estagio",
+        )
+        lotacao_id = st.selectbox(
+            "Vínculo de estágio",
+            ids,
+            index=indice,
+            format_func=lambda item: opcoes[item],
+            key=prefix + "vinculo",
+        )
+        escolhido = next(row for row in vigentes if row["id"] == lotacao_id)
+        st.caption(
+            f"Gabinete {escolhido['lotacao']}. Vigência de {escolhido['data_inicio']} "
+            f"até {escolhido['data_limite']}."
+        )
+        extras = st.multiselect(
+            "Gabinetes adicionais do Minutas IA",
+            [codigo for codigo in LOTACOES if codigo != escolhido["lotacao"]],
+            default=[
+                codigo
+                for codigo in (current.get("minutas_gabinetes") or [])
+                if codigo in LOTACOES and codigo != escolhido["lotacao"]
+            ],
+            key=prefix + "minutas_gabinetes",
+        )
+        ativo = st.checkbox("Ativo", value=bool(current.get("ativo", True)), key=prefix + "ativo_estagio")
+        st.caption("O acesso fica restrito à Pesquisa Jurídica e à geração de minuta.")
+        submit = st.form_submit_button("Salvar e liberar acesso")
+    if not submit:
+        return
+    try:
+        aplicar_usuario(
+            store,
+            principal,
+            {
+                "nome": nome,
+                "email": email,
+                "perfil": "USUARIO",
+                "ativo": ativo,
+                "categoria_acesso": "ESTAGIARIO",
+                "estagio_lotacao_id": lotacao_id,
+                "minutas_gabinetes": list(extras) + [escolhido["lotacao"]],
+                "pode_admin": True,
+            },
+            None if selected == 0 else selected,
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+    else:
+        st.session_state.pop("_access_cache", None)
+        st.session_state["acesso_message"] = "Acesso de estagiário salvo."
+        st.rerun()
+
+
+def _autorizar_estagiario(store, row, actor):
+    from services.access_requests import autorizar_estagiario
+
+    identifier = row["id"]
+    vinculos = [
+        item
+        for item in _vinculos_estagio(store)
+        if item.get("ativo") and not item.get("data_encerramento")
+    ]
+    if not vinculos:
+        st.warning("Cadastre o vínculo de estágio antes de autorizar o acesso.")
+        return
+    opcoes = {item["id"]: _rotulo_vinculo(item) for item in vinculos}
+    lotacao_id = st.selectbox(
+        "Vínculo de estágio",
+        list(opcoes),
+        format_func=lambda item: opcoes[item],
+        key="access_req_estagio_" + str(identifier),
+    )
+    escolhido = next(item for item in vinculos if item["id"] == lotacao_id)
+    st.caption(
+        f"Gabinete {escolhido['lotacao']}. Vigência até {escolhido['data_limite']}. "
+        "A autorização cria o usuário exclusivo do Minutas IA."
+    )
+    confirm = st.checkbox(
+        "Confirmo a autorização do acesso exclusivo ao Minutas IA",
+        key="access_req_confirm_estagio_" + str(identifier),
+    )
+    if st.button(
+        "Autorizar acesso",
+        key="access_req_authorize_" + str(identifier),
+        disabled=not confirm,
+    ):
+        try:
+            autorizar_estagiario(store, identifier, lotacao_id, actor)
+        except ValueError as exc:
+            st.error(str(exc))
+        except Exception:
+            LOGGER.exception("Falha ao autorizar estagiário")
+            st.error("Não foi possível autorizar o acesso.")
+        else:
+            _invalidate_alerts()
+            st.session_state["access_request_admin_message"] = (
+                "Solicitação aprovada e acesso ao Minutas IA ativado."
+            )
+            st.rerun()
+
+
 def _render_access_requests(store, principal):
     from services.access_requests import (
         ADMIN_FILTERS,
@@ -303,7 +452,8 @@ def _render_access_requests(store, principal):
         [
             {
                 "Nome": row["nome"],
-                "E-mail institucional": row["email"],
+                "Tipo": "Estagiário" if row.get("tipo_solicitante") == "ESTAGIARIO" else "Institucional",
+                "E-mail": row["email"],
                 "Gabinete / Unidade": _gabinete_display(row),
                 "Data da solicitação": datetime.fromisoformat(row["created_at"]),
                 "Status": row["status"],
@@ -321,11 +471,16 @@ def _render_access_requests(store, principal):
     actor = getattr(principal, "email", "")
     pending = [row for row in rows if row["status"] == STATUS_PENDING]
     if pending:
-        st.caption("Aprovar ou recusar não cria usuário nem altera permissões.")
+        st.caption(
+            "Aprovar uma solicitação institucional não cria usuário. "
+            "Autorizar um estagiário cria o acesso exclusivo ao Minutas IA."
+        )
     for row in rows:
         identifier = row["id"]
         with st.expander(row["nome"] + " · " + row["email"]):
-            if row["status"] == STATUS_PENDING:
+            if row["status"] == STATUS_PENDING and row.get("tipo_solicitante") == "ESTAGIARIO":
+                _autorizar_estagiario(store, row, actor)
+            elif row["status"] == STATUS_PENDING:
                 confirm_approve = st.checkbox(
                     "Confirmo a aprovação",
                     key="access_req_confirm_approve_" + str(identifier),
@@ -591,6 +746,39 @@ def render(store, principal):
     if protected:
         st.caption("Administrador protegido")
         profile_options = ("ADMINISTRADOR",)
+    categoria_atual = current.get("categoria_acesso") or "INSTITUCIONAL"
+    if protected:
+        categoria = "INSTITUCIONAL"
+    else:
+        categorias = ("INSTITUCIONAL", "ESTAGIARIO")
+        categoria = st.radio(
+            "Categoria de acesso",
+            categorias,
+            index=1 if categoria_atual == "ESTAGIARIO" else 0,
+            format_func=lambda item: "Institucional" if item == "INSTITUCIONAL" else "Estagiário",
+            key=prefix + "categoria",
+            horizontal=True,
+        )
+    if categoria == "ESTAGIARIO":
+        _formulario_estagiario(store, principal, current, selected, prefix)
+    else:
+        _formulario_institucional(
+            store,
+            principal,
+            current,
+            selected,
+            prefix,
+            profile_options,
+            protected,
+            last_admin,
+        )
+    if selected and not protected:
+        _controles_ativacao_usuario(store, principal, current, selected, protected, last_admin)
+
+
+def _formulario_institucional(
+    store, principal, current, selected, prefix, profile_options, protected, last_admin
+):
     with st.form("acesso_user_" + str(selected)):
         form_mark()
         nome = st.text_input("Nome", value=current["nome"], key=prefix + "nome")
@@ -758,75 +946,73 @@ def render(store, principal):
             st.session_state.pop("_access_cache", None)
             st.session_state["acesso_message"] = "Usuário salvo."
             st.rerun()
-    if selected and not protected:
-        if current["ativo"]:
-            if last_admin:
-                st.caption("O sistema deve manter pelo menos um administrador ativo.")
-            elif st.button("Desativar"):
-                try:
-                    current["ativo"] = False
-                    aplicar_usuario(store, principal, current, selected)
-                except ValueError as exc:
-                    st.error(str(exc))
-                else:
-                    st.session_state.pop("_access_cache", None)
-                    st.session_state["acesso_message"] = "Usuário desativado."
-                    st.rerun()
-        elif st.button("Ativar"):
+
+
+def _controles_ativacao_usuario(store, principal, current, selected, protected, last_admin):
+    if current["ativo"]:
+        if last_admin:
+            st.caption("O sistema deve manter pelo menos um administrador ativo.")
+        elif st.button("Desativar"):
             try:
-                current["ativo"] = True
+                current["ativo"] = False
                 aplicar_usuario(store, principal, current, selected)
             except ValueError as exc:
                 st.error(str(exc))
             else:
                 st.session_state.pop("_access_cache", None)
-                st.session_state["acesso_message"] = "Usuário ativado."
+                st.session_state["acesso_message"] = "Usuário desativado."
                 st.rerun()
-        self_delete = selected == principal.id
-        st.divider()
-        if protected:
-            st.caption("Este cadastro não pode ser excluído.")
-        elif self_delete:
-            st.caption("Você não pode excluir o próprio cadastro.")
-        elif last_admin:
-            st.caption("Não é possível excluir o último administrador ativo.")
-        elif st.session_state.get("acesso_delete_id") == selected:
-            with st.container(border=True):
-                render_html('<div class="mpc-danger-zone" hidden></div>')
-                st.error("Exclusão definitiva")
-                st.write(
-                    "Será excluído: **" + current["nome"] + "** · " + current["email"]
-                )
-                confirmed = st.checkbox(
-                    "Confirmo a exclusão definitiva",
-                    key="acesso_delete_confirm_" + str(selected),
-                )
-                typed = st.text_input(
-                    "Digite EXCLUIR para confirmar",
-                    key="acesso_delete_typed_" + str(selected),
-                )
-                cancel, destroy = st.columns(2)
-                with cancel:
-                    if st.button("Cancelar exclusão"):
-                        st.session_state.pop("acesso_delete_id", None)
-                        st.rerun()
-                with destroy:
-                    if st.button("Confirmar exclusão"):
-                        if not confirmed or typed.strip() != "EXCLUIR":
-                            st.error(
-                                "Marque a confirmação e digite EXCLUIR para excluir o usuário."
-                            )
-                        else:
-                            try:
-                                aplicar_exclusao_usuario(store, principal, selected)
-                            except ValueError as exc:
-                                st.error(str(exc))
-                            else:
-                                st.session_state.pop("acesso_delete_id", None)
-                                st.session_state.pop("_access_cache", None)
-                                st.session_state["acesso_select_new"] = True
-                                st.session_state["acesso_message"] = "Usuário excluído."
-                                st.rerun()
-        elif st.button("Excluir usuário"):
-            st.session_state["acesso_delete_id"] = selected
+    elif st.button("Ativar"):
+        try:
+            current["ativo"] = True
+            aplicar_usuario(store, principal, current, selected)
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.session_state.pop("_access_cache", None)
+            st.session_state["acesso_message"] = "Usuário ativado."
             st.rerun()
+    self_delete = selected == principal.id
+    st.divider()
+    if protected:
+        st.caption("Este cadastro não pode ser excluído.")
+    elif self_delete:
+        st.caption("Você não pode excluir o próprio cadastro.")
+    elif last_admin:
+        st.caption("Não é possível excluir o último administrador ativo.")
+    elif st.session_state.get("acesso_delete_id") == selected:
+        with st.container(border=True):
+            render_html('<div class="mpc-danger-zone" hidden></div>')
+            st.error("Exclusão definitiva")
+            st.write("Será excluído: **" + current["nome"] + "** · " + current["email"])
+            confirmed = st.checkbox(
+                "Confirmo a exclusão definitiva",
+                key="acesso_delete_confirm_" + str(selected),
+            )
+            typed = st.text_input(
+                "Digite EXCLUIR para confirmar",
+                key="acesso_delete_typed_" + str(selected),
+            )
+            cancel, destroy = st.columns(2)
+            with cancel:
+                if st.button("Cancelar exclusão"):
+                    st.session_state.pop("acesso_delete_id", None)
+                    st.rerun()
+            with destroy:
+                if st.button("Confirmar exclusão"):
+                    if not confirmed or typed.strip() != "EXCLUIR":
+                        st.error("Marque a confirmação e digite EXCLUIR para excluir o usuário.")
+                    else:
+                        try:
+                            aplicar_exclusao_usuario(store, principal, selected)
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        else:
+                            st.session_state.pop("acesso_delete_id", None)
+                            st.session_state.pop("_access_cache", None)
+                            st.session_state["acesso_select_new"] = True
+                            st.session_state["acesso_message"] = "Usuário excluído."
+                            st.rerun()
+    elif st.button("Excluir usuário"):
+        st.session_state["acesso_delete_id"] = selected
+        st.rerun()

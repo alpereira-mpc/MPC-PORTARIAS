@@ -994,6 +994,10 @@ def should_run_search(term):
 
 
 def global_search(store, principal, term, *, limit_per_module=PER_MODULE):
+    from services.access import has_permission
+
+    if not has_permission(principal, "busca"):
+        return [], {}, {"status": "denied", "term": "", "total": 0}
     store = unwrap_store(store)
     run, status, cleaned = should_run_search(term)
     if not run:

@@ -171,6 +171,9 @@ class MinutasLibraryService:
     def _authorize(self):
         if not can_access_minutas_piloto(self.identity, self.secrets):
             raise MinutasAccessDenied("Acesso não autorizado a este módulo.")
+        from services.estagiarios_acesso import exigir_gabinete_minutas
+
+        exigir_gabinete_minutas(self.principal, getattr(self.procurador, "sigla", None))
         return normalize_email(self.identity.get("email"))
 
     @staticmethod

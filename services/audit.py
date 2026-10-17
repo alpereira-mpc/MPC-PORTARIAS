@@ -152,6 +152,8 @@ EVENT_LABELS = {
     "ESTAGIARIO_VINCULO_ENCERRADO": "Vínculo de estagiário encerrado",
     "ESTAGIARIO_SUBSTITUIDO": "Estagiário substituído",
     "SOLICITACAO_APROVADA": "Solicitação de acesso aprovada",
+    "ESTAGIARIO_ACESSO_AUTORIZADO": "Acesso de estagiário autorizado",
+    "ESTAGIARIO_ACESSO_REVOGADO": "Acesso de estagiário revogado",
     "SOLICITACAO_RECUSADA": "Solicitação de acesso recusada",
     "SOLICITACAO_EXCLUIDA": "Solicitação de acesso excluída",
     "BACKUP_GERADO": "Backup gerado",

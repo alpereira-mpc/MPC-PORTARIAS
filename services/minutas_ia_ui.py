@@ -2403,6 +2403,12 @@ def _render_selecao_procurador():
         st.session_state[SESSION_PROCURADOR] = sigla
 
     pessoas = listar_ativos()
+    from services.estagiarios_acesso import eh_estagiario
+
+    principal = st.session_state.get("_audit_actor")
+    if eh_estagiario(principal):
+        permitidos = set(getattr(principal, "minutas_gabinetes", ()) or ())
+        pessoas = [pessoa for pessoa in pessoas if pessoa.sigla in permitidos]
     columns = st.columns(2)
     for index, pessoa in enumerate(pessoas):
         column = columns[index % 2]
@@ -2438,14 +2444,27 @@ def render(store, identity):
         legada = navegacao_legada(st.secrets)
     except Exception:
         legada = False
-    if legada:
+    from services.estagiarios_acesso import eh_estagiario, exigir_gabinete_minutas
+    from services.minutas_library import MinutasAccessDenied
+
+    principal = st.session_state.get("_audit_actor")
+    estagiario = eh_estagiario(principal)
+    if legada and not estagiario:
         st.session_state[SESSION_PROCURADOR] = "ESPO"
+    if estagiario:
+        permitidos = tuple(getattr(principal, "minutas_gabinetes", ()) or ())
+        atual = st.session_state.get(SESSION_PROCURADOR)
+        if atual not in permitidos:
+            st.session_state.pop(SESSION_PROCURADOR, None)
+            if len(permitidos) == 1:
+                st.session_state[SESSION_PROCURADOR] = permitidos[0]
     if not st.session_state.get(SESSION_PROCURADOR):
         _render_selecao_procurador()
         return
     try:
         procurador = exigir_procurador(st.session_state.get(SESSION_PROCURADOR))
-    except MinutasContextoError as exc:
+        exigir_gabinete_minutas(st.session_state.get("_audit_actor"), procurador.sigla)
+    except (MinutasContextoError, MinutasAccessDenied) as exc:
         st.session_state.pop(SESSION_PROCURADOR, None)
         st.error(str(exc))
         return

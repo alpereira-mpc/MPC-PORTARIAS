@@ -112,6 +112,11 @@ def _persistent_errors(term, errors):
 
 
 def render_home_search(store, principal):
+    from services.access import has_permission
+
+    if not has_permission(principal, "busca"):
+        st.error("Acesso não autorizado a este módulo.")
+        return
     _prepare_home_search()
     section_label("Busca global")
     st.caption(

@@ -586,7 +586,7 @@ def enter_portal_module(allowed):
     requested, nav_state = _pending_navigation(allowed)
     current = _session_get("portal_module")
     if current not in allowed:
-        current = "Início"
+        current = allowed[0] if allowed else "Início"
     target = requested if requested is not None else current
     previous = _session_get(PORTAL_LAST_MODULE)
     if previous is not None:
@@ -839,6 +839,42 @@ def _open_access_request_form():
     st.session_state[ACCESS_REQUEST_VIEW] = "form"
 
 
+def portal_navigation(principal, identity):
+    """Sidebar do estagiário contém só o Minutas IA. Servidores conservam o menu atual."""
+    from services.access import has_permission
+    from services.estagiarios_acesso import CATEGORIA_ESTAGIARIO
+    from services.minutas_piloto import can_access_minutas_piloto
+
+    if getattr(principal, "categoria_acesso", "INSTITUCIONAL") == CATEGORIA_ESTAGIARIO:
+        if has_permission(principal, "minutas") and can_access_minutas_piloto(identity):
+            return ["Minutas IA"]
+        return []
+    options = ["Início", "Busca Global"]
+    if has_permission(principal, "portarias"):
+        options.append("Portarias")
+    if has_permission(principal, "agenda"):
+        options.append("Agenda")
+    if has_permission(principal, "oficios"):
+        options.append("Ofícios")
+    if has_permission(principal, "memorandos"):
+        options.append("Memorandos")
+    if has_permission(principal, "tarefas"):
+        options.append("Tarefas")
+    if has_permission(principal, "relatorios"):
+        options.append("Relatórios e Indicadores")
+    if has_permission(principal, "representacoes"):
+        options.append("Representações")
+    if has_permission(principal, "peticoes"):
+        options.append("Petições")
+    if has_permission(principal, "ouvidoria"):
+        options.append("Ouvidoria")
+    if can_access_minutas_piloto(identity):
+        options.append("Minutas IA")
+    if has_permission(principal, "admin"):
+        options.append("Administração")
+    return options
+
+
 def render_login():
     icon = base64.standard_b64encode(asset(ROOT / "assets/gmail.png")).decode("ascii")
     st.markdown(
@@ -886,7 +922,8 @@ def render_login():
             )
     st.markdown(
         '<div class="login-domain-hint">'
-        "Utilize uma conta previamente autorizada do domínio @tce.pb.gov.br."
+        "Acesso autorizado a servidores do TCE-PB e estagiários cadastrados do MPC-PB. "
+        "Utilize a Conta Google associada ao seu cadastro."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -898,8 +935,9 @@ def _render_access_request():
     if view == "done":
         from services.access_requests import SUCCESS_BODY, SUCCESS_TITLE
 
-        st.success(SUCCESS_TITLE)
-        st.write(SUCCESS_BODY)
+        done = st.session_state.get("_access_request_done") or {}
+        st.success(done.get("title") or SUCCESS_TITLE)
+        st.write(done.get("body") or SUCCESS_BODY)
         if st.button("Voltar para o login", key="access_request_back"):
             _clear_access_request_state()
             st.rerun()
@@ -918,21 +956,49 @@ def _render_access_request():
         OTHER_UNIT,
         submit_access_request,
     )
-
-    nome = st.text_input("Nome completo", key="access_request_nome")
-    email = st.text_input("E-mail institucional", key="access_request_email")
-    gabinete = st.selectbox(
-        "Gabinete / Unidade",
-        GABINETE_OPTIONS,
-        index=None,
-        placeholder="Selecione",
-        key="access_request_gabinete",
+    from services.estagiarios_acesso import (
+        TIPO_ESTAGIARIO,
+        TIPO_INSTITUCIONAL,
+        opcoes_gabinete_estagio,
     )
-    unidade_outro = None
-    if gabinete == OTHER_UNIT:
-        unidade_outro = st.text_input(
-            "Informe a unidade", key="access_request_unidade_outro"
+
+    tipo_rotulo = st.radio(
+        "Tipo de solicitante",
+        ("Servidor ou usuário institucional", "Estagiário do MPC-PB"),
+        key="access_request_tipo",
+    )
+    estagiario = tipo_rotulo == "Estagiário do MPC-PB"
+    nome = st.text_input("Nome completo", key="access_request_nome")
+    email = st.text_input(
+        "E-mail da Conta Google" if estagiario else "E-mail institucional",
+        key="access_request_email",
+    )
+    if estagiario:
+        st.caption(
+            "O cadastro fica sujeito à análise do MPC-PB. "
+            "O envio da solicitação não libera o acesso."
         )
+        gabinete = st.selectbox(
+            "Gabinete de estágio",
+            opcoes_gabinete_estagio(),
+            index=None,
+            placeholder="Selecione",
+            key="access_request_gabinete_estagio",
+        )
+        unidade_outro = None
+    else:
+        gabinete = st.selectbox(
+            "Gabinete / Unidade",
+            GABINETE_OPTIONS,
+            index=None,
+            placeholder="Selecione",
+            key="access_request_gabinete",
+        )
+        unidade_outro = None
+        if gabinete == OTHER_UNIT:
+            unidade_outro = st.text_input(
+                "Informe a unidade", key="access_request_unidade_outro"
+            )
     submitted = st.button(
         "Enviar solicitação", type="primary", key="access_request_submit"
     )
@@ -943,7 +1009,14 @@ def _render_access_request():
         return
     try:
         store = _application_store()
-        outcome = submit_access_request(store, nome, email, gabinete, unidade_outro)
+        outcome = submit_access_request(
+            store,
+            nome,
+            email,
+            gabinete,
+            unidade_outro,
+            TIPO_ESTAGIARIO if estagiario else TIPO_INSTITUCIONAL,
+        )
     except Exception:
         LOGGER.exception("Falha ao registrar solicitação de acesso")
         st.error("Não foi possível registrar a solicitação. Tente novamente.")
@@ -951,6 +1024,10 @@ def _render_access_request():
     if not outcome.ok:
         st.error(outcome.message)
         return
+    st.session_state["_access_request_done"] = {
+        "title": outcome.title,
+        "body": outcome.message,
+    }
     st.session_state[ACCESS_REQUEST_VIEW] = "done"
     st.rerun()
 
@@ -1221,34 +1298,19 @@ def render_portal():
     from services.audit import iniciar_sessao_autorizada, registrar_modulo
 
     iniciar_sessao_autorizada(store, principal)
-    options = ["Início", "Busca Global"]
-    if has_permission(principal, "portarias"):
-        options.append("Portarias")
-    if has_permission(principal, "agenda"):
-        options.append("Agenda")
-    if has_permission(principal, "oficios"):
-        options.append("Ofícios")
-    if has_permission(principal, "memorandos"):
-        options.append("Memorandos")
-    if has_permission(principal, "tarefas"):
-        options.append("Tarefas")
-    if has_permission(principal, "relatorios"):
-        options.append("Relatórios e Indicadores")
-    if has_permission(principal, "representacoes"):
-        options.append("Representações")
-    if has_permission(principal, "peticoes"):
-        options.append("Petições")
-    if has_permission(principal, "ouvidoria"):
-        options.append("Ouvidoria")
     from services.minutas_piloto import can_access_minutas_piloto
 
-    if can_access_minutas_piloto(identity):
-        options.append("Minutas IA")
-    if has_permission(principal, "admin"):
-        options.append("Administração")
+    options = portal_navigation(principal, identity)
+    if getattr(principal, "categoria_acesso", "INSTITUCIONAL") == "ESTAGIARIO":
+        clear_alerts_overlay()
     enter_portal_module(options)
+    if not options:
+        st.error("Acesso não autorizado a este módulo.")
+        if st.button("Sair", type="primary"):
+            _logout()
+        st.stop()
     if _session_get("portal_module") not in options:
-        st.session_state["portal_module"] = "Início"
+        st.session_state["portal_module"] = options[0]
     apply_alerts_view_request()
     with st.sidebar:
         theme_key = f"portal_theme_select_{principal.id}"
@@ -1344,6 +1406,11 @@ def render_portal():
         st.stop()
     if selected == "Busca Global":
         st.session_state["audit_modulo_atual"] = None
+        try:
+            require_permission(principal, "busca")
+        except ValueError as exc:
+            st.error(str(exc))
+            st.stop()
         from services.search_ui import render_home_search
 
         with phase("module_render"):
@@ -1396,6 +1463,7 @@ def render_portal():
             if not can_access_minutas_piloto(identity):
                 st.error("Acesso não autorizado a este módulo.")
                 st.stop()
+            require_permission(principal, "minutas")
             from services.minutas_ia_ui import render
 
             with phase("module_render"):

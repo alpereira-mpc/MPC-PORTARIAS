@@ -20,7 +20,8 @@ USER_COLUMNS = (
     "id,nome,email,perfil,ativo,pode_portarias,pode_agenda,pode_oficios,pode_memorandos,pode_relatorios,"
     "pode_representacoes,pode_peticoes,pode_ouvidoria,pode_representacoes_registrar_protocolo,"
     "pode_representacoes_enviar_comunicacao,pode_comunicacoes_configurar_destinatarios,"
-    "pode_comunicacoes_enviar_teste,pode_peticoes_cadastrar,pode_peticoes_editar,pode_peticoes_registrar_andamento,pode_peticoes_registrar_resultado,pode_peticoes_concluir,pode_admin,protegido,criado_em,atualizado_em"
+    "pode_comunicacoes_enviar_teste,pode_peticoes_cadastrar,pode_peticoes_editar,pode_peticoes_registrar_andamento,pode_peticoes_registrar_resultado,pode_peticoes_concluir,pode_admin,protegido,criado_em,atualizado_em,"
+    "categoria_acesso,estagio_lotacao_id"
 )
 
 
@@ -97,6 +98,7 @@ class AccessStore:
                 with self.store.connection() as c:
                     c.execute("BEGIN IMMEDIATE")
                     self._mark_protected_admin(c)
+            self._ensure_estagiario_acesso()
             _READY.add(key)
             self._ensure_access_requests()
             return
@@ -204,6 +206,7 @@ class AccessStore:
                 "INSERT INTO configuracoes VALUES(?,?) ON CONFLICT DO NOTHING",
                 (MARKER, "1"),
             )
+        self._ensure_estagiario_acesso()
         _READY.add(key)
         self._ensure_access_requests()
 
@@ -249,6 +252,55 @@ class AccessStore:
             [(identifier, code) for code in GABINETES],
         )
 
+    def _ensure_estagiario_acesso(self):
+        with self.store.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            columns = self._table_columns(c)
+            if "categoria_acesso" not in columns:
+                c.execute(
+                    "ALTER TABLE usuarios_acesso ADD COLUMN categoria_acesso TEXT NOT NULL DEFAULT 'INSTITUCIONAL'"
+                )
+            if "estagio_lotacao_id" not in columns:
+                tipo = "BIGINT" if self.store.backend == "postgresql" else "INTEGER"
+                c.execute(
+                    f"ALTER TABLE usuarios_acesso ADD COLUMN estagio_lotacao_id {tipo}"
+                )
+            fk = "BIGINT" if self.store.backend == "postgresql" else "INTEGER"
+            c.execute(
+                "CREATE TABLE IF NOT EXISTS usuario_minutas_gabinetes ("
+                f"usuario_id {fk} NOT NULL REFERENCES usuarios_acesso(id) ON DELETE CASCADE,"
+                "gabinete TEXT NOT NULL CHECK(gabinete IN ('MTTF','ESPO','BLTC','SBBQ','IBMF','MASN','LAF')),"
+                "PRIMARY KEY(usuario_id, gabinete))"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS usuarios_acesso_categoria_idx ON usuarios_acesso(categoria_acesso)"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS usuarios_acesso_estagio_idx ON usuarios_acesso(estagio_lotacao_id)"
+            )
+            if self.store.backend == "postgresql":
+                c.execute("SAVEPOINT rls_minutas_gabinetes")
+                try:
+                    c.execute(
+                        "ALTER TABLE usuario_minutas_gabinetes ENABLE ROW LEVEL SECURITY"
+                    )
+                    c.execute(
+                        "REVOKE ALL ON TABLE usuario_minutas_gabinetes FROM PUBLIC"
+                    )
+                    for papel in ("anon", "authenticated"):
+                        c.execute("SAVEPOINT revogar_minutas_gabinetes")
+                        try:
+                            c.execute(
+                                "REVOKE ALL ON TABLE usuario_minutas_gabinetes FROM "
+                                + papel
+                            )
+                            c.execute("RELEASE SAVEPOINT revogar_minutas_gabinetes")
+                        except Exception:
+                            c.execute("ROLLBACK TO SAVEPOINT revogar_minutas_gabinetes")
+                    c.execute("RELEASE SAVEPOINT rls_minutas_gabinetes")
+                except Exception:
+                    c.execute("ROLLBACK TO SAVEPOINT rls_minutas_gabinetes")
+
     def get_by_email(self, email):
         email = normalize_email(email)
         if not email:
@@ -267,12 +319,59 @@ class AccessStore:
             return None
         with self.store.connection(read_only=True) as c:
             row = c.execute(
-                "SELECT id,ativo,atualizado_em FROM usuarios_acesso WHERE email=?",
+                "SELECT id,ativo,atualizado_em,categoria_acesso,estagio_lotacao_id "
+                "FROM usuarios_acesso WHERE email=?",
                 (email,),
             ).fetchone()
             if not row:
                 return None
-            return (int(row["id"]), bool(row["ativo"]), row["atualizado_em"])
+            estagio = None
+            gabinetes = ()
+            if row["categoria_acesso"] == "ESTAGIARIO" and row["estagio_lotacao_id"]:
+                c.execute("SAVEPOINT versao_estagio")
+                try:
+                    vinculo = c.execute(
+                        "SELECT ativo,data_inicio,data_limite,data_encerramento,lotacao,atualizado_em "
+                        "FROM estagiarios_lotacoes WHERE id=?",
+                        (row["estagio_lotacao_id"],),
+                    ).fetchone()
+                    gabinetes = tuple(
+                        item[0]
+                        for item in c.execute(
+                            "SELECT gabinete FROM usuario_minutas_gabinetes "
+                            "WHERE usuario_id=? ORDER BY gabinete",
+                            (row["id"],),
+                        )
+                    )
+                    c.execute("RELEASE SAVEPOINT versao_estagio")
+                    if vinculo:
+                        estagio = (
+                            bool(vinculo["ativo"]),
+                            vinculo["data_inicio"],
+                            vinculo["data_limite"],
+                            vinculo["data_encerramento"],
+                            vinculo["lotacao"],
+                            vinculo["atualizado_em"],
+                            gabinetes,
+                        )
+                except Exception:
+                    c.execute("ROLLBACK TO SAVEPOINT versao_estagio")
+            from services.estagiarios_acesso import hoje_institucional
+
+            vigencia = (
+                hoje_institucional().isoformat()
+                if row["categoria_acesso"] == "ESTAGIARIO"
+                else None
+            )
+            return (
+                int(row["id"]),
+                bool(row["ativo"]),
+                row["atualizado_em"],
+                row["categoria_acesso"],
+                row["estagio_lotacao_id"],
+                estagio,
+                vigencia,
+            )
 
     def get_theme(self, identifier):
         with self.store.connection(read_only=True) as c:
@@ -332,6 +431,11 @@ class AccessStore:
                 "SELECT usuario_id,gabinete FROM usuario_gabinetes ORDER BY gabinete"
             ):
                 gabinetes.setdefault(item[0], []).append(item[1])
+            minutas = {}
+            for item in c.execute(
+                "SELECT usuario_id,gabinete FROM usuario_minutas_gabinetes ORDER BY gabinete"
+            ):
+                minutas.setdefault(item[0], []).append(item[1])
             users = []
             for row in rows:
                 record = dict(row)
@@ -354,6 +458,8 @@ class AccessStore:
                 ):
                     record[key] = bool(record[key])
                 record["gabinetes"] = gabinetes.get(record["id"], [])
+                record["categoria_acesso"] = record.get("categoria_acesso") or "INSTITUCIONAL"
+                record["minutas_gabinetes"] = minutas.get(record["id"], [])
                 users.append(record)
             return users
 
@@ -367,9 +473,37 @@ class AccessStore:
             raise ValueError("Informe o nome.")
         if not EMAIL_RE.match(email):
             raise ValueError("Informe um e-mail válido.")
-        if perfil == "ADMINISTRADOR":
+        from services.estagiarios_acesso import (
+            CATEGORIA_ESTAGIARIO,
+            CATEGORIA_INSTITUCIONAL,
+            carregar_vinculo,
+            categoria_de,
+            sanitizar_cadastro_estagiario,
+        )
+
+        categoria = categoria_de(payload)
+        estagio_id = None
+        minutas = []
+        if categoria == CATEGORIA_ESTAGIARIO:
+            if email == PROTECTED_ADMIN_EMAIL:
+                raise ValueError(PROTECTED_ADMIN_MESSAGE)
+            vinculo = carregar_vinculo(self.store, payload.get("estagio_lotacao_id"))
+            restrito = sanitizar_cadastro_estagiario(payload, vinculo)
+            perfil = restrito["perfil"]
+            flags = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+            gabinetes = []
+            estagio_id = restrito["estagio_lotacao_id"]
+            # A lotação viva não fica gravada como autorização extra.
+            # Quando o estágio muda de gabinete, o anterior deixa de valer.
+            minutas = [
+                code
+                for code in restrito["minutas_gabinetes"]
+                if code != vinculo["lotacao"]
+            ]
+        elif perfil == "ADMINISTRADOR":
             flags = (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
             gabinetes = list(GABINETES)
+            categoria = CATEGORIA_INSTITUCIONAL
         else:
             flags = (
                 flag(payload.get("pode_portarias")),
@@ -448,11 +582,15 @@ class AccessStore:
                 action = "acesso_atualizar_usuario"
             c.execute("DELETE FROM usuario_gabinetes WHERE usuario_id=?", (identifier,))
             # Module visibility and each institutional action remain independent.
-            peticoes = 1 if perfil == "ADMINISTRADOR" or payload.get("pode_peticoes") else 0
-            actions = [
-                1 if perfil == "ADMINISTRADOR" or payload.get(name) else 0
-                for name in ("pode_peticoes_cadastrar", "pode_peticoes_editar", "pode_peticoes_registrar_andamento", "pode_peticoes_registrar_resultado", "pode_peticoes_concluir")
-            ]
+            if categoria == "ESTAGIARIO":
+                peticoes = 0
+                actions = [0, 0, 0, 0, 0]
+            else:
+                peticoes = 1 if perfil == "ADMINISTRADOR" or payload.get("pode_peticoes") else 0
+                actions = [
+                    1 if perfil == "ADMINISTRADOR" or payload.get(name) else 0
+                    for name in ("pode_peticoes_cadastrar", "pode_peticoes_editar", "pode_peticoes_registrar_andamento", "pode_peticoes_registrar_resultado", "pode_peticoes_concluir")
+                ]
             c.execute(
                 "UPDATE usuarios_acesso SET pode_peticoes=?,pode_peticoes_cadastrar=?,"
                 "pode_peticoes_editar=?,pode_peticoes_registrar_andamento=?,"
@@ -462,6 +600,18 @@ class AccessStore:
             c.executemany(
                 "INSERT INTO usuario_gabinetes VALUES(?,?)",
                 [(identifier, code) for code in gabinetes],
+            )
+            c.execute(
+                "UPDATE usuarios_acesso SET categoria_acesso=?, estagio_lotacao_id=? WHERE id=?",
+                (categoria, estagio_id, identifier),
+            )
+            c.execute(
+                "DELETE FROM usuario_minutas_gabinetes WHERE usuario_id=?",
+                (identifier,),
+            )
+            c.executemany(
+                "INSERT INTO usuario_minutas_gabinetes VALUES(?,?)",
+                [(identifier, code) for code in minutas],
             )
             self.store.event(
                 c,
@@ -567,6 +717,10 @@ class AccessStore:
                     raise ValueError(
                         "Não é possível excluir o último administrador ativo."
                     )
+            c.execute(
+                "DELETE FROM usuario_minutas_gabinetes WHERE usuario_id=?",
+                (identifier,),
+            )
             c.execute("DELETE FROM usuarios_acesso WHERE id=?", (identifier,))
             leftover = c.execute(
                 "SELECT COUNT(*) FROM usuario_gabinetes WHERE usuario_id=?",
@@ -586,6 +740,14 @@ class AccessStore:
             r[0]
             for r in c.execute(
                 "SELECT gabinete FROM usuario_gabinetes WHERE usuario_id=? ORDER BY gabinete",
+                (record["id"],),
+            )
+        ]
+        record["categoria_acesso"] = record.get("categoria_acesso") or "INSTITUCIONAL"
+        record["minutas_gabinetes"] = [
+            r[0]
+            for r in c.execute(
+                "SELECT gabinete FROM usuario_minutas_gabinetes WHERE usuario_id=? ORDER BY gabinete",
                 (record["id"],),
             )
         ]

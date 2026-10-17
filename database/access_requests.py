@@ -11,7 +11,7 @@ STATUS_REJECTED = "recusado"
 STATUSES = (STATUS_PENDING, STATUS_APPROVED, STATUS_REJECTED)
 _READY = set()
 COLUMNS = (
-    "id,nome,email,gabinete,unidade_outro,status,created_at,processed_at,processed_by"
+    "id,nome,email,gabinete,unidade_outro,status,created_at,processed_at,processed_by,tipo_solicitante"
 )
 INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS access_requests_email_idx ON access_requests(email)",
@@ -38,6 +38,7 @@ class AccessRequestStore:
         if marker and exists:
             with self.store.connection() as c:
                 c.execute("BEGIN IMMEDIATE")
+                self._ensure_tipo(c)
                 for statement in INDEX_SQL:
                     c.execute(statement)
             _READY.add(key)
@@ -60,8 +61,10 @@ class AccessRequestStore:
                 "CHECK(status IN ('pendente','aprovado','recusado')),"
                 "created_at TEXT NOT NULL,"
                 "processed_at TEXT,"
-                "processed_by TEXT)"
+                "processed_by TEXT,"
+                "tipo_solicitante TEXT NOT NULL DEFAULT 'INSTITUCIONAL')"
             )
+            self._ensure_tipo(c)
             for statement in INDEX_SQL:
                 c.execute(statement)
             c.execute(
@@ -94,7 +97,23 @@ class AccessRequestStore:
             ).fetchone()
             return dict(row) if row else None
 
-    def create(self, nome, email, gabinete, unidade_outro=None):
+    def _ensure_tipo(self, c):
+        if self.store.backend == "postgresql":
+            columns = {
+                row[0]
+                for row in c.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() AND table_name='access_requests'"
+                )
+            }
+        else:
+            columns = {row[1] for row in c.execute("PRAGMA table_info(access_requests)")}
+        if "tipo_solicitante" not in columns:
+            c.execute(
+                "ALTER TABLE access_requests ADD COLUMN tipo_solicitante TEXT NOT NULL DEFAULT 'INSTITUCIONAL'"
+            )
+
+    def create(self, nome, email, gabinete, unidade_outro=None, tipo="INSTITUCIONAL"):
         stamp = now()
         extra = (unidade_outro or "").strip() or None
         with self.store.connection() as c:
@@ -113,6 +132,10 @@ class AccessRequestStore:
                     "nome,email,gabinete,unidade_outro,status,created_at) "
                     "VALUES(?,?,?,?,?,?)",
                     (nome, email, gabinete, extra, STATUS_PENDING, stamp),
+                )
+                c.execute(
+                    "UPDATE access_requests SET tipo_solicitante=? WHERE id=?",
+                    (tipo if tipo in ("INSTITUCIONAL", "ESTAGIARIO") else "INSTITUCIONAL", inserted.lastrowid),
                 )
             except sqlite3.IntegrityError:
                 raise ValueError(
@@ -135,6 +158,7 @@ class AccessRequestStore:
             "created_at": stamp,
             "processed_at": None,
             "processed_by": None,
+            "tipo_solicitante": tipo if tipo in ("INSTITUCIONAL", "ESTAGIARIO") else "INSTITUCIONAL",
         }
 
     def get(self, identifier):
