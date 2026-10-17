@@ -37,12 +37,14 @@ def _error(message):
 
 
 def is_denuncia_profile(profile):
+    from services.minutas_procuradores import chave_conhecida
+
     return (
         isinstance(profile, dict)
         and str(profile.get("id") or "") == SPECIALTY_ID
         and str(profile.get("motor") or "") == MOTOR
         and str(profile.get("config_versao") or "") == CONFIG_VERSION
-        and str(profile.get("procuradora_chave") or "") == PROSECUTOR_KEY
+        and chave_conhecida(str((profile or {}).get("procuradora_chave") or ""))
         and str(profile.get("estado") or "") in INSTRUCTION_READY_STATES
     )
 
@@ -67,16 +69,18 @@ def _source_ids(context):
 
 def build_target(profile, processo, origem, periodo_fatos=""):
     from services.minutas_generation import _canonical_process_key
-    from services.minutas_library import PROCURADORA
+    from services.minutas_procuradores import pessoa_do_perfil
     if not is_denuncia_profile(profile):
         _error("O motor de denúncias não está habilitado para esta especialidade.")
     key = _canonical_process_key(processo)
     if len(key) != 7:
         _error("Informe o processo TC no formato 00000/00 antes de analisar a instrução.")
+    pessoa = pessoa_do_perfil(profile)
     return {
         "id": f"instrucao-{key}", "numero_processo": f"{key[:5]}/{key[5:]}",
         "processo_chave": key, "origem": _clean(origem), "periodo_fatos": _clean(periodo_fatos)[:180],
-        "procuradora": PROCURADORA, "procuradora_chave": PROCURADORA.casefold(),
+        "procuradora": pessoa.nome_exibicao,
+        "procuradora_chave": pessoa.chave,
         "especialidade_id": SPECIALTY_ID, "classe": "DENUNCIA", "perfil": "",
         "classificacao_estado": "CLASSIFICADO", "subtipo": "", "parecer_definitivo": False,
         "instrucao_local": True, "motor": MOTOR, "config_versao": CONFIG_VERSION,

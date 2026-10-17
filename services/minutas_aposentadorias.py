@@ -799,7 +799,7 @@ def _bind(context, target):
 
 def build_target(profile, processo, origem, beneficiario, ato):
     from services.minutas_generation import _canonical_process_key
-    from services.minutas_library import PROCURADORA
+    from services.minutas_procuradores import pessoa_do_perfil
     if not is_aposentadoria_profile(profile):
         _error("O motor de aposentadorias não está habilitado para esta especialidade.")
     key = _canonical_process_key(processo)
@@ -812,8 +812,8 @@ def build_target(profile, processo, origem, beneficiario, ato):
         "origem": _clean(origem),
         "beneficiario": _person_value(beneficiario),
         "ato": _clean(ato)[:180],
-        "procuradora": PROCURADORA,
-        "procuradora_chave": PROCURADORA.casefold(),
+        "procuradora": pessoa_do_perfil(profile).nome_exibicao,
+        "procuradora_chave": pessoa_do_perfil(profile).chave,
         "especialidade_id": SPECIALTY_ID,
         "classe": "ATOS_PESSOAL",
         "perfil": "",

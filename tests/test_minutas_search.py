@@ -140,7 +140,7 @@ def test_search_isolated_by_prosecutor_and_authorized_server_side():
     assert denied.repository.calls == []
 
     allowed = Library([_result()])
-    with pytest.raises(MinutasValidationError, match="não habilitada"):
+    with pytest.raises(MinutasValidationError, match="contexto selecionado"):
         MinutasSearchService(allowed).search(
             "licitação", procuradora="Outra Procuradora"
         )

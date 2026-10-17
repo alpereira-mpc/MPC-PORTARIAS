@@ -43,12 +43,14 @@ def _error(message):
 
 
 def is_recurso_profile(profile):
+    from services.minutas_procuradores import chave_conhecida
+
     return (
         isinstance(profile, dict)
         and str(profile.get("id") or "") == SPECIALTY_ID
         and str(profile.get("motor") or "") == MOTOR
         and str(profile.get("config_versao") or "") == CONFIG_VERSION
-        and str(profile.get("procuradora_chave") or "") == PROSECUTOR_KEY
+        and chave_conhecida(str(profile.get("procuradora_chave") or ""))
         and str(profile.get("estado") or "") in INSTRUCTION_READY_STATES
     )
 
@@ -62,13 +64,14 @@ def _modalidade(value):
 
 def build_target(profile, processo, origem, modalidade, materia_originaria="", data_decisao=""):
     from services.minutas_generation import _canonical_process_key
-    from services.minutas_library import PROCURADORA
+    from services.minutas_procuradores import pessoa_do_perfil
     if not is_recurso_profile(profile):
         _error("O motor de recursos não está habilitado para esta especialidade.")
     key = _canonical_process_key(processo)
     if len(key) != 7:
         _error("Informe o processo TC no formato 00000/00 antes de analisar a instrução.")
     modalidade = _modalidade(modalidade)
+    pessoa = pessoa_do_perfil(profile)
     return {
         "id": f"instrucao-{key}", "numero_processo": f"{key[:5]}/{key[5:]}",
         "processo_chave": key, "origem": _clean(origem),
@@ -76,7 +79,8 @@ def build_target(profile, processo, origem, modalidade, materia_originaria="", d
         "modalidade_rotulo": MODALIDADES[modalidade],
         "materia_originaria": _clean(materia_originaria)[:240],
         "data_decisao": _clean(data_decisao)[:20],
-        "procuradora": PROCURADORA, "procuradora_chave": PROCURADORA.casefold(),
+        "procuradora": pessoa.nome_exibicao,
+        "procuradora_chave": pessoa.chave,
         "especialidade_id": SPECIALTY_ID, "classe": "RECURSO", "perfil": "",
         "classificacao_estado": "CLASSIFICADO", "subtipo": "",
         "parecer_definitivo": False, "instrucao_local": True,

@@ -52,6 +52,13 @@ class SyntheticStore:
 
 
 def _choose_specialty(app, specialty=RPPS):
+    try:
+        atual = app.session_state["minutas_procurador"]
+    except Exception:
+        atual = None
+    if atual != "ESPO":
+        app.session_state["minutas_procurador"] = "ESPO"
+        app.run()
     state_secretariats = (SECRETARIAS_MUNICIPAIS, "elvira.pca.orgaos_estaduais")
     def option_key(value):
         return "minutas_pca_option_" + value.replace("elvira.", "").replace(".", "_").lower()
@@ -260,11 +267,12 @@ def test_specialty_membership_sql_is_exact_and_psycopg3_adapts_it():
         assert len(adapted.params) == 2
 
         scope_query = PostgresQuery(Transformer())
+        from database.minutas_especialidades import scoped_arguments
         scope_query.convert(
             parameters("SELECT COUNT(*) FROM minutas_referencias r WHERE " + scoped_clause()),
-            (PROSECUTOR_KEY, *scoped_parameters(logical)),
+            scoped_arguments(PROSECUTOR_KEY, logical),
         )
-        assert len(scope_query.params) == 3
+        assert len(scope_query.params) == 4
 
 
 def test_chamber_opinions_remain_accessible_in_their_own_specialty(environment):
@@ -641,8 +649,10 @@ def test_missing_relations_keep_the_module_closed(environment, monkeypatch):
     monkeypatch.setattr(minutas_ia_ui, "_service", lambda *args, administrative=False:
         library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
     def page():
+        import streamlit as st
         from services.minutas_ia_ui import render
         from tests.access_testing import TEST_IDENTITY
+        st.session_state["minutas_procurador"] = "ESPO"
         render(None, TEST_IDENTITY)
     app = AppTest.from_function(page, default_timeout=30).run()
     assert not app.exception
@@ -666,8 +676,16 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     monkeypatch.setattr(minutas_ia_ui, "_service", lambda *args, administrative=False:
         library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
     def page():
+        import streamlit as st
         from services.minutas_ia_ui import render
         from tests.access_testing import TEST_IDENTITY
+        st.session_state["minutas_procurador"] = "ESPO"
+
+        class _Admin:
+            ativo = True
+            pode_admin = True
+
+        st.session_state["_audit_actor"] = _Admin()
         render(None, TEST_IDENTITY)
     app = AppTest.from_function(page, default_timeout=30).run()
     assert not app.exception and not app.error

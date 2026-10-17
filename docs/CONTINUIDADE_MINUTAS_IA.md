@@ -111,3 +111,11 @@ Decisão posterior: as 24 especialidades já estão no Supabase e o módulo abre
 A separação é a coluna `minutas_referencias.acervo` (`ativo` ou `legado`), aplicada só pelo SQL manual `database/minutas_acervo_ativo.sql`. Esse script não foi executado. Enquanto a coluna não existir, as consultas permanecem as atuais e a tela de adicionar documentos avisa para não recadastrar número já existente: o arquivo iria para o registro histórico.
 
 Depois do SQL, as linhas atuais ficam `legado` e somem da consulta, da pesquisa, do RAG e da geração. O número de processo e o hash do PDF podem existir de novo no acervo `ativo`, uma vez em cada acervo. Dentro do ativo, a unicidade e o bloqueio de cópia permanecem. Nada é apagado e os PDFs antigos não são movidos. A leitura do legado fica em Administração, somente com a coluna presente.
+
+## Multiprocurador — reversão sem perda de acervo
+
+A entrada institucional pede o Procurador antes das especialidades. O catálogo técnico continua único, com os identificadores `elvira.*` já persistidos. O isolamento do acervo usa `procuradora_chave`. ESPO conserva a chave histórica `elvira samara`.
+
+Para voltar temporariamente à entrada direta do piloto, sem apagar os sete perfis nem os pareceres: definir `MINUTAS_NAV_LEGADA` como verdadeiro nos Secrets. Isso só recoloca a navegação em ESPO. Não é rollback de banco.
+
+O script `database/minutas_procuradores.sql` é aditivo. A coluna `procurador_sigla` só é preenchida quando `procuradora_chave` já é `elvira samara` e a sigla ainda está nula. Chaves ambíguas permanecem sem sigla. Não usar `DROP`, `TRUNCATE` nem reversão que apague linhas criadas depois da migração.

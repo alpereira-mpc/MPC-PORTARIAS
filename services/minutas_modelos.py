@@ -7,7 +7,8 @@ import uuid
 from database.minutas_especialidades import _first
 from database.store import now
 from services.minutas_library import MinutasValidationError, _validate_file
-from services.minutas_specialties import PROSECUTOR_KEY, scope
+from services.minutas_procuradores import chave_efetiva, legado_espo
+from services.minutas_specialties import scope
 from services.minutas_storage import modelo_object_path
 
 
@@ -29,6 +30,15 @@ class MinutasModeloVisualService:
     def __init__(self, library):
         self.library = library
 
+    def _chave(self):
+        procurador = getattr(self.library, "procurador", None)
+        if procurador is not None:
+            return procurador.chave
+        repository = getattr(self.library, "repository", None)
+        if repository is None:
+            return legado_espo().chave
+        return chave_efetiva(repository)
+
     def _enabled(self, connection):
         return models_enabled(connection, getattr(self.library.repository.store, "backend", ""))
 
@@ -45,7 +55,7 @@ class MinutasModeloVisualService:
             row = connection.execute(
                 "SELECT * FROM minutas_modelos_visuais WHERE procuradora_chave=? "
                 "AND especialidade_id=? AND ativo=1",
-                (PROSECUTOR_KEY, specialty),
+                (self._chave(), specialty),
             ).fetchone()
         return dict(row) if row else None
 
@@ -58,7 +68,7 @@ class MinutasModeloVisualService:
             rows = connection.execute(
                 "SELECT id,versao,ativo,nome,sha256,criado_em FROM minutas_modelos_visuais "
                 "WHERE procuradora_chave=? AND especialidade_id=? ORDER BY versao",
-                (PROSECUTOR_KEY, specialty),
+                (self._chave(), specialty),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -85,7 +95,7 @@ class MinutasModeloVisualService:
             current = connection.execute(
                 "SELECT * FROM minutas_modelos_visuais WHERE procuradora_chave=? "
                 "AND especialidade_id=? AND sha256=?",
-                (PROSECUTOR_KEY, specialty, digest),
+                (self._chave(), specialty, digest),
             ).fetchone()
         if current and int(current["ativo"]) == 1:
             return {"estado": "ATUAL", "id": str(current["id"]), "versao": int(current["versao"]), "path": current["path"]}
@@ -109,19 +119,19 @@ class MinutasModeloVisualService:
                 version = connection.execute(
                     "SELECT COALESCE(MAX(versao),0)+1 AS next FROM minutas_modelos_visuais "
                     "WHERE procuradora_chave=? AND especialidade_id=?",
-                    (PROSECUTOR_KEY, specialty),
+                    (self._chave(), specialty),
                 ).fetchone()["next"]
                 identifier = str(uuid.uuid4())
                 stamp = now()
                 connection.execute(
                     "UPDATE minutas_modelos_visuais SET ativo=0 WHERE procuradora_chave=? "
                     "AND especialidade_id=? AND ativo=1",
-                    (PROSECUTOR_KEY, specialty),
+                    (self._chave(), specialty),
                 )
                 connection.execute(
                     "INSERT INTO minutas_modelos_visuais (id,procuradora_chave,especialidade_id,versao,ativo,"
                     "nome,mime,tamanho,path,sha256,criado_em,criado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (identifier, PROSECUTOR_KEY, specialty, int(version), 1, file["name"], file["mime"],
+                    (identifier, self._chave(), specialty, int(version), 1, file["name"], file["mime"],
                      file["size"], path, digest, stamp, actor),
                 )
             persisted = True
@@ -139,12 +149,12 @@ class MinutasModeloVisualService:
         connection.execute(
             "UPDATE minutas_modelos_visuais SET ativo=0 WHERE procuradora_chave=? "
             "AND especialidade_id=? AND ativo=1",
-            (PROSECUTOR_KEY, specialty),
+            (self._chave(), specialty),
         )
         connection.execute(
             "UPDATE minutas_modelos_visuais SET ativo=1 WHERE id=? AND procuradora_chave=? "
             "AND especialidade_id=?",
-            (identifier, PROSECUTOR_KEY, specialty),
+            (identifier, self._chave(), specialty),
         )
 
 

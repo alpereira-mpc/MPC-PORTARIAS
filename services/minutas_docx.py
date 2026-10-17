@@ -610,7 +610,9 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
     paragraph.paragraph_format.space_before = Pt(logo_before_pt)
     paragraph.paragraph_format.space_after = Pt(LOGO_AFTER_PT)
     run = paragraph.add_run()
-    logo_bytes = (visual or {}).get("logo") or _template_logo(Path(profile["template"]))
+    logo_bytes = (visual or {}).get("logo")
+    if not logo_bytes:
+        logo_bytes = _template_logo(Path(profile["template"]))
     logo = run.add_picture(
         BytesIO(logo_bytes), width=Inches((visual or {}).get("logo_width_in") or 2.62)
     )
@@ -742,6 +744,34 @@ class MinutasDocxService:
         self._source_summary = source_summary
         self.template_path = Path(template_path) if template_path else None
 
+    def _presentation(self, target):
+        from services.minutas_procuradores import assinatura_neutra, legado_espo, visual_neutro
+
+        procurador = getattr(self.library, "procurador", None) or legado_espo()
+        chave = str((target or {}).get("procuradora_chave") or "")
+        if chave and chave != procurador.chave:
+            raise MinutasDocxError("A minuta não pertence ao Procurador selecionado.")
+        if procurador.sigla == "ESPO":
+            profile = dict(_PROFILES.get((target or {}).get("procuradora")) or {})
+            if not profile:
+                raise MinutasDocxError("Não há modelo Word autorizado para esta Procuradora.")
+            return profile, None
+        profile = assinatura_neutra(procurador)
+        visual = visual_neutro()
+        logo = PROJECT_ROOT / "assets" / "mpcpb_logo_sidebar_transparent.png"
+        if logo.is_file():
+            visual["logo"] = logo.read_bytes()
+        return profile, visual
+
+    def _merged_visual(self, base):
+        active = self._active_visual()
+        if not base:
+            return active
+        merged = dict(base)
+        if active:
+            merged.update({key: value for key, value in active.items() if value is not None})
+        return merged
+
     def _active_visual(self):
         if self.template_path is not None:
             return None
@@ -797,9 +827,7 @@ class MinutasDocxService:
                     "A minuta não pertence ao processo e à Procuradora selecionados."
                 )
 
-        profile = dict(_PROFILES.get(target.get("procuradora")) or {})
-        if not profile:
-            raise MinutasDocxError("Não há modelo Word autorizado para esta Procuradora.")
+        profile, visual_base = self._presentation(target)
         if self.template_path:
             profile["template"] = self.template_path
         structure = MinutasGenerationService._validate_structure(
@@ -820,7 +848,7 @@ class MinutasDocxService:
                 structure,
                 profile,
                 _draft_header_lines(header_target),
-                self._active_visual(),
+                self._merged_visual(visual_base),
             ),
         )
 
@@ -835,8 +863,6 @@ class MinutasDocxService:
             _draft_header_lines,
             _target_with_header_metadata,
         )
-        from services.minutas_library import PROCURADORA
-
         self.library._authorize()
         from services.minutas_recursos import is_recurso_profile
         from services.minutas_denuncias import is_denuncia_profile
@@ -896,9 +922,7 @@ class MinutasDocxService:
             target["periodo_fatos"] = str(
                 (generated.get("metadados_cabecalho") or {}).get("periodo_fatos") or ""
             )
-        profile = dict(_PROFILES.get(PROCURADORA) or {})
-        if not profile:
-            raise MinutasDocxError("Não há modelo Word autorizado para esta Procuradora.")
+        profile, visual_base = self._presentation(target)
         if self.template_path:
             profile["template"] = self.template_path
         if recurso:
@@ -940,6 +964,6 @@ class MinutasDocxService:
                 structure,
                 profile,
                 lines,
-                self._active_visual(),
+                self._merged_visual(visual_base),
             ),
         )

@@ -13,44 +13,32 @@ def _run_portal(store, monkeypatch, identity, secrets):
     return AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
 
 
-def test_access_requires_enabled_flag_and_authorized_verified_identity():
+def test_access_accepts_any_verified_identity_and_ignores_the_old_email_list():
     secrets = {
-        "MINUTAS_PILOTO_ENABLED": True,
+        "MINUTAS_PILOTO_ENABLED": False,
         "MINUTAS_PILOTO_EMAILS": ["ADMIN@Test.Local"],
     }
 
     assert can_access_minutas_piloto(TEST_IDENTITY, secrets) is True
     assert can_access_minutas_piloto(
         {**TEST_IDENTITY, "email": "outro@test.local"}, secrets
-    ) is False
+    ) is True
     assert can_access_minutas_piloto(
         {**TEST_IDENTITY, "email_verified": False}, secrets
     ) is False
-    assert (
-        can_access_minutas_piloto(
-            TEST_IDENTITY, {**secrets, "MINUTAS_PILOTO_ENABLED": False}
-        )
-        is False
-    )
+    assert can_access_minutas_piloto(None, secrets) is False
+    assert can_access_minutas_piloto({"email": "invalido", "email_verified": True}, secrets) is False
 
 
-def test_access_denies_missing_or_invalid_configuration():
-    invalid = (
+def test_access_does_not_depend_on_pilot_secrets():
+    for secrets in (
         {},
         {"MINUTAS_PILOTO_ENABLED": True},
-        {
-            "MINUTAS_PILOTO_ENABLED": "true",
-            "MINUTAS_PILOTO_EMAILS": ["admin@test.local"],
-        },
-        {
-            "MINUTAS_PILOTO_ENABLED": True,
-            "MINUTAS_PILOTO_EMAILS": "admin@test.local",
-        },
+        {"MINUTAS_PILOTO_ENABLED": "true", "MINUTAS_PILOTO_EMAILS": ["admin@test.local"]},
+        {"MINUTAS_PILOTO_ENABLED": True, "MINUTAS_PILOTO_EMAILS": "admin@test.local"},
         {"MINUTAS_PILOTO_ENABLED": True, "MINUTAS_PILOTO_EMAILS": ["invalido"]},
-    )
-
-    for secrets in invalid:
-        assert can_access_minutas_piloto(TEST_IDENTITY, secrets) is False
+    ):
+        assert can_access_minutas_piloto(TEST_IDENTITY, secrets) is True
 
 
 def test_authorized_user_sees_and_opens_private_module(store, monkeypatch):
@@ -66,11 +54,46 @@ def test_authorized_user_sees_and_opens_private_module(store, monkeypatch):
 
     assert not app.exception
     titles = [item.value for item in app.title]
-    assert "Gerador de Minutas de Pareceres — Projeto-Piloto" in titles
+    assert "MINUTAS IA" in titles
     captions = "\n".join(item.value for item in app.caption)
-    assert "Elvira Samara" in captions
+    assert "Selecione o Procurador" in captions
+    assert any(item.key == "minutas_procurador_ESPO" for item in app.button)
+    assert any(item.key == "minutas_procurador_LAF" for item in app.button)
+    assert len([item for item in app.button if str(item.key or "").startswith("minutas_procurador_")]) == 7
     assert not any(item.key == "minutas_active_view" for item in app.radio)
-    assert any("ainda não está configurada" in item.value for item in app.warning)
+
+
+def test_cada_procurador_abre_especialidades_e_a_troca_volta_a_selecao(monkeypatch):
+    from services import minutas_ia_ui
+    from services import minutas_specialties_ui
+    from services.minutas_procuradores import PROCURADORES
+
+    class Acervo:
+        def __init__(self, _library):
+            pass
+
+        @staticmethod
+        def catalog():
+            from services.minutas_specialties import CATALOG
+            return list(CATALOG)
+
+    monkeypatch.setattr(minutas_specialties_ui, "MinutasAcervoService", Acervo)
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args, **_kwargs: object())
+
+    def page():
+        from services import minutas_ia_ui as ui
+        ui.render(None, {})
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    for pessoa in PROCURADORES:
+        app.button(key="minutas_procurador_" + pessoa.sigla).click().run()
+        assert not app.exception
+        assert any(pessoa.nome in item.value for item in app.title)
+        assert any(item.key == "minutas_category_PCA" for item in app.button)
+        assert any(item.key == "minutas_category_DENUNCIAS" for item in app.button)
+        assert any(item.key == "minutas_category_RECURSOS" for item in app.button)
+        app.button(key="minutas_trocar_procurador").click().run()
+        assert any(item.value == "MINUTAS IA" for item in app.title)
 
 
 def test_module_navigation_executes_only_the_active_view(monkeypatch):
@@ -93,8 +116,10 @@ def test_module_navigation_executes_only_the_active_view(monkeypatch):
     )
 
     def page():
+        import streamlit as st
         from services import minutas_ia_ui as ui
 
+        st.session_state["minutas_procurador"] = "ESPO"
         ui.render(None, {})
 
     app = AppTest.from_function(page, default_timeout=30).run()
@@ -106,6 +131,47 @@ def test_module_navigation_executes_only_the_active_view(monkeypatch):
     assert calls == ["library", "search", "generator"]
     app.radio(key="minutas_active_view").set_value("Acervo").run()
     assert calls == ["library", "search", "generator", "library"]
+
+
+def test_troca_de_procurador_volta_a_selecao_e_limpa_transitorio(monkeypatch):
+    from services import minutas_ia_ui
+    from services import minutas_specialties_ui
+
+    class Acervo:
+        def __init__(self, _library):
+            pass
+
+        @staticmethod
+        def catalog():
+            from services.minutas_specialties import CATALOG
+            return list(CATALOG)
+
+    monkeypatch.setattr(minutas_specialties_ui, "MinutasAcervoService", Acervo)
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args, **_kwargs: object())
+
+    def page():
+        from services import minutas_ia_ui as ui
+        ui.render(None, {})
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key="minutas_procurador_MTTF").click().run()
+    assert not app.exception
+    assert any("Marcílio Toscano Franca Filho" in item.value for item in app.title)
+    app.session_state["minutas_specialty"] = "elvira.denuncias"
+    app.session_state["minutas_generation_result_demo"] = {"resposta": "transitória"}
+    app.button(key="minutas_trocar_procurador").click().run()
+    assert any(item.value == "MINUTAS IA" for item in app.title)
+
+    def ausente(chave):
+        try:
+            app.session_state[chave]
+        except KeyError:
+            return True
+        return False
+
+    assert ausente("minutas_specialty")
+    assert ausente("minutas_generation_result_demo")
+    assert ausente("minutas_procurador")
 
 
 def test_camaras_so_abre_geracao_quando_habilitada(monkeypatch):
@@ -125,7 +191,9 @@ def test_camaras_so_abre_geracao_quando_habilitada(monkeypatch):
     monkeypatch.setattr(minutas_ia_ui, "_generator_tab", lambda *_args: calls.append("generator"))
 
     def page():
+        import streamlit as st
         from services import minutas_ia_ui as ui
+        st.session_state["minutas_procurador"] = "ESPO"
         ui.render(None, {})
 
     app = AppTest.from_function(page, default_timeout=30).run()
@@ -368,31 +436,36 @@ def test_compact_order_controls_preserve_preexisting_position_gaps():
     assert _reordered_values(documents, 0, -1) is None
 
 
-def test_unauthorized_user_cannot_see_or_force_private_module(store, monkeypatch):
+def test_authenticated_user_outside_the_old_email_list_opens_minutas(store, monkeypatch):
     identity = {**TEST_IDENTITY, "email": "outro@test.local", "name": "Outro usuário"}
-    seed_access(store, email=identity["email"], nome=identity["name"])
+    seed_access(
+        store, email=identity["email"], nome=identity["name"], perfil="USUARIO", pode_admin=False,
+    )
     secrets = {
-        "MINUTAS_PILOTO_ENABLED": True,
+        "MINUTAS_PILOTO_ENABLED": False,
         "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]],
     }
     app = _run_portal(store, monkeypatch, identity, secrets)
 
+    navigation = app.sidebar.radio(key="portal_module")
+    assert any(option.endswith("Minutas IA") for option in navigation.options)
+    navigation.set_value("Minutas IA").run()
+    assert not app.exception
+    assert "MINUTAS IA" in [item.value for item in app.title]
+    assert not any(item.key == "minutas_initial_administration_open" for item in app.button)
+
+
+def test_unverified_identity_cannot_open_minutas(store, monkeypatch):
+    identity = {**TEST_IDENTITY, "email_verified": False}
+    secrets = {"MINUTAS_PILOTO_ENABLED": True, "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]]}
+    app = _run_portal(store, monkeypatch, identity, secrets)
     assert not any(
         option.endswith("Minutas IA")
         for option in app.sidebar.radio(key="portal_module").options
     )
-    app.session_state[PORTAL_NAV_REQUEST] = {"module": "Minutas IA", "state": {}}
-    app.run()
-
-    assert not app.exception
-    assert app.sidebar.radio(key="portal_module").value == "Início"
-    titles = [item.value for item in app.title]
-    assert "Gerador de Minutas de Pareceres — Projeto-Piloto" not in titles
 
 
-def test_disabled_pilot_stays_hidden_and_preserves_existing_navigation(
-    store, monkeypatch
-):
+def test_disabled_pilot_flag_no_longer_hides_the_module(store, monkeypatch):
     secrets = {
         "MINUTAS_PILOTO_ENABLED": False,
         "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]],
@@ -400,7 +473,7 @@ def test_disabled_pilot_stays_hidden_and_preserves_existing_navigation(
     app = _run_portal(store, monkeypatch, TEST_IDENTITY, secrets)
     navigation = app.sidebar.radio(key="portal_module")
 
-    assert not any(option.endswith("Minutas IA") for option in navigation.options)
+    assert any(option.endswith("Minutas IA") for option in navigation.options)
     assert any(option.endswith("Portarias") for option in navigation.options)
     navigation.set_value("Portarias").run()
     assert not app.exception and not app.error

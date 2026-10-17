@@ -6,7 +6,6 @@ import re
 from services.minutas_extraction import EXTRACTOR_VERSION
 from services.minutas_library import (
     MinutasValidationError,
-    PROCURADORA,
     SUBTIPOS,
 )
 
@@ -36,7 +35,7 @@ class MinutasSearchService:
         self,
         query,
         *,
-        procuradora=PROCURADORA,
+        procuradora=None,
         year=None,
         nature=SEARCH_NATURE,
         subtype=None,
@@ -48,12 +47,16 @@ class MinutasSearchService:
         page_size=DEFAULT_PAGE_SIZE,
     ):
         self.library._authorize()
+        from services.minutas_procuradores import legado_espo
         from services.minutas_specialties import scope, CLASSES
         selected = scope(getattr(self.library, "specialty_id", None))
         query = self._query(query)
-        if procuradora != PROCURADORA:
+        pessoa = getattr(self.library, "procurador", None) or legado_espo()
+        if procuradora is None:
+            procuradora = pessoa.nome_exibicao
+        if procuradora != pessoa.nome_exibicao:
             raise MinutasValidationError(
-                "Procuradora não habilitada para a pesquisa jurídica piloto."
+                "Procurador diferente do contexto selecionado."
             )
         if nature not in (None, "", SEARCH_NATURE):
             raise MinutasValidationError("Natureza não habilitada nesta fase.")
@@ -72,7 +75,7 @@ class MinutasSearchService:
 
         rows = self.repository.search_opinions(
             query,
-            PROCURADORA.casefold(),
+            pessoa.chave,
             EXTRACTOR_VERSION,
             specialty_id=selected["id"],
             year=year,
@@ -87,6 +90,10 @@ class MinutasSearchService:
         has_next = len(rows) > page_size
         results = []
         for row in rows[:page_size]:
+            if str(row.get("procuradora") or pessoa.nome_exibicao) != pessoa.nome_exibicao:
+                continue
+            if row.get("procuradora_chave") and row.get("procuradora_chave") != pessoa.chave:
+                continue
             source_identity = "|".join(
                 str(row.get(field) or "")
                 for field in (

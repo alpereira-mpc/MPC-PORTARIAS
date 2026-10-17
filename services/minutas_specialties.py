@@ -114,6 +114,12 @@ def requires_account_year(specialty_id):
     return canonical_specialty_id(specialty_id) not in (APOSENTADORIAS, DENUNCIAS, RECURSOS)
 
 
+def _prosecutor_scope_accepted(profile):
+    from services.minutas_procuradores import chave_conhecida
+
+    return chave_conhecida(str((profile or {}).get("procuradora_chave") or ""))
+
+
 def instruction_generation_allowed(profile):
     """Habilitação operacional da geração por PDFs, isolada por motor."""
     if not isinstance(profile, dict):
@@ -126,7 +132,7 @@ def instruction_generation_allowed(profile):
             identifier == DENUNCIAS
             and motor == DENUNCIAS_MOTOR
             and version == "1"
-            and str(profile.get("procuradora_chave") or "") == PROSECUTOR_KEY
+            and _prosecutor_scope_accepted(profile)
             and str(profile.get("estado") or "") in INSTRUCTION_READY_STATES
         )
     if identifier == RECURSOS or motor == RECURSOS_MOTOR:
@@ -134,7 +140,7 @@ def instruction_generation_allowed(profile):
             identifier == RECURSOS
             and motor == RECURSOS_MOTOR
             and version == "1"
-            and str(profile.get("procuradora_chave") or "") == PROSECUTOR_KEY
+            and _prosecutor_scope_accepted(profile)
             and str(profile.get("estado") or "") in INSTRUCTION_READY_STATES
         )
     if identifier == APOSENTADORIAS or motor == APOSENTADORIAS_MOTOR:
@@ -154,17 +160,23 @@ def instruction_generation_allowed(profile):
 
 
 def instruction_profile(library):
-    """Perfil efetivo da sessão: banco quando existir, senão o catálogo."""
+    """Perfil efetivo da sessão, com a configuração do Procurador selecionado."""
     repository = getattr(library, "repository", None)
     specialty = getattr(library, "specialty_id", None)
     if specialty is None:
         specialty = getattr(repository, "specialty_id", None)
+    profile = None
     if repository is not None and callable(getattr(repository, "profile", None)):
         try:
-            return repository.profile()
+            profile = repository.profile()
         except Exception:
-            pass
-    return scope(specialty or RPPS)
+            profile = None
+    if profile is None:
+        profile = scope(specialty or RPPS)
+    from services.minutas_procuradores import aplicar_contexto, procurador_do_repositorio
+
+    procurador = getattr(library, "procurador", None) or procurador_do_repositorio(repository)
+    return aplicar_contexto(profile, procurador)
 
 
 def plain(value):
@@ -182,13 +194,15 @@ def suggest(record, extractions):
               "especialidade_id": None, "classe": "", "modalidade": "",
               "perfil": "", "entidade": "", "temas": [], "evidencia": [],
               "motivo": "Dados insuficientes para identificar a especialidade."}
-    if record.get("procuradora_chave") != PROSECUTOR_KEY:
-        result["motivo"] = "Procurador fora do escopo desta implantação."
+    from services.minutas_procuradores import chave_conhecida
+
+    if not chave_conhecida(record.get("procuradora_chave")):
+        result["motivo"] = "Procurador fora do escopo institucional."
         return result
     # Extrações devem estar vinculadas ao registro e aos documentos atuais.
     text = "\n".join(str(row.get("texto_integral") or "") for row in extractions
                      if str(row.get("referencia_id")) == str(record["id"])
-                     and row.get("procuradora_chave") == PROSECUTOR_KEY)
+                     and row.get("procuradora_chave") == record.get("procuradora_chave"))
     fields = {}
     for match in re.finditer(r"(?im)^\s*(origem|entidade|órgão|orgao|unidade gestora|natureza|classe|modalidade)\s*:\s*([^\n]+)", text):
         fields.setdefault(plain(match[1]), set()).add(match[2].strip())

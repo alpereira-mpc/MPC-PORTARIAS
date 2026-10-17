@@ -27,7 +27,6 @@ from services.minutas_library import (
     MinutasLibraryService,
     MinutasValidationError,
     OTHER_COMPLEMENT_TYPE,
-    PROCURADORA,
     SUBTIPOS,
 )
 from services.minutas_acervo import optional_exercise_label
@@ -126,17 +125,33 @@ def _cached_docx(service, generator, target_id, analysis, result, cache_key):
 
 
 def _service(store, identity, *, administrative=False):
+    from services.minutas_procuradores import SESSION_PROCURADOR, exigir_procurador
+
+    procurador = None
+    sigla = st.session_state.get(SESSION_PROCURADOR)
+    if sigla:
+        try:
+            procurador = exigir_procurador(sigla)
+        except Exception:
+            procurador = None
     try:
         storage = SupabaseMinutasStorage.from_secrets(st.secrets)
-        repository = MinutasReferenciasStore(store,
+        repository = MinutasReferenciasStore(
+            store,
             specialty_id=None if administrative else st.session_state.get("minutas_specialty"),
-            include_acervo=True)
+            include_acervo=True,
+            procuradora_chave=procurador.chave if procurador is not None else None,
+        )
     except (StorageConfigurationError, RuntimeError):
         st.warning(
             "A Biblioteca de Referências ainda não está configurada neste ambiente."
         )
         return None
-    return MinutasLibraryService(repository, storage, identity, st.secrets)
+    service = MinutasLibraryService(
+        repository, storage, identity, st.secrets, procurador=procurador,
+        principal=st.session_state.get("_audit_actor"),
+    )
+    return service
 
 
 def _error(exc, *, etapa="operacao"):
@@ -175,12 +190,21 @@ def _upload_tuple(upload):
     return (upload.name, upload.getvalue()) if upload is not None else None
 
 
+def _rotulo_procurador(service):
+    from services.minutas_procuradores import legado_espo
+
+    pessoa = getattr(service, "procurador", None) or legado_espo()
+    rotulo = "Procuradora" if pessoa.genero == "feminino" else "Procurador"
+    return rotulo, pessoa.nome_exibicao
+
+
 def _create_form(service):
     section_label("Nova referência")
+    rotulo, nome = _rotulo_procurador(service)
     with st.form("minutas_reference_create", clear_on_submit=True, border=True):
         first, second = st.columns(2)
         with first:
-            st.text_input("Procuradora", value=PROCURADORA, disabled=True)
+            st.text_input(rotulo, value=nome, disabled=True)
             process = st.text_input("Número do processo *")
         with second:
             year = st.number_input(
@@ -211,7 +235,7 @@ def _create_form(service):
     try:
         service.create(
             {
-                "procuradora": PROCURADORA,
+                "procuradora": nome,
                 "numero_processo": process,
                 "exercicio": year,
                 "subtipo": subtype,
@@ -1899,7 +1923,8 @@ def _historical_generator_panel(store, identity):
         )
         return
 
-    st.text_input("Procuradora", value=PROCURADORA, disabled=True)
+    rotulo, nome = _rotulo_procurador(service)
+    st.text_input(rotulo, value=nome, disabled=True)
     target = st.selectbox(
         "Processo histórico",
         targets,
@@ -2197,7 +2222,8 @@ def _search_tab(store, identity):
         )
         filters = st.columns(4)
         with filters[0]:
-            st.text_input("Procuradora", value=PROCURADORA, disabled=True)
+            rotulo, nome = _rotulo_procurador(library)
+            st.text_input(rotulo, value=nome, disabled=True)
         with filters[1]:
             from services.minutas_specialties import scope, CLASSES
             selected = scope(library.specialty_id)
@@ -2360,12 +2386,73 @@ def _block_specialties(detail=""):
     st.warning(message)
 
 
-def render(store, identity):
-    started = perf_counter()
+def _render_selecao_procurador():
+    from services.minutas_procuradores import SESSION_PROCURADOR, listar_ativos
+    from services.minutas_specialties_ui import clear_procurador_session
+    from services.ui_theme import badges, render_record
+
     with st.container(border=True, key="mpc_card_operational_minutas_module_header"):
-        st.title("Gerador de Minutas de Pareceres — Projeto-Piloto")
-        render_html(badge("AMBIENTE EXPERIMENTAL", "warning"))
-        st.caption("Projeto-piloto privado do MPC-PB · Procuradora Elvira Samara")
+        st.title("MINUTAS IA")
+        st.caption(
+            "Selecione o Procurador para acessar as especialidades e os recursos "
+            "de análise e geração de minutas."
+        )
+
+    def escolher(sigla):
+        clear_procurador_session()
+        st.session_state[SESSION_PROCURADOR] = sigla
+
+    pessoas = listar_ativos()
+    columns = st.columns(2)
+    for index, pessoa in enumerate(pessoas):
+        column = columns[index % 2]
+        with column:
+            with st.container(border=True, key="mpc_card_operational_minutas_procurador_" + pessoa.sigla.lower()):
+                tratamento = "Dra." if pessoa.genero == "feminino" else "Dr."
+                render_record(
+                    f"{tratamento} {pessoa.nome}",
+                    badges_html=badges((pessoa.sigla, "brand")),
+                    secondary="Ministério Público de Contas da Paraíba",
+                    meta="Acervo, especialidades e minutas deste gabinete",
+                    accent="brand",
+                )
+                st.button(
+                    "Selecionar",
+                    key="minutas_procurador_" + pessoa.sigla,
+                    on_click=escolher,
+                    args=(pessoa.sigla,),
+                )
+
+
+def render(store, identity):
+    from services.minutas_procuradores import (
+        SESSION_PROCURADOR,
+        MinutasContextoError,
+        exigir_procurador,
+        navegacao_legada,
+        pode_administrar,
+    )
+
+    started = perf_counter()
+    try:
+        legada = navegacao_legada(st.secrets)
+    except Exception:
+        legada = False
+    if legada:
+        st.session_state[SESSION_PROCURADOR] = "ESPO"
+    if not st.session_state.get(SESSION_PROCURADOR):
+        _render_selecao_procurador()
+        return
+    try:
+        procurador = exigir_procurador(st.session_state.get(SESSION_PROCURADOR))
+    except MinutasContextoError as exc:
+        st.session_state.pop(SESSION_PROCURADOR, None)
+        st.error(str(exc))
+        return
+    tratamento = "Dra." if procurador.genero == "feminino" else "Dr."
+    with st.container(border=True, key="mpc_card_operational_minutas_module_header"):
+        st.title(f"Minutas IA — {tratamento} {procurador.nome}")
+        st.caption(f"{procurador.sigla} · acervo e configuração deste Procurador")
     from database.minutas_especialidades import MinutasSpecialtiesStore
     from services.minutas_specialties_ui import (
         acervo, administration, clear_specialty_session, selection, synchronize_scope,
@@ -2401,7 +2488,8 @@ def render(store, identity):
             return
         profile = selection(administrative_library)
         if profile is None:
-            if not st.session_state.get("minutas_nav_category"):
+            principal = st.session_state.get("_audit_actor")
+            if not st.session_state.get("minutas_nav_category") and pode_administrar(principal):
                 st.button(
                     "Administração do módulo",
                     key="minutas_initial_administration_open",
@@ -2435,7 +2523,10 @@ def render(store, identity):
                 "success" if instruction_generation_allowed(profile) else "muted",
             )
         )
-        st.caption("Ambiente especializado: Acervo, Pesquisa Jurídica e geração assistida quando configurada.")
+        st.caption(
+            f"{tratamento} {procurador.nome} · {profile['nome']}. "
+            "Ambiente especializado: Acervo, Pesquisa Jurídica e geração assistida quando configurada."
+        )
     active = st.radio(
         "Área do módulo",
         sections,

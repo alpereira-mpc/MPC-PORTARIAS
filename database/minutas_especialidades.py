@@ -62,17 +62,36 @@ def scoped_parameters(specialty):
 
 
 def scoped_clause(alias="r"):
+    """Documento do Procurador da operação e catálogo técnico central.
+
+    A segunda chave é a do catálogo compartilhado (piloto ESPO), não a do acervo.
+    """
     return (f"{alias}.procuradora_chave=? AND EXISTS (SELECT 1 FROM minutas_classificacoes mc "
             f"JOIN minutas_acervo_vinculos mv ON mv.referencia_id=mc.referencia_id "
             "JOIN minutas_especialidades ms ON ms.id=mv.especialidade_id "
             f"WHERE mc.referencia_id={alias}.id AND mc.estado='CLASSIFICADO' "
-            f"AND ms.procuradora_chave={alias}.procuradora_chave AND (ms.grupo='TEMATICO' OR mc.classe=ms.grupo) "
+            f"AND ms.procuradora_chave=? AND (ms.grupo='TEMATICO' OR mc.classe=ms.grupo) "
             "AND " + specialty_membership_clause("mv.especialidade_id") + ")")
 
 
+def scoped_arguments(document_key, specialty):
+    from services.minutas_procuradores import CHAVE_CATALOGO
+
+    return (document_key, CHAVE_CATALOGO, *scoped_parameters(specialty))
+
+
 class MinutasSpecialtiesStore:
-    def __init__(self, store):
+    def __init__(self, store, procuradora_chave=None):
         self.store = unwrap_store(store)
+        if procuradora_chave:
+            from services.minutas_procuradores import exigir_procurador
+
+            self.procuradora_chave = exigir_procurador(procuradora_chave).chave
+
+    def _escopo(self):
+        from services.minutas_procuradores import chave_efetiva
+
+        return chave_efetiva(self)
 
     def missing_relations(self):
         """Relações invisíveis no search_path atual. Não cria nem altera nada."""
@@ -118,11 +137,12 @@ class MinutasSpecialtiesStore:
         if specialty: scope(specialty)
         page, limit = int(page), int(limit)
         if not 1 <= limit <= 100 or page < 1: raise ValueError("Paginação inválida.")
+        chave = self._escopo()
         where = "r.procuradora_chave=?"
-        args = [PROSECUTOR_KEY]
+        args = [chave]
         if specialty:
             where = scoped_clause()
-            args.extend(scoped_parameters(specialty))
+            args = list(scoped_arguments(chave, specialty))
         if pending:
             where += " AND (mc.estado IS NULL OR mc.estado<>'CLASSIFICADO')"
         if query:
@@ -174,12 +194,12 @@ class MinutasSpecialtiesStore:
                 "COUNT(DISTINCT CASE WHEN extracao_status='PROCESSADO' AND extrator_versao=? "
                 "THEN documento_id END) AS indexados,MAX(atualizado_em) AS ultima_atualizacao "
                 "FROM escopo GROUP BY especialidade_id",
-                (*PREFEITURAS_LEGACY, PREFEITURAS, PROSECUTOR_KEY, *membership_ids, EXTRACTOR_VERSION),
+                (*PREFEITURAS_LEGACY, PREFEITURAS, self._escopo(), *membership_ids, EXTRACTOR_VERSION),
             ).fetchall()
             pending = c.execute(
                 "SELECT COUNT(*) AS total FROM minutas_referencias r LEFT JOIN minutas_classificacoes mc "
                 "ON mc.referencia_id=r.id WHERE r.procuradora_chave=? "
-                "AND (mc.estado IS NULL OR mc.estado<>'CLASSIFICADO')" + active, (PROSECUTOR_KEY,),
+                "AND (mc.estado IS NULL OR mc.estado<>'CLASSIFICADO')" + active, (self._escopo(),),
             ).fetchone()["total"]
         metrics = {row["especialidade_id"]: dict(row) for row in rows}
         specialties = []
@@ -201,33 +221,33 @@ class MinutasSpecialtiesStore:
             enabled = separation_enabled(c, getattr(self.store, "backend", ""))
             bare, scoped = active_clause(enabled, ""), active_clause(enabled)
             records = [dict(r) for r in c.execute(
-                "SELECT * FROM minutas_referencias WHERE procuradora_chave=?" + bare + " ORDER BY id", (PROSECUTOR_KEY,)).fetchall()]
+                "SELECT * FROM minutas_referencias WHERE procuradora_chave=?" + bare + " ORDER BY id", (self._escopo(),)).fetchall()]
             documents = [dict(r) for r in c.execute(
                 "SELECT d.* FROM minutas_documentos_catalogo d JOIN minutas_referencias r ON r.id=d.referencia_id "
-                "WHERE r.procuradora_chave=?" + scoped + " ORDER BY d.path", (PROSECUTOR_KEY,)).fetchall()]
+                "WHERE r.procuradora_chave=?" + scoped + " ORDER BY d.path", (self._escopo(),)).fetchall()]
             if enabled:
                 extractions = [dict(r) for r in c.execute(
                     "SELECT e.* FROM minutas_extracoes e JOIN minutas_referencias r ON r.id=e.referencia_id "
-                    "WHERE e.procuradora_chave=?" + scoped + " ORDER BY e.arquivo_path", (PROSECUTOR_KEY,)).fetchall()]
+                    "WHERE e.procuradora_chave=?" + scoped + " ORDER BY e.arquivo_path", (self._escopo(),)).fetchall()]
             else:
                 extractions = [dict(r) for r in c.execute(
                     "SELECT e.* FROM minutas_extracoes e WHERE e.procuradora_chave=? ORDER BY e.arquivo_path",
-                    (PROSECUTOR_KEY,)).fetchall()]
+                    (self._escopo(),)).fetchall()]
             classifications = [dict(r) for r in c.execute(
                 "SELECT mc.* FROM minutas_classificacoes mc JOIN minutas_referencias r ON r.id=mc.referencia_id "
-                "WHERE r.procuradora_chave=?" + scoped + " ORDER BY mc.referencia_id", (PROSECUTOR_KEY,)).fetchall()]
+                "WHERE r.procuradora_chave=?" + scoped + " ORDER BY mc.referencia_id", (self._escopo(),)).fetchall()]
         return {"processos": records, "documentos": documents, "extracoes": extractions, "classificacoes": classifications}
 
     def legacy_snapshot(self):
         """Inventário anterior ao DDL; usa somente tabelas Minutas já existentes."""
         with self.store.connection(read_only=True) as c:
             records = [dict(r) for r in c.execute("SELECT * FROM minutas_referencias WHERE procuradora_chave=? ORDER BY id",
-                                                (PROSECUTOR_KEY,)).fetchall()]
+                                                (self._escopo(),)).fetchall()]
             complements = [dict(r) for r in c.execute("SELECT d.* FROM minutas_documentos_complementares d "
                 "JOIN minutas_referencias r ON r.id=d.referencia_id WHERE r.procuradora_chave=? ORDER BY d.path",
-                (PROSECUTOR_KEY,)).fetchall()]
+                (self._escopo(),)).fetchall()]
             extractions = [dict(r) for r in c.execute("SELECT * FROM minutas_extracoes WHERE procuradora_chave=? ORDER BY arquivo_path",
-                                                    (PROSECUTOR_KEY,)).fetchall()]
+                                                    (self._escopo(),)).fetchall()]
         documents = []
         for record in records:
             for role, kind in (("auditoria", "Relatório da Auditoria"), ("parecer", "Parecer definitivo")):
@@ -252,7 +272,7 @@ class MinutasSpecialtiesStore:
         if getattr(self.store, "backend", "") == "postgresql":
             c.execute("SELECT id FROM minutas_referencias WHERE id=? FOR UPDATE", (item["referencia_id"],))
         row = c.execute("SELECT procuradora_chave FROM minutas_referencias WHERE id=?", (item["referencia_id"],)).fetchone()
-        if not row or row["procuradora_chave"] != PROSECUTOR_KEY: raise ValueError("Processo fora do escopo autorizado.")
+        if not row or row["procuradora_chave"] != self._escopo(): raise ValueError("Processo fora do escopo autorizado.")
         previous = c.execute("SELECT * FROM minutas_classificacoes WHERE referencia_id=?", (item["referencia_id"],)).fetchone()
         previous = dict(previous) if previous else None
         if previous:
@@ -302,15 +322,15 @@ class MinutasSpecialtiesStore:
                           "minutas_extracoes,minutas_classificacoes IN SHARE ROW EXCLUSIVE MODE")
             enabled = separation_enabled(c, getattr(self.store, "backend", ""))
             bare, scoped = active_clause(enabled, ""), active_clause(enabled)
-            rows = [dict(r) for r in c.execute("SELECT * FROM minutas_referencias WHERE procuradora_chave=?" + bare + " ORDER BY id", (PROSECUTOR_KEY,)).fetchall()]
+            rows = [dict(r) for r in c.execute("SELECT * FROM minutas_referencias WHERE procuradora_chave=?" + bare + " ORDER BY id", (self._escopo(),)).fetchall()]
             if fingerprint(rows) != plan["registros_hash"]: raise ValueError("Inventário alterado; simule novamente.")
-            docs = [dict(r) for r in c.execute("SELECT d.* FROM minutas_documentos_catalogo d JOIN minutas_referencias r ON r.id=d.referencia_id WHERE r.procuradora_chave=?" + scoped + " ORDER BY d.path", (PROSECUTOR_KEY,)).fetchall()]
+            docs = [dict(r) for r in c.execute("SELECT d.* FROM minutas_documentos_catalogo d JOIN minutas_referencias r ON r.id=d.referencia_id WHERE r.procuradora_chave=?" + scoped + " ORDER BY d.path", (self._escopo(),)).fetchall()]
             if enabled:
                 ext = [dict(r) for r in c.execute(
                     "SELECT e.* FROM minutas_extracoes e JOIN minutas_referencias r ON r.id=e.referencia_id "
-                    "WHERE e.procuradora_chave=?" + scoped + " ORDER BY e.arquivo_path", (PROSECUTOR_KEY,)).fetchall()]
+                    "WHERE e.procuradora_chave=?" + scoped + " ORDER BY e.arquivo_path", (self._escopo(),)).fetchall()]
             else:
-                ext = [dict(r) for r in c.execute("SELECT * FROM minutas_extracoes WHERE procuradora_chave=? ORDER BY arquivo_path", (PROSECUTOR_KEY,)).fetchall()]
+                ext = [dict(r) for r in c.execute("SELECT * FROM minutas_extracoes WHERE procuradora_chave=? ORDER BY arquivo_path", (self._escopo(),)).fetchall()]
             if fingerprint(docs) != plan["documentos_hash"] or fingerprint(ext) != plan["extracoes_hash"]:
                 raise ValueError("Documentos ou extrações alterados; simule novamente.")
             changed = sum(self._classify(c, item, actor, automatic=True, batch=plan["lote"]) for item in plan["itens"])
@@ -359,7 +379,7 @@ class MinutasSpecialtiesStore:
             c.execute("BEGIN IMMEDIATE")
             row = c.execute("SELECT mc.* FROM minutas_classificacoes mc JOIN minutas_referencias r "
                 "ON r.id=mc.referencia_id WHERE r.id=? AND r.procuradora_chave=? AND mc.estado='CLASSIFICADO'",
-                (identifier, PROSECUTOR_KEY)).fetchone()
+                (identifier, self._escopo())).fetchone()
             if not row: raise ValueError("Processo não classificado no escopo autorizado.")
             if selected["grupo"] != "TEMATICO" and row["classe"] != selected["grupo"]:
                 raise ValueError("Vínculo incompatível com a classe efetiva.")
@@ -377,4 +397,4 @@ class MinutasSpecialtiesStore:
         with self.store.connection(read_only=True) as c:
             return [dict(r) for r in c.execute("SELECT e.* FROM minutas_especialidades_eventos e "
                 "JOIN minutas_referencias r ON r.id=e.referencia_id WHERE e.referencia_id=? AND r.procuradora_chave=? "
-                "ORDER BY e.criado_em DESC,e.id DESC LIMIT 20", (identifier, PROSECUTOR_KEY)).fetchall()]
+                "ORDER BY e.criado_em DESC,e.id DESC LIMIT 20", (identifier, self._escopo())).fetchall()]

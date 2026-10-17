@@ -825,7 +825,7 @@ def test_partial_storage_delete_restores_already_removed_object():
 def test_direct_service_calls_deny_unauthorized_identity(operation):
     repository = FakeRepository()
     storage = FakeStorage()
-    identity = {**TEST_IDENTITY, "email": "outro@test.local"}
+    identity = {**TEST_IDENTITY, "email": "outro@test.local", "email_verified": False}
     service = _service(repository, storage, identity=identity)
     arguments = {
         "list": (),
@@ -866,12 +866,13 @@ def test_direct_service_calls_deny_unauthorized_identity(operation):
     assert storage.events == []
 
 
-def test_direct_create_denies_disabled_feature_before_validation():
+def test_direct_create_denies_unverified_identity_before_validation():
     repository = FakeRepository()
     storage = FakeStorage()
     service = _service(
         repository,
         storage,
+        identity={**TEST_IDENTITY, "email_verified": False},
         secrets={**SECRETS, "MINUTAS_PILOTO_ENABLED": False},
     )
 

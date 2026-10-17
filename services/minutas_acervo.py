@@ -237,6 +237,8 @@ class MinutasAcervoService:
         return migration_plan(self.repository.snapshot())
 
     def apply(self, reviewed_plan, backup):
+        from services.minutas_procuradores import exigir_admin_estrutural
+        exigir_admin_estrutural(self.library)
         actor = self.library._authorize()
         current = self.dry_run()
         if current != reviewed_plan: raise MinutasValidationError("Inventário alterado; simule e confira novamente.")
@@ -268,6 +270,8 @@ class MinutasAcervoService:
             "evidencia": [reason.strip()], "motivo": reason.strip()}, actor)
 
     def update_state(self, specialty, values):
+        from services.minutas_procuradores import exigir_admin_estrutural
+        exigir_admin_estrutural(self.library)
         return self.repository.update_state(specialty, values, self.library._authorize())
 
     def restore(self, event_id):
@@ -380,8 +384,10 @@ class MinutasAcervoService:
             elif fonte == "nome do arquivo":
                 suggestion = "Processo identificado pelo nome do arquivo."
             elif role == "parecer":
-                classified = suggest({"id": "preview", "procuradora_chave": PROSECUTOR_KEY},
-                    [{"referencia_id": "preview", "procuradora_chave": PROSECUTOR_KEY,
+                from services.minutas_procuradores import legado_espo
+                pessoa = getattr(self.library, "procurador", None) or legado_espo()
+                classified = suggest({"id": "preview", "procuradora_chave": pessoa.chave},
+                    [{"referencia_id": "preview", "procuradora_chave": pessoa.chave,
                       "texto_integral": extracted.get("texto_integral") or ""}])
                 origem = origem or classified.get("entidade") or ""
                 suggestion = classified.get("especialidade_id") or fill
@@ -396,11 +402,13 @@ class MinutasAcervoService:
     def _upload_existing(self, c, specialty, key, year, digest, name, confirm_version):
         """Checks only metadata; reused before upload and inside the short transaction."""
         from database.minutas_especialidades import active_clause, separation_enabled
+        from services.minutas_procuradores import legado_espo
         enabled = separation_enabled(c, getattr(self.library.repository.store, "backend", ""))
         active = active_clause(enabled, "")
+        chave = (getattr(self.library, "procurador", None) or legado_espo()).chave
         matches = c.execute("SELECT * FROM minutas_referencias WHERE procuradora_chave=? "
             "AND LOWER(processo_chave) IN (?,?,?,?)" + active,
-            (PROSECUTOR_KEY, key, "tc" + key, "processotc" + key, "processo" + key)).fetchall()
+            (chave, key, "tc" + key, "processotc" + key, "processo" + key)).fetchall()
         if len(matches) > 1:
             raise MinutasValidationError("Há registros equivalentes para este processo; confira os vínculos antes de cadastrar.")
         record = dict(matches[0]) if matches else None
@@ -410,7 +418,7 @@ class MinutasAcervoService:
             + scoped + " "
             "UNION SELECT d.referencia_id FROM minutas_acervo_documentos d JOIN minutas_referencias r "
             "ON r.id=d.referencia_id WHERE r.procuradora_chave=? AND d.sha256=?" + scoped,
-            (PROSECUTOR_KEY, digest, PROSECUTOR_KEY, digest)).fetchall()
+            (chave, digest, chave, digest)).fetchall()
         if any(str(d["referencia_id"]) != str((record or {}).get("id")) for d in known):
             raise MinutasValidationError("Conteúdo já vinculado a outro processo; confira os vínculos antes de cadastrar uma cópia.")
         if not record:
@@ -490,7 +498,9 @@ class MinutasAcervoService:
             with self.library.repository.store.connection() as c:
                 c.execute("BEGIN IMMEDIATE")
                 if getattr(self.library.repository.store, "backend", "") == "postgresql":
-                    c.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (PROSECUTOR_KEY + key,))
+                    from services.minutas_procuradores import legado_espo
+                    pessoa_lock = getattr(self.library, "procurador", None) or legado_espo()
+                    c.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (pessoa_lock.chave + key,))
                 record, duplicate, current_unhashed = self._upload_existing(c, *parameters)
                 if duplicate:
                     return {"estado": "DUPLICADO", "referencia_id": str(record["id"])}
@@ -501,7 +511,8 @@ class MinutasAcervoService:
                 if not record:
                     identifier = str(uuid.uuid4())
                     stamp = now()
-                    from services.minutas_library import PROCURADORA
+                    from services.minutas_procuradores import legado_espo
+                    pessoa = getattr(self.library, "procurador", None) or legado_espo()
                     subtype = {"RPPS": "Instituto/Autarquia", "CAMARA": "Câmara Municipal",
                         "PREFEITURA": "Prefeitura", "SECRETARIA_MUNICIPAL": "Secretaria Municipal ou Estadual",
                         "ORGAO_ESTADUAL": "Secretaria Municipal ou Estadual"}.get(profile["perfil"])
@@ -509,11 +520,11 @@ class MinutasAcervoService:
                     if separation_enabled(c, getattr(self.library.repository.store, "backend", "")):
                         c.execute("INSERT INTO minutas_referencias (id,procuradora,procuradora_chave,numero_processo,processo_chave,"
                             "exercicio,subtipo,acervo,criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                            (identifier, PROCURADORA, PROSECUTOR_KEY, "TC " + key[:5] + "/" + key[5:], key, year, subtype, "ativo", stamp, actor, stamp, actor))
+                            (identifier, pessoa.nome_exibicao, pessoa.chave, "TC " + key[:5] + "/" + key[5:], key, year, subtype, "ativo", stamp, actor, stamp, actor))
                     else:
                         c.execute("INSERT INTO minutas_referencias (id,procuradora,procuradora_chave,numero_processo,processo_chave,"
                             "exercicio,subtipo,criado_em,criado_por,atualizado_em,atualizado_por) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                            (identifier, PROCURADORA, PROSECUTOR_KEY, "TC " + key[:5] + "/" + key[5:], key, year, subtype, stamp, actor, stamp, actor))
+                            (identifier, pessoa.nome_exibicao, pessoa.chave, "TC " + key[:5] + "/" + key[5:], key, year, subtype, stamp, actor, stamp, actor))
                     record = {"id": identifier}
                     recurso = specialty == RECURSOS
                     self.repository._classify(c, {"referencia_id": identifier, "estado": "CLASSIFICADO", "especialidade_id": specialty,

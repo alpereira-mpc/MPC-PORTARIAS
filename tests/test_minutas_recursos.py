@@ -234,8 +234,10 @@ def test_card_so_indica_geracao_apos_habilitacao_e_painel_oferece_duas_modalidad
     )
 
     def page():
+        import streamlit as st
         from services.minutas_ia_ui import render
         from tests.access_testing import TEST_IDENTITY
+        st.session_state["minutas_procurador"] = "ESPO"
         render(None, TEST_IDENTITY)
 
     inactive = AppTest.from_function(page, default_timeout=30).run()

@@ -28,10 +28,14 @@ EXTRACTION_INVENTORY_COLUMNS = (
 class MinutasReferenciasStore:
     """Operate only on the manually provisioned PostgreSQL table."""
 
-    def __init__(self, store, specialty_id=None, *, include_acervo=False):
+    def __init__(self, store, specialty_id=None, *, include_acervo=False, procuradora_chave=None):
         self.store = unwrap_store(store)
         self.specialty_id = specialty_id
         self.include_acervo = include_acervo or bool(specialty_id)
+        if procuradora_chave:
+            from services.minutas_procuradores import exigir_procurador
+
+            self.procuradora_chave = exigir_procurador(procuradora_chave).chave
         if specialty_id:
             from services.minutas_specialties import canonical_specialty_id, scope
             scope(specialty_id)
@@ -52,7 +56,35 @@ class MinutasReferenciasStore:
                 + ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 tuple(record[column] for column in COLUMNS.split(",")),
             )
+            self._associar_sigla(connection, record)
         return self.get(record["id"])
+
+    @staticmethod
+    def _associar_sigla(connection, record):
+        """Grava a sigla quando a coluna aditiva já existe. Não altera o INSERT legado."""
+        from services.minutas_procuradores import procurador_da_chave
+
+        pessoa = procurador_da_chave(record.get("procuradora_chave"))
+        if pessoa is None:
+            return
+        try:
+            connection.execute("SAVEPOINT minutas_sigla")
+            column = connection.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name='minutas_referencias' AND column_name='procurador_sigla'"
+            ).fetchone()
+            if column:
+                connection.execute(
+                    "UPDATE minutas_referencias SET procurador_sigla=? "
+                    "WHERE id=? AND (procurador_sigla IS NULL OR procurador_sigla=?)",
+                    (pessoa.sigla, record["id"], pessoa.sigla),
+                )
+            connection.execute("RELEASE SAVEPOINT minutas_sigla")
+        except Exception:
+            try:
+                connection.execute("ROLLBACK TO SAVEPOINT minutas_sigla")
+            except Exception:
+                pass
 
     def profile(self):
         from services.minutas_specialties import PREFEITURAS, PREFEITURAS_LEGACY, scope
@@ -76,38 +108,46 @@ class MinutasReferenciasStore:
         return result
 
     def scope_revision(self):
-        from database.minutas_especialidades import scoped_clause, scoped_parameters
-        from services.minutas_specialties import fingerprint, PROSECUTOR_KEY
+        from database.minutas_especialidades import scoped_arguments, scoped_clause
+        from services.minutas_procuradores import chave_efetiva
+        from services.minutas_specialties import fingerprint
         profile = self.profile()
         with self.store.connection(read_only=True) as c:
             row = c.execute("SELECT COUNT(e.id) AS total,MAX(e.atualizado_em) AS atualizado "
                 "FROM minutas_extracoes e JOIN minutas_referencias r ON r.id=e.referencia_id WHERE " + scoped_clause()
                 + self._active(c),
-                (PROSECUTOR_KEY, *scoped_parameters(self.specialty_id))).fetchone()
+                scoped_arguments(chave_efetiva(self), self.specialty_id)).fetchone()
         return fingerprint([profile, dict(row)])
 
     def get(self, identifier):
         if self.specialty_id:
-            from database.minutas_especialidades import scoped_clause, scoped_parameters
-            from services.minutas_specialties import PROSECUTOR_KEY
+            from database.minutas_especialidades import scoped_arguments, scoped_clause
+            from services.minutas_procuradores import chave_efetiva
             with self.store.connection(read_only=True) as connection:
                 row = connection.execute(
                     "SELECT r.*,mc.especialidade_id,mc.classe,mc.estado AS classificacao_estado,"
                     "mc.entidade AS origem,mc.revisao AS classificacao_revisao "
                     "FROM minutas_referencias r JOIN minutas_classificacoes mc ON mc.referencia_id=r.id "
                     "WHERE r.id=? AND " + scoped_clause() + self._active(connection),
-                    (identifier, PROSECUTOR_KEY, *scoped_parameters(self.specialty_id)),
+                    (identifier, *scoped_arguments(chave_efetiva(self), self.specialty_id)),
                 ).fetchone()
             if row:
                 result = dict(row)
                 result["especialidade_id"] = self.specialty_id
                 return result
             return None
+        chave = getattr(self, "procuradora_chave", None)
         with self.store.connection(read_only=True) as connection:
-            row = connection.execute(
-                f"SELECT {COLUMNS} FROM minutas_referencias WHERE id=?",
-                (identifier,),
-            ).fetchone()
+            if chave:
+                row = connection.execute(
+                    f"SELECT {COLUMNS} FROM minutas_referencias WHERE id=? AND procuradora_chave=?",
+                    (identifier, chave),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    f"SELECT {COLUMNS} FROM minutas_referencias WHERE id=?",
+                    (identifier,),
+                ).fetchone()
         return dict(row) if row else None
 
     def get_by_process(self, procuradora_key, process_key):
@@ -121,8 +161,8 @@ class MinutasReferenciasStore:
 
     def list(self):
         if self.specialty_id:
-            from database.minutas_especialidades import scoped_clause, scoped_parameters
-            from services.minutas_specialties import PROSECUTOR_KEY
+            from database.minutas_especialidades import scoped_arguments, scoped_clause
+            from services.minutas_procuradores import chave_efetiva
             with self.store.connection(read_only=True) as connection:
                 rows = connection.execute(
                     "SELECT r.*,mc.classe,mc.estado AS classificacao_estado,mc.entidade AS origem,"
@@ -130,15 +170,25 @@ class MinutasReferenciasStore:
                     "JOIN minutas_classificacoes mc ON mc.referencia_id=r.id WHERE " + scoped_clause()
                     + self._active(connection)
                     + " ORDER BY r.exercicio DESC,r.numero_processo,r.id",
-                    (PROSECUTOR_KEY, *scoped_parameters(self.specialty_id)),
+                    scoped_arguments(chave_efetiva(self), self.specialty_id),
                 ).fetchall()
             return [dict(row, especialidade_id=self.specialty_id) for row in rows]
+        chave = getattr(self, "procuradora_chave", None)
         with self.store.connection(read_only=True) as connection:
             active = self._active(connection, "")
+            clauses = []
+            params = []
+            if chave:
+                clauses.append("procuradora_chave=?")
+                params.append(chave)
+            if active:
+                clauses.append("acervo='ativo'")
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
             rows = connection.execute(
                 f"SELECT {COLUMNS} FROM minutas_referencias"
-                + (" WHERE acervo='ativo'" if active else "")
-                + " ORDER BY exercicio DESC, numero_processo, id"
+                + where
+                + " ORDER BY exercicio DESC, numero_processo, id",
+                tuple(params),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -182,12 +232,12 @@ class MinutasReferenciasStore:
 
     def get_extraction(self, path):
         if self.specialty_id:
-            from database.minutas_especialidades import scoped_clause, scoped_parameters
-            from services.minutas_specialties import PROSECUTOR_KEY
+            from database.minutas_especialidades import scoped_arguments, scoped_clause
+            from services.minutas_procuradores import chave_efetiva
             with self.store.connection(read_only=True) as c:
                 row = c.execute("SELECT e.* FROM minutas_extracoes e JOIN minutas_referencias r "
                     "ON r.id=e.referencia_id WHERE e.arquivo_path=? AND " + scoped_clause() + self._active(c),
-                    (path, PROSECUTOR_KEY, *scoped_parameters(self.specialty_id))).fetchone()
+                    (path, *scoped_arguments(chave_efetiva(self), self.specialty_id))).fetchone()
             return dict(row) if row else None
         with self.store.connection(read_only=True) as connection:
             row = connection.execute(
@@ -254,9 +304,9 @@ class MinutasReferenciasStore:
         return [dict(row) for row in rows]
 
     def _scoped_extractions(self, procuradora_key, *, inventory):
-        from database.minutas_especialidades import scoped_clause, scoped_parameters
-        from services.minutas_specialties import scope
-        if procuradora_key != scope(self.specialty_id)["procuradora_chave"]:
+        from database.minutas_especialidades import scoped_arguments, scoped_clause
+        from services.minutas_procuradores import chave_conhecida, chave_efetiva
+        if not chave_conhecida(procuradora_key) or procuradora_key != chave_efetiva(self):
             raise ValueError("Procuradora incompatível com a especialidade.")
         columns = EXTRACTION_INVENTORY_COLUMNS if inventory else EXTRACTION_COLUMNS
         columns = ",".join("e." + name for name in columns.split(","))
@@ -267,7 +317,7 @@ class MinutasReferenciasStore:
                 + self._active(connection)
                 + ("" if inventory else " AND e.status='PROCESSADO'")
                 + " ORDER BY e.referencia_id,e.papel,e.posicao,e.arquivo_path",
-                (procuradora_key, *scoped_parameters(self.specialty_id)),
+                scoped_arguments(procuradora_key, self.specialty_id),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -289,9 +339,12 @@ class MinutasReferenciasStore:
     ):
         """Search current, linked opinion pages with PostgreSQL Portuguese FTS."""
         from database.minutas_especialidades import scoped_parameters, specialty_membership_clause
-        from services.minutas_specialties import canonical_specialty_id, scope
+        from services.minutas_procuradores import CHAVE_CATALOGO, chave_conhecida, chave_efetiva
+        from services.minutas_specialties import canonical_specialty_id
         specialty_id = canonical_specialty_id(specialty_id)
-        if procuradora_key != scope(specialty_id)["procuradora_chave"]:
+        if not chave_conhecida(procuradora_key) or (
+            self.specialty_id and procuradora_key != chave_efetiva(self)
+        ):
             raise ValueError("Procuradora incompatível com a especialidade.")
         if self.specialty_id and specialty_id != self.specialty_id:
             raise ValueError("Especialidade incompatível com o acervo selecionado.")
@@ -308,7 +361,7 @@ class MinutasReferenciasStore:
             "AND doc.mime=e.arquivo_mime AND doc.tamanho=e.arquivo_tamanho)",
             "EXISTS (SELECT 1 FROM minutas_classificacoes mc JOIN minutas_acervo_vinculos mv "
             "ON mv.referencia_id=mc.referencia_id JOIN minutas_especialidades ms ON ms.id=mv.especialidade_id "
-            "WHERE mc.referencia_id=r.id AND ms.procuradora_chave=r.procuradora_chave "
+            "WHERE mc.referencia_id=r.id AND ms.procuradora_chave=? "
             "AND (ms.grupo='TEMATICO' OR mc.classe=ms.grupo) "
             "AND mc.estado='CLASSIFICADO' AND " + specialty_membership_clause("mv.especialidade_id") + ")",
             # Validate only the recorded identifier format; search never downloads
@@ -326,6 +379,7 @@ class MinutasReferenciasStore:
             extractor_version,
             procuradora_key,
             procuradora_key,
+            CHAVE_CATALOGO,
             *scoped_parameters(specialty_id),
         ]
         if year is not None:

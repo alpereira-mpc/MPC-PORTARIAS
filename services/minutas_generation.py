@@ -11,7 +11,7 @@ import unicodedata
 
 from services import ai_service
 from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionService
-from services.minutas_library import MinutasValidationError, PROCURADORA
+from services.minutas_library import MinutasValidationError
 from services.minutas_search import MinutasSearchService
 
 
@@ -1570,13 +1570,37 @@ class MinutasGenerationService:
         self.library = library
         self.extractor = MinutasExtractionService(library, cache_documents=True)
         self.search = search or MinutasSearchService(library)
-        self._analyze = analyze or ai_service.analisar_fundamentos_minuta
-        self._generate = generate or ai_service.gerar_minuta_parecer
+        base_analyze = analyze or ai_service.analisar_fundamentos_minuta
+        base_generate = generate or ai_service.gerar_minuta_parecer
+        self._analyze = lambda contexto, _base=base_analyze: _base(self._com_camadas(contexto))
+        self._generate = lambda contexto, _base=base_generate: _base(self._com_camadas(contexto))
         # A instância vive apenas durante um rerun do Streamlit. Este cache evita
         # repetir o mesmo inventário dentro da execução sem reutilizar dados entre
         # sessões ou impedir que o rerun seguinte enxergue fontes alteradas.
         self._records_cache = None
         self._source_state_cache = {}
+
+    def _pessoa(self):
+        from services.minutas_procuradores import legado_espo
+
+        return getattr(self.library, "procurador", None) or legado_espo()
+
+    def _com_camadas(self, contexto):
+        if not isinstance(contexto, dict) or contexto.get("camadas_prompt"):
+            return contexto
+        from services.minutas_procuradores import camadas_prompt
+        from services.minutas_specialties import scope
+
+        nome = ""
+        specialty = getattr(self.library, "specialty_id", None)
+        if specialty:
+            try:
+                nome = scope(specialty).get("nome") or ""
+            except Exception:
+                nome = ""
+        enriquecido = dict(contexto)
+        enriquecido["camadas_prompt"] = camadas_prompt(self._pessoa(), nome)
+        return enriquecido
 
     def _records(self):
         from services.minutas_specialties import scope, RPPS
@@ -1600,7 +1624,7 @@ class MinutasGenerationService:
         return [
             record
             for record in self._records()
-            if record.get("procuradora") == PROCURADORA
+            if record.get("procuradora") == self._pessoa().nome_exibicao
             and record.get("especialidade_id") == self.library.specialty_id
             and record.get("classificacao_estado") == "CLASSIFICADO"
         ]
@@ -1615,8 +1639,10 @@ class MinutasGenerationService:
             raise MinutasGenerationError(
                 "O processo não está classificado na especialidade RPPS habilitada."
             )
-        if target.get("procuradora") != PROCURADORA:
-            raise MinutasGenerationError("Procuradora não autorizada para este teste.")
+        from services.minutas_procuradores import procurador_da_chave
+        pessoa = procurador_da_chave(target.get("procuradora_chave"))
+        if pessoa is None or target.get("procuradora") != pessoa.nome_exibicao:
+            raise MinutasGenerationError("Procurador não autorizado para este acervo.")
 
     def _source_state(self, target):
         self._validate_target(target)
@@ -3869,8 +3895,8 @@ class MinutasGenerationService:
             "processo_chave": key,
             "exercicio": int(exercicio or 0) or None,
             "origem": origem or "",
-            "procuradora": PROCURADORA,
-            "procuradora_chave": PROCURADORA.casefold(),
+            "procuradora": self._pessoa().nome_exibicao,
+            "procuradora_chave": self._pessoa().chave,
             "especialidade_id": profile["id"],
             "classe": profile.get("grupo") or "",
             "perfil": profile.get("perfil") or "",

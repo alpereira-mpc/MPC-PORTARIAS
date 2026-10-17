@@ -9,6 +9,12 @@ import uuid
 from database.store import now
 from services.access import normalize_email
 from services.minutas_piloto import can_access_minutas_piloto
+from services.minutas_procuradores import (
+    exigir_admin_estrutural,
+    exigir_procurador,
+    legado_espo,
+    mesmo_escopo,
+)
 from services.oficios import validate_upload
 
 
@@ -131,12 +137,20 @@ def _validate_complement_metadata(values):
 class MinutasLibraryService:
     """Administrative API; future reader roles can use a separate service."""
 
-    def __init__(self, repository, storage, identity, secrets):
+    def __init__(self, repository, storage, identity, secrets, procurador=None, principal=None):
         self.repository = repository
         self.storage = storage
         self.identity = dict(identity or {})
         self.secrets = secrets
         self.specialty_id = getattr(repository, "specialty_id", None)
+        # Ausência explícita mantém o piloto ESPO para chamadores anteriores a esta expansão.
+        # A interface nova sempre informa o Procurador selecionado.
+        self.procurador = exigir_procurador(procurador) if procurador is not None else legado_espo()
+        self.principal = principal
+        try:
+            self.repository.procuradora_chave = self.procurador.chave
+        except Exception:
+            pass
 
     def require_specialty(self):
         self._authorize()
@@ -168,14 +182,14 @@ class MinutasLibraryService:
     def create(self, values, auditoria, parecer):
         actor = self._authorize()
         procuradora = str(values.get("procuradora") or "").strip()
-        if procuradora != PROCURADORA:
-            raise MinutasValidationError("Procuradora inválida.")
+        if procuradora != self.procurador.nome_exibicao:
+            raise MinutasValidationError("Procurador inválido.")
         process, process_key = _normalize_process(values.get("numero_processo"))
         subtype = values.get("subtipo")
         if subtype not in SUBTIPOS:
             raise MinutasValidationError("Subtipo de PCA inválido.")
         year = _validate_year(values.get("exercicio"))
-        procuradora_key = procuradora.casefold()
+        procuradora_key = self.procurador.chave
         if self.repository.get_by_process(procuradora_key, process_key):
             raise MinutasDuplicateError(
                 "Já existe uma referência para este processo e Procuradora."
@@ -226,12 +240,12 @@ class MinutasLibraryService:
 
     def list(self):
         self._authorize()
-        return [record for record in self.repository.list() if record.get("procuradora") == PROCURADORA]
+        return [record for record in self.repository.list() if mesmo_escopo(record, self.procurador)]
 
     def get(self, identifier):
         self._authorize()
         record = self.repository.get(identifier)
-        if not record or record.get("procuradora") != PROCURADORA:
+        if not mesmo_escopo(record, self.procurador):
             raise MinutasValidationError("Referência não encontrada.")
         return record
 
@@ -324,6 +338,7 @@ class MinutasLibraryService:
 
     def delete_document(self, identifier, document_id, confirmed=False):
         self._authorize()
+        exigir_admin_estrutural(self)
         if confirmed is not True:
             raise MinutasValidationError("Confirme a exclusão do documento.")
         self.get(identifier)
@@ -402,6 +417,7 @@ class MinutasLibraryService:
         return updated
 
     def delete(self, identifier, confirmed=False):
+        exigir_admin_estrutural(self)
         self._authorize()
         if confirmed is not True:
             raise MinutasValidationError("Confirme a exclusão da referência.")

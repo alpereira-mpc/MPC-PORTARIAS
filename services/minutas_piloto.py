@@ -1,8 +1,6 @@
-"""Fail-closed access configuration for the private Minutas IA pilot."""
+"""Acesso ao Minutas IA para identidades já autenticadas no portal."""
 
 import re
-
-import streamlit as st
 
 from services.access import normalize_email
 
@@ -10,35 +8,18 @@ from services.access import normalize_email
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def _authorized_emails(secrets):
-    try:
-        raw = secrets.get("MINUTAS_PILOTO_EMAILS")
-    except Exception:
-        return None
-    if not isinstance(raw, (list, tuple)) or not raw:
-        return None
-
-    emails = set()
-    for value in raw:
-        if not isinstance(value, str):
-            return None
-        email = normalize_email(value)
-        if not email or not _EMAIL_PATTERN.fullmatch(email):
-            return None
-        emails.add(email)
-    return emails or None
-
-
 def can_access_minutas_piloto(identity, secrets=None):
-    """Authorize an OIDC identity only when the complete pilot config is valid."""
+    """Qualquer identidade verificada já autorizada no portal.
+
+    A lista MINUTAS_PILOTO_EMAILS e a flag MINUTAS_PILOTO_ENABLED não restringem
+    mais o módulo. Acesso anônimo e e-mail não verificado continuam negados.
+    O parâmetro secrets permanece na assinatura para os chamadores existentes.
+    """
+    del secrets
     if not identity or identity.get("email_verified") is False:
         return False
     try:
-        source = st.secrets if secrets is None else secrets
-        if source.get("MINUTAS_PILOTO_ENABLED") is not True:
-            return False
-        emails = _authorized_emails(source)
         email = normalize_email(identity.get("email"))
     except Exception:
         return False
-    return bool(emails and email in emails)
+    return bool(email and _EMAIL_PATTERN.fullmatch(email))

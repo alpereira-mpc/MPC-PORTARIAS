@@ -14,6 +14,12 @@ from services.minutas_specialties import (
 from services.ui_theme import badges, render_record, status_tone
 
 
+def clear_procurador_session():
+    """Troca de Procurador: descarta o contexto transitório e a seleção."""
+    clear_specialty_session()
+    st.session_state.pop("minutas_procurador", None)
+
+
 def clear_specialty_session():
     """Retorna à entrada neutra, preservando somente dados já persistidos."""
     transient_prefixes = (
@@ -79,7 +85,26 @@ def selection(library):
     }
     selected_category = st.session_state.get("minutas_nav_category")
     if not selected_category:
-        st.caption("Procuradora: Elvira Samara Pereira de Oliveira")
+        from services.minutas_procuradores import MinutasContextoError, exigir_procurador
+
+        sigla = st.session_state.get("minutas_procurador")
+        try:
+            procurador = exigir_procurador(sigla) if sigla else None
+        except MinutasContextoError:
+            procurador = None
+        if procurador is not None:
+            tratamento = "Dra." if procurador.genero == "feminino" else "Dr."
+            st.caption(f"Minutas IA — {tratamento} {procurador.nome}")
+            if procurador.sigla != "ESPO":
+                st.caption(
+                    "Acervo jurídico individual. A ausência de pareceres não desativa o motor "
+                    "e não autoriza precedentes de outro Procurador."
+                )
+        st.button(
+            "← Trocar Procurador",
+            key="minutas_trocar_procurador",
+            on_click=clear_procurador_session,
+        )
         st.subheader("Escolha o ambiente de trabalho")
         columns = st.columns(2)
         for index, (key, (label, description, availability, generation)) in enumerate(categories.items()):
@@ -189,7 +214,12 @@ def synchronize_scope(library, identity):
             if key.startswith(("minutas_upload_preview_", "minutas_uploads_", "minutas_batch_")) or key == "minutas_migration_plan":
                 del st.session_state[key]
         st.session_state["minutas_scope_identity"] = email
-    token = fingerprint([email, library.specialty_id, library.repository.scope_revision()])
+    token = fingerprint([
+        email,
+        getattr(getattr(library, "procurador", None), "sigla", ""),
+        library.specialty_id,
+        library.repository.scope_revision(),
+    ])
     if st.session_state.get("minutas_scope_token") != token:
         prefixes = (
             "minutas_generation_analysis_", "minutas_generation_result_",
