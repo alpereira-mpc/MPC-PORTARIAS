@@ -123,8 +123,14 @@ class FakeStorage:
         return self.objects[path]
 
 
+class _Gestor:
+    ativo = True
+    pode_admin = True
+
+
 class FakeLibrary:
     specialty_id = "elvira.pca.rpps"
+    principal = _Gestor()
     def __init__(self, repository, storage, authorized=True):
         self.repository = repository
         self.storage = storage

@@ -241,6 +241,8 @@ class MinutasAcervoService:
         return self.repository.catalog()
 
     def dry_run(self):
+        from services.minutas_procuradores import exigir_gestao_acervo
+        exigir_gestao_acervo(self.library)
         self.library._authorize()
         return migration_plan(self.repository.snapshot())
 
@@ -260,6 +262,8 @@ class MinutasAcervoService:
         self, identifier, specialty, formal_class, entity, reason, themes=(),
         *, modality="", profile_value="",
     ):
+        from services.minutas_procuradores import exigir_gestao_acervo
+        exigir_gestao_acervo(self.library)
         actor = self.library._authorize()
         profile = scope(specialty)
         if formal_class not in CLASSES: raise MinutasValidationError("Informe a classe processual efetiva.")
@@ -283,9 +287,13 @@ class MinutasAcervoService:
         return self.repository.update_state(specialty, values, self.library._authorize())
 
     def restore(self, event_id):
+        from services.minutas_procuradores import exigir_gestao_acervo
+        exigir_gestao_acervo(self.library)
         return self.repository.restore_classification(event_id, self.library._authorize())
 
     def link(self, identifier, specialty, reason):
+        from services.minutas_procuradores import exigir_gestao_acervo
+        exigir_gestao_acervo(self.library)
         return self.repository.link(identifier, specialty, reason, self.library._authorize())
 
     def find_active_process(self, specialty, key):
@@ -310,6 +318,8 @@ class MinutasAcervoService:
 
     def preview_upload(self, name, content, role, specialty=None):
         """Extração local explícita; não conserva bytes em caches globais."""
+        from services.minutas_procuradores import exigir_gestao_acervo
+        exigir_gestao_acervo(self.library)
         self.library._authorize()
         from services.minutas_extraction import extract_content
         if role not in ("auditoria", "complementar", "parecer", "modelo"):
@@ -455,6 +465,8 @@ class MinutasAcervoService:
 
     def add_file(self, specialty, values, upload, *, role, confirm_version=False):
         """Uma transação por arquivo; duplicatas idempotentes; versões nunca sobrescrevem."""
+        from services.minutas_procuradores import exigir_gestao_acervo
+        exigir_gestao_acervo(self.library)
         actor = self.library._authorize()
         profile = scope(specialty)
         formal = values.get("classe")

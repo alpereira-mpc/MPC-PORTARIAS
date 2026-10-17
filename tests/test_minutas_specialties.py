@@ -102,13 +102,19 @@ class Storage:
         self.objects.pop(path, None)
 
 
-def library(store, storage, specialty=RPPS):
+class GestorAcervo:
+    ativo = True
+    pode_admin = True
+
+
+def library(store, storage, specialty=RPPS, principal=GestorAcervo()):
     # Only the production constructor requires PostgreSQL; exercise the SAME SQL
     # repository against synthetic relational tables, not a dict implementation.
     repo = object.__new__(MinutasReferenciasStore)
     repo.store, repo.specialty_id, repo.include_acervo = store, specialty, True
     return MinutasLibraryService(repo, storage, TEST_IDENTITY,
-        {"MINUTAS_PILOTO_ENABLED": True, "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]]})
+        {"MINUTAS_PILOTO_ENABLED": True, "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]]},
+        principal=principal)
 
 
 def build_store(path, *, separated=False):
@@ -817,8 +823,15 @@ def test_prefeituras_abre_acervo_e_pesquisa_mas_mantem_geracao_bloqueada(environ
         library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
 
     def page():
+        import streamlit as st
         from services.minutas_ia_ui import render
         from tests.access_testing import TEST_IDENTITY
+
+        class Gestor:
+            ativo = True
+            pode_admin = True
+
+        st.session_state["_audit_actor"] = Gestor()
         render(None, TEST_IDENTITY)
 
     app = AppTest.from_function(page, default_timeout=30).run()
@@ -859,8 +872,15 @@ def test_batch_upload_ui_keeps_a_single_themed_confirmation_across_reruns(enviro
     monkeypatch.setattr(minutas_ia_ui, "_service", lambda *args, administrative=False:
         library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
     def page():
+        import streamlit as st
         from services.minutas_ia_ui import render
         from tests.access_testing import TEST_IDENTITY
+
+        class Gestor:
+            ativo = True
+            pode_admin = True
+
+        st.session_state["_audit_actor"] = Gestor()
         render(None, TEST_IDENTITY)
     app = AppTest.from_function(page, default_timeout=30).run()
     _choose_specialty(app)
@@ -1144,8 +1164,15 @@ def test_report_link_widgets_show_recovered_metadata_and_follow_the_selection(se
     monkeypatch.setattr(minutas_ia_ui, "_service", lambda *args, administrative=False:
         library(store, storage, None if administrative else st.session_state.get("minutas_specialty")))
     def page():
+        import streamlit as st
         from services.minutas_ia_ui import render
         from tests.access_testing import TEST_IDENTITY
+
+        class Gestor:
+            ativo = True
+            pode_admin = True
+
+        st.session_state["_audit_actor"] = Gestor()
         render(None, TEST_IDENTITY)
     app = AppTest.from_function(page, default_timeout=30).run()
     _choose_specialty(app)
@@ -1570,8 +1597,15 @@ def test_aposentadorias_acervo_accepts_null_exercise_and_keeps_pca_required(envi
     )
 
     def page():
+        import streamlit as st
         from services.minutas_ia_ui import render
         from tests.access_testing import TEST_IDENTITY
+
+        class Gestor:
+            ativo = True
+            pode_admin = True
+
+        st.session_state["_audit_actor"] = Gestor()
         render(None, TEST_IDENTITY)
 
     app = AppTest.from_function(page, default_timeout=30).run()

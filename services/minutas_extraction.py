@@ -389,6 +389,8 @@ class MinutasExtractionService:
         }
 
     def process_reference(self, reference_id, force_paths=None):
+        from services.minutas_procuradores import exigir_gestao_acervo
+        exigir_gestao_acervo(self.library)
         actor = self.library._authorize()
         reference = self.library.get(reference_id)
         forced = set(force_paths or ())
@@ -459,6 +461,8 @@ class MinutasExtractionService:
         return self.repository.upsert_extraction(record)
 
     def reprocess_document(self, reference_id, path):
+        from services.minutas_procuradores import exigir_gestao_acervo
+        exigir_gestao_acervo(self.library)
         actor = self.library._authorize()
         reference = self.library.get(reference_id)
         document = next(

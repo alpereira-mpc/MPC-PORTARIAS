@@ -24,8 +24,12 @@ def _biblioteca(store, storage, sigla, specialty):
     repositorio.store = store
     repositorio.specialty_id = specialty
     repositorio.include_acervo = True
+    class _Gestor:
+        ativo = True
+        pode_admin = True
+
     return MinutasLibraryService(
-        repositorio, storage, TEST_IDENTITY, {}, procurador=sigla,
+        repositorio, storage, TEST_IDENTITY, {}, procurador=sigla, principal=_Gestor(),
     )
 
 

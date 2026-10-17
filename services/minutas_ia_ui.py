@@ -2478,14 +2478,18 @@ def render(store, identity):
             _block_specialties("Relações ausentes ou invisíveis: " + ", ".join(missing) + ".")
             return
     try:
+        principal = st.session_state.get("_audit_actor")
         if st.session_state.get("minutas_initial_administration"):
-            st.button(
-                "← Voltar à escolha de especialidade",
-                key="minutas_initial_administration_back",
-                on_click=lambda: st.session_state.pop("minutas_initial_administration", None),
-            )
-            administration(administrative_library)
-            return
+            if not pode_administrar(principal):
+                st.session_state.pop("minutas_initial_administration", None)
+            else:
+                st.button(
+                    "← Voltar à escolha de especialidade",
+                    key="minutas_initial_administration_back",
+                    on_click=lambda: st.session_state.pop("minutas_initial_administration", None),
+                )
+                administration(administrative_library)
+                return
         profile = selection(administrative_library)
         if profile is None:
             principal = st.session_state.get("_audit_actor")
@@ -2505,13 +2509,15 @@ def render(store, identity):
             raise
         _block_specialties()
         return
+    principal = st.session_state.get("_audit_actor")
+    gestor = pode_administrar(principal)
     sections = (
-        "Acervo",
-        "Pesquisa Jurídica",
-        "Gerar Minuta de Parecer",
+        ("Acervo", "Pesquisa Jurídica", "Gerar Minuta de Parecer")
+        if gestor
+        else ("Pesquisa Jurídica", "Gerar Minuta de Parecer")
     )
     if st.session_state.get("minutas_active_view") == "Gerar Minuta":
-        st.session_state["minutas_active_view"] = sections[2]
+        st.session_state["minutas_active_view"] = "Gerar Minuta de Parecer"
     if st.session_state.get("minutas_active_view") not in sections:
         st.session_state["minutas_active_view"] = sections[0]
     with st.container(border=True, key="mpc_card_operational_minutas_specialty_context"):
@@ -2523,9 +2529,14 @@ def render(store, identity):
                 "success" if instruction_generation_allowed(profile) else "muted",
             )
         )
+        areas = (
+            "Acervo, Pesquisa Jurídica e geração assistida quando configurada."
+            if gestor
+            else "Pesquisa Jurídica e geração assistida quando configurada."
+        )
         st.caption(
             f"{tratamento} {procurador.nome} · {profile['nome']}. "
-            "Ambiente especializado: Acervo, Pesquisa Jurídica e geração assistida quando configurada."
+            f"Ambiente especializado: {areas}"
         )
     active = st.radio(
         "Área do módulo",
@@ -2535,9 +2546,9 @@ def render(store, identity):
         key="minutas_active_view",
     )
     try:
-        if active == sections[0]:
+        if active == "Acervo":
             acervo(library, administrative_library, profile)
-        elif active == sections[1]:
+        elif active == "Pesquisa Jurídica":
             _search_tab(store, identity)
         elif instruction_generation_allowed(profile):
             _generator_tab(store, identity)

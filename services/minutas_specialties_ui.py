@@ -162,7 +162,7 @@ def selection(library):
 
             st.button("← Voltar a PCA", key="minutas_nav_back_pca", on_click=back_to_pca)
         st.subheader("Especialidades de PCA")
-        st.caption("Escolha uma especialidade para abrir o Acervo, a Pesquisa Jurídica e, quando habilitada, a geração assistida.")
+        st.caption("Escolha uma especialidade para abrir a Pesquisa Jurídica e, quando habilitada, a geração assistida.")
         selected = st.session_state.get("minutas_specialty" if secretariats else "minutas_pca_choice")
         columns = st.columns(2)
         for index, (label, value) in enumerate(choices.items()):
@@ -203,7 +203,7 @@ def selection(library):
         return None
     profile = catalog[selected]
     if not instruction_generation_allowed(profile):
-        st.info("Acervo e pesquisa disponíveis. Esta especialidade ainda não possui motor especializado habilitado.")
+        st.info("Pesquisa jurídica disponível. Esta especialidade ainda não possui motor especializado habilitado.")
     return profile
 
 
@@ -670,6 +670,8 @@ def _back_to_acervo_consult():
 
 
 def acervo(library, administrative_library, profile):
+    if not _gestao_autorizada(administrative_library):
+        return
     admin = MinutasAcervoService(administrative_library)
     admin.library._authorize()
     mode = st.radio(
@@ -768,8 +770,18 @@ def _legacy_archive(admin, library):
         _documents(library, library.get(identifier))
 
 
+def _gestao_autorizada(library):
+    from services.minutas_procuradores import pode_administrar
+    if pode_administrar(getattr(library, "principal", None)):
+        return True
+    st.error("Operação administrativa restrita.")
+    return False
+
+
 def administration(library):
     """Acesso administrativo sem criar uma especialidade de trabalho implícita."""
+    if not _gestao_autorizada(library):
+        return
     admin = MinutasAcervoService(library)
     admin.library._authorize()
     _administration(admin, None)

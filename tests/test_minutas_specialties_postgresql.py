@@ -51,8 +51,13 @@ def test_real_postgresql_migration_uuid_idempotence_fts_and_rls(specialized_pg):
     chamber = seed(store, process="01499/26", subtype="Câmara Municipal", entity="Câmara Municipal de Exemplo")
     seed(store, process="02720/25", subtype="Prefeitura", entity="Prefeitura Municipal")
     seed(store, process="99999/26", prosecutor="outra")
+    class _Gestor:
+        ativo = True
+        pode_admin = True
+
     library = MinutasLibraryService(MinutasReferenciasStore(store, RPPS), Storage(), TEST_IDENTITY,
-        {"MINUTAS_PILOTO_ENABLED": True, "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]]})
+        {"MINUTAS_PILOTO_ENABLED": True, "MINUTAS_PILOTO_EMAILS": [TEST_IDENTITY["email"]]},
+        principal=_Gestor())
     admin = MinutasAcervoService(library)
     first = admin.apply(admin.dry_run(), {"identificador": "backup-sintetico", "restauracao_verificada": True})
     assert first["alterados"] == 3

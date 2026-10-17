@@ -243,12 +243,18 @@ def _values(process="TC 00001/24", subtype="Prefeitura"):
     }
 
 
-def _service(repository=None, storage=None, identity=None, secrets=None):
+class _Gestor:
+    ativo = True
+    pode_admin = True
+
+
+def _service(repository=None, storage=None, identity=None, secrets=None, principal=None):
     return MinutasLibraryService(
         repository or FakeRepository(),
         storage or FakeStorage(),
         identity or TEST_IDENTITY,
         secrets or SECRETS,
+        principal=_Gestor() if principal is None else principal,
     )
 
 

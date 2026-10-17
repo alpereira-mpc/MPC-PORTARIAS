@@ -7,7 +7,7 @@ import uuid
 from database.minutas_especialidades import _first
 from database.store import now
 from services.minutas_library import MinutasValidationError, _validate_file
-from services.minutas_procuradores import chave_efetiva, legado_espo
+from services.minutas_procuradores import chave_efetiva, exigir_gestao_acervo, legado_espo
 from services.minutas_specialties import scope
 from services.minutas_storage import modelo_object_path
 
@@ -80,6 +80,7 @@ class MinutasModeloVisualService:
 
     def save(self, specialty, upload):
         """Substitui o modelo ativo e conserva as versões anteriores. Não cria processo."""
+        exigir_gestao_acervo(self.library)
         actor = self.library._authorize()
         scope(specialty)
         file = _validate_file("parecer", upload)

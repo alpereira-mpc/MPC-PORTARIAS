@@ -11,6 +11,7 @@ from services.access import normalize_email
 from services.minutas_piloto import can_access_minutas_piloto
 from services.minutas_procuradores import (
     exigir_admin_estrutural,
+    exigir_gestao_acervo,
     exigir_procurador,
     legado_espo,
     mesmo_escopo,
@@ -180,6 +181,7 @@ class MinutasLibraryService:
         return f"referencias/{identifier}/{kind}/{uuid.uuid4().hex}{suffix}"
 
     def create(self, values, auditoria, parecer):
+        exigir_gestao_acervo(self)
         actor = self._authorize()
         procuradora = str(values.get("procuradora") or "").strip()
         if procuradora != self.procurador.nome_exibicao:
@@ -263,6 +265,7 @@ class MinutasLibraryService:
         return self.repository.list_documents(identifier)
 
     def add_document(self, identifier, values, upload):
+        exigir_gestao_acervo(self)
         actor = self._authorize()
         self.get(identifier)
         metadata = _validate_complement_metadata(values)
@@ -317,6 +320,7 @@ class MinutasLibraryService:
         return Download(document["nome"], document["mime"], content)
 
     def update_documents(self, identifier, documents):
+        exigir_gestao_acervo(self)
         actor = self._authorize()
         self.get(identifier)
         current = self.repository.list_documents(identifier)
@@ -359,6 +363,7 @@ class MinutasLibraryService:
     def promote_document_to_primary(
         self, identifier, document_id, displaced_values, confirmed=False
     ):
+        exigir_gestao_acervo(self)
         actor = self._authorize()
         if confirmed is not True:
             raise MinutasValidationError("Confirme a reorganização dos documentos.")
@@ -381,6 +386,7 @@ class MinutasLibraryService:
         )
 
     def replace(self, identifier, kind, upload):
+        exigir_gestao_acervo(self)
         actor = self._authorize()
         if kind not in DOCUMENT_KINDS:
             raise MinutasValidationError("Tipo de documento inválido.")

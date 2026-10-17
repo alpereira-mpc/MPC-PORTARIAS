@@ -284,23 +284,22 @@ def pode_administrar(principal):
     return bool(getattr(principal, "pode_admin", False) or getattr(principal, "administrator", False))
 
 
-def exigir_admin_estrutural(library):
-    """Exclusão permanente e evolução do catálogo exigem administrador.
+def exigir_gestao_acervo(library):
+    """Manutenção do acervo exige identidade institucional e administrador ativo.
 
-    Sem principal autenticado, a operação é recusada. A única compatibilidade
-    com a suíte local é a variável definida pelo pytest, que não existe no
-    processo Streamlit em execução real.
+    Principal ausente, inativo ou sem privilégio é recusado. Não há exceção
+    para a suíte de testes nem para estado de sessão.
     """
-    import os
-
-    principal = getattr(library, "principal", None)
-    if pode_administrar(principal):
-        return
-    if principal is None and os.environ.get("PYTEST_CURRENT_TEST"):
+    if pode_administrar(getattr(library, "principal", None)):
         return
     from services.minutas_library import MinutasAccessDenied
 
     raise MinutasAccessDenied("Operação administrativa restrita.")
+
+
+def exigir_admin_estrutural(library):
+    """Exclusão permanente e evolução do catálogo exigem administrador."""
+    exigir_gestao_acervo(library)
 
 
 def visual_neutro():

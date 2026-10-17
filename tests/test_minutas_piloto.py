@@ -119,7 +119,12 @@ def test_module_navigation_executes_only_the_active_view(monkeypatch):
         import streamlit as st
         from services import minutas_ia_ui as ui
 
+        class _Gestor:
+            ativo = True
+            pode_admin = True
+
         st.session_state["minutas_procurador"] = "ESPO"
+        st.session_state["_audit_actor"] = _Gestor()
         ui.render(None, {})
 
     app = AppTest.from_function(page, default_timeout=30).run()
