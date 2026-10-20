@@ -4,6 +4,7 @@ from io import BytesIO
 
 from docx import Document
 import pytest
+from tests.test_minutas_orientacao import gerar_instrucao
 
 from services.ai_service import (
     PROMPT_MINUTA_PARECER,
@@ -592,7 +593,7 @@ def test_pesquisa_sem_precedente_rag_isolado_e_docx():
     assert "exercicio" not in captured["alvo"]
     assert [item["referencia_id"] for item in analyzed["referencias"]["referencias"]] == ["outro"]
     assert captured["buscas"][0][1] == "0100026"
-    generated = service.generate_instruction(
+    generated = gerar_instrucao(service,
         [document], analyzed, processo="01000/26",
         origem="Instituto de Previdência de Exemplo", beneficiario=NOME,
     )
@@ -673,6 +674,7 @@ def test_quatro_motores_de_pca_continuam_habilitados():
     def generate(context):
         captured["orientacao"] = context["orientacao_dispositivo"]
         captured["motor"] = context.get("motor")
+        captured["assessor"] = (context.get("orientacao_juridica_usuario") or {}).get("texto")
         return {"estrutura": _structure(), "modelo": "pca"}
 
     for specialty, expected in (
@@ -694,11 +696,12 @@ def test_quatro_motores_de_pca_continuam_habilitados():
         analyzed = service.analyze_instruction(
             [document], processo="02108/26", exercicio=2025, origem="Entidade de Exemplo",
         )
-        service.generate_instruction(
+        gerar_instrucao(service,
             [document], analyzed, processo="02108/26", exercicio=2025, origem="Entidade de Exemplo",
         )
         assert captured["orientacao"] == expected
         assert captured.get("motor") != MOTOR
+        assert "assessor" in captured["assessor"].casefold()
 
 
 def test_navegacao_preserva_filtro_e_descarta_instrucao_de_aposentadoria():

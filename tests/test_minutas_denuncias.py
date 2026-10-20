@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 import pytest
+from tests.test_minutas_orientacao import gerar_instrucao
 
 from services.minutas_denuncias import MOTOR, SPECIALTY_ID, is_denuncia_profile
 from services.minutas_docx import ELVIRA_TEMPLATE, MinutasDocxService
@@ -98,7 +99,7 @@ def test_denuncias_pdf_fluxo_rag_isolado_sem_exercicio_e_docx(request_text):
     analyzed = service.analyze_instruction(
         documents, processo="02108/26", origem="Município de Exemplo", periodo_fatos="2023 a 2025",
     )
-    generated = service.generate_instruction(
+    generated = gerar_instrucao(service,
         documents, analyzed, processo="02108/26", origem="Município de Exemplo", periodo_fatos="2023 a 2025",
     )
     assert analyzed["referencias"]["estado"] == "RECUPERADO"
@@ -134,10 +135,10 @@ def test_denuncias_sem_precedente_e_alteracao_de_pdf_exigem_comportamento_seguro
     )
     analyzed = service.analyze_instruction([document], processo="02108/26", origem="Município")
     assert analyzed["referencias"]["estado"] == "SEM_RESULTADO"
-    assert service.generate_instruction([document], analyzed, processo="02108/26", origem="Município")["estrutura"]
+    assert gerar_instrucao(service, [document], analyzed, processo="02108/26", origem="Município")["estrutura"]
     changed = _doc("denuncia.pdf", "Denúncia alterada sobre contratação.", "denuncia_inicial")
     with pytest.raises(MinutasGenerationError, match="alterada"):
-        service.generate_instruction([changed], analyzed, processo="02108/26", origem="Município")
+        gerar_instrucao(service, [changed], analyzed, processo="02108/26", origem="Município")
 
 
 def test_ui_denuncias_so_libera_geracao_com_perfil_correto(tmp_path, monkeypatch):

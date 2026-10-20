@@ -263,7 +263,7 @@ def analyze(service, documentos, *, processo, origem="", periodo_fatos=""):
     }
 
 
-def generate(service, documentos, analyzed, *, processo, origem="", periodo_fatos="", use_rag=True):
+def generate(service, documentos, analyzed, *, processo, origem="", periodo_fatos="", use_rag=True, orientacao_juridica=None, contexto_orientacao=None, usuario=""):
     from services.minutas_generation import _serialized_size
     from services.minutas_instrucao import montar_contexto
     target = build_target(service._instruction_profile(), processo, origem, periodo_fatos)
@@ -272,11 +272,20 @@ def generate(service, documentos, analyzed, *, processo, origem="", periodo_fato
         _error("A instrução foi alterada. Analise novamente antes de gerar a minuta.")
     if analyzed.get("motor") not in (None, MOTOR):
         _error("A análise não pertence ao motor de denúncias.")
+    orientacao = service._validar_orientacao_operacao(
+        target, analyzed, orientacao_juridica, contexto_orientacao, usuario
+    )
     context = _bind(prepared["contexto"], target)
     analysis = validate_analysis(analyzed.get("analise"), context)
     context["analise_estruturada"] = analysis
+    from services.minutas_orientacao import aplicar_bloco, metadados_orientacao
+    referencias, consulta = (
+        service._enriquecer_referencias_instrucao(analyzed.get("referencias"), orientacao, target)
+        if use_rag else (analyzed.get("referencias"), "")
+    )
+    aplicar_bloco(context, orientacao, consulta if use_rag else "")
     if use_rag:
-        opinions, passages = service._instruction_reference_lists(analyzed.get("referencias"))
+        opinions, passages = service._instruction_reference_lists(referencias)
         context["referencias_historicas"] = opinions
         context["referencias_juridicas_recuperadas"] = passages
         context["orientacao_referencias_juridicas"] = (
@@ -296,6 +305,7 @@ def generate(service, documentos, analyzed, *, processo, origem="", periodo_fato
         "config_versao": CONFIG_VERSION, "fontes_alvo": prepared["fontes_alvo"],
         "referencias_historicas": len(context.get("referencias_historicas") or ()),
         "referencias_juridicas_enviadas": len(context.get("referencias_juridicas_recuperadas") or ()),
+        "orientacao_assessor": metadados_orientacao(orientacao, contexto_orientacao),
     }
 
 

@@ -24,7 +24,8 @@ def clear_specialty_session():
     """Retorna à entrada neutra, preservando somente dados já persistidos."""
     transient_prefixes = (
         "minutas_generation_analysis_", "minutas_generation_result_",
-        "minutas_generation_docx_cache_", "minutas_search_download_",
+        "minutas_generation_docx_cache_", "minutas_orientacao_",
+        "minutas_search_download_",
         "minutas_result_", "minutas_download_", "minutas_complement_download_",
         "minutas_instrucao_", "minutas_upload_preview_", "minutas_uploads_",
         "minutas_batch_", "minutas_query_", "minutas_page_", "minutas_record_",
@@ -224,7 +225,8 @@ def synchronize_scope(library, identity):
     if st.session_state.get("minutas_scope_token") != token:
         prefixes = (
             "minutas_generation_analysis_", "minutas_generation_result_",
-            "minutas_generation_docx_cache_", "minutas_search_download_",
+            "minutas_generation_docx_cache_", "minutas_orientacao_",
+            "minutas_search_download_",
             "minutas_result_", "minutas_download_", "minutas_complement_download_",
             "minutas_instrucao_",
         )

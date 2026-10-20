@@ -13,7 +13,6 @@ import streamlit as st
 from database.minutas_referencias import MinutasReferenciasStore
 from services.ai_service import GeminiErro, GeminiNaoConfigurada
 from services.minutas_generation import (
-    MAX_ORIENTACAO_JURIDICA_CHARS,
     RAG_RECOVERY_VERSION,
     VALIDATION_POLICY_VERSION,
     MinutasGenerationError,
@@ -53,24 +52,154 @@ def _clear_generated_result(result_key, docx_cache_key):
     st.session_state.pop(docx_cache_key, None)
 
 
-def _bradson_orientation_key(generator, target, identity):
-    """Chave transitória, vinculada a usuário, processo e gabinete BLTC."""
-    from services.minutas_procuradores import orientacao_juridica_habilitada
+def _confirmar_orientacao(draft_key, stored_key, contexto, notice_key):
+    from services.minutas_orientacao import normalizar_orientacao
 
-    library = getattr(generator, "library", None)
-    pessoa = getattr(library, "procurador", None)
-    if pessoa is None or not orientacao_juridica_habilitada(pessoa):
-        return None
-    actor = str((identity or {}).get("email") or "").strip().casefold()
-    scope = "|".join((actor, pessoa.chave, str(target.get("id") or "")))
-    return "minutas_generation_bradson_orientation_" + sha256(
-        scope.encode("utf-8")
-    ).hexdigest()[:20]
+    try:
+        texto = normalizar_orientacao(st.session_state.get(draft_key))
+    except MinutasGenerationError as exc:
+        st.session_state.pop(stored_key, None)
+        st.session_state[notice_key] = str(exc)
+        return
+    st.session_state.pop(notice_key, None)
+    st.session_state[stored_key] = {"texto": texto, "contexto": contexto}
 
 
-def _clear_bradson_orientation(orientation_key, result_key, docx_cache_key):
-    st.session_state[orientation_key] = ""
-    _clear_generated_result(result_key, docx_cache_key)
+def _secao_orientacao_assessor(campos, *, painel):
+    """Etapa obrigatória, reutilizada por todos os motores de geração."""
+    from services.minutas_orientacao import (
+        MAX_ORIENTACAO_JURIDICA_CHARS,
+        chave_estado_orientacao,
+        contexto_orientacao,
+        normalizar_orientacao,
+    )
+
+    partes = (
+        campos.get("usuario"),
+        campos.get("procurador_chave"),
+        campos.get("especialidade_id"),
+        campos.get("processo_chave"),
+        campos.get("fontes_versao"),
+        painel,
+    )
+    draft_key = chave_estado_orientacao(*partes, sufixo="texto")
+    stored_key = chave_estado_orientacao(*partes, sufixo="confirmacao")
+    notice_key = chave_estado_orientacao(*partes, sufixo="aviso")
+    button_key = chave_estado_orientacao(*partes, sufixo="confirmar")
+    contexto = contexto_orientacao(
+        usuario=campos.get("usuario") or "",
+        procurador_chave=campos.get("procurador_chave") or "",
+        especialidade_id=campos.get("especialidade_id") or "",
+        fontes_versao=campos.get("fontes_versao") or "",
+        analise=campos.get("analise"),
+        processo_chave=campos.get("processo_chave") or "",
+    )
+    processo_alterado = bool(
+        campos.get("processo_analise")
+        and campos.get("processo_analise") != campos.get("processo_chave")
+    )
+    section_label("Orientação do Assessor para a Minuta")
+    st.caption(
+        "Informe a conclusão que pretende desenvolver na minuta e, se desejar, "
+        "detalhe as teses jurídicas, o tratamento das irregularidades identificadas, "
+        "os precedentes relevantes e os encaminhamentos pretendidos. A IA utilizará "
+        "sua orientação em conjunto com os documentos analisados e os precedentes "
+        "do Procurador."
+    )
+    st.text_area(
+        "Orientação jurídica e conclusão pretendida",
+        key=draft_key,
+        height=240,
+        max_chars=MAX_ORIENTACAO_JURIDICA_CHARS,
+        placeholder=(
+            "Exemplo: Elaborar parecer pela regularidade das contas, considerando "
+            "que as irregularidades apontadas não comprometeram o resultado da gestão. "
+            "Analisar a possibilidade de relevar as falhas formais, fundamentando essa "
+            "conclusão nos precedentes aplicáveis do Procurador. Recomendar a adoção "
+            "de providências corretivas para os próximos exercícios."
+        ),
+    )
+    st.caption("Preenchimento obrigatório.")
+    if processo_alterado:
+        st.caption(
+            "O processo foi alterado após a análise. Analise novamente antes de gerar a minuta."
+        )
+    elif notice := st.session_state.get(notice_key):
+        st.caption(notice)
+    st.button(
+        "Confirmar orientação e habilitar geração",
+        key=button_key,
+        disabled=processo_alterado,
+        on_click=_confirmar_orientacao,
+        args=(draft_key, stored_key, contexto, notice_key),
+    )
+    payload = st.session_state.get(stored_key)
+    rascunho = str(st.session_state.get(draft_key) or "")
+    confirmada = False
+    texto = ""
+    if (
+        not processo_alterado
+        and isinstance(payload, dict)
+        and payload.get("contexto") == contexto
+    ):
+        try:
+            if normalizar_orientacao(rascunho) == payload.get("texto"):
+                confirmada = True
+                texto = payload["texto"]
+        except MinutasGenerationError:
+            confirmada = False
+    if confirmada:
+        st.caption("Orientação confirmada para esta análise.")
+    else:
+        st.caption(
+            "A geração permanece indisponível até a confirmação de uma orientação "
+            "válida para esta análise."
+        )
+    return {
+        "confirmada": confirmada,
+        "texto": texto,
+        "contexto": contexto if confirmada else "",
+        "usuario": str(campos.get("usuario") or ""),
+    }
+
+
+def _campos_orientacao_ui(generator, analyzed, usuario, *, target=None, instrucao=False, **alvo):
+    if instrucao and hasattr(generator, "campos_orientacao_instrucao"):
+        return generator.campos_orientacao_instrucao(analyzed, usuario=usuario, **alvo)
+    if target is not None and hasattr(generator, "campos_orientacao"):
+        return generator.campos_orientacao(target, analyzed, usuario)
+    return {
+        "usuario": usuario,
+        "procurador_chave": str(
+            (target or {}).get("procuradora_chave")
+            or (analyzed or {}).get("procuradora_chave")
+            or ""
+        ),
+        "especialidade_id": str(
+            (target or {}).get("especialidade_id")
+            or (analyzed or {}).get("especialidade_id")
+            or ""
+        ),
+        "fontes_versao": str((analyzed or {}).get("fontes_versao") or ""),
+        "analise": (analyzed or {}).get("analise") if isinstance(analyzed, dict) else None,
+        "processo_chave": str(
+            (target or {}).get("processo_chave")
+            or (analyzed or {}).get("processo_alvo_chave")
+            or ""
+        ),
+        "processo_analise": str((analyzed or {}).get("processo_alvo_chave") or ""),
+    }
+
+
+def _aviso_orientacao_anterior(resultado, texto_confirmado):
+    anterior = ""
+    if isinstance(resultado, dict):
+        anterior = str((resultado.get("orientacao_assessor") or {}).get("texto") or "")
+    if anterior and anterior != texto_confirmado:
+        st.caption(
+            "A minuta exibida foi produzida com uma orientação anterior e "
+            "permanece disponível até uma nova geração."
+        )
 
 
 def _generated_review_items(result):
@@ -1682,7 +1811,7 @@ def _instruction_profile(generator):
         return scope(getattr(library, "specialty_id", None) or RPPS)
 
 
-def _instruction_panel(generator, service):
+def _instruction_panel(generator, service, identity=None):
     from services.minutas_recursos import MODALIDADES, is_recurso_profile
     from services.minutas_denuncias import is_denuncia_profile
     from services.minutas_aposentadorias import is_aposentadoria_profile
@@ -1874,8 +2003,26 @@ def _instruction_panel(generator, service):
         if contextual.get("estado") == "INDISPONIVEL":
             st.caption("Pesquisa contextual nas demais especialidades indisponível nesta execução.")
         _analysis_panel(analyzed)
+    usuario = str((identity or {}).get("email") or "").strip()
+    estado_orientacao = {
+        "confirmada": False, "texto": "", "contexto": "", "usuario": usuario,
+    }
+    if analyzed:
+        estado_orientacao = _secao_orientacao_assessor(
+            _campos_orientacao_ui(
+                generator, analyzed, usuario, instrucao=True, processo=processo,
+                exercicio=exercicio, origem=origem, beneficiario=beneficiario, ato=ato,
+                periodo_fatos=periodo_fatos, modalidade_recurso=modalidade_recurso,
+                materia_originaria=materia_originaria, data_decisao=data_decisao,
+            ),
+            painel="instrucao",
+        )
     generate_label = "Gerar minuta com IA" if retirement else "Gerar minuta"
-    if st.button(generate_label, key="minutas_instrucao_gerar", disabled=not analyzed):
+    if st.button(
+        generate_label,
+        key="minutas_instrucao_gerar",
+        disabled=not analyzed or not estado_orientacao["confirmada"],
+    ) and analyzed and estado_orientacao["confirmada"]:
         try:
             with st.spinner(
                 "Gerando a minuta de aposentadoria..." if retirement else "Gerando a minuta..."
@@ -1885,11 +2032,15 @@ def _instruction_panel(generator, service):
                     beneficiario=beneficiario, ato=ato, periodo_fatos=periodo_fatos,
                     modalidade_recurso=modalidade_recurso,
                     materia_originaria=materia_originaria, data_decisao=data_decisao,
+                    orientacao_juridica=estado_orientacao["texto"],
+                    contexto_orientacao=estado_orientacao["contexto"],
+                    usuario=estado_orientacao["usuario"],
                 )
         except Exception as exc:
             _error(exc, etapa="geracao_instrucao")
     generated = st.session_state.get("minutas_instrucao_minuta")
     if generated and analyzed:
+        _aviso_orientacao_anterior(generated, estado_orientacao["texto"])
         for note in generated.get("advertencias_qualidade") or ():
             st.warning(note)
         if retirement:
@@ -1918,7 +2069,7 @@ def _generator_tab(store, identity):
     service = _service(store, identity)
     if service is None:
         return
-    _instruction_panel(MinutasGenerationService(service), service)
+    _instruction_panel(MinutasGenerationService(service), service, identity)
 
 
 def _historical_generator_panel(store, identity):
@@ -2084,6 +2235,19 @@ def _historical_generator_panel(store, identity):
                     docx_cache_key=docx_cache_key,
                 )
 
+    analysis_ready = bool(
+        analysis
+        and isinstance(analysis.get("analise"), dict)
+    )
+    usuario = str((identity or {}).get("email") or "").strip()
+    estado_orientacao = {
+        "confirmada": False, "texto": "", "contexto": "", "usuario": usuario,
+    }
+    if analysis_ready:
+        estado_orientacao = _secao_orientacao_assessor(
+            _campos_orientacao_ui(generator, analysis, usuario, target=target),
+            painel="historico",
+        )
     section_label("Etapa 2 — Gerar minuta")
     st.caption("A geração pode recuperar precedentes do Acervo e sempre exige revisão humana antes do uso oficial.")
     use_rag = st.checkbox(
@@ -2097,41 +2261,6 @@ def _historical_generator_panel(store, identity):
             "probatória e os demais controles permanecem iguais."
         ),
     )
-    analysis_ready = bool(
-        analysis
-        and isinstance(analysis.get("analise"), dict)
-    )
-    orientation_key = _bradson_orientation_key(generator, target, identity)
-    orientacao_juridica = ""
-    if analysis_ready and orientation_key:
-        st.text_area(
-            "Orientação jurídica para a minuta (opcional)",
-            key=orientation_key,
-            max_chars=MAX_ORIENTACAO_JURIDICA_CHARS,
-            placeholder=(
-                "Informe a tese, os fundamentos prioritários, o tratamento das "
-                "irregularidades ou a conclusão pretendida."
-            ),
-            help=(
-                "A orientação direciona somente esta geração. Fatos, provas e "
-                "lacunas documentais continuam prevalecendo."
-            ),
-            on_change=_clear_generated_result,
-            args=(result_key, docx_cache_key),
-        )
-        st.caption(
-            "Aplicada apenas à minuta, com prioridade argumentativa compatível "
-            "com os documentos e o acervo jurídico do BLTC."
-        )
-        st.button(
-            "Limpar orientação",
-            icon=":material/ink_eraser:",
-            key=f"minutas_generation_clear_orientation_{target['id']}",
-            disabled=not bool(st.session_state.get(orientation_key)),
-            on_click=_clear_bradson_orientation,
-            args=(orientation_key, result_key, docx_cache_key),
-        )
-        orientacao_juridica = str(st.session_state.get(orientation_key) or "").strip()
     if analysis and (analysis.get("pendencias_conferencia") or ()):
         st.caption(
             "A conferência assistida é facultativa; as advertências permanecerão "
@@ -2142,9 +2271,8 @@ def _historical_generator_panel(store, identity):
         type="primary",
         icon=":material/auto_awesome:",
         key=f"minutas_generation_submit_{target['id']}",
-        disabled=not analysis_ready or bool(summary["issues"]),
-    ):
-        _clear_generated_result(result_key, docx_cache_key)
+        disabled=not analysis_ready or not estado_orientacao["confirmada"] or bool(summary["issues"]),
+    ) and analysis_ready and estado_orientacao["confirmada"] and not summary["issues"]:
         generation_analysis = analysis
         if use_rag and rag_stale:
             try:
@@ -2168,20 +2296,24 @@ def _historical_generator_panel(store, identity):
                 with st.spinner(
                     "Gerando minuta com os pontos de revisão sinalizados..."
                 ):
-                    generation_args = {
-                        "use_rag": use_rag,
-                    }
-                    if orientacao_juridica:
-                        generation_args["orientacao_juridica"] = orientacao_juridica
-                    st.session_state[result_key] = generator.generate(
-                        target["id"], generation_analysis, **generation_args
+                    gerada = generator.generate(
+                        target["id"],
+                        generation_analysis,
+                        use_rag=use_rag,
+                        orientacao_juridica=estado_orientacao["texto"],
+                        contexto_orientacao=estado_orientacao["contexto"],
+                        usuario=estado_orientacao["usuario"],
                     )
             except Exception as exc:
                 _error(exc)
+            else:
+                st.session_state[result_key] = gerada
+                st.session_state.pop(docx_cache_key, None)
 
     result = st.session_state.get(result_key)
     if not result:
         return
+    _aviso_orientacao_anterior(result, estado_orientacao["texto"])
     st.warning(
         "Documento experimental sujeito à revisão humana — "
         "sem caráter de manifestação oficial."

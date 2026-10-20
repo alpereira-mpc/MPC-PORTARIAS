@@ -605,7 +605,8 @@ def test_rpps_generation_not_limited_to_four_examples_and_other_specialty_never_
         return _draft_result(context)
     service = MinutasGenerationService(lib, analyze=analyze, generate=generate)
     assert target in service.targets() and chamber not in service.targets()
-    result = service.generate(target["id"], service.analyze(target["id"]), use_rag=False)
+    from tests.test_minutas_generation import _gerar
+    result = _gerar(service, target["id"], service.analyze(target["id"]), use_rag=False)
     assert result["processo_alvo_chave"] == "1234526"
     assert "PARECER EXCLUSIVO DA CAMARA" not in json.dumps(sent, ensure_ascii=False)
     assert "SEGREDO DO PARECER-ALVO" not in json.dumps(sent, ensure_ascii=False)

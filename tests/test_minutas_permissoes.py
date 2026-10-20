@@ -1,6 +1,7 @@
 """Usuário comum pesquisa e gera; só o administrador mantém o acervo."""
 
 import pytest
+from tests.test_minutas_orientacao import gerar_instrucao
 
 from services.minutas_acervo import MinutasAcervoService
 from services.minutas_docx import ELVIRA_TEMPLATE, MinutasDocxService
@@ -461,7 +462,7 @@ def test_usuario_comum_analisa_pdf_transitorio_e_baixa_docx():
         modalidade_recurso="APELACAO", materia_originaria="Licitação",
         data_decisao="2025-03-10",
     )
-    gerado = servico.generate_instruction(
+    gerado = gerar_instrucao(servico,
         [documento], analisado, processo="02108/26", origem="Município de Exemplo",
         modalidade_recurso="APELACAO", materia_originaria="Licitação",
         data_decisao="2025-03-10",
