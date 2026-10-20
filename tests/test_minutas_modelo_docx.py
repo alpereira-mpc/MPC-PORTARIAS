@@ -3,21 +3,31 @@
 import base64
 from hashlib import sha256
 from io import BytesIO
+from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
 from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Emu, Pt
 
-from services.minutas_docx import MinutasDocxError, MinutasDocxService
+from services.minutas_docx import (
+    MinutasDocxError,
+    MinutasDocxService,
+    _apply_numbering,
+    _numbering_definition,
+)
 from services.minutas_generation import MinutasGenerationError, MinutasGenerationService
 from services.minutas_library import MinutasLibraryService
+from services.minutas_generation import _draft_header_lines
 from services.minutas_modelo_docx import (
     MENSAGEM_MODELO_AUSENTE,
     MENSAGEM_MODELO_INVALIDO,
     impressao_modelo,
+    renderizar,
     validar_pacote,
 )
 from services.minutas_modelos import MinutasModeloVisualService
@@ -335,3 +345,478 @@ def test_modelo_valido_nao_dispensa_a_orientacao_do_assessor(ambiente):
     )
     assert servico._generate(contexto)["ok"] is True
     assert chamadas[0]["orientacao_juridica_usuario"]["texto"].startswith("Sustentar")
+
+
+OFICIAL_ASSESSOR = (
+    Path(__file__).resolve().parents[1]
+    / "tmp"
+    / "diagnostico-modelo"
+    / "minuta oficial do assessor.docx"
+)
+
+
+def _jc(paragraph):
+    properties = paragraph._p.find(qn("w:pPr"))
+    if properties is None:
+        return ""
+    align = properties.find(qn("w:jc"))
+    if align is None:
+        return ""
+    return str(align.get(qn("w:val")) or "")
+
+
+def _estilo(paragraph):
+    properties = paragraph._p.find(qn("w:pPr"))
+    if properties is None:
+        return ""
+    style = properties.find(qn("w:pStyle"))
+    if style is None:
+        return ""
+    return str(style.get(qn("w:val")) or "")
+
+
+def _num_id(paragraph):
+    properties = paragraph._p.find(qn("w:pPr"))
+    if properties is None:
+        return None
+    number = properties.find(qn("w:numPr"))
+    if number is None:
+        return None
+    identifier = number.find(qn("w:numId"))
+    if identifier is None:
+        return None
+    return identifier.get(qn("w:val"))
+
+
+def _negrito(paragraph):
+    for run in paragraph._p.iter(qn("w:r")):
+        text = "".join(node.text or "" for node in run.findall(qn("w:t"))).strip()
+        if not text:
+            continue
+        properties = run.find(qn("w:rPr"))
+        return properties is not None and properties.find(qn("w:b")) is not None
+    return False
+
+
+def _fonte_run(paragraph):
+    for run in paragraph._p.iter(qn("w:r")):
+        properties = run.find(qn("w:rPr"))
+        if properties is None:
+            continue
+        fonts = properties.find(qn("w:rFonts"))
+        if fonts is None:
+            continue
+        return fonts.get(qn("w:ascii")) or fonts.get(qn("w:hAnsi")) or ""
+    return ""
+
+
+def _definir_jc(paragraph, value):
+    properties = paragraph._p.get_or_add_pPr()
+    align = properties.find(qn("w:jc"))
+    if align is None:
+        align = OxmlElement("w:jc")
+        properties.append(align)
+    align.set(qn("w:val"), value)
+
+
+def _sombrear(cell, fill):
+    properties = cell._tc.get_or_add_tcPr()
+    shade = OxmlElement("w:shd")
+    shade.set(qn("w:val"), "clear")
+    shade.set(qn("w:color"), "auto")
+    shade.set(qn("w:fill"), fill)
+    properties.append(shade)
+
+
+def _largura(cell, dxa):
+    properties = cell._tc.get_or_add_tcPr()
+    width = properties.find(qn("w:tcW"))
+    if width is None:
+        width = OxmlElement("w:tcW")
+        properties.append(width)
+    width.set(qn("w:w"), str(dxa))
+    width.set(qn("w:type"), "dxa")
+
+
+def _largura_atual(cell):
+    properties = cell._tc.find(qn("w:tcPr"))
+    if properties is None:
+        return ""
+    width = properties.find(qn("w:tcW"))
+    if width is None:
+        return ""
+    return str(width.get(qn("w:w")) or "")
+
+
+def _formato_numero(document, number_id):
+    numbering = document.part.numbering_part.element
+    abstract_id = None
+    for number in numbering.findall(qn("w:num")):
+        if number.get(qn("w:numId")) == str(number_id):
+            reference = number.find(qn("w:abstractNumId"))
+            abstract_id = reference.get(qn("w:val")) if reference is not None else None
+    if abstract_id is None:
+        return ""
+    for abstract in numbering.findall(qn("w:abstractNum")):
+        if abstract.get(qn("w:abstractNumId")) != abstract_id:
+            continue
+        level = abstract.find(qn("w:lvl"))
+        if level is None:
+            return ""
+        fmt = level.find(qn("w:numFmt"))
+        return str(fmt.get(qn("w:val")) or "") if fmt is not None else ""
+    return ""
+
+
+def _mapa_numeracao(document):
+    numbering = document.part.numbering_part.element
+    return {
+        number.get(qn("w:numId")): _formato_numero(document, number.get(qn("w:numId")))
+        for number in numbering.findall(qn("w:num"))
+    }
+
+
+def _texto_tabela(table):
+    return "\n".join(cell.text for row in table.rows for cell in row.cells)
+
+
+def _texto_completo(document):
+    parts = [paragraph.text for paragraph in document.paragraphs]
+    parts.extend(_texto_tabela(table) for table in document.tables)
+    return "\n".join(parts)
+
+
+def _modelo_regional(
+    nome_arquivo,
+    *,
+    fonte_relatorio,
+    fonte_fundamento,
+    esquerda,
+    superior,
+    logo,
+    largura,
+    fill,
+    kind,
+    marker,
+    alinhamento_data,
+    alinhamento_assinatura,
+    largura_ementa,
+):
+    document = Document()
+    section = document.sections[0]
+    section.page_width = Cm(21)
+    section.page_height = Cm(29.7)
+    section.top_margin = Cm(superior)
+    section.bottom_margin = Cm(2)
+    section.left_margin = Cm(esquerda)
+    section.right_margin = Cm(2)
+    header = section.header.paragraphs[0]
+    header.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    image = header.add_run()
+    image.add_picture(BytesIO(logo), width=Emu(largura))
+    footer = section.footer.paragraphs[0]
+    footer.add_run(f"Rodapé exclusivo {fonte_relatorio}")
+    relatorio = document.styles.add_style("EstiloRelatorioGabinete", WD_STYLE_TYPE.PARAGRAPH)
+    fundamento = document.styles.add_style("EstiloFundamentoGabinete", WD_STYLE_TYPE.PARAGRAPH)
+    relatorio.font.name = fonte_relatorio
+    relatorio.font.size = Pt(12)
+    fundamento.font.name = fonte_fundamento
+    fundamento.font.size = Pt(11)
+    for line in (
+        "Processo TC nº 00000/00",
+        "Natureza: texto antigo do modelo",
+        "Unidade Jurisdicionada: Município Antigo",
+        "Exercício: 1999",
+    ):
+        item = document.add_paragraph(line)
+        item.runs[0].bold = True
+        _definir_jc(item, "both")
+    document.add_paragraph("")
+    ementa = document.add_table(rows=1, cols=2)
+    ementa.cell(0, 0).text = ""
+    _largura(ementa.cell(0, 1), largura_ementa)
+    paragrafo = ementa.cell(0, 1).paragraphs[0]
+    paragrafo.text = ""
+    paragrafo.add_run("EMENTA:").bold = True
+    paragrafo.add_run(" ")
+    paragrafo.add_run(VENENO)
+    document.add_paragraph("")
+    faixa = document.add_table(rows=1, cols=1)
+    faixa.cell(0, 0).text = "PARECER Nº "
+    _sombrear(faixa.cell(0, 0), fill)
+    document.add_paragraph("")
+    corpo = document.add_paragraph(
+        "Texto antigo do relatório deste modelo, longo o bastante para representar o corpo.",
+        style=relatorio,
+    )
+    _fonte(corpo.runs[0], fonte_relatorio, 12)
+    analise = document.add_paragraph(
+        "Argumentação antiga do modelo sobre outro processo, outro gestor e outros valores.",
+        style=fundamento,
+    )
+    _fonte(analise.runs[0], fonte_fundamento, 11)
+    prova = document.add_table(rows=2, cols=2)
+    prova.cell(0, 0).text = "VALOR_RESIDUAL_MODELO"
+    prova.cell(1, 0).text = "349430"
+    imagem = document.add_paragraph()
+    imagem.add_run().add_picture(BytesIO(PNG_A), width=Emu(120000))
+    document.add_paragraph(
+        "ANTE O EXPOSTO, pugna-se pelo dispositivo do processo que serviu de modelo.",
+        style=relatorio,
+    )
+    number_id = _numbering_definition(
+        document, kind=kind, marker=marker, left_twips=720, hanging_twips=360,
+    )
+    for text in (
+        "Pedido antigo que não pode ser copiado.",
+        "Outro pedido exclusivo do processo usado como modelo.",
+    ):
+        item = document.add_paragraph(text, style=relatorio)
+        _fonte(item.runs[0], fonte_relatorio, 12)
+        _apply_numbering(item, number_id)
+    document.add_paragraph("")
+    document.add_paragraph("")
+    data = document.add_paragraph("João Pessoa, 1 de janeiro de 2020.")
+    _definir_jc(data, alinhamento_data)
+    document.add_paragraph("")
+    nome = document.add_paragraph("NOME DE EXEMPLO DO MODELO")
+    nome.runs[0].bold = True
+    _definir_jc(nome, alinhamento_assinatura)
+    cargo = document.add_paragraph("Cargo de exemplo do modelo")
+    _definir_jc(cargo, alinhamento_assinatura)
+    _definir_jc(document.add_paragraph("kacf"), "start")
+    output = BytesIO()
+    document.save(output)
+    return nome_arquivo, output.getvalue()
+
+
+def _perfil_render():
+    return {
+        "nome": "BRADSON TIBÉRIO LUNA CAMELO",
+        "cargo": "Procurador do Ministério Público de Contas do Estado da Paraíba",
+        "localidade": "João Pessoa",
+    }
+
+
+def test_tabela_nao_reconhecida_nao_e_apagada_em_silencio():
+    document = Document()
+    document.add_paragraph("Planilha antiga")
+    table = document.add_table(rows=4, cols=3)
+    table.cell(0, 0).text = "Valores do processo modelo"
+    output = BytesIO()
+    document.save(output)
+    with pytest.raises(MinutasDocxError, match="inválido ou incompatível"):
+        renderizar(
+            output.getvalue(),
+            {},
+            _structure(),
+            _perfil_render(),
+            ["Processo TC Nº 02659/25"],
+        )
+
+
+def test_gabinetes_preservam_tabelas_estilos_e_dispositivo_proprios(ambiente):
+    store, storage = ambiente
+    bradson = _gabinete(store, storage, PREFEITURAS, "BLTC")
+    elvira = _gabinete(store, storage, PREFEITURAS, "ESPO")
+    modelo_bradson = _modelo_regional(
+        "bradson-estrutura.docx",
+        fonte_relatorio="Times New Roman",
+        fonte_fundamento="Calibri",
+        esquerda=3.4,
+        superior=2.6,
+        logo=PNG_B,
+        largura=900000,
+        fill="D8D8D8",
+        kind="lowerLetter",
+        marker="%1)",
+        alinhamento_data="end",
+        alinhamento_assinatura="center",
+        largura_ementa=5000,
+    )
+    modelo_elvira = _modelo_regional(
+        "elvira-estrutura.docx",
+        fonte_relatorio="Georgia",
+        fonte_fundamento="Arial",
+        esquerda=1.9,
+        superior=4.8,
+        logo=PNG_A,
+        largura=1400000,
+        fill="1F4E79",
+        kind="decimal",
+        marker="%1.",
+        alinhamento_data="right",
+        alinhamento_assinatura="start",
+        largura_ementa=3200,
+    )
+    MinutasModeloVisualService(bradson).save(PREFEITURAS, modelo_bradson)
+    MinutasModeloVisualService(elvira).save(PREFEITURAS, modelo_elvira)
+
+    def conferir(library, modelo, nome, cargo, fonte_relatorio, fonte_fundamento, fill, formato, jc_data, jc_cargo, largura):
+        gerado = Document(BytesIO(_exportar(library).content))
+        texto = _texto_completo(gerado)
+        relatorio = next(
+            item for item in gerado.paragraphs if item.text.startswith("Relatorio da instrucao")
+        )
+        fundamento = next(
+            item for item in gerado.paragraphs if item.text.startswith("Fundamentacao geral")
+        )
+        titulo = next(
+            item for item in gerado.paragraphs if item.text == "Pagamento sem cobertura"
+        )
+        pedido = next(
+            item for item in gerado.paragraphs
+            if item.text.startswith("Conferir a instrucao")
+        )
+        data = next(
+            item for item in gerado.paragraphs
+            if any(
+                month in item.text.casefold()
+                for month in ("janeiro", "fevereiro", "março", "abril", "maio", "junho",
+                              "julho", "agosto", "setembro", "outubro", "novembro", "dezembro")
+            )
+        )
+        assinatura = next(item for item in gerado.paragraphs if nome in item.text)
+        cargo_item = next(item for item in gerado.paragraphs if cargo in item.text)
+        ementa = next(table for table in gerado.tables if "EMENTA" in table.cell(0, 1).text.upper())
+        faixa = next(table for table in gerado.tables if "PARECER" in _texto_tabela(table).upper())
+        identificacao = next(item for item in gerado.paragraphs if item.text.startswith("Processo TC"))
+
+        assert len(gerado.tables) == 2
+        assert not ementa.cell(0, 0).text.strip()
+        assert "Ementa de teste da instrucao." in ementa.cell(0, 1).text
+        assert "EMENTA:" in ementa.cell(0, 1).text
+        assert not any(item.text.startswith("Ementa:") for item in gerado.paragraphs)
+        assert _largura_atual(ementa.cell(0, 1)) == str(largura)
+        assert fill in "".join(
+            str(node.get(qn("w:fill")) or "")
+            for node in faixa._tbl.iter(qn("w:shd"))
+        ).upper()
+        assert not any(item.text.strip().casefold() == "parecer nº" for item in gerado.paragraphs)
+        assert _negrito(identificacao)
+        assert not _negrito(relatorio)
+        assert not _negrito(fundamento)
+        assert _negrito(titulo)
+        assert _estilo(relatorio) != _estilo(fundamento)
+        assert _fonte_run(relatorio) == fonte_relatorio
+        assert _fonte_run(fundamento) == fonte_fundamento
+        assert _num_id(pedido)
+        assert _formato_numero(gerado, _num_id(pedido)) == formato
+        assert _mapa_numeracao(gerado) == _mapa_numeracao(Document(BytesIO(modelo[1])))
+        assert _jc(data) == jc_data
+        assert _jc(assinatura) == jc_cargo
+        assert _jc(cargo_item) == jc_cargo
+        assert _negrito(assinatura)
+        assert not _negrito(cargo_item)
+        assert len(list(gerado.element.body.iter(qn("w:drawing")))) == 0
+        assert _logotipos(_exportar(library).content) == [logo_bytes(library)]
+        assert VENENO not in texto
+        assert "kacf" not in texto
+        assert "VALOR_RESIDUAL_MODELO" not in texto
+        assert "00000/00" not in texto
+        assert "NOME DE EXEMPLO" not in texto
+        assert "Pedido antigo" not in texto
+        assert "02659/25" in texto
+        assert nome in texto
+
+    def logo_bytes(library):
+        return PNG_B if library is bradson else PNG_A
+
+    conferir(
+        bradson, modelo_bradson, "BRADSON TIBÉRIO LUNA CAMELO",
+        "Procurador do Ministério Público de Contas do Estado da Paraíba",
+        "Times New Roman", "Calibri", "D8D8D8", "lowerLetter", "end", "center", 5000,
+    )
+    conferir(
+        elvira, modelo_elvira, "ELVIRA SAMARA PEREIRA DE OLIVEIRA",
+        "Procuradora-Geral do Ministério Público de Contas do Estado da Paraíba",
+        "Georgia", "Arial", "1F4E79", "decimal", "right", "start", 3200,
+    )
+    texto_bradson = _texto_completo(Document(BytesIO(_exportar(bradson).content)))
+    texto_elvira = _texto_completo(Document(BytesIO(_exportar(elvira).content)))
+    assert "ELVIRA" not in texto_bradson
+    assert "BRADSON" not in texto_elvira
+    assert "Minuta Procuradora" not in _pacote(_exportar(elvira).content, "word/document.xml")
+
+
+@pytest.mark.skipif(not OFICIAL_ASSESSOR.is_file(), reason="amostra local do modelo do assessor ausente")
+def test_minuta_oficial_do_assessor_preserva_regioes_visuais():
+    estrutura = _structure()
+    estrutura["pedidos"] = [
+        "Primeiro pedido novo da minuta.",
+        "Segundo pedido novo da minuta.",
+        "Terceiro pedido novo da minuta.",
+        "Quarto pedido novo da minuta.",
+    ]
+    alvo = {
+        "numero_processo": "02659/25",
+        "origem": "Prefeitura Municipal de Piloto",
+        "responsavel": "Gestor de Teste",
+        "exercicio": "2025",
+        "data_parecer": "2026-10-20",
+    }
+    gerado = Document(BytesIO(renderizar(
+        OFICIAL_ASSESSOR.read_bytes(),
+        alvo,
+        estrutura,
+        _perfil_render(),
+        _draft_header_lines(alvo),
+    )))
+    texto = _texto_completo(gerado)
+    ementa = next(table for table in gerado.tables if "EMENTA" in _texto_tabela(table).upper())
+    faixa = next(table for table in gerado.tables if "PARECER" in _texto_tabela(table).upper())
+    relatorio = next(item for item in gerado.paragraphs if "Relatorio da instrucao" in item.text)
+    fundamento = next(item for item in gerado.paragraphs if "Fundamentacao geral" in item.text)
+    titulo = next(item for item in gerado.paragraphs if item.text == "Pagamento sem cobertura")
+    pedidos = [
+        item for item in gerado.paragraphs
+        if item.text.endswith("pedido novo da minuta.")
+    ]
+    identificacao = next(item for item in gerado.paragraphs if item.text.startswith("Processo TC"))
+    data = next(item for item in gerado.paragraphs if "20 de outubro de 2026" in item.text)
+    nome = next(item for item in gerado.paragraphs if "BRADSON TIBÉRIO LUNA CAMELO" in item.text)
+    cargo = next(item for item in gerado.paragraphs if "Procurador do Ministério Público de Contas" in item.text)
+    origem = Document(OFICIAL_ASSESSOR)
+
+    assert len(gerado.tables) == 2
+    assert len(origem.tables) == 2
+    assert not ementa.cell(0, 0).text.strip()
+    assert ementa.cell(0, 1).text.startswith("EMENTA:")
+    assert "Ementa de teste da instrucao." in ementa.cell(0, 1).text
+    assert not any("Ementa de teste da instrucao." in item.text for item in gerado.paragraphs)
+    assert _largura_atual(ementa.cell(0, 1)) == _largura_atual(origem.tables[0].cell(0, 1))
+    assert "D8D8D8" in "".join(
+        str(node.get(qn("w:fill")) or "") for node in faixa._tbl.iter(qn("w:shd"))
+    ).upper()
+    assert "PARECER" in _texto_tabela(faixa).upper()
+    assert not any(item.text.strip().casefold() in {"parecer nº", "parecer n°"} for item in gerado.paragraphs)
+    assert _negrito(identificacao)
+    assert "02659/25" in identificacao.text
+    assert any(
+        item.text == "Unidade Jurisdicionada: Prefeitura Municipal de Piloto"
+        for item in gerado.paragraphs
+    )
+    assert any(item.text.startswith("Exercício:") and item.text.endswith("2025") for item in gerado.paragraphs)
+    assert not any(item.text.startswith("Origem:") for item in gerado.paragraphs)
+    assert not _negrito(relatorio)
+    assert not _negrito(fundamento)
+    assert _negrito(titulo)
+    assert _estilo(relatorio) and _estilo(relatorio) != _estilo(fundamento)
+    assert len(pedidos) == 4
+    assert len({_num_id(item) for item in pedidos}) == 1
+    assert _formato_numero(gerado, _num_id(pedidos[0])) == "lowerLetter"
+    assert _mapa_numeracao(gerado) == _mapa_numeracao(origem)
+    assert _jc(data) == "end"
+    assert _jc(nome) == "center"
+    assert _jc(cargo) == "center"
+    assert _negrito(nome)
+    assert not _negrito(cargo)
+    assert nome._p.find(qn("w:pPr")).find(qn("w:keepNext")) is not None
+    assert "kacf" not in texto
+    assert "02559" not in texto
+    assert "FREI MARTINHO" not in texto.upper()
+    assert "Pedido antigo" not in texto
+    assert len(list(gerado.element.body.iter(qn("w:drawing")))) == 0
+    assert len(list(origem.element.body.iter(qn("w:drawing")))) > 0
+    assert gerado.sections[0].left_margin == origem.sections[0].left_margin
+    assert gerado.sections[0].top_margin == origem.sections[0].top_margin

@@ -310,8 +310,12 @@ def _paragraph_metrics(paragraph):
     before = _length_pt(fmt.space_before)
     if before is None and style_fmt is not None:
         before = _length_pt(style_fmt.space_before)
+    try:
+        centered = paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    except ValueError:
+        centered = False
     return {
-        "center": paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER,
+        "center": centered,
         "left_cm": _metric(left, 0, 12),
         "first_cm": _metric(first, -3, 8),
         "before_pt": _metric(before, 0, 72),
