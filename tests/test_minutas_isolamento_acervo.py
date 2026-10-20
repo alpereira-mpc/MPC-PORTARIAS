@@ -10,6 +10,7 @@ from services.minutas_procuradores import (
     MinutasContextoError,
     camadas_prompt,
     exigir_procurador,
+    orientacao_juridica_habilitada,
     resolver_configuracao,
 )
 from services.minutas_search import MinutasSearchService
@@ -211,16 +212,26 @@ def test_perfil_juridico_bradson_nao_altera_elvira_nem_outros_gabinetes():
     assert "sem conclusão predeterminada" in camada_bradson
     assert configuracao["personalizacao"] == "bradson_evidencia_v1"
     assert "reconciliação documental e quantitativa" in configuracao["criterios"]
+    assert orientacao_juridica_habilitada(bradson) is True
+    assert "Orientação jurídica expressa do usuário" not in camada_bradson
+    assert "Orientação jurídica expressa do usuário" in camadas_prompt(
+        bradson, "Prefeituras / PCA", orientacao_juridica=True
+    )
 
     espo = camadas_prompt(exigir_procurador("ESPO"), "Prefeituras / PCA")
     assert "preserve a redação e as fórmulas já calibradas" in espo
     assert "bradson_evidencia_v1" not in espo
+    assert orientacao_juridica_habilitada("ESPO") is False
+    assert "Orientação jurídica expressa do usuário" not in camadas_prompt(
+        exigir_procurador("ESPO"), "Prefeituras / PCA", orientacao_juridica=True
+    )
     assert resolver_configuracao("ESPO")["template"] == "elvira"
 
     for pessoa in PROCURADORES:
         if pessoa.sigla in {"BLTC", "ESPO"}:
             continue
         assert "bradson_evidencia_v1" not in camadas_prompt(pessoa, "Prefeituras / PCA")
+        assert orientacao_juridica_habilitada(pessoa) is False
         assert resolver_configuracao(pessoa)["personalizacao"] == "em_formacao"
 
 

@@ -3134,6 +3134,68 @@ def test_bradson_layers_reach_both_existing_calls_with_frei_martinho_evidence():
     assert "aprovação das contas" not in available.casefold()
 
 
+def test_bradson_legal_guidance_is_generation_only_and_can_be_replaced():
+    from services.minutas_procuradores import exigir_procurador
+
+    target, history, other, rows = _scenario()
+    for record in (target, history):
+        record.update(
+            procuradora="Bradson Tibério Luna Camelo",
+            procuradora_chave="bltc",
+        )
+    for row in rows:
+        if row["referencia_id"] in {target["id"], history["id"]}:
+            row.update(
+                procuradora="Bradson Tibério Luna Camelo",
+                procuradora_chave="bltc",
+            )
+
+    analysis_calls = []
+    drafting_calls = []
+    library = Library([target, history, other], rows)
+    library.procurador = exigir_procurador("BLTC")
+    service = MinutasGenerationService(
+        library,
+        analyze=lambda context: analysis_calls.append(context) or _analysis_result(context),
+        generate=lambda context: drafting_calls.append(context) or _draft_result(context),
+    )
+
+    analyzed = service.analyze(target["id"])
+    original_analysis = deepcopy(analyzed)
+    favorable = "Priorizar o acolhimento da defesa quando a conciliação for comprovada."
+    contrary = "Priorizar a manutenção do apontamento se a prova documental for insuficiente."
+
+    service.generate(target["id"], analyzed, orientacao_juridica=favorable)
+    service.generate(target["id"], analyzed, orientacao_juridica=contrary)
+    service.generate(target["id"], analyzed, orientacao_juridica="")
+
+    assert len(analysis_calls) == 1
+    assert len(drafting_calls) == 3
+    assert analyzed == original_analysis
+    assert drafting_calls[0]["orientacao_juridica_usuario"]["texto"] == favorable
+    assert drafting_calls[1]["orientacao_juridica_usuario"]["texto"] == contrary
+    assert "orientacao_juridica_usuario" not in drafting_calls[2]
+    assert "conflito relevante" in drafting_calls[0]["camadas_prompt"]
+    assert "conclusão predeterminada" in drafting_calls[0]["camadas_prompt"]
+
+
+def test_legal_guidance_is_rejected_outside_bradson_profile():
+    target, history, other, rows = _scenario()
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+    )
+    analyzed = service.analyze(target["id"])
+
+    with pytest.raises(MinutasGenerationError, match="somente no perfil"):
+        service.generate(
+            target["id"],
+            analyzed,
+            orientacao_juridica="Opinar pela aprovação.",
+        )
+
+
 def test_generation_revalidates_authorization_and_source_revision():
     target, history, other, rows = _scenario()
     library = Library([target, history, other], rows)
@@ -3636,6 +3698,107 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     assert generation_calls == [(TARGET_ID, True)]
     assert not any("Conteúdo para revisão" in item.value for item in app.markdown)
     assert any("fontes foram alteradas" in item.value for item in app.info)
+
+
+def test_ui_bradson_legal_guidance_is_process_and_user_scoped(monkeypatch):
+    from services import minutas_ia_ui
+    from services.minutas_procuradores import exigir_procurador
+
+    target = _record(TARGET_ID, "TC 01653/26", HISTORICAL_TEST_PROCESS_KEY)
+    generation_calls = []
+    analysis = {
+        "analise": {
+            "resumo_processual": "Resumo.",
+            "irregularidades": [],
+            "pontos_atencao_gerais": [],
+        },
+        "fontes_versao": "revision-guidance",
+        "rag_recovery_version": RAG_RECOVERY_VERSION,
+        "validation_policy_version": VALIDATION_POLICY_VERSION,
+        "recuperacao_juridica": {
+            "versao": RAG_RECOVERY_VERSION,
+            "estado": "SEM_RESULTADOS",
+            "trechos": [],
+        },
+    }
+
+    class Generator:
+        def __init__(self, _library):
+            self.library = type(
+                "Library", (), {"procurador": exigir_procurador("BLTC")}
+            )()
+
+        def targets(self):
+            return [target]
+
+        def source_summary(self, _identifier):
+            return {
+                "fontes_alvo_previstas": 1,
+                "referencias_historicas_disponiveis": 1,
+                "issues": [],
+                "fontes_versao": "revision-guidance",
+            }
+
+        def analyze(self, _identifier):
+            return deepcopy(analysis)
+
+        def generate(self, identifier, analyzed, use_rag=True, orientacao_juridica=None):
+            generation_calls.append((identifier, analyzed, use_rag, orientacao_juridica))
+            return {
+                "texto": "# MINUTA\n\nConteúdo para revisão.",
+                "fontes_versao": "revision-guidance",
+                "advertencias_qualidade": [],
+                "advertencias_documentais": [],
+                "fontes_utilizadas": [],
+                "omitidas_por_limite": [],
+            }
+
+    class WordExporter:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def export(self, *_args):
+            return type(
+                "Word",
+                (),
+                {
+                    "content": b"PK-docx",
+                    "name": "minuta.docx",
+                    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                },
+            )()
+
+    monkeypatch.setattr(minutas_ia_ui, "_service", lambda *_args: object())
+    monkeypatch.setattr(minutas_ia_ui, "MinutasGenerationService", Generator)
+    monkeypatch.setattr(minutas_ia_ui, "MinutasDocxService", WordExporter)
+
+    def page():
+        from services.minutas_ia_ui import _historical_generator_panel
+
+        _historical_generator_panel(None, {"email": "assessor@mpc.pb.gov.br"})
+
+    app = AppTest.from_function(page, default_timeout=30).run()
+    app.button(key=f"minutas_analysis_submit_{TARGET_ID}").click().run()
+    assert [item.label for item in app.text_area] == [
+        "Orientação jurídica para a minuta (opcional)"
+    ]
+    orientation_key = app.text_area[0].key
+    assert orientation_key != minutas_ia_ui._bradson_orientation_key(
+        Generator(None), target, {"email": "outro@mpc.pb.gov.br"}
+    )
+
+    app.text_area(key=orientation_key).set_value("Opinar pela aprovação com ressalvas.").run()
+    app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
+    app.text_area(key=orientation_key).set_value("Opinar pela rejeição da defesa.").run()
+    app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
+
+    assert [call[3] for call in generation_calls] == [
+        "Opinar pela aprovação com ressalvas.",
+        "Opinar pela rejeição da defesa.",
+    ]
+    assert app.session_state[f"minutas_generation_analysis_{TARGET_ID}"] == analysis
+    app.button(key=f"minutas_generation_clear_orientation_{TARGET_ID}").click().run()
+    assert app.session_state[orientation_key] == ""
 
 
 def test_ui_shows_document_warning_and_keeps_drafting_enabled(monkeypatch):

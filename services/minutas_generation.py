@@ -23,6 +23,7 @@ MAX_RAG_RESULTS_PER_QUERY = 4
 MAX_RAG_PASSAGES = 6
 MAX_RAG_PASSAGES_PER_OPINION = 2
 MAX_RAG_PASSAGE_CHARS = 1600
+MAX_ORIENTACAO_JURIDICA_CHARS = 6000
 RAG_RECOVERY_VERSION = "3b5b1-relevance-v2"
 EVIDENCE_CORRECTION_VERSION = "3c3-assisted-evidence-v1"
 VALIDATION_POLICY_VERSION = "5-rpps-device-sanctions-v1"
@@ -1563,6 +1564,20 @@ def _serialized_size(value):
     )
 
 
+def _orientacao_juridica_usuario(value):
+    """Normaliza uma orientação opcional sem permitir que ela domine o contexto."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise MinutasGenerationError("A orientação jurídica deve ser um texto.")
+    orientacao = value.strip()
+    if len(orientacao) > MAX_ORIENTACAO_JURIDICA_CHARS:
+        raise MinutasGenerationError(
+            "A orientação jurídica excede o limite de 6.000 caracteres."
+        )
+    return orientacao
+
+
 class MinutasGenerationService:
     """Build bounded contexts for the two explicit Minutas AI stages."""
 
@@ -1599,7 +1614,13 @@ class MinutasGenerationService:
             except Exception:
                 nome = ""
         enriquecido = dict(contexto)
-        enriquecido["camadas_prompt"] = camadas_prompt(self._pessoa(), nome)
+        enriquecido["camadas_prompt"] = camadas_prompt(
+            self._pessoa(),
+            nome,
+            orientacao_juridica=bool(
+                enriquecido.get("orientacao_juridica_usuario")
+            ),
+        )
         return enriquecido
 
     def _records(self):
@@ -3751,11 +3772,30 @@ class MinutasGenerationService:
         )
         return response
 
-    def generate(self, target_reference_id, analyzed, use_rag=True):
+    def generate(
+        self,
+        target_reference_id,
+        analyzed,
+        use_rag=True,
+        orientacao_juridica=None,
+    ):
         total_started = perf_counter()
         self.library._authorize()
         target = self.library.get(target_reference_id)
         self._validate_target(target)
+        orientacao = _orientacao_juridica_usuario(orientacao_juridica)
+        if orientacao:
+            from services.minutas_procuradores import orientacao_juridica_habilitada
+
+            if (
+                not orientacao_juridica_habilitada(self._pessoa())
+                or str(target.get("procuradora_chave") or "")
+                != self._pessoa().chave
+            ):
+                raise MinutasGenerationError(
+                    "A orientação jurídica para a minuta está disponível somente "
+                    "no perfil do Procurador Bradson Tibério Luna Camelo."
+                )
         if not isinstance(analyzed, dict) or not isinstance(analyzed.get("analise"), dict):
             raise MinutasGenerationError("Analise os fundamentos antes de gerar a minuta.")
         expected_identity = {
@@ -3799,6 +3839,14 @@ class MinutasGenerationService:
         request_context["analise_estruturada"] = self._analysis_for_generation(
             analysis
         )
+        if orientacao:
+            request_context["orientacao_juridica_usuario"] = {
+                "texto": orientacao,
+                "efeito": (
+                    "Priorizar a linha argumentativa e a conclusão pretendida, "
+                    "sem superar fatos, provas ou lacunas documentais."
+                ),
+            }
         if conference["pendencias"]:
             request_context["orientacao_conferencia_documental"] = (
                 "Existem pontos não verificados. Eles não impedem a minuta, mas "

@@ -13,6 +13,7 @@ import streamlit as st
 from database.minutas_referencias import MinutasReferenciasStore
 from services.ai_service import GeminiErro, GeminiNaoConfigurada
 from services.minutas_generation import (
+    MAX_ORIENTACAO_JURIDICA_CHARS,
     RAG_RECOVERY_VERSION,
     VALIDATION_POLICY_VERSION,
     MinutasGenerationError,
@@ -50,6 +51,26 @@ LOGGER = logging.getLogger(__name__)
 def _clear_generated_result(result_key, docx_cache_key):
     st.session_state.pop(result_key, None)
     st.session_state.pop(docx_cache_key, None)
+
+
+def _bradson_orientation_key(generator, target, identity):
+    """Chave transitória, vinculada a usuário, processo e gabinete BLTC."""
+    from services.minutas_procuradores import orientacao_juridica_habilitada
+
+    library = getattr(generator, "library", None)
+    pessoa = getattr(library, "procurador", None)
+    if pessoa is None or not orientacao_juridica_habilitada(pessoa):
+        return None
+    actor = str((identity or {}).get("email") or "").strip().casefold()
+    scope = "|".join((actor, pessoa.chave, str(target.get("id") or "")))
+    return "minutas_generation_bradson_orientation_" + sha256(
+        scope.encode("utf-8")
+    ).hexdigest()[:20]
+
+
+def _clear_bradson_orientation(orientation_key, result_key, docx_cache_key):
+    st.session_state[orientation_key] = ""
+    _clear_generated_result(result_key, docx_cache_key)
 
 
 def _generated_review_items(result):
@@ -2080,6 +2101,37 @@ def _historical_generator_panel(store, identity):
         analysis
         and isinstance(analysis.get("analise"), dict)
     )
+    orientation_key = _bradson_orientation_key(generator, target, identity)
+    orientacao_juridica = ""
+    if analysis_ready and orientation_key:
+        st.text_area(
+            "Orientação jurídica para a minuta (opcional)",
+            key=orientation_key,
+            max_chars=MAX_ORIENTACAO_JURIDICA_CHARS,
+            placeholder=(
+                "Informe a tese, os fundamentos prioritários, o tratamento das "
+                "irregularidades ou a conclusão pretendida."
+            ),
+            help=(
+                "A orientação direciona somente esta geração. Fatos, provas e "
+                "lacunas documentais continuam prevalecendo."
+            ),
+            on_change=_clear_generated_result,
+            args=(result_key, docx_cache_key),
+        )
+        st.caption(
+            "Aplicada apenas à minuta, com prioridade argumentativa compatível "
+            "com os documentos e o acervo jurídico do BLTC."
+        )
+        st.button(
+            "Limpar orientação",
+            icon=":material/ink_eraser:",
+            key=f"minutas_generation_clear_orientation_{target['id']}",
+            disabled=not bool(st.session_state.get(orientation_key)),
+            on_click=_clear_bradson_orientation,
+            args=(orientation_key, result_key, docx_cache_key),
+        )
+        orientacao_juridica = str(st.session_state.get(orientation_key) or "").strip()
     if analysis and (analysis.get("pendencias_conferencia") or ()):
         st.caption(
             "A conferência assistida é facultativa; as advertências permanecerão "
@@ -2116,8 +2168,13 @@ def _historical_generator_panel(store, identity):
                 with st.spinner(
                     "Gerando minuta com os pontos de revisão sinalizados..."
                 ):
+                    generation_args = {
+                        "use_rag": use_rag,
+                    }
+                    if orientacao_juridica:
+                        generation_args["orientacao_juridica"] = orientacao_juridica
                     st.session_state[result_key] = generator.generate(
-                        target["id"], generation_analysis, use_rag=use_rag
+                        target["id"], generation_analysis, **generation_args
                     )
             except Exception as exc:
                 _error(exc)
