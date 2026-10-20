@@ -570,6 +570,15 @@ def test_received_complementary_documents_use_real_service_from_ui(store, monkey
     app.radio(key="oficio_page").set_value("Recebidos").run()
     app.button(key="open_oficio_" + identifier).click().run()
     app.radio(key="oficio_detail_section_" + identifier).set_value("Documentos").run()
+    principal_download = next(
+        button
+        for button in app.button
+        if (button.key or "").startswith("oficio_file_")
+    )
+    principal_file_id = principal_download.key.removeprefix("oficio_file_")
+    assert principal_download.label == "Baixar PDF"
+    principal_download.click().run()
+    assert app.download_button(key="oficio_download_" + principal_file_id).label == "Baixar PDF"
     app.file_uploader(key="oficio_received_complement_uploads_" + identifier).set_value(
         [("complementar.pdf", _blank_pdf(), "application/pdf")]
     ).run()
@@ -592,6 +601,12 @@ def test_received_complementary_documents_use_real_service_from_ui(store, monkey
     assert real_service.download_received_complementary_file(
         identifier, complementary["id"]
     ) == _blank_pdf()
+    assert app.button(key="oficio_complement_file_" + complementary["id"]).label == "Baixar PDF"
+    app.button(key="oficio_complement_file_" + complementary["id"]).click().run()
+    assert (
+        app.download_button(key="oficio_complement_download_" + complementary["id"]).label
+        == "Baixar PDF"
+    )
 
     app.checkbox(key="oficio_complement_delete_confirm_" + complementary["id"]).check()
     app.button(key="oficio_complement_delete_" + complementary["id"]).click().run()

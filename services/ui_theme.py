@@ -1677,15 +1677,23 @@ section[data-testid="stMain"] [class*="st-key-oficio_received_principal_"] [data
 section[data-testid="stMain"] [class*="st-key-oficio_received_complement_"] [data-testid="stButton"] button,
 section[data-testid="stMain"] [class*="st-key-oficio_received_principal_"] [data-testid="stDownloadButton"] button,
 section[data-testid="stMain"] [class*="st-key-oficio_received_complement_"] [data-testid="stDownloadButton"] button{{
-min-width:2.2rem;
 min-height:2.2rem;
-padding:.25rem .45rem;
+padding:.35rem .55rem;
 border-radius:.45rem;
+white-space:nowrap;
+}}
+section[data-testid="stMain"] :is([class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) :is([data-testid="stButton"],[data-testid="stDownloadButton"]) button [data-testid="stIconMaterial"]{{
+font-size:1rem;
 }}
 @media (max-width:640px){{
 section[data-testid="stMain"] [class*="st-key-oficio_received_principal_"] [data-testid="stHorizontalBlock"],
 section[data-testid="stMain"] [class*="st-key-oficio_received_complement_"] [data-testid="stHorizontalBlock"]{{
 gap:.25rem;
+flex-wrap:wrap;
+}}
+section[data-testid="stMain"] :is([class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child{{
+flex:1 0 100% !important;
+width:100% !important;
 }}
 section[data-testid="stMain"] :is([class*="st-key-oficios_received_documents_"],[class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) .mpc-oficios-document-name{{
 font-size:.84rem;

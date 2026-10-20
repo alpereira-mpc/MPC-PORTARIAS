@@ -1184,22 +1184,24 @@ def _render_received_documents(service, r, principal_files, attachments, complem
             _received_document_title("Documento principal")
         for file in principal_files:
             with st.container(key="oficio_received_principal_" + file["id"]):
-                details, action = st.columns([9, 1], vertical_alignment="center")
+                details, action = st.columns([7, 3], vertical_alignment="center")
                 with details:
                     _received_document_summary(file)
                 with action:
                     if st.button(
-                        "↓",
+                        "Baixar PDF",
                         key="oficio_file_" + file["id"],
+                        icon=":material/download:",
                         help="Preparar download do documento principal",
                     ):
                         audit_download_oficio(r, file, "preparado")
                         st.download_button(
-                            "↓",
+                            "Baixar PDF",
                             service.download(file["id"]),
                             file["nome"],
                             mime=file["tipo"],
                             key="oficio_download_" + file["id"],
+                            icon=":material/download:",
                             help="Baixar documento principal",
                             on_click=audit_download_oficio,
                             args=(r, file, "solicitado"),
@@ -1257,22 +1259,24 @@ def _render_received_documents(service, r, principal_files, attachments, complem
         st.caption("Nenhum documento complementar cadastrado.")
     for file in complementary:
         with st.container(key="oficio_received_complement_" + file["id"]):
-            details, download, removal = st.columns([8, 1, 1], vertical_alignment="center")
+            details, download, removal = st.columns([6, 3, 1], vertical_alignment="center")
             with details:
                 _received_document_summary(file, file.get("descricao") or None)
             with download:
                 if st.button(
-                    "↓",
+                    "Baixar PDF",
                     key="oficio_complement_file_" + file["id"],
+                    icon=":material/download:",
                     help="Preparar download do documento complementar",
                 ):
                     audit_download_oficio(r, file, "preparado")
                     st.download_button(
-                        "↓",
+                        "Baixar PDF",
                         service.download_received_complementary_file(r["id"], file["id"]),
                         file["nome"],
                         mime=file["tipo"],
                         key="oficio_complement_download_" + file["id"],
+                        icon=":material/download:",
                         help="Baixar documento complementar",
                         on_click=audit_download_oficio,
                         args=(r, file, "solicitado"),
