@@ -1574,14 +1574,27 @@ class MinutasGenerationService:
         base_analyze = analyze or ai_service.analisar_fundamentos_minuta
         base_generate = generate or ai_service.gerar_minuta_parecer
         self._analyze = lambda contexto, _base=base_analyze: _base(self._com_camadas(contexto))
-        self._generate = lambda contexto, _base=base_generate: _base(
-            self._com_camadas(self._exigir_bloco_orientacao(contexto))
-        )
+
+        def _gerar_com_modelo(contexto, _base=base_generate):
+            self._exigir_modelo_visual()
+            return _base(self._com_camadas(self._exigir_bloco_orientacao(contexto)))
+
+        self._generate = _gerar_com_modelo
         # A instância vive apenas durante um rerun do Streamlit. Este cache evita
         # repetir o mesmo inventário dentro da execução sem reutilizar dados entre
         # sessões ou impedir que o rerun seguinte enxergue fontes alteradas.
         self._records_cache = None
         self._source_state_cache = {}
+
+    def _exigir_modelo_visual(self):
+        """Antes da chamada onerosa, quando o cadastro de modelos pode ser consultado."""
+        from services.minutas_docx import MinutasDocxError
+        from services.minutas_modelo_docx import garantir_modelo_exportavel
+
+        try:
+            garantir_modelo_exportavel(self.library)
+        except MinutasDocxError as exc:
+            raise MinutasGenerationError(str(exc)) from exc
 
     def _pessoa(self):
         from services.minutas_procuradores import legado_espo

@@ -27,6 +27,7 @@ class MinutaDocx:
     name: str
     mime: str
     content: bytes
+    modelo: dict | None = None
 
 
 class MinutasDocxError(ValueError):
@@ -856,6 +857,24 @@ class MinutasDocxService:
             merged.update({key: value for key, value in active.items() if value is not None})
         return merged
 
+    def _render(self, target, structure, profile, lines, visual_base):
+        from services.minutas_modelo_docx import (
+            metadados_publicos,
+            renderizar,
+            resolver_para_exportacao,
+        )
+
+        modelo = resolver_para_exportacao(self.library)
+        if modelo:
+            return renderizar(
+                modelo["content"], target, structure, profile, lines,
+            ), metadados_publicos(modelo)
+        if self.template_path:
+            profile["template"] = self.template_path
+        return _build_docx(
+            target, structure, profile, lines, self._merged_visual(visual_base),
+        ), None
+
     def _active_visual(self):
         if self.template_path is not None:
             return None
@@ -912,8 +931,6 @@ class MinutasDocxService:
                 )
 
         profile, visual_base = self._presentation(target)
-        if self.template_path:
-            profile["template"] = self.template_path
         structure = MinutasGenerationService._validate_structure(
             generated.get("estrutura")
         )
@@ -924,16 +941,18 @@ class MinutasDocxService:
             MinutasGenerationService._normalize_structure(structure, header_target)
         )
         structure = MinutasGenerationService._validate_structure(structure)
+        content, modelo = self._render(
+            header_target,
+            structure,
+            profile,
+            _draft_header_lines(header_target),
+            visual_base,
+        )
         return MinutaDocx(
             name=_filename(target),
             mime=DOCX_MIME,
-            content=_build_docx(
-                target,
-                structure,
-                profile,
-                _draft_header_lines(header_target),
-                self._merged_visual(visual_base),
-            ),
+            content=content,
+            modelo=modelo,
         )
 
     def export_instruction(
@@ -1007,8 +1026,6 @@ class MinutasDocxService:
                 (generated.get("metadados_cabecalho") or {}).get("periodo_fatos") or ""
             )
         profile, visual_base = self._presentation(target)
-        if self.template_path:
-            profile["template"] = self.template_path
         if recurso:
             from services.minutas_recursos import header_lines, normalize_structure
             structure, _warnings = normalize_structure(
@@ -1040,14 +1057,10 @@ class MinutasDocxService:
             )
             structure = MinutasGenerationService._validate_structure(structure)
             lines = _draft_header_lines(header_target)
+        content, modelo = self._render(target, structure, profile, lines, visual_base)
         return MinutaDocx(
             name=_filename(target),
             mime=DOCX_MIME,
-            content=_build_docx(
-                target,
-                structure,
-                profile,
-                lines,
-                self._merged_visual(visual_base),
-            ),
+            content=content,
+            modelo=modelo,
         )

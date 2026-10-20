@@ -237,7 +237,18 @@ def _generated_review_panel(result):
             st.markdown(f"- **{category}:** {text}")
 
 
-def _docx_signature(target_id, analysis, result):
+def _impressao_modelo(service):
+    if service is None:
+        return ""
+    try:
+        from services.minutas_modelo_docx import impressao_modelo
+
+        return impressao_modelo(service)
+    except Exception:
+        return ""
+
+
+def _docx_signature(target_id, analysis, result, service=None):
     payload = {
         "target_id": str(target_id),
         "fontes_versao": result.get("fontes_versao"),
@@ -248,6 +259,7 @@ def _docx_signature(target_id, analysis, result):
         "metadados_cabecalho": result.get("metadados_cabecalho"),
         "advertencias_documentais": result.get("advertencias_documentais"),
         "advertencias_qualidade": result.get("advertencias_qualidade"),
+        "modelo_visual": _impressao_modelo(service),
     }
     serialized = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
@@ -256,7 +268,7 @@ def _docx_signature(target_id, analysis, result):
 
 
 def _cached_docx(service, generator, target_id, analysis, result, cache_key):
-    signature = _docx_signature(target_id, analysis, result)
+    signature = _docx_signature(target_id, analysis, result, service)
     cached = st.session_state.get(cache_key)
     if isinstance(cached, dict) and cached.get("signature") == signature:
         LOGGER.info("MINUTAS_PERF etapa=docx cache=hit duracao_ms=0")

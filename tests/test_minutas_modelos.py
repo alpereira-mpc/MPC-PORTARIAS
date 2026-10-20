@@ -183,7 +183,9 @@ def test_exportacao_instrucao_camara_prioriza_modelo_da_especialidade(prepared):
     )
     document = Document(BytesIO(exported.content))
     assert document.sections[0].left_margin.cm == pytest.approx(3, abs=0.05)
-    assert document.styles["Minuta Ementa"].paragraph_format.left_indent.cm == pytest.approx(8, abs=0.05)
+    ementa = next(item for item in document.paragraphs if item.text.startswith("Ementa:"))
+    assert ementa.paragraph_format.left_indent.cm == pytest.approx(8, abs=0.05)
+    assert "Minuta Procuradora" not in document.styles
     body = "\n".join(paragraph.text for paragraph in document.paragraphs)
     assert "Câmara Municipal de Exemplo" in body
     assert POISON not in body and "Bananeiras" not in body
@@ -221,8 +223,11 @@ def test_docx_aplica_formatacao_e_descarta_o_texto_do_modelo(prepared):
     assert section.top_margin.cm >= 5
     assert section.left_margin.cm == pytest.approx(3, abs=0.05)
     assert section.header_distance.cm == pytest.approx(0.8, abs=0.05)
-    assert document.styles["Minuta Ementa"].paragraph_format.left_indent.cm == pytest.approx(8, abs=0.05)
-    assert document.styles["Minuta Corpo"].font.size.pt == pytest.approx(13, abs=0.05)
+    ementa = next(item for item in document.paragraphs if item.text.startswith("Ementa:"))
+    corpo = next(item for item in document.paragraphs if item.text.startswith("Relatório"))
+    assert ementa.paragraph_format.left_indent.cm == pytest.approx(8, abs=0.05)
+    assert corpo.runs[0].font.size.pt == pytest.approx(13, abs=0.05)
+    assert "Minuta Procuradora" not in document.styles
     extent = document.sections[0].header.paragraphs[0]._p.xpath(".//wp:extent")[0]
     assert int(extent.get("cx")) / 914400 == pytest.approx(2.1, abs=0.05)
     assert "ELVIRA SAMARA PEREIRA DE OLIVEIRA" in body
