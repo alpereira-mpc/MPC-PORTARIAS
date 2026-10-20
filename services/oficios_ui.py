@@ -1184,7 +1184,7 @@ def _render_received_documents(service, r, principal_files, attachments, complem
             _received_document_title("Documento principal")
         for file in principal_files:
             with st.container(key="oficio_received_principal_" + file["id"]):
-                details, action = st.columns([7, 3], vertical_alignment="center")
+                details, action = st.columns([6, 4], vertical_alignment="center")
                 with details:
                     _received_document_summary(file)
                 with action:
@@ -1220,6 +1220,7 @@ def _render_received_documents(service, r, principal_files, attachments, complem
                     "Adicionar PDFs complementares",
                     type=["pdf"],
                     accept_multiple_files=True,
+                    max_upload_size=10,
                     key="oficio_received_complement_uploads_" + r["id"],
                 )
                 descriptions = []
@@ -1282,7 +1283,11 @@ def _render_received_documents(service, r, principal_files, attachments, complem
                         args=(r, file, "solicitado"),
                     )
             with removal:
-                with st.popover("⌫", help="Excluir documento complementar"):
+                with st.popover(
+                    "Excluir",
+                    icon=":material/delete_outline:",
+                    help="Excluir documento complementar",
+                ):
                     confirmed = st.checkbox(
                         "Confirmo a exclusão deste documento complementar.",
                         key="oficio_complement_delete_confirm_" + file["id"],

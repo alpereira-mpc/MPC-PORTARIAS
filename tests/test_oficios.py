@@ -570,6 +570,11 @@ def test_received_complementary_documents_use_real_service_from_ui(store, monkey
     app.radio(key="oficio_page").set_value("Recebidos").run()
     app.button(key="open_oficio_" + identifier).click().run()
     app.radio(key="oficio_detail_section_" + identifier).set_value("Documentos").run()
+    assert (
+        app.file_uploader(key="oficio_received_complement_uploads_" + identifier)
+        .max_upload_size_mb
+        == 10
+    )
     principal_download = next(
         button
         for button in app.button

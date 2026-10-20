@@ -1618,8 +1618,11 @@ font-weight:700;
 }}
 section[data-testid="stMain"] [class*="st-key-oficio_received_principal_"],
 section[data-testid="stMain"] [class*="st-key-oficio_received_complement_"]{{
-padding:.05rem 0;
+padding:.2rem 0;
 border-bottom:1px solid var(--mpc-border-md);
+}}
+section[data-testid="stMain"] :is([class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) > [data-testid="stHorizontalBlock"]{{
+gap:.5rem;
 }}
 section[data-testid="stMain"] :is([class*="st-key-oficios_received_documents_"],[class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) .mpc-oficios-document-summary{{
 display:flex;
@@ -1677,12 +1680,21 @@ section[data-testid="stMain"] [class*="st-key-oficio_received_principal_"] [data
 section[data-testid="stMain"] [class*="st-key-oficio_received_complement_"] [data-testid="stButton"] button,
 section[data-testid="stMain"] [class*="st-key-oficio_received_principal_"] [data-testid="stDownloadButton"] button,
 section[data-testid="stMain"] [class*="st-key-oficio_received_complement_"] [data-testid="stDownloadButton"] button{{
-min-height:2.2rem;
-padding:.35rem .55rem;
-border-radius:.45rem;
+min-height:2.35rem;
+padding:.4rem .65rem;
+border-radius:.5rem;
+white-space:nowrap;
+}}
+section[data-testid="stMain"] :is([class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) [data-testid="stPopoverButton"]{{
+min-height:2.35rem;
+padding:.4rem .55rem;
+border-radius:.5rem;
 white-space:nowrap;
 }}
 section[data-testid="stMain"] :is([class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) :is([data-testid="stButton"],[data-testid="stDownloadButton"]) button [data-testid="stIconMaterial"]{{
+font-size:1rem;
+}}
+section[data-testid="stMain"] [class*="st-key-oficio_received_complement_"] [data-testid="stPopoverButton"] [data-testid="stIconMaterial"]{{
 font-size:1rem;
 }}
 @media (max-width:640px){{
@@ -1694,6 +1706,10 @@ flex-wrap:wrap;
 section[data-testid="stMain"] :is([class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child{{
 flex:1 0 100% !important;
 width:100% !important;
+}}
+section[data-testid="stMain"] :is([class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:not(:first-child){{
+flex:0 0 auto !important;
+width:auto !important;
 }}
 section[data-testid="stMain"] :is([class*="st-key-oficios_received_documents_"],[class*="st-key-oficio_received_principal_"],[class*="st-key-oficio_received_complement_"]) .mpc-oficios-document-name{{
 font-size:.84rem;
