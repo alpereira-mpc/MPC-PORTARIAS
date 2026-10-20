@@ -3061,6 +3061,79 @@ def test_complete_generation_uses_one_analysis_and_one_drafting_call():
     assert any("TC 01653/26" in source for source in result["fontes_utilizadas"])
 
 
+def test_bradson_layers_reach_both_existing_calls_with_frei_martinho_evidence():
+    from services.minutas_procuradores import exigir_procurador
+
+    target, history, other, rows = _scenario()
+    target.update(
+        procuradora="Bradson Tibério Luna Camelo",
+        procuradora_chave="bltc",
+        numero_processo="TC 00001/24",
+        processo_chave="0000124",
+        exercicio=2024,
+        subtipo="Prefeitura",
+    )
+    evidence = (
+        "Transferências de emendas parlamentares: R$ 349.430,00. "
+        "A defesa distingue receita efetivamente recebida de erro de classificação "
+        "no Sagres e apresenta registros do FNS para conciliação. "
+        "Diferença RGPS de R$ 14.078,60 e RPPS de R$ 23.413,57. "
+        "Após revisão das bases de cálculo, foi indicado recolhimento de 99,05%."
+    )
+    audit = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    audit.update(
+        procuradora=target["procuradora"],
+        procuradora_chave="bltc",
+        texto_integral=evidence,
+        unidades_json=json.dumps([{"pagina": 1, "texto": evidence}], ensure_ascii=False),
+    )
+    defense = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "complementar"
+    )
+    defense.update(procuradora=target["procuradora"], procuradora_chave="bltc")
+    target_opinion = next(
+        row
+        for row in rows
+        if row["referencia_id"] == target["id"] and row["papel"] == "parecer"
+    )
+    target_opinion.update(procuradora=target["procuradora"], procuradora_chave="bltc")
+    history.update(procuradora=target["procuradora"], procuradora_chave="bltc")
+    for row in rows:
+        if row["referencia_id"] == history["id"]:
+            row.update(procuradora=target["procuradora"], procuradora_chave="bltc")
+
+    captured = []
+    library = Library([target, history, other], rows)
+    library.procurador = exigir_procurador("BLTC")
+    service = MinutasGenerationService(
+        library,
+        analyze=lambda context: captured.append(("analise", context)),
+        generate=lambda context: captured.append(("geracao", context)),
+    )
+
+    analysis_context = service.prepare_analysis_context(target["id"])["contexto"]
+    drafting_context = service.prepare_context(target["id"])["contexto"]
+    service._analyze(analysis_context)
+    service._generate(drafting_context)
+
+    assert [kind for kind, _context in captured] == ["analise", "geracao"]
+    for _kind, context in captured:
+        assert "bradson_evidencia_v1" in context["camadas_prompt"]
+        assert "conclusão predeterminada" in context["camadas_prompt"]
+    available = json.dumps(analysis_context, ensure_ascii=False)
+    for value in ("349.430,00", "14.078,60", "23.413,57", "99,05%", "Sagres", "FNS"):
+        assert value in available
+    for value in ("349.430,00", "14.078,60", "23.413,57", "99,05%"):
+        assert all(value not in context["camadas_prompt"] for _kind, context in captured)
+    assert "aprovação das contas" not in available.casefold()
+
+
 def test_generation_revalidates_authorization_and_source_revision():
     target, history, other, rows = _scenario()
     library = Library([target, history, other], rows)

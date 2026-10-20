@@ -644,3 +644,71 @@ def test_docx_supports_short_and_long_ementa_with_optional_header_fields():
         for paragraph in long_doc.paragraphs
     )
     assert any("Origem: Não informada" in paragraph.text for paragraph in short_doc.paragraphs)
+
+
+def test_docx_bradson_uses_isolated_visual_profile_and_automatic_pagination():
+    from services.minutas_procuradores import exigir_procurador
+
+    target = _target(
+        procuradora="Bradson Tibério Luna Camelo",
+        procuradora_chave="bltc",
+        origem="Prefeitura Municipal de Frei Martinho",
+        responsavel="Gestor Municipal Identificado",
+        data="2026-10-20",
+    )
+    analyzed, generated = _payload(target)
+    library = Library(target)
+    library.procurador = exigir_procurador("BLTC")
+    exported = MinutasDocxService(library, source_summary=_summary).export(
+        target["id"], analyzed, generated
+    )
+    document = Document(BytesIO(exported.content))
+    section = document.sections[0]
+    body = [paragraph.text for paragraph in document.paragraphs if paragraph.text]
+    footer = "\n".join(paragraph.text for paragraph in section.footer.paragraphs)
+
+    assert section.top_margin.cm == pytest.approx(2.8, abs=0.03)
+    assert section.left_margin.cm == pytest.approx(3.0, abs=0.03)
+    assert section.right_margin.cm == pytest.approx(2.5, abs=0.03)
+    assert "Origem: Prefeitura Municipal de Frei Martinho" in body
+    assert "Responsável: Gestor Municipal Identificado" in body
+    assert "Responsável: Não informado" not in body
+    assert "BRADSON TIBÉRIO LUNA CAMELO" in body
+    assert "Procurador do Ministério Público de Contas" in body[-1]
+    assert "João Pessoa, 20 de outubro de 2026." in body
+    assert not any("ELVIRA SAMARA" in paragraph for paragraph in body)
+    assert "MINUTA EXPERIMENTAL — SUJEITA À REVISÃO HUMANA" in footer
+
+    signature = next(
+        paragraph
+        for paragraph in document.paragraphs
+        if paragraph.text == "BRADSON TIBÉRIO LUNA CAMELO"
+    )
+    assert signature.paragraph_format.keep_with_next is True
+    assert document.paragraphs[-1].paragraph_format.keep_together is True
+    with ZipFile(BytesIO(exported.content)) as package:
+        document_xml = package.read("word/document.xml").decode("utf-8")
+        footer_xml = package.read("word/footer1.xml").decode("utf-8")
+        numbering_xml = package.read("word/numbering.xml").decode("utf-8")
+    assert " PAGE " in footer_xml
+    assert 'w:val="decimal"' in numbering_xml
+    assert 'w:val="lowerLetter"' in numbering_xml
+    assert "ELVIRA SAMARA" not in document_xml
+
+    missing = _target(
+        procuradora="Bradson Tibério Luna Camelo",
+        procuradora_chave="bltc",
+    )
+    missing_analyzed, missing_generated = _payload(missing)
+    missing_library = Library(missing)
+    missing_library.procurador = exigir_procurador("BLTC")
+    missing_doc = Document(
+        BytesIO(
+            MinutasDocxService(missing_library, source_summary=_summary)
+            .export(missing["id"], missing_analyzed, missing_generated)
+            .content
+        )
+    )
+    missing_body = [paragraph.text for paragraph in missing_doc.paragraphs]
+    assert not any(text.startswith("Responsável:") for text in missing_body)
+    assert not any(text.startswith("Origem:") for text in missing_body)

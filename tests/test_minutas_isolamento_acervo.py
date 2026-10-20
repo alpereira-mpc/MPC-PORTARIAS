@@ -8,7 +8,9 @@ from services.minutas_library import MinutasLibraryService, MinutasValidationErr
 from services.minutas_procuradores import (
     PROCURADORES,
     MinutasContextoError,
+    camadas_prompt,
     exigir_procurador,
+    resolver_configuracao,
 )
 from services.minutas_search import MinutasSearchService
 from services.minutas_specialties import APOSENTADORIAS, PREFEITURAS, RPPS
@@ -195,6 +197,31 @@ def test_pesquisa_e_docx_nao_herdam_outro_gabinete():
         documento._presentation(
             {"procuradora": "Elvira Samara", "procuradora_chave": "elvira samara"}
         )
+
+
+def test_perfil_juridico_bradson_nao_altera_elvira_nem_outros_gabinetes():
+    bradson = exigir_procurador("BLTC")
+    camada_bradson = camadas_prompt(bradson, "Prefeituras / PCA")
+    configuracao = resolver_configuracao(bradson)
+
+    assert "bradson_evidencia_v1" in camada_bradson
+    assert "apontamento inicial; defesa; provas efetivamente disponíveis" in camada_bradson
+    assert "A conclusão da Auditoria não vincula" in camada_bradson
+    assert "preserve valores contraditórios" in camada_bradson.casefold()
+    assert "sem conclusão predeterminada" in camada_bradson
+    assert configuracao["personalizacao"] == "bradson_evidencia_v1"
+    assert "reconciliação documental e quantitativa" in configuracao["criterios"]
+
+    espo = camadas_prompt(exigir_procurador("ESPO"), "Prefeituras / PCA")
+    assert "preserve a redação e as fórmulas já calibradas" in espo
+    assert "bradson_evidencia_v1" not in espo
+    assert resolver_configuracao("ESPO")["template"] == "elvira"
+
+    for pessoa in PROCURADORES:
+        if pessoa.sigla in {"BLTC", "ESPO"}:
+            continue
+        assert "bradson_evidencia_v1" not in camadas_prompt(pessoa, "Prefeituras / PCA")
+        assert resolver_configuracao(pessoa)["personalizacao"] == "em_formacao"
 
 
 def test_troca_de_procurador_descarta_listagem_anterior():

@@ -198,6 +198,42 @@ def config_neutra():
     }
 
 
+def config_bradson():
+    """Perfil jurídico do gabinete BLTC, sem alterar o catálogo compartilhado."""
+    return {
+        **config_neutra(),
+        "orientacoes": [
+            "Examinar cada irregularidade em sequência: apontamento, defesa, prova, "
+            "reavaliação técnica, situação final e conclusão ministerial.",
+            "Distinguir erro formal ou de classificação de omissão de receita, dano "
+            "ao erário, responsabilidade pessoal e hipótese sancionatória.",
+            "Registrar lacunas e contradições para conferência humana, sem completar "
+            "fatos, documentos, valores ou fundamentos ausentes.",
+        ],
+        "criterios": [
+            "reconciliação documental e quantitativa",
+            "evolução cronológica da instrução",
+            "independência da avaliação ministerial",
+            "coerência entre fundamentação e dispositivo",
+        ],
+        "defesa": [
+            "Separar alegação, documento apresentado e suficiência probatória.",
+            "Conferir bases de cálculo, valores recolhidos, registros contábeis, guias, "
+            "extratos e conciliações efetivamente disponíveis.",
+        ],
+        "fundamentacao": [
+            "Demonstrar a pertinência concreta de cada norma ou precedente citado.",
+            "Não equiparar a manutenção do achado pela Auditoria à conclusão do MPC.",
+        ],
+        "validacoes": [
+            "valores contraditórios permanecem identificados e não são corrigidos silenciosamente",
+            "conclusão e pedidos decorrem das avaliações individualizadas",
+            "precedentes pertencem exclusivamente ao acervo BLTC",
+        ],
+        "personalizacao": "bradson_evidencia_v1",
+    }
+
+
 def _config_preenchida(valor):
     if not isinstance(valor, dict) or not valor:
         return False
@@ -218,20 +254,21 @@ def resolver_configuracao(procurador, *, especialidade=None, geral=None, catalog
         base = dict(catalogo or {})
         base.setdefault("template", "elvira")
         return base
+    base = config_bradson() if procurador.sigla == "BLTC" else config_neutra()
     if _config_preenchida(especialidade):
-        resolvida = config_neutra()
+        resolvida = base
         resolvida.update(especialidade)
         resolvida["template"] = especialidade.get("template") or "institucional"
         if resolvida["template"] == "elvira":
             resolvida["template"] = "institucional"
         return resolvida
     if _config_preenchida(geral):
-        resolvida = config_neutra()
+        resolvida = base
         resolvida.update(geral)
         if resolvida.get("template") == "elvira":
             resolvida["template"] = "institucional"
         return resolvida
-    return config_neutra()
+    return base
 
 
 def aplicar_contexto(profile, procurador):
@@ -318,6 +355,54 @@ def visual_neutro():
     }
 
 
+def visual_bradson():
+    """Apresentação DOCX exclusiva do gabinete BLTC."""
+    visual = visual_neutro()
+    visual.update(
+        {
+            "top_cm": 2.8,
+            "bottom_cm": 2.0,
+            "left_cm": 3.0,
+            "right_cm": 2.5,
+            "header_cm": 0.8,
+            "footer_cm": 1.0,
+            "logo_width_in": 2.4,
+            "logo_from_top_cm": 0.8,
+            "logo_after_pt": 8,
+            "identification_after_pt": 18,
+            "omit_uninformed_header_fields": True,
+            "page_numbering": True,
+            "show_signature_date": True,
+            "signature_keep_together": True,
+            "request_numbering": {
+                "left_twips": 720,
+                "hanging_twips": 360,
+                "alinea_left_twips": 1440,
+                "alinea_hanging_twips": 360,
+            },
+            "styles": {
+                "Normal": {"size": 11.5, "first_cm": 1.25, "after_pt": 6},
+                "Minuta Corpo": {"size": 11.5, "first_cm": 1.25, "after_pt": 8},
+                "Minuta Ementa": {"size": 10.5, "left_cm": 4.75, "after_pt": 18},
+                "Minuta Irregularidade": {
+                    "size": 11.5,
+                    "left_cm": 0,
+                    "before_pt": 10,
+                    "after_pt": 4,
+                },
+                "Minuta Encerramento": {
+                    "size": 11.5,
+                    "first_cm": 1.25,
+                    "before_pt": 18,
+                },
+                "Minuta Procuradora": {"size": 12, "before_pt": 12},
+                "Minuta Cargo": {"size": 10.5},
+            },
+        }
+    )
+    return visual
+
+
 def assinatura_neutra(procurador):
     procurador = exigir_procurador(procurador)
     return {
@@ -325,6 +410,20 @@ def assinatura_neutra(procurador):
         "cargo": "Ministério Público de Contas do Estado da Paraíba",
         "template": None,
         "neutro": True,
+    }
+
+
+def assinatura_bradson(procurador):
+    procurador = exigir_procurador(procurador)
+    if procurador.sigla != "BLTC":
+        raise MinutasContextoError("Perfil de apresentação exclusivo do gabinete BLTC.")
+    return {
+        "nome": procurador.nome.upper(),
+        "cargo": "Procurador do Ministério Público de Contas do Estado da Paraíba",
+        "template": None,
+        "neutro": False,
+        "perfil": "bradson_docx_v1",
+        "localidade": "João Pessoa",
     }
 
 
@@ -346,6 +445,23 @@ def camadas_prompt(procurador, especialidade_nome=""):
         pessoa = (
             "Camada do Procurador: preserve a redação e as fórmulas já calibradas "
             "para Elvira Samara Pereira de Oliveira. Não as trate como regra dos demais gabinetes."
+        )
+    elif procurador.sigla == "BLTC":
+        pessoa = (
+            "Camada exclusiva do Procurador Bradson Tibério Luna Camelo — perfil "
+            "bradson_evidencia_v1. Para cada irregularidade, desenvolva em sequência: "
+            "apontamento inicial; defesa; provas efetivamente disponíveis; manifestações "
+            "posteriores da Auditoria; evolução dos valores ou bases de cálculo; situação "
+            "final; e avaliação ministerial independente. A conclusão da Auditoria não "
+            "vincula o Ministério Público de Contas. Confronte registros contábeis, guias, "
+            "extratos, receitas recebidas, classificação no Sagres, bases de cálculo, "
+            "percentuais de recolhimento e conciliações somente quando constarem das fontes. "
+            "Diferencie erro formal ou de classificação de omissão de receita, dano ao erário, "
+            "responsabilidade pessoal e sanção. Preserve valores contraditórios, identifique "
+            "a cronologia das revisões e não faça correção silenciosa. Se a prova for ausente "
+            "ou insuficiente, registre a lacuna e a necessidade de conferência humana. Cite "
+            "norma ou precedente apenas com pertinência demonstrada. Faça a conclusão e cada "
+            "pedido decorrerem das avaliações individualizadas, sem conclusão predeterminada."
         )
     else:
         pessoa = (

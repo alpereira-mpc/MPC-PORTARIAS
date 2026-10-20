@@ -388,10 +388,14 @@ def test_pesquisa_geracao_e_docx_respeitam_o_gabinete(store):
     perfil, visual = MinutasDocxService(autorizada)._presentation(
         {"procuradora_chave": "bltc", "procuradora": "Bradson Tibério Luna Camelo"}
     )
-    assert perfil["neutro"] is True
+    assert perfil["neutro"] is False
+    assert perfil["perfil"] == "bradson_docx_v1"
+    assert visual["page_numbering"] is True
     assert visual.get("template") != "elvira"
     assert resolver_configuracao("BLTC")["template"] == "institucional"
-    assert "linguagem institucional neutra" in camadas_prompt(exigir_procurador("BLTC"), "Prefeituras")
+    assert "bradson_evidencia_v1" in camadas_prompt(
+        exigir_procurador("BLTC"), "Prefeituras"
+    )
     assert resolver_configuracao("ESPO")["template"] == "elvira"
 
 

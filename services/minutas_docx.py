@@ -1,6 +1,7 @@
 """Exportação DOCX institucional das minutas experimentais já geradas."""
 
 from dataclasses import dataclass
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 import re
@@ -530,13 +531,14 @@ def _closing(value):
     return str(value or "").strip()
 
 
-def _add_requests(document, requests):
+def _add_requests(document, requests, numbering=None):
+    numbering = numbering or {}
     decimal_id = _numbering_definition(
         document,
         kind="decimal",
         marker="%1.",
-        left_twips=PEDIDO_LEFT_TWIPS,
-        hanging_twips=PEDIDO_HANGING_TWIPS,
+        left_twips=numbering.get("left_twips", PEDIDO_LEFT_TWIPS),
+        hanging_twips=numbering.get("hanging_twips", PEDIDO_HANGING_TWIPS),
     )
     for request in requests:
         lines = [line.strip() for line in str(request).splitlines() if line.strip()]
@@ -558,8 +560,10 @@ def _add_requests(document, requests):
                 document,
                 kind="lowerLetter",
                 marker="%1)",
-                left_twips=ALINEA_LEFT_TWIPS,
-                hanging_twips=ALINEA_HANGING_TWIPS,
+                left_twips=numbering.get("alinea_left_twips", ALINEA_LEFT_TWIPS),
+                hanging_twips=numbering.get(
+                    "alinea_hanging_twips", ALINEA_HANGING_TWIPS
+                ),
             )
             for item in alineas:
                 subparagraph = document.add_paragraph(style="Minuta Alínea")
@@ -579,6 +583,39 @@ def _filename(target):
 def _style_size(visual, name, default):
     values = ((visual or {}).get("styles") or {}).get(name) or {}
     return values.get("size") or default
+
+
+def _add_page_number(paragraph):
+    paragraph.add_run(" | Página ")
+    begin = paragraph.add_run()
+    begin._r.append(OxmlElement("w:fldChar"))
+    begin._r[-1].set(qn("w:fldCharType"), "begin")
+    instruction = paragraph.add_run()
+    field = OxmlElement("w:instrText")
+    field.set(qn("xml:space"), "preserve")
+    field.text = " PAGE "
+    instruction._r.append(field)
+    separate = paragraph.add_run()
+    separate._r.append(OxmlElement("w:fldChar"))
+    separate._r[-1].set(qn("w:fldCharType"), "separate")
+    paragraph.add_run("1")
+    end = paragraph.add_run()
+    end._r.append(OxmlElement("w:fldChar"))
+    end._r[-1].set(qn("w:fldCharType"), "end")
+
+
+def _signature_date(target, profile):
+    raw = str(target.get("data_parecer") or target.get("data") or "").strip()
+    try:
+        value = date.fromisoformat(raw[:10]) if raw else date.today()
+    except ValueError:
+        value = date.today()
+    months = (
+        "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+        "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+    )
+    place = str(profile.get("localidade") or "João Pessoa").strip()
+    return f"{place}, {value.day} de {months[value.month - 1]} de {value.year}."
 
 
 def _build_docx(target, structure, profile, header_lines, visual=None):
@@ -606,9 +643,11 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
     paragraph.paragraph_format.left_indent = Cm(0)
     paragraph.paragraph_format.right_indent = Cm(0)
     paragraph.paragraph_format.first_line_indent = Cm(0)
-    logo_before_pt = max(0, (LOGO_FROM_TOP_CM - float(header_cm)) * 72 / 2.54)
+    logo_from_top_cm = (visual or {}).get("logo_from_top_cm", LOGO_FROM_TOP_CM)
+    logo_after_pt = (visual or {}).get("logo_after_pt", LOGO_AFTER_PT)
+    logo_before_pt = max(0, (float(logo_from_top_cm) - float(header_cm)) * 72 / 2.54)
     paragraph.paragraph_format.space_before = Pt(logo_before_pt)
-    paragraph.paragraph_format.space_after = Pt(LOGO_AFTER_PT)
+    paragraph.paragraph_format.space_after = Pt(logo_after_pt)
     run = paragraph.add_run()
     logo_bytes = (visual or {}).get("logo")
     if not logo_bytes:
@@ -627,7 +666,7 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
             float(header_cm)
             + logo_before_pt * 2.54 / 72
             + logo_height_cm
-            + LOGO_AFTER_PT * 2.54 / 72
+            + float(logo_after_pt) * 2.54 / 72
         )
         configured_top = float((visual or {}).get("top_cm") or 6.35)
         section.top_margin = Cm(max(configured_top, needed_top))
@@ -639,13 +678,26 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
     footer_run = footer_paragraph.add_run(
         "MINUTA EXPERIMENTAL — SUJEITA À REVISÃO HUMANA"
     )
-    _set_run_font(footer_run, 9, italic=True)
+    if (visual or {}).get("page_numbering"):
+        _add_page_number(footer_paragraph)
+    for run in footer_paragraph.runs:
+        _set_run_font(run, 9, italic=True)
 
+    if (visual or {}).get("omit_uninformed_header_fields"):
+        header_lines = [
+            line
+            for line in header_lines
+            if line not in {"Origem: Não informada", "Responsável: Não informado"}
+        ]
     for index, line in enumerate(header_lines):
         item = document.add_paragraph(style="Minuta Identificação")
         _add_text(item, line, bold=True)
         if index == len(header_lines) - 1:
-            item.paragraph_format.space_after = Pt(IDENTIFICATION_AFTER_PT)
+            item.paragraph_format.space_after = Pt(
+                (visual or {}).get(
+                    "identification_after_pt", IDENTIFICATION_AFTER_PT
+                )
+            )
 
     body_size = _style_size(visual, "Minuta Corpo", 12)
     ementa_size = _style_size(visual, "Minuta Ementa", 11)
@@ -705,7 +757,11 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
     conclusion = _conclusion(structure)
     if conclusion:
         _add_body(document, conclusion, size=body_size)
-    _add_requests(document, structure["pedidos"])
+    _add_requests(
+        document,
+        structure["pedidos"],
+        numbering=(visual or {}).get("request_numbering"),
+    )
     _add_body(
         document,
         _closing(structure["encerramento"]),
@@ -713,10 +769,22 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
         size=body_size,
     )
 
+    keep_signature = bool((visual or {}).get("signature_keep_together"))
+    if keep_signature and document.paragraphs:
+        document.paragraphs[-1].paragraph_format.keep_with_next = True
+    if (visual or {}).get("show_signature_date"):
+        dated = document.add_paragraph(style="Minuta Cargo")
+        dated.paragraph_format.space_before = Pt(12)
+        dated.paragraph_format.space_after = Pt(0)
+        dated.paragraph_format.keep_with_next = keep_signature
+        _add_text(dated, _signature_date(target, profile), size=11)
+
     signature = (visual or {}).get("signature_name") or {}
     role = (visual or {}).get("signature_role") or {}
     name = document.add_paragraph(style="Minuta Procuradora")
     name.paragraph_format.space_before = Pt(signature.get("before_pt") or 24)
+    name.paragraph_format.keep_with_next = keep_signature
+    name.paragraph_format.keep_together = keep_signature
     _add_text(
         name,
         profile["nome"],
@@ -725,6 +793,7 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
         italic=True,
     )
     title = document.add_paragraph(style="Minuta Cargo")
+    title.paragraph_format.keep_together = keep_signature
     _add_text(title, profile["cargo"], size=role.get("size") or 11)
 
     output = BytesIO()
@@ -745,7 +814,13 @@ class MinutasDocxService:
         self.template_path = Path(template_path) if template_path else None
 
     def _presentation(self, target):
-        from services.minutas_procuradores import assinatura_neutra, legado_espo, visual_neutro
+        from services.minutas_procuradores import (
+            assinatura_bradson,
+            assinatura_neutra,
+            legado_espo,
+            visual_bradson,
+            visual_neutro,
+        )
 
         procurador = getattr(self.library, "procurador", None) or legado_espo()
         chave = str((target or {}).get("procuradora_chave") or "")
@@ -756,9 +831,18 @@ class MinutasDocxService:
             if not profile:
                 raise MinutasDocxError("Não há modelo Word autorizado para esta Procuradora.")
             return profile, None
-        profile = assinatura_neutra(procurador)
-        visual = visual_neutro()
-        logo = PROJECT_ROOT / "assets" / "mpcpb_logo_sidebar_transparent.png"
+        if procurador.sigla == "BLTC":
+            profile = assinatura_bradson(procurador)
+            visual = visual_bradson()
+        else:
+            profile = assinatura_neutra(procurador)
+            visual = visual_neutro()
+        logo_name = (
+            "mpcpb_header_horizontal_transparent.png"
+            if procurador.sigla == "BLTC"
+            else "mpcpb_logo_sidebar_transparent.png"
+        )
+        logo = PROJECT_ROOT / "assets" / logo_name
         if logo.is_file():
             visual["logo"] = logo.read_bytes()
         return profile, visual
