@@ -813,7 +813,7 @@ def test_camaras_desabilitada_e_outras_especialidades_nao_geram():
         _profiled_library(SECRETARIAS_MUNICIPAIS),
         _profiled_library(SECRETARIAS_MUNICIPAIS, motor=SHARED_INSTRUCTION_MOTOR, estado="A iniciar"),
         _profiled_library(
-            "elvira.pca.governo", motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
+            "elvira.pca.orgaos_estaduais", motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
         ),
         _profiled_library(
             "elvira.tema.licitacoes", motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",

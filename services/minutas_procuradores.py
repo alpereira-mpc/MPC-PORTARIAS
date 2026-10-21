@@ -110,6 +110,7 @@ PROCURADORES = tuple(Procurador(**item) for item in _REGISTROS)
 _POR_SIGLA = {item.sigla: item for item in PROCURADORES}
 _POR_CHAVE = {item.chave: item for item in PROCURADORES}
 _POR_PREFIXO = {item.prefixo: item for item in PROCURADORES}
+PREFIXO_CATALOGO_ESPECIALIDADES = "elvira"
 
 
 def legado_espo():
@@ -139,6 +140,53 @@ def exigir_procurador(valor):
     if pessoa is None or not pessoa.ativo:
         raise MinutasContextoError("Procurador não reconhecido.")
     return pessoa
+
+
+def id_contextual_especialidade(procurador, catalogo_id):
+    """Identifica o par Procurador/especialidade sem alterar a chave persistida."""
+    procurador = exigir_procurador(procurador)
+    from services.minutas_specialties import canonical_specialty_id
+
+    tecnico = canonical_specialty_id(catalogo_id)
+    prefixo = PREFIXO_CATALOGO_ESPECIALIDADES + "."
+    if not tecnico.startswith(prefixo) or len(tecnico) == len(prefixo):
+        raise MinutasContextoError("Especialidade técnica não reconhecida.")
+    return procurador.prefixo + "." + tecnico[len(prefixo):]
+
+
+def id_catalogo_especialidade(valor, procurador):
+    """Resolve ID técnico antigo ou contextual, recusando contexto cruzado."""
+    procurador = exigir_procurador(procurador)
+    from services.minutas_specialties import canonical_specialty_id
+
+    identificador = str(valor or "").strip()
+    prefixo_tecnico = PREFIXO_CATALOGO_ESPECIALIDADES + "."
+    if identificador.startswith(prefixo_tecnico):
+        return canonical_specialty_id(identificador)
+    prefixo_contextual = procurador.prefixo + "."
+    if identificador.startswith(prefixo_contextual):
+        return canonical_specialty_id(
+            prefixo_tecnico + identificador[len(prefixo_contextual):]
+        )
+    prefixo_informado = identificador.partition(".")[0]
+    if prefixo_informado in _POR_PREFIXO:
+        raise MinutasContextoError(
+            "Especialidade incompatível com o Procurador selecionado."
+        )
+    raise MinutasContextoError("Especialidade técnica não reconhecida.")
+
+
+def contextualizar_especialidade(profile, procurador):
+    """Expõe as identidades contextual e técnica sem substituir relações antigas."""
+    if not isinstance(profile, dict):
+        raise MinutasContextoError("Especialidade incompatível com o Procurador selecionado.")
+    procurador = exigir_procurador(procurador)
+    resultado = dict(profile)
+    tecnico = id_catalogo_especialidade(resultado.get("id"), procurador)
+    resultado["id"] = tecnico
+    resultado["id_catalogo"] = tecnico
+    resultado["id_contextual"] = id_contextual_especialidade(procurador, tecnico)
+    return resultado
 
 
 def procurador_da_chave(chave):
@@ -279,9 +327,7 @@ def aplicar_contexto(profile, procurador):
     tenha sido provisionado no piloto.
     """
     procurador = exigir_procurador(procurador)
-    if not isinstance(profile, dict):
-        raise MinutasContextoError("Especialidade incompatível com o Procurador selecionado.")
-    resultado = dict(profile)
+    resultado = contextualizar_especialidade(profile, procurador)
     if isinstance(resultado.get("config"), dict):
         resultado["config"] = dict(resultado["config"])
     chave_perfil = str(resultado.get("procuradora_chave") or "")

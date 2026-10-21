@@ -4186,6 +4186,7 @@ class MinutasGenerationService:
             "procuradora": self._pessoa().nome_exibicao,
             "procuradora_chave": self._pessoa().chave,
             "especialidade_id": profile["id"],
+            "especialidade_id_contextual": profile["id_contextual"],
             "classe": profile.get("grupo") or "",
             "perfil": profile.get("perfil") or "",
             "classificacao_estado": "CLASSIFICADO",
@@ -4200,6 +4201,7 @@ class MinutasGenerationService:
         process = dict(bound.get("processo_alvo") or {})
         process.update({
             "especialidade_id": target["especialidade_id"],
+            "especialidade_id_contextual": target.get("especialidade_id_contextual") or "",
             "classe": target.get("classe") or "",
             "perfil": target.get("perfil") or "",
             "subtipo": target.get("subtipo") or "",

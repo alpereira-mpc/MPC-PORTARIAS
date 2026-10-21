@@ -800,21 +800,26 @@ def _administration(admin, profile):
         data = admin.repository.dashboard()
         catalog = {row["id"]: row for row in admin.catalog()}
         rows = []
+        rows_by_catalog_id = {}
         for row in data["especialidades"]:
             item = catalog[row["id"]]
-            rows.append({"Especialidade": item["nome"], "ID": item["id"], "Estado": item["estado"],
+            rendered = {"Especialidade": item["nome"], "ID": item["id_contextual"], "Estado": item["estado"],
                 "Geração": "Habilitada" if instruction_generation_allowed(item) else "Desabilitada",
                 "Processos": row.get("processos", 0), "Pareceres": row.get("pareceres", 0),
-                "Relatórios": row.get("relatorios", 0), "Documentos indexados": row.get("indexados", 0)})
+                "Relatórios": row.get("relatorios", 0), "Documentos indexados": row.get("indexados", 0)}
+            rows.append(rendered)
+            rows_by_catalog_id[item["id_catalogo"]] = rendered
         prioritized_ids = (
             "elvira.pca.prefeituras", "elvira.pca.camaras", RPPS,
             "elvira.pca.secretarias_municipais", "elvira.pca.orgaos_estaduais",
             "elvira.denuncias", "elvira.pessoal.aposentadorias", "elvira.pessoal.pensoes",
             RECURSOS,
         )
-        by_id = {row["ID"]: row for row in rows}
-        operational = [by_id[identifier] for identifier in prioritized_ids]
-        remaining = [row for row in rows if row["ID"] not in prioritized_ids]
+        operational = [rows_by_catalog_id[identifier] for identifier in prioritized_ids]
+        remaining = [
+            row for identifier, row in rows_by_catalog_id.items()
+            if identifier not in prioritized_ids
+        ]
         enabled = sum(row["Geração"] == "Habilitada" for row in operational)
         testing = sum(row["Estado"] == "Em testes" for row in operational)
         with st.container(border=True, key="mpc_card_operational_minutas_admin_summary"):

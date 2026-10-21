@@ -47,11 +47,12 @@ class MinutasSearchService:
         page_size=DEFAULT_PAGE_SIZE,
     ):
         self.library._authorize()
-        from services.minutas_procuradores import legado_espo
+        from services.minutas_procuradores import id_contextual_especialidade, legado_espo
         from services.minutas_specialties import scope, CLASSES
         selected = scope(getattr(self.library, "specialty_id", None))
         query = self._query(query)
         pessoa = getattr(self.library, "procurador", None) or legado_espo()
+        contextual_id = id_contextual_especialidade(pessoa, selected["id"])
         if procuradora is None:
             procuradora = pessoa.nome_exibicao
         if procuradora != pessoa.nome_exibicao:
@@ -113,6 +114,7 @@ class MinutasSearchService:
                     ),
                     "natureza": CLASSES.get(selected["grupo"], "Classe efetiva do processo"),
                     "especialidade_id": selected["id"],
+                    "especialidade_id_contextual": contextual_id,
                     "subtipo": row["subtipo"],
                     "documento": row["arquivo_nome"],
                     "arquivo_path": row["arquivo_path"],
@@ -129,6 +131,7 @@ class MinutasSearchService:
         return {
             "consulta": query,
             "especialidade_id": selected["id"],
+            "especialidade_id_contextual": contextual_id,
             "pagina": page,
             "tamanho_pagina": page_size,
             "tem_anterior": page > 1,

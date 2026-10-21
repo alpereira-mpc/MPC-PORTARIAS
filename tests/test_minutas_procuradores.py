@@ -9,8 +9,12 @@ from services.minutas_procuradores import (
     assinatura_neutra,
     camadas_prompt,
     chave_efetiva,
+    config_bradson,
     config_neutra,
+    contextualizar_especialidade,
     exigir_procurador,
+    id_catalogo_especialidade,
+    id_contextual_especialidade,
     legado_espo,
     listar_ativos,
     mesmo_escopo,
@@ -70,7 +74,7 @@ def test_configuracao_dos_novos_perfis_nao_herda_elvira():
             assert resolvida.get("template") == "elvira"
             continue
         resolvida = resolver_configuracao(sigla, catalogo=catalogo)
-        assert resolvida == config_neutra()
+        assert resolvida == (config_bradson() if sigla == "BLTC" else config_neutra())
         assert resolvida["template"] != "elvira"
         assert resolvida["teses"] == []
         assert "elvira" not in assinatura_neutra(sigla)["cargo"].casefold()
@@ -94,6 +98,8 @@ def test_contexto_novo_nao_carrega_configuracao_juridica_da_elvira():
     perfil = dict(scope("elvira.pca.rpps"))
     aplicado = aplicar_contexto(perfil, "BLTC")
     assert aplicado["id"] == "elvira.pca.rpps"
+    assert aplicado["id_catalogo"] == "elvira.pca.rpps"
+    assert aplicado["id_contextual"] == "bltc.pca.rpps"
     assert aplicado["procuradora_chave"] == "bltc"
     assert aplicado["procuradora"] == "Bradson Tibério Luna Camelo"
     assert aplicado["config"]["template"] == "institucional"
@@ -116,6 +122,41 @@ def test_catalogo_tecnico_continua_unico():
     assert len({item["id"] for item in CATALOG}) == len(CATALOG) > 20
     assert {item["procuradora_chave"] for item in CATALOG} == {"elvira samara"}
     assert "elvira.denuncias" in {item["id"] for item in CATALOG}
+
+
+def test_ids_contextuais_usam_o_prefixo_institucional_de_cada_procurador():
+    tecnico = "elvira.pca.prefeituras"
+    assert id_contextual_especialidade("ESPO", tecnico) == tecnico
+    assert id_contextual_especialidade("BLTC", tecnico) == "bltc.pca.prefeituras"
+    contextuais = {
+        id_contextual_especialidade(pessoa, tecnico) for pessoa in PROCURADORES
+    }
+    assert len(contextuais) == len(PROCURADORES)
+    assert all(
+        id_contextual_especialidade(pessoa, "elvira.tema.nova_especialidade")
+        == pessoa.prefixo + ".tema.nova_especialidade"
+        for pessoa in PROCURADORES
+    )
+
+
+def test_ids_tecnicos_historicos_e_contextuais_resolvem_sem_cruzar_gabinetes():
+    assert id_catalogo_especialidade("elvira.pca.prefeituras", "BLTC") == "elvira.pca.prefeituras"
+    assert id_catalogo_especialidade("elvira.pca.governo", "BLTC") == "elvira.pca.prefeituras"
+    assert id_catalogo_especialidade("bltc.pca.prefeituras", "BLTC") == "elvira.pca.prefeituras"
+    with pytest.raises(MinutasContextoError, match="incompatível"):
+        id_catalogo_especialidade("mttf.pca.prefeituras", "BLTC")
+    perfil = contextualizar_especialidade(scope("elvira.pca.prefeituras"), "BLTC")
+    assert perfil["id"] == perfil["id_catalogo"] == "elvira.pca.prefeituras"
+    assert perfil["id_contextual"] == "bltc.pca.prefeituras"
+
+
+def test_painel_administrativo_exibe_o_id_contextual_e_ordena_pelo_catalogo():
+    import inspect
+    from services.minutas_specialties_ui import _administration
+
+    source = inspect.getsource(_administration)
+    assert '"ID": item["id_contextual"]' in source
+    assert 'rows_by_catalog_id[item["id_catalogo"]]' in source
 
 
 def test_navegacao_legada_so_liga_com_sinal_explicito():
@@ -174,7 +215,7 @@ def test_acervo_e_docx_nao_cruzam_tres_perfis():
             "procuradora_chave": "bltc",
         }
     )
-    assert visual["top_cm"] == 2.5
+    assert visual["top_cm"] == 2.8
     assert visual["fonte"] == "Arial"
     assert "Procuradora-Geral" not in perfil["cargo"]
     assert perfil["nome"] == "BRADSON TIBÉRIO LUNA CAMELO"

@@ -110,7 +110,7 @@ def test_cadastro_novo_fica_no_gabinete_e_nao_altera_o_piloto(acervo_misto):
         conexao.execute("ALTER TABLE minutas_referencias ADD COLUMN procurador_sigla TEXT")
     bltc = _acervo(store, storage, "BLTC", PREFEITURAS)
     criado = bltc.add_file(
-        PREFEITURAS,
+        "bltc.pca.prefeituras",
         {
             "classe": "PCA",
             "numero_processo": "TC 01653/26",
@@ -137,15 +137,43 @@ def test_cadastro_novo_fica_no_gabinete_e_nao_altera_o_piloto(acervo_misto):
             "SELECT procuradora_chave, procurador_sigla FROM minutas_referencias WHERE id=?",
             (prefeitura["id"],),
         ).fetchone()
+        classificacao = conexao.execute(
+            "SELECT especialidade_id FROM minutas_classificacoes WHERE referencia_id=?",
+            (criado["referencia_id"],),
+        ).fetchone()
     assert linha["procuradora_chave"] == "bltc"
     assert linha["procurador_sigla"] == "BLTC"
     assert piloto["procuradora_chave"] == "elvira samara"
     assert piloto["procurador_sigla"] is None
+    assert classificacao["especialidade_id"] == PREFEITURAS
     ibmf = _acervo(store, storage, "IBMF", PREFEITURAS)
     assert ibmf.repository.list_records(PREFEITURAS) == []
     assert [item["id"] for item in bltc.repository.list_records(PREFEITURAS)] == [
         criado["referencia_id"]
     ]
+
+
+def test_catalogos_contextuais_nao_alteram_ids_relacoes_ou_quantitativos(acervo_misto):
+    store, storage, prefeitura, _aposentadoria = acervo_misto
+    espo = _acervo(store, storage, "ESPO", PREFEITURAS)
+    bltc = _acervo(store, storage, "BLTC", PREFEITURAS)
+    antes_espo = espo.repository.dashboard()
+    antes_bltc = bltc.repository.dashboard()
+
+    perfil_espo = next(item for item in espo.catalog() if item["id"] == PREFEITURAS)
+    perfil_bltc = next(item for item in bltc.catalog() if item["id"] == PREFEITURAS)
+
+    assert perfil_espo["id_contextual"] == "elvira.pca.prefeituras"
+    assert perfil_bltc["id_contextual"] == "bltc.pca.prefeituras"
+    assert perfil_espo["id_catalogo"] == perfil_bltc["id_catalogo"] == PREFEITURAS
+    assert espo.repository.dashboard() == antes_espo
+    assert bltc.repository.dashboard() == antes_bltc
+    assert [item["id"] for item in espo.repository.list_records(PREFEITURAS)] == [
+        prefeitura["id"]
+    ]
+    assert bltc.repository.list_records(PREFEITURAS) == []
+    assert espo.find_active_process(PREFEITURAS, "0165326")["id"] == prefeitura["id"]
+    assert bltc.find_active_process("bltc.pca.prefeituras", "0165326") is None
 
 
 def test_pesquisa_e_docx_nao_herdam_outro_gabinete():

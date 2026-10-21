@@ -238,7 +238,17 @@ class MinutasAcervoService:
 
     def catalog(self):
         self.library._authorize()
-        return self.repository.catalog()
+        from services.minutas_procuradores import contextualizar_especialidade
+
+        return [
+            contextualizar_especialidade(profile, self.library.procurador)
+            for profile in self.repository.catalog()
+        ]
+
+    def _specialty(self, value):
+        from services.minutas_procuradores import id_catalogo_especialidade
+
+        return id_catalogo_especialidade(value, self.library.procurador)
 
     def dry_run(self):
         from services.minutas_procuradores import exigir_gestao_acervo
@@ -265,6 +275,7 @@ class MinutasAcervoService:
         from services.minutas_procuradores import exigir_gestao_acervo
         exigir_gestao_acervo(self.library)
         actor = self.library._authorize()
+        specialty = self._specialty(specialty)
         profile = scope(specialty)
         if formal_class not in CLASSES: raise MinutasValidationError("Informe a classe processual efetiva.")
         if profile["grupo"] != "TEMATICO" and formal_class != profile["grupo"]:
@@ -284,7 +295,9 @@ class MinutasAcervoService:
     def update_state(self, specialty, values):
         from services.minutas_procuradores import exigir_admin_estrutural
         exigir_admin_estrutural(self.library)
-        return self.repository.update_state(specialty, values, self.library._authorize())
+        return self.repository.update_state(
+            self._specialty(specialty), values, self.library._authorize()
+        )
 
     def restore(self, event_id):
         from services.minutas_procuradores import exigir_gestao_acervo
@@ -294,11 +307,14 @@ class MinutasAcervoService:
     def link(self, identifier, specialty, reason):
         from services.minutas_procuradores import exigir_gestao_acervo
         exigir_gestao_acervo(self.library)
-        return self.repository.link(identifier, specialty, reason, self.library._authorize())
+        return self.repository.link(
+            identifier, self._specialty(specialty), reason, self.library._authorize()
+        )
 
     def find_active_process(self, specialty, key):
         """Único processo ATIVO da Procuradora na especialidade; ignora o legado."""
         self.library._authorize()
+        specialty = self._specialty(specialty)
         scope(specialty)
         key = stable_process_key(key)
         if not key:
@@ -321,6 +337,8 @@ class MinutasAcervoService:
         from services.minutas_procuradores import exigir_gestao_acervo
         exigir_gestao_acervo(self.library)
         self.library._authorize()
+        if specialty:
+            specialty = self._specialty(specialty)
         from services.minutas_extraction import extract_content
         if role not in ("auditoria", "complementar", "parecer", "modelo"):
             raise MinutasValidationError("Finalidade documental inválida.")
@@ -468,6 +486,7 @@ class MinutasAcervoService:
         from services.minutas_procuradores import exigir_gestao_acervo
         exigir_gestao_acervo(self.library)
         actor = self.library._authorize()
+        specialty = self._specialty(specialty)
         profile = scope(specialty)
         formal = values.get("classe")
         if formal not in CLASSES or (profile["grupo"] != "TEMATICO" and formal != profile["grupo"]):

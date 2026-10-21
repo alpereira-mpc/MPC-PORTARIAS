@@ -150,6 +150,24 @@ def test_search_isolated_by_prosecutor_and_authorized_server_side():
     assert allowed.downloads == [("reference-1", "parecer")]
 
 
+def test_search_exposes_contextual_id_but_queries_the_shared_catalog_id():
+    from services.minutas_procuradores import exigir_procurador
+
+    library = Library([
+        _result(
+            procuradora="Bradson Tibério Luna Camelo",
+            procuradora_chave="bltc",
+        )
+    ])
+    library.procurador = exigir_procurador("BLTC")
+    response = MinutasSearchService(library).search("prestação de contas")
+
+    assert response["especialidade_id"] == "elvira.pca.rpps"
+    assert response["especialidade_id_contextual"] == "bltc.pca.rpps"
+    assert response["resultados"][0]["especialidade_id_contextual"] == "bltc.pca.rpps"
+    assert library.repository.calls[0][3]["specialty_id"] == "elvira.pca.rpps"
+
+
 def test_search_recovers_opinion_without_exercise_in_aposentadorias():
     library = Library([_result(exercicio=None, subtipo=None)])
     library.specialty_id = "elvira.pessoal.aposentadorias"
