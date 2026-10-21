@@ -1,10 +1,10 @@
 """Lazy Streamlit UI for substitution memoranda."""
-from datetime import date
+from datetime import date, timezone
 import hashlib
 import streamlit as st
 from services.access import authorization_scope, has_permission, require_permission
 from services.branding import module_title
-from services.date_format import format_date_br, format_datetime_br
+from services.date_format import BRASILIA, format_date_br, format_datetime_br
 from services.ui_theme import badges, card_container, empty_state, filter_mark, guidance_note, render_record, status_tone
 from services.memorandos import (
     MIME_DOCX,
@@ -347,7 +347,11 @@ def _editor(service, store, principal):
     signer=st.selectbox("Signatário",members,index=default,format_func=lambda p:p["nome"])
     a,b,c=st.columns(3); nature=a.selectbox("Natureza da função",NATUREZAS); motive=b.selectbox("Motivo",MOTIVOS); custom=c.text_input("Texto do motivo",disabled=motive!="Outro")
     period=st.date_input("Período",value=(date.today(),date.today()),format="DD/MM/YYYY")
-    start,end=period if isinstance(period,tuple) else (period,period)
+    bounds = _period_bounds(period)
+    if bounds is None:
+        st.caption("Selecione a data final para completar o período.")
+        return
+    start,end = bounds
     if end<start: st.error("A data final deve ser igual ou posterior à inicial."); return
     if not complete:
         guidance_note("Selecione o servidor afastado e o substituto(a) para continuar.")
@@ -365,6 +369,15 @@ def _editor(service, store, principal):
             invalidate_alert_summary()
         except ValueError as exc: st.error(str(exc))
     _documents(service, principal, record, identifier)
+
+
+def _period_bounds(period):
+    """Return a complete date range, keeping Streamlit's partial selection pending."""
+    if isinstance(period, tuple):
+        if len(period) != 2:
+            return None
+        return period
+    return (period, period) if period is not None else None
 
 
 def _draft_delete_confirmations():
@@ -408,11 +421,22 @@ def _confirm_draft_delete(service, principal, identifier):
         st.session_state["memo_draft_delete_flash"] = "Rascunho excluído."
 
 
+def _format_memo_datetime(value):
+    """Display Memorandos' persisted UTC timestamps in the official timezone."""
+    return format_datetime_br(
+        value,
+        target_timezone=BRASILIA,
+        # Memorandos have always been persisted by database.store.now() in UTC.
+        # This only gives that documented meaning to legacy values without offset.
+        naive_timezone=timezone.utc,
+    )
+
+
 def _details(service,row,principal):
     r=service.get(row["id"]); st.write("Cadeia: "+row["cadeia"]); st.write(f"Período: {format_date_br(r['data_inicio'])} a {format_date_br(r['data_fim'])} · {r['situacao']}")
     st.write("Gabinete: "+r["gabinete_snapshot"]); st.write("Signatário: "+r["signatario_nome"]+" — "+r["signatario_cargo"])
     for index,step in enumerate(r["etapas"],1): st.caption(f"Etapa {index}: {step['substituido']['nome']} ({step['substituido']['cargo']}, {step['substituido'].get('lotacao','')}) → {step['substituto']['nome']} ({step['substituto']['cargo']}, {step['substituto'].get('lotacao','')})")
-    st.caption(f"Criado por {r['criado_por']} em {format_datetime_br(r['criado_em'])}. Finalizado: {format_datetime_br(r.get('finalizado_em'))}")
+    st.caption(f"Criado por {r['criado_por']} em {_format_memo_datetime(r['criado_em'])}. Finalizado: {_format_memo_datetime(r.get('finalizado_em'))}")
     file=service.file(row["id"])
     source=service.file(row["id"], MIME_DOCX)
     if source: st.download_button("Baixar DOCX",source[1],source[0],MIME_DOCX,key="memo_docx_"+row["id"])
@@ -519,11 +543,15 @@ def _hard_delete_controls(service, row, principal, record):
         key="memo_hard_confirm_" + identifier,
     ):
         try:
-            snapshot = service.delete_finalized(
-                identifier,
-                administrator=has_permission(principal, "admin"),
-                confirmation=typed,
-            )
+            # The principal can have changed after the details were rendered.
+            # Confirm it again immediately before the irreversible operation.
+            with authorization_scope(service.store, principal) as current:
+                require_permission(current, "admin")
+                snapshot = service.delete_finalized(
+                    identifier,
+                    administrator=True,
+                    confirmation=typed,
+                )
             _audit_memo(
                 "MEMORANDO_EXCLUIDO_DEFINITIVAMENTE",
                 "EXCLUIR",
@@ -542,6 +570,10 @@ def _hard_delete_controls(service, row, principal, record):
             st.rerun()
         except ValueError as exc:
             st.error(str(exc))
+        except Exception:
+            # The transaction rolls back on a persistence failure; do not claim
+            # success or clear the confirmation while the record is intact.
+            st.error("Não foi possível excluir o memorando. Tente novamente.")
 
 
 def _listing(service, principal):

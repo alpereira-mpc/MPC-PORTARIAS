@@ -884,6 +884,24 @@ def test_new_form_starts_without_selected_participants():
     assert chain.index(f'**{{LABEL_AWAY}}**') < chain.index(f'**{{LABEL_REPLACEMENT}}**')
 
 
+def test_period_bounds_waits_for_a_complete_range():
+    from services.memorandos_ui import _period_bounds
+
+    first = date(2026, 1, 10)
+    second = date(2026, 1, 12)
+    assert _period_bounds(()) is None
+    assert _period_bounds((first,)) is None
+    assert _period_bounds((first, second)) == (first, second)
+    assert _period_bounds(first) == (first, first)
+
+
+def test_memorandum_timestamps_are_displayed_in_brasilia():
+    from services.memorandos_ui import _format_memo_datetime
+
+    assert _format_memo_datetime("2026-01-05T12:30:00+00:00") == "05/01/2026 09:30"
+    assert _format_memo_datetime("2020-06-15T12:30:00") == "15/06/2020 09:30"
+
+
 def test_new_memorandum_ui_has_empty_participant_selects(store, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from tests.access_testing import enable_login
@@ -1704,6 +1722,8 @@ def test_hard_delete_ui_is_admin_only():
     assert 'has_permission(principal, "admin")' in details
     assert "EXCLUIR" in controls
     assert "Confirmar exclusão definitiva" in controls
+    assert "memo_hard_cancel_" in controls
+    assert 'st.session_state.pop("memo_hard_delete_id", None)' in controls
     assert "situacao" in listing
     assert "Em andamento" not in inspect.getsource(memorandos_ui._nav_pages)
     assert "NAV_HISTORY" in inspect.getsource(memorandos_ui.render)

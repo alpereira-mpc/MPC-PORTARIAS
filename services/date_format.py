@@ -1,6 +1,10 @@
 """Date presentation helpers; persistence and comparisons remain ISO/typed."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
+
+
+BRASILIA = ZoneInfo("America/Sao_Paulo")
 
 
 def _missing(value):
@@ -44,12 +48,31 @@ def format_date_br(value, *, empty="—"):
     return str(parsed)
 
 
-def format_datetime_br(value, *, empty="—", seconds=False):
-    """Format one UI timestamp, preserving its current timezone semantics."""
+def format_datetime_br(
+    value,
+    *,
+    empty="—",
+    seconds=False,
+    target_timezone=None,
+    naive_timezone=None,
+):
+    """Format a UI timestamp, optionally converting it for presentation only.
+
+    ``naive_timezone`` is deliberately explicit: a datetime without an offset
+    cannot be converted safely until its origin is known.
+    """
     parsed = _temporal(value)
     if parsed is None:
         return empty
     if isinstance(parsed, datetime):
+        if target_timezone is not None:
+            if parsed.tzinfo is None:
+                if naive_timezone is None:
+                    return parsed.strftime(
+                        "%d/%m/%Y %H:%M:%S" if seconds else "%d/%m/%Y %H:%M"
+                    )
+                parsed = parsed.replace(tzinfo=naive_timezone)
+            parsed = parsed.astimezone(target_timezone)
         pattern = "%d/%m/%Y %H:%M:%S" if seconds else "%d/%m/%Y %H:%M"
         return parsed.strftime(pattern)
     if isinstance(parsed, date):

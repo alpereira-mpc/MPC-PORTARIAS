@@ -1,8 +1,9 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from services.date_format import format_date_br, format_datetime_br
+from services.date_format import BRASILIA, format_date_br, format_datetime_br
 
 
 def test_format_date_br_accepts_iso_native_and_pandas_values():
@@ -17,6 +18,22 @@ def test_format_datetime_br_uses_minutes_by_default_and_optional_seconds():
     assert format_datetime_br(value) == "05/01/2026 08:30"
     assert format_datetime_br("2026-01-05T08:30:45") == "05/01/2026 08:30"
     assert format_datetime_br(value, seconds=True) == "05/01/2026 08:30:45"
+
+
+def test_format_datetime_br_converts_utc_and_aware_timestamps_to_brasilia_once():
+    options = {"target_timezone": BRASILIA, "naive_timezone": timezone.utc}
+    assert format_datetime_br("2026-01-05T12:30:45+00:00", **options) == "05/01/2026 09:30"
+    assert format_datetime_br(
+        datetime(2026, 1, 5, 7, 30, 45, tzinfo=ZoneInfo("America/New_York")),
+        **options,
+    ) == "05/01/2026 09:30"
+    # An already local, aware value is not shifted for a second time.
+    assert format_datetime_br("2026-01-05T09:30:45-03:00", **options) == "05/01/2026 09:30"
+
+
+def test_format_datetime_br_interprets_legacy_naive_memorandum_timestamps_as_utc():
+    options = {"target_timezone": BRASILIA, "naive_timezone": timezone.utc}
+    assert format_datetime_br("2020-06-15T12:30:00", **options) == "15/06/2020 09:30"
 
 
 def test_format_date_helpers_handle_missing_and_invalid_values_safely():
