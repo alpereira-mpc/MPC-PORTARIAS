@@ -19,6 +19,7 @@ ADMIN_SECTIONS = (
     "Estagiários",
     "Acessos e Auditoria",
     "Sistema",
+    "Minutas IA",
 )
 ADMIN_SISTEMA_TABS = ("Saúde", "Backup")
 AUDIT_TABS = ("Visão Geral", "Acessos", "Auditoria")
@@ -651,6 +652,11 @@ def render(store, principal):
         from services.system_ui import render as render_system
 
         render_system(store, principal)
+        return
+    if area == "Minutas IA":
+        from services.minutas_ia_ui import render_administracao
+
+        render_administracao(store, principal)
         return
     access = AccessStore(store)
     users = access.list_users()

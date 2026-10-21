@@ -286,16 +286,23 @@ def _cached_docx(service, generator, target_id, analysis, result, cache_key):
     return word
 
 
-def _service(store, identity, *, administrative=False):
+def servico_minutas(store, identity, *, administrative=False, procurador=None, principal=None):
+    """Monta o serviço do gabinete. Procurador explícito não cai no piloto ESPO."""
     from services.minutas_procuradores import SESSION_PROCURADOR, exigir_procurador
 
-    procurador = None
-    sigla = st.session_state.get(SESSION_PROCURADOR)
-    if sigla:
-        try:
-            procurador = exigir_procurador(sigla)
-        except Exception:
+    if procurador is not None:
+        procurador = exigir_procurador(procurador)
+    else:
+        sigla = st.session_state.get(SESSION_PROCURADOR)
+        if sigla:
+            try:
+                procurador = exigir_procurador(sigla)
+            except Exception:
+                procurador = None
+        else:
             procurador = None
+    if principal is None:
+        principal = st.session_state.get("_audit_actor")
     try:
         storage = SupabaseMinutasStorage.from_secrets(st.secrets)
         repository = MinutasReferenciasStore(
@@ -309,11 +316,18 @@ def _service(store, identity, *, administrative=False):
             "A Biblioteca de Referências ainda não está configurada neste ambiente."
         )
         return None
-    service = MinutasLibraryService(
-        repository, storage, identity, st.secrets, procurador=procurador,
-        principal=st.session_state.get("_audit_actor"),
+    return MinutasLibraryService(
+        repository,
+        storage,
+        identity,
+        st.secrets,
+        procurador=procurador,
+        principal=principal,
     )
-    return service
+
+
+def _service(store, identity, *, administrative=False):
+    return servico_minutas(store, identity, administrative=administrative)
 
 
 def _error(exc, *, etapa="operacao"):
@@ -2587,6 +2601,127 @@ def _block_specialties(detail=""):
     st.warning(message)
 
 
+def _especialidades_disponiveis(library):
+    """Bloqueia a navegação especializada quando o catálogo não está implantado."""
+    from database.minutas_especialidades import MinutasSpecialtiesStore
+
+    repository_store = getattr(getattr(library, "repository", None), "store", None)
+    if getattr(repository_store, "backend", None) not in {"postgresql", "sqlite"}:
+        return True
+    try:
+        missing = MinutasSpecialtiesStore(repository_store).missing_relations()
+    except Exception as exc:
+        if not _specialty_infrastructure_error(exc):
+            raise
+        _block_specialties()
+        return False
+    if missing:
+        _block_specialties(
+            "Relações ausentes ou invisíveis: " + ", ".join(missing) + "."
+        )
+        return False
+    return True
+
+
+def rotulo_procurador_administracao(pessoa):
+    tratamento = "Dra." if pessoa.genero == "feminino" else "Dr."
+    return f"{tratamento} {pessoa.nome}"
+
+
+def _identity_da_administracao(principal):
+    identity = st.session_state.get("_audit_identity")
+    email = getattr(principal, "email", "") or ""
+    if (
+        isinstance(identity, dict)
+        and identity.get("email") == email
+        and identity.get("email_verified") is not False
+    ):
+        return identity
+    if not email:
+        return None
+    return {"email": email, "email_verified": True}
+
+
+def _descartar_rascunho_administrativo():
+    for key in list(st.session_state):
+        if str(key).startswith("admin_minutas_"):
+            del st.session_state[key]
+
+
+def render_administracao(store, principal):
+    """Aba Administração → Minutas IA. Não altera o gabinete da sessão operacional."""
+    from services.estagiarios_acesso import eh_estagiario
+    from services.minutas_library import MinutasAccessDenied
+    from services.minutas_procuradores import (
+        SESSION_PROCURADOR,
+        MinutasContextoError,
+        listar_ativos,
+        pode_administrar,
+    )
+    from services.minutas_specialties_ui import administration
+
+    if eh_estagiario(principal) or not pode_administrar(principal):
+        st.error("Operação administrativa restrita.")
+        return
+    identity = _identity_da_administracao(principal)
+    if identity is None:
+        st.error("Não foi possível confirmar a identidade desta operação.")
+        return
+    if st.session_state.get("admin_minutas_identity") != identity["email"]:
+        _descartar_rascunho_administrativo()
+        st.session_state["admin_minutas_identity"] = identity["email"]
+    pessoas = tuple(listar_ativos())
+    if not pessoas:
+        st.warning("Nenhum Procurador disponível no Minutas IA.")
+        return
+    mapa = {pessoa.sigla: pessoa for pessoa in pessoas}
+    siglas = list(mapa)
+    chave = "admin_minutas_procurador"
+    if st.session_state.get(chave) not in siglas:
+        st.session_state.pop(chave, None)
+        operacional = st.session_state.get(SESSION_PROCURADOR)
+        if operacional in siglas:
+            st.session_state[chave] = operacional
+    with st.container(border=True, key="mpc_card_operational_admin_minutas_procurador"):
+        sigla = st.selectbox(
+            "Procurador",
+            siglas,
+            format_func=lambda item, pessoas=mapa: (
+                rotulo_procurador_administracao(pessoas[item])
+                if item in pessoas
+                else str(item)
+            ),
+            key=chave,
+        )
+        procurador = mapa.get(sigla)
+        if procurador is None:
+            st.error("Procurador não reconhecido.")
+            return
+        st.caption(f"{procurador.sigla} · {procurador.nome}")
+    try:
+        library = servico_minutas(
+            store,
+            identity,
+            administrative=True,
+            procurador=procurador,
+            principal=principal,
+        )
+    except MinutasContextoError as exc:
+        st.error(str(exc))
+        return
+    if library is None:
+        return
+    if getattr(getattr(library, "procurador", None), "sigla", None) != procurador.sigla:
+        st.error("Não foi possível isolar o Procurador selecionado.")
+        return
+    if not _especialidades_disponiveis(library):
+        return
+    try:
+        administration(library)
+    except MinutasAccessDenied as exc:
+        st.error(str(exc))
+
+
 def _render_selecao_procurador():
     from services.minutas_procuradores import SESSION_PROCURADOR, listar_ativos
     from services.minutas_specialties_ui import clear_procurador_session
@@ -2670,55 +2805,24 @@ def render(store, identity):
         st.error(str(exc))
         return
     tratamento = "Dra." if procurador.genero == "feminino" else "Dr."
+    st.session_state.pop("minutas_initial_administration", None)
     with st.container(border=True, key="mpc_card_operational_minutas_module_header"):
         st.title(f"Minutas IA — {tratamento} {procurador.nome}")
         st.caption(f"{procurador.sigla} · acervo e configuração deste Procurador")
-    from database.minutas_especialidades import MinutasSpecialtiesStore
     from services.minutas_specialties_ui import (
-        acervo, administration, clear_specialty_session, selection, synchronize_scope,
+        acervo, clear_specialty_session, selection, synchronize_scope,
     )
     from services.minutas_specialties import instruction_generation_allowed
     administrative_library = _service(store, identity, administrative=True)
     if administrative_library is None:
         return
-    if any(st.session_state.get(key) for key in (
-        "minutas_nav_category", "minutas_specialty", "minutas_initial_administration",
-    )):
+    if any(st.session_state.get(key) for key in ("minutas_nav_category", "minutas_specialty")):
         st.button("Início do módulo", key="minutas_module_home", on_click=clear_specialty_session)
-    repository_store = getattr(getattr(administrative_library, "repository", None), "store", None)
-    if getattr(repository_store, "backend", None) in {"postgresql", "sqlite"}:
-        try:
-            missing = MinutasSpecialtiesStore(repository_store).missing_relations()
-        except Exception as exc:
-            if not _specialty_infrastructure_error(exc):
-                raise
-            _block_specialties()
-            return
-        if missing:
-            _block_specialties("Relações ausentes ou invisíveis: " + ", ".join(missing) + ".")
-            return
+    if not _especialidades_disponiveis(administrative_library):
+        return
     try:
-        principal = st.session_state.get("_audit_actor")
-        if st.session_state.get("minutas_initial_administration"):
-            if not pode_administrar(principal):
-                st.session_state.pop("minutas_initial_administration", None)
-            else:
-                st.button(
-                    "← Voltar à escolha de especialidade",
-                    key="minutas_initial_administration_back",
-                    on_click=lambda: st.session_state.pop("minutas_initial_administration", None),
-                )
-                administration(administrative_library)
-                return
         profile = selection(administrative_library)
         if profile is None:
-            principal = st.session_state.get("_audit_actor")
-            if not st.session_state.get("minutas_nav_category") and pode_administrar(principal):
-                st.button(
-                    "Administração do módulo",
-                    key="minutas_initial_administration_open",
-                    on_click=lambda: st.session_state.__setitem__("minutas_initial_administration", True),
-                )
             return
         library = _service(store, identity)
         if library is None:

@@ -122,7 +122,8 @@ def test_administrador_mantem_acervo_pesquisa_geracao_e_administracao(environmen
         render(None, TEST_IDENTITY)
 
     app = AppTest.from_function(page, default_timeout=30).run()
-    assert any(item.key == "minutas_initial_administration_open" for item in app.button)
+    assert not any(item.key == "minutas_initial_administration_open" for item in app.button)
+    assert not any(item.label == "Administração do módulo" for item in app.button)
     _choose_specialty(app)
     assert _opcoes(app) == ["Acervo", "Pesquisa Jurídica", "Gerar Minuta de Parecer"]
     assert app.radio(key="minutas_active_view").value == "Acervo"

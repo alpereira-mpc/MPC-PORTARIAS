@@ -213,7 +213,12 @@ def synchronize_scope(library, identity):
     email = identity.get("email")
     if st.session_state.get("minutas_scope_identity") != email:
         for key in list(st.session_state):
-            if key.startswith(("minutas_upload_preview_", "minutas_uploads_", "minutas_batch_")) or key == "minutas_migration_plan":
+            if key.startswith((
+                "minutas_upload_preview_",
+                "minutas_uploads_",
+                "minutas_batch_",
+                "admin_minutas_",
+            )) or key == "minutas_migration_plan":
                 del st.session_state[key]
         st.session_state["minutas_scope_identity"] = email
     token = fingerprint([
@@ -745,6 +750,12 @@ def _plan_summary(plan):
         st.caption(f"Metadados incompletos: {len(incomplete)}")
 
 
+def _admin_key(admin, nome):
+    """Chave de interface delimitada pelo Procurador da operação administrativa."""
+    sigla = getattr(getattr(admin.library, "procurador", None), "sigla", "") or "escopo"
+    return "admin_minutas_" + nome + "_" + str(sigla).lower()
+
+
 def _legacy_archive(admin, library):
     st.caption("Leitura do acervo anterior. Estes processos não entram na pesquisa, no RAG nem na geração.")
     records = admin.repository.list_records(legacy=True, limit=100)
@@ -753,6 +764,7 @@ def _legacy_archive(admin, library):
         return
     options = {str(row["id"]): row for row in records}
     st.caption(f"{len(records)} processo(s) legado(s)")
+    record_key = _admin_key(admin, "legacy_record")
     identifier = st.selectbox("Processo legado", list(options), index=None,
         placeholder="Selecione para consultar os documentos",
         format_func=lambda key: " · ".join(
@@ -761,12 +773,12 @@ def _legacy_archive(admin, library):
                 optional_exercise_label(options[key], "exercício"),
             ) if part
         ),
-        key="minutas_legacy_record")
+        key=record_key)
     if identifier:
         st.button(
             "← Voltar",
-            key="minutas_legacy_back",
-            on_click=lambda: st.session_state.pop("minutas_legacy_record", None),
+            key=_admin_key(admin, "legacy_back"),
+            on_click=lambda key=record_key: st.session_state.pop(key, None),
         )
         _record_summary(options[identifier])
         _documents(library, library.get(identifier))
@@ -793,9 +805,10 @@ def _administration(admin, profile):
     operations = ["Painel de especialidades", "Inventário e reclassificação", "Evolução das especialidades"]
     if admin.repository.separation_enabled():
         operations.append("Acervo legado")
+    sigla = str(getattr(getattr(admin.library, "procurador", None), "sigla", "") or "escopo").lower()
     st.subheader("Administração do Minutas IA")
     st.caption("Acompanhamento do catálogo, inventário e evolução, sem alterar o acervo por esta tela.")
-    operation = st.selectbox("Administração", operations)
+    operation = st.selectbox("Administração", operations, key=_admin_key(admin, "operacao"))
     if operation == "Painel de especialidades":
         data = admin.repository.dashboard()
         catalog = {row["id"]: row for row in admin.catalog()}
@@ -822,7 +835,7 @@ def _administration(admin, profile):
         ]
         enabled = sum(row["Geração"] == "Habilitada" for row in operational)
         testing = sum(row["Estado"] == "Em testes" for row in operational)
-        with st.container(border=True, key="mpc_card_operational_minutas_admin_summary"):
+        with st.container(border=True, key="mpc_card_operational_minutas_admin_summary_" + sigla):
             st.caption("Visão geral da operação priorizada")
             total, motors, in_testing, pending = st.columns(4)
             total.metric("Categorias operacionais", 5)
@@ -842,32 +855,71 @@ def _administration(admin, profile):
         _legacy_archive(admin, admin.library)
     elif operation == "Inventário e reclassificação":
         st.warning("Operação administrativa explícita. Antes de aplicar, confira o inventário e comprove restauração do backup de banco e Storage.")
-        if st.button("Simular reclassificação (sem alterações)"):
-            st.session_state["minutas_migration_plan"] = admin.dry_run()
-        plan = st.session_state.get("minutas_migration_plan")
+        plan_key = _admin_key(admin, "plano")
+        if st.button("Simular reclassificação (sem alterações)", key=_admin_key(admin, "simular")):
+            st.session_state[plan_key] = admin.dry_run()
+        plan = st.session_state.get(plan_key)
         if plan:
             _plan_summary(plan)
-            st.download_button("Baixar relatório da simulação", json.dumps(plan, ensure_ascii=False, indent=2), "minutas-dry-run.json", "application/json")
-            backup = st.text_input("Identificador da evidência de backup e teste de restauração")
-            verified = st.checkbox("Backup de banco e Storage restaurado e conferido em ambiente isolado")
-            if st.button("Aplicar plano conferido", disabled=not (backup.strip() and verified)):
+            st.download_button(
+                "Baixar relatório da simulação",
+                json.dumps(plan, ensure_ascii=False, indent=2),
+                "minutas-dry-run.json",
+                "application/json",
+                key=_admin_key(admin, "relatorio"),
+            )
+            backup = st.text_input(
+                "Identificador da evidência de backup e teste de restauração",
+                key=_admin_key(admin, "backup"),
+            )
+            verified = st.checkbox(
+                "Backup de banco e Storage restaurado e conferido em ambiente isolado",
+                key=_admin_key(admin, "backup_ok"),
+            )
+            if st.button(
+                "Aplicar plano conferido",
+                key=_admin_key(admin, "aplicar"),
+                disabled=not (backup.strip() and verified),
+            ):
                 result = admin.apply(plan, {"identificador": backup, "restauracao_verificada": verified})
                 st.success(f"{result['alterados']} classificação(ões) aplicada(s); contagens reconciliadas.")
-                del st.session_state["minutas_migration_plan"]
+                st.session_state.pop(plan_key, None)
     elif operation == "Evolução das especialidades":
         profiles = admin.catalog()
         selected_profile = st.selectbox(
             "Especialidade técnica",
             [item["id"] for item in profiles],
             format_func=lambda identifier: next(item["nome"] for item in profiles if item["id"] == identifier),
+            key=_admin_key(admin, "evolucao"),
         )
         profile = next(item for item in profiles if item["id"] == selected_profile)
-        with st.form("minutas_evolution_" + profile["id"]):
-            state = st.selectbox("Estado", STATES, index=STATES.index(profile["estado"]))
-            cases = st.number_input("Casos testados", 0, value=int(profile["casos_testados"]))
-            pending = st.text_area("Pendências conhecidas", value=profile["pendencias"])
-            results = st.text_area("Resultados dos testes comparativos", value=profile["resultados_testes"])
-            human = st.checkbox("Testes e revisão humana concluídos")
+        with st.form(_admin_key(admin, "evolucao_form_" + profile["id"])):
+            state = st.selectbox(
+                "Estado",
+                STATES,
+                index=STATES.index(profile["estado"]),
+                key=_admin_key(admin, "estado_" + profile["id"]),
+            )
+            cases = st.number_input(
+                "Casos testados",
+                0,
+                value=int(profile["casos_testados"]),
+                key=_admin_key(admin, "casos_" + profile["id"]),
+            )
+            pending = st.text_area(
+                "Pendências conhecidas",
+                value=profile["pendencias"],
+                key=_admin_key(admin, "pendencias_" + profile["id"]),
+            )
+            results = st.text_area(
+                "Resultados dos testes comparativos",
+                value=profile["resultados_testes"],
+                key=_admin_key(admin, "resultados_" + profile["id"]),
+            )
+            human = st.checkbox(
+                "Testes e revisão humana concluídos",
+                key=_admin_key(admin, "revisao_" + profile["id"]),
+            )
             save = st.form_submit_button("Registrar evolução")
         if save:
             admin.update_state(profile["id"], {"estado": state, "casos_testados": cases, "pendencias": pending,

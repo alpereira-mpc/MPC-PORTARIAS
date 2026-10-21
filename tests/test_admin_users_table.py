@@ -229,6 +229,7 @@ def test_other_admin_sections_remain():
         "Estagiários",
         "Acessos e Auditoria",
         "Sistema",
+        "Minutas IA",
     )
     for section in ADMIN_SECTIONS:
         assert section in source or section == "Usuários"

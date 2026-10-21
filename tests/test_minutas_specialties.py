@@ -699,7 +699,8 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     assert not any(item.key == "minutas_specialty" for item in app.selectbox)
     assert not any(item.key == "minutas_active_view" for item in app.radio)
     assert len([item for item in app.button if item.key.startswith("minutas_category_")]) == 5
-    assert app.button(key="minutas_initial_administration_open")
+    assert not any(item.key == "minutas_initial_administration_open" for item in app.button)
+    assert not any(item.label == "Administração do módulo" for item in app.button)
     app.button(key="minutas_category_PCA").click().run()
     assert len([item for item in app.button if item.key.startswith("minutas_pca_option_")]) == 4
     assert not any(item.key == "minutas_initial_administration_open" for item in app.button)
@@ -734,34 +735,9 @@ def test_specialized_ui_preserves_selection_and_does_not_call_ai_or_read_pdfs(en
     app.button(key="minutas_module_home").click().run()
     assert not any(item.key == "minutas_active_view" for item in app.radio)
     assert not any(item.key == "minutas_specialty" for item in app.selectbox)
-    app.button(key="minutas_initial_administration_open").click().run()
-    assert app.button(key="minutas_initial_administration_back")
     assert not any(item.key == "minutas_initial_administration_open" for item in app.button)
-    administration = next(item for item in app.selectbox if item.label == "Administração")
-    assert "Painel de especialidades" in administration.options
-    assert "Evolução das especialidades" in administration.options
-    panel = app.dataframe[0].value
-    technical = app.dataframe[1].value
-    assert list(panel.columns) == [
-        "Especialidade", "ID", "Estado", "Geração", "Processos", "Pareceres",
-        "Relatórios", "Documentos indexados",
-    ]
-    assert len(panel) == 9
-    assert set(panel["ID"]) == {
-        PREFEITURAS, CAMARAS, RPPS, SECRETARIAS_MUNICIPAIS,
-        "elvira.pca.orgaos_estaduais", "elvira.denuncias",
-        "elvira.pessoal.aposentadorias", "elvira.pessoal.pensoes",
-        RECURSOS,
-    }
-    assert len(panel) + len(technical) == 23
-    assert panel.loc[panel["ID"] == PREFEITURAS, "Especialidade"].tolist() == ["Prefeituras Municipais"]
-    assert not any(frame["ID"].isin(["elvira.pca.governo", "elvira.pca.gestao"]).any() for frame in (panel, technical))
-    assert any("Catálogo técnico preservado: 23" in caption.value for caption in app.caption)
-    assert any("A iniciar" in caption.value for caption in app.caption)
-    app.button(key="minutas_initial_administration_back").click().run()
-    assert not any(item.key == "minutas_active_view" for item in app.radio)
-    assert app.button(key="minutas_initial_administration_open")
-    assert not any(item.key == "minutas_initial_administration_back" for item in app.button)
+    assert not any(item.label == "Administração do módulo" for item in app.button)
+    assert not any(item.label == "Administração" for item in app.selectbox)
     assert storage.downloads == []
     assert not any("ts_headline" in query for query in store.queries)
 
