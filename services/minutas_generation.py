@@ -12,6 +12,7 @@ import unicodedata
 from services import ai_service
 from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionService
 from services.minutas_library import MinutasValidationError
+from services.minutas_orientacao import MAX_ORIENTACAO_JURIDICA_CHARS
 from services.minutas_search import MinutasSearchService
 
 
@@ -23,7 +24,6 @@ MAX_RAG_RESULTS_PER_QUERY = 4
 MAX_RAG_PASSAGES = 6
 MAX_RAG_PASSAGES_PER_OPINION = 2
 MAX_RAG_PASSAGE_CHARS = 1600
-MAX_ORIENTACAO_JURIDICA_CHARS = 6000
 RAG_RECOVERY_VERSION = "3b5b1-relevance-v2"
 EVIDENCE_CORRECTION_VERSION = "3c3-assisted-evidence-v1"
 VALIDATION_POLICY_VERSION = "5-rpps-device-sanctions-v1"
@@ -1564,20 +1564,6 @@ def _serialized_size(value):
     )
 
 
-def _orientacao_juridica_usuario(value):
-    """Normaliza uma orientação opcional sem permitir que ela domine o contexto."""
-    if value is None:
-        return ""
-    if not isinstance(value, str):
-        raise MinutasGenerationError("A orientação jurídica deve ser um texto.")
-    orientacao = value.strip()
-    if len(orientacao) > MAX_ORIENTACAO_JURIDICA_CHARS:
-        raise MinutasGenerationError(
-            "A orientação jurídica excede o limite de 6.000 caracteres."
-        )
-    return orientacao
-
-
 class MinutasGenerationService:
     """Build bounded contexts for the two explicit Minutas AI stages."""
 
@@ -1588,12 +1574,27 @@ class MinutasGenerationService:
         base_analyze = analyze or ai_service.analisar_fundamentos_minuta
         base_generate = generate or ai_service.gerar_minuta_parecer
         self._analyze = lambda contexto, _base=base_analyze: _base(self._com_camadas(contexto))
-        self._generate = lambda contexto, _base=base_generate: _base(self._com_camadas(contexto))
+
+        def _gerar_com_modelo(contexto, _base=base_generate):
+            self._exigir_modelo_visual()
+            return _base(self._com_camadas(self._exigir_bloco_orientacao(contexto)))
+
+        self._generate = _gerar_com_modelo
         # A instância vive apenas durante um rerun do Streamlit. Este cache evita
         # repetir o mesmo inventário dentro da execução sem reutilizar dados entre
         # sessões ou impedir que o rerun seguinte enxergue fontes alteradas.
         self._records_cache = None
         self._source_state_cache = {}
+
+    def _exigir_modelo_visual(self):
+        """Antes da chamada onerosa, quando o cadastro de modelos pode ser consultado."""
+        from services.minutas_docx import MinutasDocxError
+        from services.minutas_modelo_docx import garantir_modelo_exportavel
+
+        try:
+            garantir_modelo_exportavel(self.library)
+        except MinutasDocxError as exc:
+            raise MinutasGenerationError(str(exc)) from exc
 
     def _pessoa(self):
         from services.minutas_procuradores import legado_espo
@@ -1622,6 +1623,219 @@ class MinutasGenerationService:
             ),
         )
         return enriquecido
+
+    @staticmethod
+    def _exigir_bloco_orientacao(contexto):
+        """Última barreira antes do modelo: não há geração sem o bloco válido."""
+        from services.minutas_orientacao import normalizar_orientacao
+
+        if not isinstance(contexto, dict):
+            raise MinutasGenerationError(
+                "Informe a orientação jurídica antes de gerar a minuta."
+            )
+        bloco = contexto.get("orientacao_juridica_usuario")
+        if not isinstance(bloco, dict):
+            raise MinutasGenerationError(
+                "Informe a orientação jurídica antes de gerar a minuta."
+            )
+        normalizar_orientacao(bloco.get("texto"))
+        return contexto
+
+    def campos_orientacao(self, target, analyzed, usuario=""):
+        campos = {
+            "usuario": str(usuario or "").strip(),
+            "procurador_chave": str((target or {}).get("procuradora_chave") or ""),
+            "especialidade_id": str((target or {}).get("especialidade_id") or ""),
+            "fontes_versao": (
+                str(analyzed.get("fontes_versao") or "")
+                if isinstance(analyzed, dict)
+                else ""
+            ),
+            "analise": analyzed.get("analise") if isinstance(analyzed, dict) else None,
+            "processo_chave": str((target or {}).get("processo_chave") or ""),
+        }
+        registrado = (
+            str(analyzed.get("processo_alvo_chave") or "")
+            if isinstance(analyzed, dict)
+            else ""
+        )
+        if registrado:
+            campos["processo_analise"] = registrado
+        return campos
+
+    def pacote_orientacao(self, texto, target, analyzed, usuario=""):
+        from services.minutas_orientacao import contexto_orientacao, normalizar_orientacao
+
+        campos = self.campos_orientacao(target, analyzed, usuario)
+        normalizado = normalizar_orientacao(texto)
+        return {
+            "orientacao_juridica": normalizado,
+            "contexto_orientacao": contexto_orientacao(
+                usuario=campos["usuario"],
+                procurador_chave=campos["procurador_chave"],
+                especialidade_id=campos["especialidade_id"],
+                fontes_versao=campos["fontes_versao"],
+                analise=campos["analise"],
+                processo_chave=campos["processo_chave"],
+            ),
+            "usuario": campos["usuario"],
+        }
+
+    def _validar_orientacao_operacao(
+        self, target, analyzed, orientacao_juridica, contexto_orientacao, usuario
+    ):
+        from services.minutas_orientacao import exigir_orientacao_confirmada
+
+        campos = self.campos_orientacao(target, analyzed, usuario)
+        return exigir_orientacao_confirmada(
+            orientacao_juridica,
+            contexto_orientacao,
+            usuario=campos["usuario"],
+            procurador_chave=campos["procurador_chave"],
+            especialidade_id=campos["especialidade_id"],
+            fontes_versao=campos["fontes_versao"],
+            analise=campos["analise"],
+            processo_chave=campos["processo_chave"],
+            processo_analise=campos.get("processo_analise", ""),
+        )
+
+    def _referencia_autorizada(self, row, target):
+        if not isinstance(row, dict):
+            return False
+        if row.get("parecer_definitivo") is False:
+            return False
+        if str(row.get("papel") or "parecer") != "parecer":
+            return False
+        processo = str(row.get("processo_chave") or "")
+        if processo and processo == str(target.get("processo_chave") or ""):
+            return False
+        chave = str(row.get("procuradora_chave") or "")
+        if chave and chave != str(target.get("procuradora_chave") or ""):
+            return False
+        nome = str(row.get("procuradora") or "")
+        if nome and nome != str(target.get("procuradora") or ""):
+            return False
+        return True
+
+    def _buscar_orientacao(self, consulta, target):
+        if not consulta:
+            return []
+        search_method = self.search if callable(self.search) else self.search.search
+        try:
+            response = search_method(
+                consulta,
+                page_size=MAX_RAG_RESULTS_PER_QUERY,
+                exclude_process_key=target.get("processo_chave"),
+                exclude_reference_id=str(target.get("id") or ""),
+            )
+        except Exception:
+            return []
+        return list((response or {}).get("resultados") or [])
+
+    def _enriquecer_referencias_instrucao(self, precedentes, texto, target):
+        from services.minutas_orientacao import (
+            consulta_da_orientacao,
+            mesclar_referencias,
+            trecho_aderente,
+        )
+
+        base = deepcopy(precedentes) if isinstance(precedentes, dict) else {
+            "estado": "SEM_RESULTADO",
+            "referencias": [],
+            "consultas": [],
+        }
+        consulta = consulta_da_orientacao(texto)
+        if not consulta:
+            return base, ""
+        novas = []
+        for row in self._buscar_orientacao(consulta, target):
+            if not self._referencia_autorizada(row, target):
+                continue
+            trecho = _clean_text(row.get("trecho") or row.get("texto") or "")[
+                :MAX_RAG_PASSAGE_CHARS
+            ]
+            if not trecho or not trecho_aderente(consulta, trecho):
+                continue
+            novas.append({
+                "referencia_id": str(row.get("referencia_id") or row.get("id") or ""),
+                "processo": row.get("numero_processo") or row.get("processo") or "",
+                "trecho": trecho,
+                "pagina": row.get("pagina") if isinstance(row.get("pagina"), int) else None,
+                "documento": row.get("documento") or "Parecer definitivo",
+                "criterio_recuperacao": "orientacao_do_assessor",
+            })
+        referencias = mesclar_referencias(base.get("referencias") or [], novas)
+        enriquecido = dict(base)
+        enriquecido["referencias"] = referencias
+        consultas = list(base.get("consultas") or [])
+        consultas.append({"consulta": consulta, "origem": "orientacao_do_assessor"})
+        enriquecido["consultas"] = consultas
+        if referencias and enriquecido.get("estado") in {None, "", "SEM_RESULTADO", "SEM_CONSULTAS"}:
+            enriquecido["estado"] = "RECUPERADO"
+        return enriquecido, consulta
+
+    def _mesclar_trechos_orientacao(self, target, trechos, texto):
+        from services.minutas_orientacao import (
+            consulta_da_orientacao,
+            mesclar_referencias,
+            trecho_aderente,
+        )
+
+        consulta = consulta_da_orientacao(texto)
+        if not consulta:
+            return list(trechos or []), ""
+        novas = []
+        for row in self._buscar_orientacao(consulta, target):
+            if not self._referencia_autorizada(row, target):
+                continue
+            passage = str(row.get("contexto") or row.get("trecho") or "").replace(
+                "【", ""
+            ).replace("】", "").strip()
+            if not passage or not trecho_aderente(consulta, passage):
+                continue
+            novas.append({
+                "referencia_id": str(row.get("referencia_id") or ""),
+                "processo": row.get("processo") or "",
+                "documento": row.get("documento") or "",
+                "arquivo_path": row.get("arquivo_path"),
+                "sha256_registrado": row.get("sha256_registrado"),
+                "fonte_versao": row.get("fonte_versao"),
+                "procuradora": row.get("procuradora"),
+                "pagina": row.get("pagina"),
+                "trecho_literal": passage[:MAX_RAG_PASSAGE_CHARS],
+                "materias": ["orientação do assessor"],
+                "irregularidades_ids": [],
+                "relevancia": float(row.get("relevancia") or 0),
+                "natureza": "manifestação histórica não vinculante",
+                "criterio_recuperacao": "orientacao_do_assessor",
+            })
+        return mesclar_referencias(list(trechos or []), novas), consulta
+
+    def preparar_orientacao(
+        self,
+        context,
+        *,
+        target,
+        analyzed,
+        orientacao_juridica,
+        contexto_orientacao,
+        usuario="",
+        precedentes=None,
+        use_rag=True,
+    ):
+        from services.minutas_orientacao import aplicar_bloco
+
+        texto = self._validar_orientacao_operacao(
+            target, analyzed, orientacao_juridica, contexto_orientacao, usuario
+        )
+        consulta = ""
+        referencias = precedentes
+        if use_rag:
+            referencias, consulta = self._enriquecer_referencias_instrucao(
+                precedentes, texto, target
+            )
+        aplicar_bloco(context, texto, consulta if use_rag else "")
+        return texto, referencias
 
     def _records(self):
         from services.minutas_specialties import scope, RPPS
@@ -3778,24 +3992,13 @@ class MinutasGenerationService:
         analyzed,
         use_rag=True,
         orientacao_juridica=None,
+        contexto_orientacao=None,
+        usuario="",
     ):
         total_started = perf_counter()
         self.library._authorize()
         target = self.library.get(target_reference_id)
         self._validate_target(target)
-        orientacao = _orientacao_juridica_usuario(orientacao_juridica)
-        if orientacao:
-            from services.minutas_procuradores import orientacao_juridica_habilitada
-
-            if (
-                not orientacao_juridica_habilitada(self._pessoa())
-                or str(target.get("procuradora_chave") or "")
-                != self._pessoa().chave
-            ):
-                raise MinutasGenerationError(
-                    "A orientação jurídica para a minuta está disponível somente "
-                    "no perfil do Procurador Bradson Tibério Luna Camelo."
-                )
         if not isinstance(analyzed, dict) or not isinstance(analyzed.get("analise"), dict):
             raise MinutasGenerationError("Analise os fundamentos antes de gerar a minuta.")
         expected_identity = {
@@ -3831,6 +4034,21 @@ class MinutasGenerationService:
             raise MinutasGenerationError(
                 "As fontes foram alteradas. Analise novamente os fundamentos."
             )
+        orientacao = self._validar_orientacao_operacao(
+            target, analyzed, orientacao_juridica, contexto_orientacao, usuario
+        )
+        trechos, consulta = self._mesclar_trechos_orientacao(
+            target, recovery.get("trechos", ()), orientacao
+        ) if use_rag else (list(recovery.get("trechos") or []), "")
+        if use_rag and trechos != list(recovery.get("trechos") or []):
+            prepared = self.prepare_context(
+                target_reference_id,
+                analyzed["analise"],
+                trechos,
+                use_rag=True,
+            )
+        from services.minutas_orientacao import aplicar_bloco, metadados_orientacao
+
         analysis = self._validate_analysis(
             analyzed["analise"], prepared["contexto"]
         )
@@ -3839,14 +4057,7 @@ class MinutasGenerationService:
         request_context["analise_estruturada"] = self._analysis_for_generation(
             analysis
         )
-        if orientacao:
-            request_context["orientacao_juridica_usuario"] = {
-                "texto": orientacao,
-                "efeito": (
-                    "Priorizar a linha argumentativa e a conclusão pretendida, "
-                    "sem superar fatos, provas ou lacunas documentais."
-                ),
-            }
+        aplicar_bloco(request_context, orientacao, consulta if use_rag else "")
         if conference["pendencias"]:
             request_context["orientacao_conferencia_documental"] = (
                 "Existem pontos não verificados. Eles não impedem a minuta, mas "
@@ -3893,6 +4104,7 @@ class MinutasGenerationService:
                 target.get("processo_chave") or target.get("numero_processo")
             ),
             "procuradora_chave": str(target.get("procuradora_chave") or ""),
+            "orientacao_assessor": metadados_orientacao(orientacao, contexto_orientacao),
             **{
                 key: (
                     _serialized_size(request_context)
@@ -3927,6 +4139,34 @@ class MinutasGenerationService:
                 "Esta especialidade ainda não possui motor habilitado."
             )
         return profile
+
+    def _resolver_alvo_instrucao(
+        self, *, processo, exercicio=None, origem="", beneficiario="", ato="",
+        periodo_fatos="", modalidade_recurso="", materia_originaria="", data_decisao="",
+    ):
+        from services.minutas_recursos import is_recurso_profile
+        from services.minutas_denuncias import is_denuncia_profile
+        from services.minutas_aposentadorias import is_aposentadoria_profile
+
+        profile = self._instruction_profile()
+        if is_recurso_profile(profile):
+            from services.minutas_recursos import build_target
+            return build_target(
+                profile, processo, origem, modalidade_recurso,
+                materia_originaria, data_decisao,
+            )
+        if is_aposentadoria_profile(profile):
+            from services.minutas_aposentadorias import build_target
+            return build_target(profile, processo, origem, beneficiario, ato)
+        if is_denuncia_profile(profile):
+            from services.minutas_denuncias import build_target
+            return build_target(profile, processo, origem, periodo_fatos)
+        return self._instruction_target(processo, exercicio, origem)
+
+    def campos_orientacao_instrucao(self, analyzed, usuario="", **alvo):
+        return self.campos_orientacao(
+            self._resolver_alvo_instrucao(**alvo), analyzed, usuario
+        )
 
     def _instruction_target(self, processo, exercicio, origem):
         from services.minutas_specialties import instruction_pca_subtype
@@ -4110,43 +4350,52 @@ class MinutasGenerationService:
                     "conteudo": [content],
                 },
             })
-            passages.append({
+            passage_item = {
                 "processo": process,
                 "documento": document,
                 "pagina": page,
                 "trecho_literal": passage,
                 "natureza": "manifestação histórica não vinculante",
-            })
+            }
+            if item.get("criterio_recuperacao"):
+                passage_item["criterio_recuperacao"] = item["criterio_recuperacao"]
+            passages.append(passage_item)
         return opinions, passages
 
     def generate_instruction(
         self, documentos, analyzed, *, processo, exercicio=None, origem="",
         beneficiario="", ato="", periodo_fatos="", modalidade_recurso="",
         materia_originaria="", data_decisao="", use_rag=True,
+        orientacao_juridica=None, contexto_orientacao=None, usuario="",
     ):
         from services.minutas_recursos import is_recurso_profile
         from services.minutas_denuncias import is_denuncia_profile
         from services.minutas_aposentadorias import is_aposentadoria_profile
         from services.minutas_instrucao import montar_contexto
         self.library._authorize()
+        orientacao_kwargs = {
+            "orientacao_juridica": orientacao_juridica,
+            "contexto_orientacao": contexto_orientacao,
+            "usuario": usuario,
+        }
         if is_recurso_profile(self._instruction_profile()):
             from services import minutas_recursos as recursos
             return recursos.generate(
                 self, documentos, analyzed, processo=processo, origem=origem,
                 modalidade=modalidade_recurso, materia_originaria=materia_originaria,
-                data_decisao=data_decisao, use_rag=use_rag,
+                data_decisao=data_decisao, use_rag=use_rag, **orientacao_kwargs,
             )
         if is_aposentadoria_profile(self._instruction_profile()):
             from services import minutas_aposentadorias as retirement
             return retirement.generate(
                 self, documentos, analyzed, processo=processo, origem=origem,
-                beneficiario=beneficiario, ato=ato, use_rag=use_rag,
+                beneficiario=beneficiario, ato=ato, use_rag=use_rag, **orientacao_kwargs,
             )
         if is_denuncia_profile(self._instruction_profile()):
             from services import minutas_denuncias as denuncias
             return denuncias.generate(
                 self, documentos, analyzed, processo=processo, origem=origem,
-                periodo_fatos=periodo_fatos, use_rag=use_rag,
+                periodo_fatos=periodo_fatos, use_rag=use_rag, **orientacao_kwargs,
             )
         target = self._instruction_target(processo, exercicio, origem)
         prepared = montar_contexto(
@@ -4157,6 +4406,9 @@ class MinutasGenerationService:
             raise MinutasGenerationError(
                 "A instrução foi alterada. Analise novamente antes de gerar a minuta."
             )
+        orientacao = self._validar_orientacao_operacao(
+            target, analyzed, orientacao_juridica, contexto_orientacao, usuario
+        )
         analysis = self._validate_analysis(analyzed.get("analise"), prepared["contexto"])
         conference = analysis.get("conferencia_documental") or {}
         header_metadata = _resolved_header_metadata(
@@ -4178,9 +4430,18 @@ class MinutasGenerationService:
                 "não podem ser tratados como prova confirmada. Preserve cada "
                 "irregularidade e use formulação cautelosa para revisão humana."
             )
+        from services.minutas_orientacao import aplicar_bloco, metadados_orientacao
+
+        referencias, consulta = (
+            self._enriquecer_referencias_instrucao(
+                analyzed.get("referencias"), orientacao, target
+            )
+            if use_rag else (analyzed.get("referencias"), "")
+        )
+        aplicar_bloco(context, orientacao, consulta if use_rag else "")
         opinions, passages = ([], [])
         if use_rag:
-            opinions, passages = self._instruction_reference_lists(analyzed.get("referencias"))
+            opinions, passages = self._instruction_reference_lists(referencias)
             context["referencias_historicas"] = opinions
             context["referencias_juridicas_recuperadas"] = passages
             context["orientacao_referencias_juridicas"] = (
@@ -4188,7 +4449,9 @@ class MinutasGenerationService:
                 "e não são fatos do processo-alvo. Se o parecer for pouco fundamentado "
                 "ou remeter a documento ausente, indique a limitação e não invente a "
                 "análise técnica. A ausência de precedente pertinente não autoriza "
-                "fundamento inadequado."
+                "fundamento inadequado. Precedentes recuperados pela orientação do "
+                "Assessor podem convergir ou divergir; não trate divergência como "
+                "entendimento favorável."
             )
         while _serialized_size(context) > MAX_CONTEXT_BYTES and context.get(
             "referencias_juridicas_recuperadas"
@@ -4230,5 +4493,6 @@ class MinutasGenerationService:
             "referencias_juridicas_enviadas": len(
                 context.get("referencias_juridicas_recuperadas") or []
             ),
+            "orientacao_assessor": metadados_orientacao(orientacao, contexto_orientacao),
             **metrics,
         }

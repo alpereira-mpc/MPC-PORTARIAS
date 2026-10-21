@@ -27,6 +27,52 @@ from services.minutas_library import MinutasAccessDenied
 
 TARGET_ID = "target-taperoa"
 HISTORICAL_TEST_PROCESS_KEY = "0165326"
+ORIENTACAO_REGRESSAO = (
+    "Sustentar a linha argumentativa indicada pelo assessor nesta minuta experimental."
+)
+
+
+def _gerar(
+    service,
+    target_id,
+    analyzed,
+    use_rag=True,
+    orientacao_juridica=None,
+    contexto_orientacao=None,
+    usuario="",
+):
+    if orientacao_juridica is None:
+        orientacao_juridica = ORIENTACAO_REGRESSAO
+    if contexto_orientacao is None:
+        target = service.library.get(target_id)
+        pacote = service.pacote_orientacao(
+            orientacao_juridica, target, analyzed, usuario
+        )
+        orientacao_juridica = pacote["orientacao_juridica"]
+        contexto_orientacao = pacote["contexto_orientacao"]
+        usuario = pacote["usuario"]
+    return service.generate(
+        target_id,
+        analyzed,
+        use_rag=use_rag,
+        orientacao_juridica=orientacao_juridica,
+        contexto_orientacao=contexto_orientacao,
+        usuario=usuario,
+    )
+
+
+def _confirmar_orientacao_ui(app, texto=ORIENTACAO_REGRESSAO):
+    area = next(
+        item
+        for item in app.text_area
+        if item.label == "Orientação jurídica e conclusão pretendida"
+    )
+    area.set_value(texto).run()
+    next(
+        item
+        for item in app.button
+        if item.label == "Confirmar orientação e habilitar geração"
+    ).click().run()
 HISTORICAL_TEST_PROCESS_KEYS = {"0165326", "0272025", "0149926", "0265025"}
 _UI_HOLD = {}
 
@@ -615,7 +661,7 @@ def test_context_preserves_verified_folios_without_converting_pdf_pages():
     assert sources[3]["folhas_processuais"]["citacao"] == "fl. 170"
     assert sources[3]["folhas_processuais"]["fim"] is None
 
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
     report = "\n".join(result["estrutura"]["relatorio_paragrafos"])
     assert "Integram a instrução processual" not in report
     assert "Relatório da Auditoria (fls. 101/110)" not in report
@@ -1326,7 +1372,7 @@ def test_assisted_correction_revalidates_globally_without_new_ai_call():
         "fonte_id"
     ]
 
-    service.generate(target["id"], corrected)
+    _gerar(service, target["id"], corrected)
     assert len(drafting_calls) == 1
 
 
@@ -1545,7 +1591,7 @@ def test_multiple_irregularities_preserve_analysis_and_allow_cautious_drafting()
         "NAO_VERIFICADA"
     )
     assert result["suficiente_para_geracao"] is True
-    generated = service.generate(target["id"], result)
+    generated = _gerar(service, target["id"], result)
     assert len(drafting_calls) == 1
     request_analysis = drafting_calls[0]["analise_estruturada"]
     pending_fact = request_analysis["irregularidades"][1]["fatos_documentados"][0]
@@ -1605,7 +1651,7 @@ def test_taperoa_unlocated_citations_are_warnings_and_allow_generation(
     )
 
     analyzed = service.analyze(target["id"])
-    generated = service.generate(target["id"], analyzed)
+    generated = _gerar(service, target["id"], analyzed)
 
     assert analyzed["suficiente_para_geracao"] is True
     assert any(
@@ -1705,7 +1751,7 @@ def test_quality_checks_warn_without_changing_legal_conclusion():
         generate=generate,
     )
     analyzed = service.analyze(target["id"])
-    result = service.generate(target["id"], analyzed)
+    result = _gerar(service, target["id"], analyzed)
 
     warnings = "\n".join(result["advertencias_qualidade"])
     assert "Possível omissão" in warnings
@@ -1739,7 +1785,7 @@ def test_rejected_defense_with_only_generic_divergence_is_warned():
         ),
     )
 
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert any(
         "Divergência da Auditoria sem fundamento" in warning
@@ -1763,7 +1809,7 @@ def test_rejected_defense_with_specific_divergence_is_not_warned():
         ),
     )
 
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert not any(
         "Divergência da Auditoria sem fundamento" in warning
@@ -1787,7 +1833,7 @@ def test_categorical_cure_with_insufficient_documents_is_warned():
         generate=generate,
     )
 
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert any(
         "sem justificativa probatória textual verificável" in warning
@@ -1822,7 +1868,7 @@ def test_existing_document_and_page_without_cure_excerpt_is_warned():
         generate=generate,
     )
 
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert any(
         "sem justificativa probatória textual verificável" in warning
@@ -1864,7 +1910,7 @@ def test_verified_cure_with_specific_support_is_not_warned():
         generate=generate,
     )
 
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert not any(
         "saneamento" in warning.casefold()
@@ -1880,7 +1926,7 @@ def test_coherent_draft_renders_numbered_requests_and_closing():
         generate=_draft_result,
     )
 
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert "1. Submeta-se a minuta à revisão jurídica humana." in result["texto"]
     assert "É o Parecer." in result["texto"]
@@ -1908,7 +1954,7 @@ def test_duplicate_request_line_is_rendered_only_in_numbered_requests():
         generate=generate,
     )
 
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     request = result["estrutura"]["pedidos"][0]
     assert result["texto"].count(request) == 1
@@ -2009,7 +2055,7 @@ def test_draft_header_removes_bureaucratic_phrases_and_groups_recommendations():
         analyze=_analysis_result,
         generate=generate,
     )
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
     structure = result["estrutura"]
 
     assert structure["identificacao_processual"].splitlines() == [
@@ -2077,7 +2123,7 @@ def test_header_metadata_uses_only_unambiguous_target_extractions():
         analyze=_analysis_result,
         generate=_draft_result,
     )
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert result["metadados_cabecalho"] == {
         "origem": "Instituto de Previdência do Município de Taperoá",
@@ -2107,7 +2153,7 @@ def test_header_metadata_omits_conflicting_or_non_entity_values():
         analyze=_analysis_result,
         generate=_draft_result,
     )
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert result["metadados_cabecalho"] == {}
     assert "Origem: Não informada" in result["texto"]
@@ -2133,7 +2179,7 @@ def test_header_metadata_does_not_leak_from_historical_processes():
         analyze=_analysis_result,
         generate=_draft_result,
     )
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert result["metadados_cabecalho"] == {}
     assert "Outra Cidade" not in result["texto"]
@@ -2159,7 +2205,7 @@ def test_header_metadata_supports_another_jurisdiction_type():
         analyze=_analysis_result,
         generate=_draft_result,
     )
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert result["metadados_cabecalho"] == {
         "origem": "Câmara Municipal de Taperoá",
@@ -2188,7 +2234,7 @@ def test_header_metadata_recovers_explicit_narrative_responsible_from_target_sou
         analyze=_analysis_result,
         generate=_draft_result,
     )
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert result["metadados_cabecalho"] == {
         "origem": "Prefeitura Municipal de São Bentinho",
@@ -2223,7 +2269,7 @@ def test_other_pca_uses_direct_accounts_outcome_and_preserves_relief(subtype):
         analyze=_analysis_result,
         generate=generate,
     )
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert result["estrutura"]["pedidos"][0].startswith(
         "Proponha-se a regularidade com ressalvas"
@@ -2422,7 +2468,7 @@ def test_quality_warnings_preserve_invalid_currency_and_accounting_code():
         analyze=_analysis_result,
         generate=generate,
     )
-    result = service.generate(target["id"], service.analyze(target["id"]))
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
 
     assert accounting_code in result["texto"]
     assert "R$ 409.458.55" in result["texto"]
@@ -2960,8 +3006,8 @@ def test_generation_can_compare_rag_enabled_and_disabled_without_changing_analys
     analyzed = service.analyze(target["id"])
     analysis_snapshot = json.dumps(analyzed["analise"], sort_keys=True)
 
-    with_rag = service.generate(target["id"], analyzed, use_rag=True)
-    without_rag = service.generate(target["id"], analyzed, use_rag=False)
+    with_rag = _gerar(service, target["id"], analyzed, use_rag=True)
+    without_rag = _gerar(service, target["id"], analyzed, use_rag=False)
 
     assert "referencias_juridicas_recuperadas" in drafting_contexts[0]
     assert drafting_contexts[0]["referencias_juridicas_recuperadas"]
@@ -2983,7 +3029,7 @@ def test_generation_continues_when_legal_search_finds_no_precedent():
     )
 
     analyzed = service.analyze(target["id"])
-    result = service.generate(target["id"], analyzed, use_rag=True)
+    result = _gerar(service, target["id"], analyzed, use_rag=True)
 
     assert analyzed["recuperacao_juridica"]["estado"] == "SEM_RESULTADOS"
     assert "lexical" in analyzed["recuperacao_juridica"]["motivo_ausencia"]
@@ -3048,7 +3094,7 @@ def test_complete_generation_uses_one_analysis_and_one_drafting_call():
         Library([target, history, other], rows), analyze=analyze, generate=generate
     )
     analyzed = service.analyze(target["id"])
-    result = service.generate(target["id"], analyzed)
+    result = _gerar(service, target["id"], analyzed)
 
     assert len(analysis_calls) == 1
     assert len(drafting_calls) == 1
@@ -3117,9 +3163,14 @@ def test_bradson_layers_reach_both_existing_calls_with_frei_martinho_evidence():
         generate=lambda context: captured.append(("geracao", context)),
     )
 
+    from services.minutas_orientacao import aplicar_bloco
+
     analysis_context = service.prepare_analysis_context(target["id"])["contexto"]
     drafting_context = service.prepare_context(target["id"])["contexto"]
     service._analyze(analysis_context)
+    with pytest.raises(MinutasGenerationError, match="Informe a orientação jurídica"):
+        service._generate(drafting_context)
+    aplicar_bloco(drafting_context, ORIENTACAO_REGRESSAO)
     service._generate(drafting_context)
 
     assert [kind for kind, _context in captured] == ["analise", "geracao"]
@@ -3165,34 +3216,45 @@ def test_bradson_legal_guidance_is_generation_only_and_can_be_replaced():
     favorable = "Priorizar o acolhimento da defesa quando a conciliação for comprovada."
     contrary = "Priorizar a manutenção do apontamento se a prova documental for insuficiente."
 
-    service.generate(target["id"], analyzed, orientacao_juridica=favorable)
-    service.generate(target["id"], analyzed, orientacao_juridica=contrary)
-    service.generate(target["id"], analyzed, orientacao_juridica="")
+    _gerar(service, target["id"], analyzed, orientacao_juridica=favorable)
+    _gerar(service, target["id"], analyzed, orientacao_juridica=contrary)
+    with pytest.raises(MinutasGenerationError, match="Informe a orientação jurídica"):
+        service.generate(target["id"], analyzed, orientacao_juridica="")
 
     assert len(analysis_calls) == 1
-    assert len(drafting_calls) == 3
+    assert len(drafting_calls) == 2
+    assert "orientacao_juridica_usuario" not in analysis_calls[0]
     assert analyzed == original_analysis
     assert drafting_calls[0]["orientacao_juridica_usuario"]["texto"] == favorable
     assert drafting_calls[1]["orientacao_juridica_usuario"]["texto"] == contrary
-    assert "orientacao_juridica_usuario" not in drafting_calls[2]
     assert "conflito relevante" in drafting_calls[0]["camadas_prompt"]
     assert "conclusão predeterminada" in drafting_calls[0]["camadas_prompt"]
+    assert "outro Procurador" in drafting_calls[0]["camadas_prompt"]
 
 
-def test_legal_guidance_is_rejected_outside_bradson_profile():
+def test_legal_guidance_reaches_every_prosecutor_and_rejects_foreign_context():
     target, history, other, rows = _scenario()
+    drafting = []
     service = MinutasGenerationService(
         Library([target, history, other], rows),
         analyze=_analysis_result,
-        generate=_draft_result,
+        generate=lambda context: drafting.append(context) or _draft_result(context),
     )
     analyzed = service.analyze(target["id"])
+    texto = "Opinar pela aprovação das contas com ressalvas."
 
-    with pytest.raises(MinutasGenerationError, match="somente no perfil"):
+    _gerar(service, target["id"], analyzed, orientacao_juridica=texto)
+
+    assert "Orientação do Assessor" in drafting[0]["camadas_prompt"]
+    assert "bradson_evidencia_v1" not in drafting[0]["camadas_prompt"]
+    assert drafting[0]["orientacao_juridica_usuario"]["papel"].startswith("diretriz")
+    assert drafting[0]["orientacao_juridica_usuario"]["texto"] == texto
+    with pytest.raises(MinutasGenerationError, match="não corresponde ao contexto"):
         service.generate(
             target["id"],
             analyzed,
-            orientacao_juridica="Opinar pela aprovação.",
+            orientacao_juridica=texto,
+            contexto_orientacao="contexto-de-outro-processo",
         )
 
 
@@ -3209,7 +3271,7 @@ def test_generation_revalidates_authorization_and_source_revision():
 
     library.authorized = False
     with pytest.raises(MinutasAccessDenied):
-        service.generate(target["id"], analyzed)
+        _gerar(service, target["id"], analyzed)
     with pytest.raises(MinutasAccessDenied):
         service.pilot_diagnostics(target["id"], analyzed)
     with pytest.raises(MinutasAccessDenied):
@@ -3222,11 +3284,11 @@ def test_generation_revalidates_authorization_and_source_revision():
         "disponivel": False
     }
     with pytest.raises(MinutasGenerationError, match="não pertence"):
-        service.generate(target["id"], mismatched)
+        _gerar(service, target["id"], mismatched)
 
     wrong_prosecutor = dict(analyzed, procuradora_chave="outra-procuradora")
     with pytest.raises(MinutasGenerationError, match="não pertence"):
-        service.generate(target["id"], wrong_prosecutor)
+        _gerar(service, target["id"], wrong_prosecutor)
     assert drafting_calls == []
 
     rows[0]["atualizado_em"] = "2026-10-13T11:00:00+00:00"
@@ -3234,7 +3296,7 @@ def test_generation_revalidates_authorization_and_source_revision():
         "disponivel": False
     }
     with pytest.raises(MinutasGenerationError, match="fontes foram alteradas"):
-        service.generate(target["id"], analyzed)
+        _gerar(service, target["id"], analyzed)
     assert drafting_calls == []
 
 
@@ -3493,7 +3555,7 @@ def test_generation_propagates_controlled_gemini_failure():
     analyzed = service.analyze(target["id"])
 
     with pytest.raises(ai_service.GeminiErro, match="indisponível"):
-        service.generate(target["id"], analyzed)
+        _gerar(service, target["id"], analyzed)
 
 
 def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch):
@@ -3568,7 +3630,7 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
             }
             return refreshed
 
-        def generate(self, identifier, analyzed, use_rag=True):
+        def generate(self, identifier, analyzed, use_rag=True, **_kwargs):
             assert analyzed["fontes_versao"] == revision["value"]
             generation_calls.append((identifier, use_rag))
             return {
@@ -3648,6 +3710,7 @@ def test_ui_calls_generation_only_on_click_and_keeps_result_on_rerun(monkeypatch
     app.session_state[analysis_key] = stale
     app.run()
     assert refresh_calls == []
+    _confirmar_orientacao_ui(app)
     assert any(
         "navegar nesta tela não executa nova pesquisa" in item.value
         for item in app.caption
@@ -3742,7 +3805,7 @@ def test_ui_bradson_legal_guidance_is_process_and_user_scoped(monkeypatch):
         def analyze(self, _identifier):
             return deepcopy(analysis)
 
-        def generate(self, identifier, analyzed, use_rag=True, orientacao_juridica=None):
+        def generate(self, identifier, analyzed, use_rag=True, orientacao_juridica=None, **_kwargs):
             generation_calls.append((identifier, analyzed, use_rag, orientacao_juridica))
             return {
                 "texto": "# MINUTA\n\nConteúdo para revisão.",
@@ -3779,17 +3842,44 @@ def test_ui_bradson_legal_guidance_is_process_and_user_scoped(monkeypatch):
 
     app = AppTest.from_function(page, default_timeout=30).run()
     app.button(key=f"minutas_analysis_submit_{TARGET_ID}").click().run()
+    from services.minutas_orientacao import chave_estado_orientacao
+
     assert [item.label for item in app.text_area] == [
-        "Orientação jurídica para a minuta (opcional)"
+        "Orientação jurídica e conclusão pretendida"
     ]
-    orientation_key = app.text_area[0].key
-    assert orientation_key != minutas_ia_ui._bradson_orientation_key(
-        Generator(None), target, {"email": "outro@mpc.pb.gov.br"}
+    assert any(
+        "Orientação do Assessor para a Minuta" in str(item.value)
+        for item in app.markdown
     )
+    orientation_key = app.text_area[0].key
+    partes = (
+        "assessor@mpc.pb.gov.br",
+        target["procuradora_chave"],
+        target["especialidade_id"],
+        target["processo_chave"],
+        analysis["fontes_versao"],
+        "historico",
+    )
+    assert orientation_key == chave_estado_orientacao(*partes, sufixo="texto")
+    assert orientation_key != chave_estado_orientacao(
+        "outro@mpc.pb.gov.br", *partes[1:], sufixo="texto"
+    )
+    assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is True
 
     app.text_area(key=orientation_key).set_value("Opinar pela aprovação com ressalvas.").run()
+    assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is True
+    next(
+        item for item in app.button
+        if item.label == "Confirmar orientação e habilitar geração"
+    ).click().run()
     app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
     app.text_area(key=orientation_key).set_value("Opinar pela rejeição da defesa.").run()
+    assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is True
+    app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
+    next(
+        item for item in app.button
+        if item.label == "Confirmar orientação e habilitar geração"
+    ).click().run()
     app.button(key=f"minutas_generation_submit_{TARGET_ID}").click().run()
 
     assert [call[3] for call in generation_calls] == [
@@ -3797,8 +3887,8 @@ def test_ui_bradson_legal_guidance_is_process_and_user_scoped(monkeypatch):
         "Opinar pela rejeição da defesa.",
     ]
     assert app.session_state[f"minutas_generation_analysis_{TARGET_ID}"] == analysis
-    app.button(key=f"minutas_generation_clear_orientation_{TARGET_ID}").click().run()
-    assert app.session_state[orientation_key] == ""
+    app.run()
+    assert app.session_state[orientation_key] == "Opinar pela rejeição da defesa."
 
 
 def test_ui_shows_document_warning_and_keeps_drafting_enabled(monkeypatch):
@@ -4012,6 +4102,8 @@ def test_ui_shows_document_warning_and_keeps_drafting_enabled(monkeypatch):
         "Página corrigida automaticamente de 8 para 9" in item.value
         for item in app.success
     )
+    assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is True
+    _confirmar_orientacao_ui(app)
     assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is False
     assert generation_calls == []
 
@@ -4033,4 +4125,6 @@ def test_ui_shows_document_warning_and_keeps_drafting_enabled(monkeypatch):
     assert app.session_state[
         f"minutas_generation_analysis_{TARGET_ID}"
     ]["suficiente_para_geracao"] is True
+    assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is True
+    _confirmar_orientacao_ui(app)
     assert app.button(key=f"minutas_generation_submit_{TARGET_ID}").disabled is False

@@ -428,8 +428,9 @@ def assinatura_bradson(procurador):
 
 
 def orientacao_juridica_habilitada(procurador):
-    """A orientação de redação é uma capacidade isolada do perfil BLTC."""
-    return exigir_procurador(procurador).sigla == "BLTC"
+    """A orientação do Assessor acompanha todo Procurador com geração habilitada."""
+    exigir_procurador(procurador)
+    return True
 
 
 def camadas_prompt(procurador, especialidade_nome="", *, orientacao_juridica=False):
@@ -479,17 +480,10 @@ def camadas_prompt(procurador, especialidade_nome="", *, orientacao_juridica=Fal
         "Se não houver parecer individual, informe a ausência e não complete com outro gabinete."
     )
     camadas = [institucional, especialidade, pessoa, precedentes]
-    if procurador.sigla == "BLTC" and orientacao_juridica:
-        camadas.append(
-            "Orientação jurídica expressa do usuário: o campo "
-            "orientacao_juridica_usuario indica a linha argumentativa e a "
-            "conclusão pretendida para esta minuta. Dê-lhe prioridade na redação, "
-            "sem convertê-la em fato ou prova. Desenvolva-a somente quando "
-            "compatível com os documentos, a análise estruturada e os precedentes "
-            "recuperados do próprio BLTC. Se houver conflito relevante, identifique-o "
-            "objetivamente e não invente fatos, provas, decisões, precedentes ou "
-            "fundamentos para sustentar a orientação."
-        )
+    if orientacao_juridica:
+        from services.minutas_orientacao import CAMADA_ORIENTACAO
+
+        camadas.append(CAMADA_ORIENTACAO)
     return "\n".join(camadas)
 
 

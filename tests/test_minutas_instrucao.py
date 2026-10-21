@@ -3,6 +3,7 @@
 from io import BytesIO
 
 from reportlab.pdfgen import canvas
+from tests.test_minutas_orientacao import gerar_instrucao
 import inspect
 import json
 import logging
@@ -256,7 +257,7 @@ def test_inclusao_ou_remocao_invalida_a_versao_anterior():
     analyzed = service.analyze_instruction([first], processo="03333/26", exercicio=2025)
     assert seen["ids"] == [first["fonte_id"]]
     with pytest.raises(MinutasGenerationError, match="alterada"):
-        service.generate_instruction(
+        gerar_instrucao(service,
             [first, second], analyzed, processo="03333/26", exercicio=2025,
         )
     assert versao([first]) != versao([first, second])
@@ -348,7 +349,7 @@ def test_analise_geracao_e_docx_aceitam_quantidade_variavel(quantidade):
     analyzed = service.analyze_instruction(
         documents, processo="03333/26", exercicio=2025, origem="Instituto",
     )
-    generated = service.generate_instruction(
+    generated = gerar_instrucao(service,
         documents, analyzed, processo="03333/26", exercicio=2025, origem="Instituto",
     )
     word = MinutasDocxService(_library(), template_path=ELVIRA_TEMPLATE).export_instruction(
@@ -496,7 +497,7 @@ def test_geracao_com_advertencias_e_precedentes_usa_o_contrato_historico():
     assert analyzed["duracao_ms"] == 1800
     assert len(analyzed["pendencias_conferencia"]) >= 5
     assert len({item["irregularidade"] for item in analyzed["pendencias_conferencia"]}) == 4
-    generated = service.generate_instruction(
+    generated = gerar_instrucao(service,
         documents, analyzed, processo="03333/26", exercicio=2025,
     )
     assert captured["excluido"] == "0333326"
@@ -533,7 +534,7 @@ def test_resposta_invalida_nao_conclui_a_minuta():
     )
     analyzed = service.analyze_instruction([base], processo="03333/26", exercicio=2025)
     with pytest.raises(MinutasGenerationError, match="partes obrigatórias"):
-        service.generate_instruction([base], analyzed, processo="03333/26", exercicio=2025)
+        gerar_instrucao(service, [base], analyzed, processo="03333/26", exercicio=2025)
 
 
 def test_ausencia_de_precedente_nao_inventa_fundamento():
@@ -554,7 +555,7 @@ def test_ausencia_de_precedente_nao_inventa_fundamento():
         search=lambda *_args, **_kwargs: {"resultados": []},
     )
     analyzed = service.analyze_instruction([base], processo="03333/26")
-    generated = service.generate_instruction([base], analyzed, processo="03333/26")
+    generated = gerar_instrucao(service, [base], analyzed, processo="03333/26")
     assert captured["historicas"] == []
     assert captured["recuperadas"] == []
     assert generated["referencias_historicas"] == 0
@@ -704,6 +705,8 @@ def test_generator_tab_uses_instruction_flow_without_historical_mode(monkeypatch
     assert calls["analyze"] == 0
     app.button(key="minutas_instrucao_analisar").click().run()
     assert calls["analyze"] == 1
+    from tests.test_minutas_generation import _confirmar_orientacao_ui
+    _confirmar_orientacao_ui(app)
     app.button(key="minutas_instrucao_gerar").click().run()
     assert calls["generate"] == 1
     assert calls["export"] >= 1
@@ -866,7 +869,7 @@ def test_camaras_habilitada_usa_identidade_propria_sem_misturar_rpps():
         [document], processo="02108/26", exercicio=2025,
         origem="Câmara Municipal de Exemplo",
     )
-    generated = service.generate_instruction(
+    generated = gerar_instrucao(service,
         [document], analyzed, processo="02108/26", exercicio=2025,
         origem="Câmara Municipal de Exemplo",
     )
@@ -936,7 +939,7 @@ def test_secretarias_habilitada_usa_identidade_propria_e_julgamento_direto(estad
         [document], processo="02108/26", exercicio=2025,
         origem="Secretaria Municipal de Educação de Exemplo",
     )
-    generated = service.generate_instruction(
+    generated = gerar_instrucao(service,
         [document], analyzed, processo="02108/26", exercicio=2025,
         origem="Secretaria Municipal de Educação de Exemplo",
     )
@@ -1042,7 +1045,7 @@ def test_prefeituras_habilitada_gera_parecer_unico_condicional_e_isolado(
         documents, processo="02108/26", exercicio=2025,
         origem="Prefeitura Municipal de Exemplo",
     )
-    generated = service.generate_instruction(
+    generated = gerar_instrucao(service,
         documents, analyzed, processo="02108/26", exercicio=2025,
         origem="Prefeitura Municipal de Exemplo",
     )
@@ -1097,6 +1100,6 @@ def test_desabilitar_camaras_nao_afeta_rpps():
         search=lambda *_a, **_k: {"resultados": []},
     )
     analyzed = rpps.analyze_instruction([document], processo="03333/26", exercicio=2025)
-    generated = rpps.generate_instruction([document], analyzed, processo="03333/26", exercicio=2025)
+    generated = gerar_instrucao(rpps, [document], analyzed, processo="03333/26", exercicio=2025)
     assert analyzed["processo_alvo_id"].startswith("instrucao-")
     assert generated["estrutura"]

@@ -213,16 +213,20 @@ def test_perfil_juridico_bradson_nao_altera_elvira_nem_outros_gabinetes():
     assert configuracao["personalizacao"] == "bradson_evidencia_v1"
     assert "reconciliação documental e quantitativa" in configuracao["criterios"]
     assert orientacao_juridica_habilitada(bradson) is True
-    assert "Orientação jurídica expressa do usuário" not in camada_bradson
-    assert "Orientação jurídica expressa do usuário" in camadas_prompt(
+    assert "Orientação do Assessor" not in camada_bradson
+    assert "Orientação do Assessor" in camadas_prompt(
         bradson, "Prefeituras / PCA", orientacao_juridica=True
     )
 
     espo = camadas_prompt(exigir_procurador("ESPO"), "Prefeituras / PCA")
     assert "preserve a redação e as fórmulas já calibradas" in espo
     assert "bradson_evidencia_v1" not in espo
-    assert orientacao_juridica_habilitada("ESPO") is False
-    assert "Orientação jurídica expressa do usuário" not in camadas_prompt(
+    assert orientacao_juridica_habilitada("ESPO") is True
+    assert "Orientação do Assessor" not in espo
+    assert "Orientação do Assessor" in camadas_prompt(
+        exigir_procurador("ESPO"), "Prefeituras / PCA", orientacao_juridica=True
+    )
+    assert "bradson_evidencia_v1" not in camadas_prompt(
         exigir_procurador("ESPO"), "Prefeituras / PCA", orientacao_juridica=True
     )
     assert resolver_configuracao("ESPO")["template"] == "elvira"
@@ -231,7 +235,11 @@ def test_perfil_juridico_bradson_nao_altera_elvira_nem_outros_gabinetes():
         if pessoa.sigla in {"BLTC", "ESPO"}:
             continue
         assert "bradson_evidencia_v1" not in camadas_prompt(pessoa, "Prefeituras / PCA")
-        assert orientacao_juridica_habilitada(pessoa) is False
+        assert orientacao_juridica_habilitada(pessoa) is True
+        assert "Orientação do Assessor" not in camadas_prompt(pessoa, "Prefeituras / PCA")
+        assert "Orientação do Assessor" in camadas_prompt(
+            pessoa, "Prefeituras / PCA", orientacao_juridica=True
+        )
         assert resolver_configuracao(pessoa)["personalizacao"] == "em_formacao"
 
 

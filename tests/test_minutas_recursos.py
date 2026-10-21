@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 import pytest
+from tests.test_minutas_orientacao import gerar_instrucao
 
 from services.minutas_acervo import MinutasAcervoService
 from services.minutas_docx import ELVIRA_TEMPLATE, MinutasDocxService
@@ -137,7 +138,7 @@ def test_fluxo_completo_das_duas_modalidades_usa_servicos_reais(modalidade):
         modalidade_recurso=modalidade, materia_originaria="Licitação",
         data_decisao="2025-03-10",
     )
-    generated = service.generate_instruction(
+    generated = gerar_instrucao(service,
         documents, analyzed, processo="02108/26", origem="Município de Exemplo",
         modalidade_recurso=modalidade, materia_originaria="Licitação",
         data_decisao="2025-03-10",
@@ -171,10 +172,10 @@ def test_alterar_modalidade_ou_documento_exige_nova_analise():
     )
     analyzed = service.analyze_instruction([document], processo="02108/26", modalidade_recurso="APELACAO")
     with pytest.raises(MinutasGenerationError, match="modalidade"):
-        service.generate_instruction([document], analyzed, processo="02108/26", modalidade_recurso="ORDINARIO")
+        gerar_instrucao(service, [document], analyzed, processo="02108/26", modalidade_recurso="ORDINARIO")
     changed = _doc("decisao.pdf", "Decisão recorrida alterada.", "decisao")
     with pytest.raises(MinutasGenerationError, match="alterada"):
-        service.generate_instruction([changed], analyzed, processo="02108/26", modalidade_recurso="APELACAO")
+        gerar_instrucao(service, [changed], analyzed, processo="02108/26", modalidade_recurso="APELACAO")
 
 
 def test_upload_persistente_classifica_modalidade_materia_e_teses_sem_schema_novo(tmp_path):
