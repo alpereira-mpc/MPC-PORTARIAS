@@ -2423,19 +2423,6 @@ def test_prefectures_management_only_does_not_invent_government_opinion():
 
     assert normalized["pedidos"] == structure["pedidos"]
     assert all("parecer prévio" not in item.casefold() for item in normalized["pedidos"])
-    assert not any("apenas de gestão" in warning for warning in warnings)
-
-    context = {
-        "documentos_processo_alvo": [{
-            "conteudo": [{
-                "pagina": 7,
-                "texto": "O objeto abrange expressamente as contas de governo do exercício.",
-            }],
-        }],
-    }
-    _normalized, warnings = MinutasGenerationService._normalize_structure(
-        structure, target, context,
-    )
     assert any("apenas de gestão" in warning for warning in warnings)
 
 

@@ -533,27 +533,6 @@ def _is_prefeituras_target(target):
     return str((target or {}).get("especialidade_id") or "") == "elvira.pca.prefeituras"
 
 
-def _documented_government_scope(context):
-    """Detecta competência de governo somente nas peças do processo atual."""
-    if not isinstance(context, dict):
-        return False
-    for source in context.get("documentos_processo_alvo") or ():
-        for unit in source.get("conteudo") or ():
-            if not isinstance(unit, dict):
-                continue
-            text = str(unit.get("texto") or "")
-            if re.search(r"\bcontas?\s+de\s+governo\b", text, re.IGNORECASE):
-                return True
-            if re.search(
-                r"\b(?:emiss[aã]o|emitir|compet[eê]ncia)\b.{0,100}"
-                r"\bparecer\s+pr[eé]vio\b",
-                text,
-                re.IGNORECASE | re.DOTALL,
-            ):
-                return True
-    return False
-
-
 def _government_opinion_outcome(request):
     """Return an outcome only for an explicit government-accounts opinion."""
     text = str(request or "")
@@ -738,7 +717,13 @@ def _resolved_header_metadata(target, sources=(), analysis=None):
         if structured:
             metadata[field] = structured
             continue
-        candidates = _header_metadata_from_text(field, source_text)
+        filtered_text = source_text
+        if field == "responsavel":
+            filtered_text = "\n".join(
+                line for line in source_text.splitlines()
+                if linha_do_exercicio(line, target.get("exercicio"))
+            )
+        candidates = _header_metadata_from_text(field, filtered_text)
         if len(candidates) == 1:
             metadata[field] = next(iter(candidates.values()))
             continue
@@ -3430,10 +3415,10 @@ class MinutasGenerationService:
             normalized = integrar_sancoes(normalized)
         except ValueError as exc:
             raise MinutasGenerationError(str(exc)) from exc
-        identity_pending = pendencias_identidade(normalized, target)
-        normalized["pendencias_identificacao"] = identity_pending.copy()
+        warnings = pendencias_identidade(normalized, target)
+        normalized["pendencias_identificacao"] = warnings.copy()
         identity = dict(normalized.get("identidade_responsaveis") or {})
-        identity.update(valor=target.get("responsavel") or "", exercicio=target.get("exercicio"), pendencias=identity_pending.copy())
+        identity.update(valor=target.get("responsavel") or "", exercicio=target.get("exercicio"), pendencias=warnings.copy())
         if context is not None:
             _, _, evidence = resolver_responsavel(
                 target, context.get("documentos_processo_alvo", ()), None
@@ -3449,8 +3434,6 @@ class MinutasGenerationService:
         normalized["fundamentacao_geral_paragrafos"] = foundation
         normalized["fundamentacao_geral"] = "\n\n".join(foundation)
         normalized["encerramento"] = "É o Parecer."
-
-        warnings = []
 
         requests = [str(item).strip() for item in normalized.get("pedidos", ())]
         opinion_requests = [
@@ -3498,8 +3481,7 @@ class MinutasGenerationService:
                     "Prefeitura; foi preservada uma conclusão por competência "
                     "para revisão jurídica."
                 )
-            if (account_requests and not government_requests
-                    and _documented_government_scope(context)):
+            if account_requests and not government_requests:
                 warnings.append(
                     "PCA de Prefeitura com conclusão apenas de gestão, sem suporte "
                     "documental explícito para parecer prévio sobre contas de governo; "
@@ -4317,7 +4299,6 @@ class MinutasGenerationService:
         self, documentos, *, processo, exercicio=None, origem="", beneficiario="", ato="", periodo_fatos="",
         modalidade_recurso="", materia_originaria="", data_decisao="",
     ):
-        total_started = perf_counter()
         from services.minutas_recursos import is_recurso_profile
         from services.minutas_denuncias import is_denuncia_profile
         from services.minutas_aposentadorias import is_aposentadoria_profile
@@ -4342,75 +4323,18 @@ class MinutasGenerationService:
                 self, documentos, processo=processo, origem=origem, periodo_fatos=periodo_fatos,
             )
         target = self._instruction_target(processo, exercicio, origem)
-        context_started = perf_counter()
         prepared = montar_contexto(
             documentos, processo=target["numero_processo"], exercicio=exercicio,
             origem=origem,
         )
-        context_duration_ms = round((perf_counter() - context_started) * 1000)
-        source_documents = prepared["contexto"].get("documentos_processo_alvo", ())
-        source_units = [
-            unit for source in source_documents if isinstance(source, dict)
-            for unit in source.get("conteudo", ()) if isinstance(unit, dict)
-        ]
-        LOGGER.info(
-            "MINUTAS_PERF etapa=contexto_instrucao duracao_ms=%d contexto_bytes=%d "
-            "documentos=%d unidades=%d paginas=%d omissoes=%d",
-            context_duration_ms,
-            _serialized_size(prepared["contexto"]),
-            len(source_documents),
-            len(source_units),
-            len({
-                (str(source.get("fonte_id") or index), unit.get("pagina"))
-                for index, source in enumerate(source_documents)
-                if isinstance(source, dict)
-                for unit in source.get("conteudo", ())
-                if isinstance(unit, dict) and isinstance(unit.get("pagina"), int)
-            }),
-            len(prepared["omissoes"]),
-        )
-        metadata_started = perf_counter()
         header_metadata = _resolved_header_metadata(
             target, prepared["contexto"].get("documentos_processo_alvo", ())
         )
         target = _target_with_header_metadata(target, header_metadata)
         context = self._bind_instruction_context(prepared["contexto"], target)
-        LOGGER.info(
-            "MINUTAS_PERF etapa=metadados duracao_ms=%d contexto_final_bytes=%d "
-            "responsavel_resolvido=%s pendencias_identificacao=%d",
-            round((perf_counter() - metadata_started) * 1000),
-            _serialized_size(context),
-            bool(target.get("responsavel")),
-            len(target.get("pendencias_identificacao") or ()),
-        )
-        provider_started = perf_counter()
-        try:
-            generated = self._analyze(context)
-        except Exception:
-            LOGGER.info(
-                "MINUTAS_PERF etapa=provedor_falha duracao_ms=%d",
-                round((perf_counter() - provider_started) * 1000),
-            )
-            raise
-        LOGGER.info(
-            "MINUTAS_PERF etapa=provedor_ok duracao_ms=%d",
-            round((perf_counter() - provider_started) * 1000),
-        )
-        validation_started = perf_counter()
+        generated = self._analyze(context)
         analysis = self._validate_analysis(generated.get("analise"), context)
-        LOGGER.info(
-            "MINUTAS_PERF etapa=validacao_analise duracao_ms=%d irregularidades=%d",
-            round((perf_counter() - validation_started) * 1000),
-            len(analysis.get("irregularidades") or ()),
-        )
-        recovery_started = perf_counter()
         precedents = self._instruction_precedents(analysis, target["processo_chave"])
-        LOGGER.info(
-            "MINUTAS_PERF etapa=recuperacao_juridica duracao_ms=%d referencias=%d estado=%s",
-            round((perf_counter() - recovery_started) * 1000),
-            len(precedents.get("referencias") or ()),
-            precedents.get("estado") or "",
-        )
         conference = analysis.get("conferencia_documental") or {}
         metrics = {
             key: generated[key]
@@ -4419,7 +4343,7 @@ class MinutasGenerationService:
             )
             if isinstance(generated, dict) and generated.get(key) is not None
         }
-        result = {
+        return {
             "analise": analysis,
             "pendencias_conferencia": conference.get("pendencias") or [],
             "fontes_versao": prepared["versao"],
@@ -4435,11 +4359,6 @@ class MinutasGenerationService:
             "metadados_cabecalho": header_metadata,
             **metrics,
         }
-        LOGGER.info(
-            "MINUTAS_PERF etapa=analise_instrucao_concluida duracao_ms=%d",
-            round((perf_counter() - total_started) * 1000),
-        )
-        return result
 
     def _instruction_reference_lists(self, precedents):
         """Converte a recuperação no contrato do gerador histórico: lista, não o envelope."""

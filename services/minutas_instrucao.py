@@ -1,16 +1,11 @@
 """Instrução processual local para gerar minuta. Não grava o acervo nem alimenta o RAG."""
 
 from hashlib import sha256
-import logging
 import re
-from time import perf_counter
 import uuid
 
 from services.minutas_extraction import extract_content
 from services.minutas_library import MinutasValidationError, _validate_file
-
-
-LOGGER = logging.getLogger(__name__)
 
 
 TIPOS = (
@@ -61,7 +56,6 @@ def _finding_label(line):
 
 def receber_pdf(name, content, tipo, *, data="", origem="", descricao=""):
     """Extrai um PDF da instrução. O arquivo não é enviado ao acervo."""
-    started = perf_counter()
     info = tipo_info(tipo)
     file = _validate_file("parecer", (name, content))
     if file["mime"] != "application/pdf":
@@ -80,15 +74,6 @@ def receber_pdf(name, content, tipo, *, data="", origem="", descricao=""):
         units.append({"texto": re.sub(r"\s+", " ", extracted["texto_integral"]).strip(), "pagina": 1})
     if not units:
         raise MinutasInstrucaoError("Não foi possível extrair texto deste PDF.")
-    LOGGER.info(
-        "MINUTAS_PERF etapa=extracao duracao_ms=%d pdf_bytes=%d paginas=%d "
-        "texto_bytes=%d tipo=%s",
-        round((perf_counter() - started) * 1000),
-        len(file["content"]),
-        len({unit.get("pagina") for unit in units if unit.get("pagina") is not None}),
-        sum(len(str(unit.get("texto") or "").encode("utf-8")) for unit in units),
-        info["chave"],
-    )
     digest = sha256(file["content"]).hexdigest()
     identifier = str(uuid.uuid4())
     return {
@@ -206,15 +191,8 @@ def conferencia(documentos):
 def consolidar(sources, budget):
     """Reduz o contexto sem descartar apontamento identificável."""
     from services.minutas_generation import _serialized_size
-    started = perf_counter()
     payload = {"documentos_processo_alvo": sources}
-    input_bytes = _serialized_size(payload)
-    if input_bytes <= budget:
-        LOGGER.info(
-            "MINUTAS_PERF etapa=consolidacao duracao_ms=%d entrada_bytes=%d "
-            "saida_bytes=%d paginas_omitidas=0 consolidado=false",
-            round((perf_counter() - started) * 1000), input_bytes, input_bytes,
-        )
+    if _serialized_size(payload) <= budget:
         return sources, []
     condensed = []
     omissions = []
@@ -237,20 +215,11 @@ def consolidar(sources, budget):
                 "motivo": "Consolidação pelo limite de contexto. Apontamentos identificáveis foram preservados.",
             })
         condensed.append({**source, "conteudo": kept, "consolidado": True})
-    output_bytes = _serialized_size({"documentos_processo_alvo": condensed})
-    if output_bytes > budget:
+    if _serialized_size({"documentos_processo_alvo": condensed}) > budget:
         raise MinutasInstrucaoError(
             "O volume documental excede o contexto seguro mesmo após a consolidação dos apontamentos. "
             "Nenhum apontamento foi descartado em silêncio; retire ou separe documentos antes de gerar."
         )
-    LOGGER.info(
-        "MINUTAS_PERF etapa=consolidacao duracao_ms=%d entrada_bytes=%d "
-        "saida_bytes=%d paginas_omitidas=%d consolidado=true",
-        round((perf_counter() - started) * 1000),
-        input_bytes,
-        output_bytes,
-        sum(len(item["paginas_nao_enviadas_integralmente"]) for item in omissions),
-    )
     return condensed, omissions
 
 

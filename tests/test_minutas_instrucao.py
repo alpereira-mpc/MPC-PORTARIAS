@@ -10,7 +10,6 @@ import logging
 
 import pytest
 
-from services.ai_service import GeminiErro
 from services.minutas_docx import ELVIRA_TEMPLATE, MinutasDocxService
 from services.minutas_generation import MinutasGenerationError, MinutasGenerationService
 from services.minutas_instrucao import (
@@ -302,75 +301,6 @@ def test_volume_impossivel_nao_trunca_em_silencio():
     }
     with pytest.raises(MinutasInstrucaoError, match="excede o contexto"):
         consolidar([source], budget=120)
-
-
-def test_contexto_de_53_paginas_preserva_todas_as_irregularidades():
-    pages = [
-        {
-            "texto": (
-                f"Irregularidade {number}. A Auditoria apontou o fato; "
-                f"a defesa apresentou a alegação {number}; a análise final "
-                "manteve a conclusão e o valor documentado."
-            ),
-            "pagina": number,
-        }
-        for number in range(1, 54)
-    ]
-    source = {
-        "fonte_id": "volume-53",
-        "arquivo": "volume.pdf",
-        "papel": "auditoria",
-        "tipo": "Relatório Inicial de Auditoria",
-        "ordem_processual": 1,
-        "conteudo": pages,
-    }
-
-    kept, omissions = consolidar([source], budget=600_000)
-
-    text = "\n".join(unit["texto"] for unit in kept[0]["conteudo"])
-    assert omissions == []
-    assert all(f"Irregularidade {number}." in text for number in range(1, 54))
-
-
-@pytest.mark.parametrize("page_count", [1, 53])
-def test_analise_funciona_com_contexto_pequeno_e_grande(page_count):
-    base = _doc(
-        "inicial.pdf",
-        "Pagamento sem cobertura documental no instituto de previdencia municipal",
-        "relatorio_inicial",
-    )
-    base["conteudo"] = [
-        {
-            "pagina": number,
-            "texto": (
-                "Pagamento sem cobertura documental no instituto de previdencia "
-                f"municipal. Irregularidade {number}. Defesa e conclusão da Auditoria."
-            ),
-        }
-        for number in range(1, page_count + 1)
-    ]
-    base["paginas"] = list(range(1, page_count + 1))
-    captured = {}
-
-    def analyze(context):
-        captured["context"] = context
-        return {"analise": _analysis(base), "modelo": "mock", "duracao_ms": 1}
-
-    service = MinutasGenerationService(
-        _library(), analyze=analyze,
-        search=lambda *_args, **_kwargs: {"resultados": []},
-    )
-    result = service.analyze_instruction(
-        [base], processo="03333/26", exercicio=2025
-    )
-
-    units = captured["context"]["documentos_processo_alvo"][0]["conteudo"]
-    assert len(units) == page_count
-    assert all(
-        f"Irregularidade {number}." in units[number - 1]["texto"]
-        for number in range(1, page_count + 1)
-    )
-    assert result["analise"]["irregularidades"]
 
 
 @pytest.mark.parametrize("quantidade", [1, 2, 4])
@@ -713,11 +643,6 @@ def test_generator_tab_uses_instruction_flow_without_historical_mode(monkeypatch
 
         def analyze_instruction(self, documents, **_kwargs):
             calls["analyze"] += 1
-            if calls.get("fail"):
-                raise GeminiErro(
-                    "A IA não respondeu dentro do limite seguro. Os documentos e "
-                    "metadados foram preservados; tente analisar novamente."
-                )
             return {
                 "analise": {
                     "resumo_processual": "Análise da instrução.",
@@ -793,17 +718,6 @@ def test_generator_tab_uses_instruction_flow_without_historical_mode(monkeypatch
     assert calls["analyze"] == 1
     assert calls["generate"] == 1
     assert calls["export"] >= exported
-    calls["fail"] = True
-    app.button(key="minutas_instrucao_analisar").click().run()
-    assert len(app.session_state["minutas_instrucao_documentos"]) == 1
-    assert app.text_input(key="minutas_instrucao_processo").value == "01653/26"
-    assert app.text_input(key="minutas_instrucao_origem_processo").value == "Instituto Alfa"
-    assert "minutas_instrucao_analise" not in app.session_state
-    assert "minutas_instrucao_minuta" not in app.session_state
-    assert any(
-        "documentos e metadados foram preservados" in item.value
-        for item in app.error
-    )
 
 
 def test_incluir_preserva_edicao_manual_conflito_e_falha_de_extracao(monkeypatch):

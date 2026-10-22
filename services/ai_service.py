@@ -30,10 +30,6 @@ GEMINI_MODEL = "gemini-3.5-flash-lite"
 GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 GEMINI_ENDPOINT = _endpoint(GEMINI_MODEL)
 TIMEOUT_SECONDS = 120
-# A análise de Minutas pode usar o modelo reserva após silêncio completo do
-# provedor, mas a soma dos dois limites permanece abaixo do timeout global.
-MINUTAS_ANALYSIS_PRIMARY_TIMEOUT_SECONDS = 70
-MINUTAS_ANALYSIS_FALLBACK_TIMEOUT_SECONDS = 45
 MAX_ATTEMPTS = 3
 SERVER_ATTEMPTS = 4
 RETRY_DELAYS_SECONDS = (1, 2)
@@ -58,10 +54,6 @@ MENSAGEM_COTA_DIARIA = (
 MENSAGEM_SOBRECARGA = (
     "O modelo de IA está temporariamente sobrecarregado. "
     "Tente novamente em alguns minutos."
-)
-MENSAGEM_TIMEOUT_MINUTAS_ANALISE = (
-    "A IA não respondeu dentro do limite seguro. Os documentos e metadados "
-    "foram preservados; tente analisar novamente."
 )
 _MODULO_OPERACAO = {
     "laboratorio_resumo": "laboratorio",
@@ -1053,36 +1045,12 @@ def analisar_fundamentos_minuta(contexto):
     """Return structured evidence analysis using target-process sources only."""
     if not isinstance(contexto, dict):
         raise GeminiErro("Não foi possível preparar a análise jurídica da minuta.")
-    preparation_started = time.perf_counter()
     text = json.dumps(contexto, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    context_bytes = len(text.encode("utf-8"))
-    if context_bytes > MINUTA_MAX_CONTEXT_BYTES:
+    if len(text.encode("utf-8")) > MINUTA_MAX_CONTEXT_BYTES:
         raise GeminiErro("Os documentos do processo excedem o limite seguro de análise.")
     primary, fallback = _minutas_models()
     started = time.perf_counter()
     prompt, schema = _minuta_contract(contexto, "analise")
-    documents = contexto.get("documentos_processo_alvo") or []
-    units = [
-        unit for document in documents if isinstance(document, dict)
-        for unit in document.get("conteudo", ()) if isinstance(unit, dict)
-    ]
-    pages = {
-        (str(document.get("fonte_id") or index), unit.get("pagina"))
-        for index, document in enumerate(documents)
-        if isinstance(document, dict)
-        for unit in document.get("conteudo", ())
-        if isinstance(unit, dict) and isinstance(unit.get("pagina"), int)
-    }
-    LOGGER.info(
-        "MINUTAS_PERF etapa=prompt_analise duracao_ms=%d contexto_bytes=%d "
-        "tokens_estimados=%d documentos=%d unidades=%d paginas=%d",
-        round((time.perf_counter() - preparation_started) * 1000),
-        context_bytes,
-        (context_bytes + 3) // 4,
-        len(documents),
-        len(units),
-        len(pages),
-    )
     raw, model = _executar(
         lambda key, selected: _request_texto(
             text, key, prompt, selected, schema,
@@ -1094,17 +1062,7 @@ def analisar_fundamentos_minuta(contexto):
         fallback_model=fallback,
     )
     _validar_termino_minuta(raw)
-    result = _minuta_metrics(raw, model, started, "analise")
-    LOGGER.info(
-        "MINUTAS_PERF etapa=resposta_analise modelo=%s duracao_ms=%s "
-        "tokens_entrada=%s tokens_saida=%s tokens_total=%s",
-        model,
-        result.get("duracao_ms"),
-        result.get("tokens_entrada"),
-        result.get("tokens_saida"),
-        result.get("tokens_total"),
-    )
-    return result
+    return _minuta_metrics(raw, model, started, "analise")
 
 
 def gerar_minuta_parecer(contexto):
@@ -1173,7 +1131,6 @@ def _executar(
         "fallback": False,
         "via_quota": False,
         "via_503": False,
-        "via_timeout": False,
         "http_status": None,
         "viu_429": False,
         "viu_500": False,
@@ -1200,29 +1157,7 @@ def _executar(
                     modelo,
                     attempt,
                 )
-            request._mpc_timeout_seconds = _operation_timeout_seconds(
-                operacao, estado
-            )
-            if operacao == "minutas_analise":
-                LOGGER.info(
-                    "IA_PROVIDER etapa=inicio operacao=%s modelo=%s tentativa=%s "
-                    "request_bytes=%s timeout_s=%s",
-                    operacao,
-                    modelo,
-                    estado["tentativas"],
-                    len(getattr(request, "data", None) or b""),
-                    request._mpc_timeout_seconds,
-                )
             raw = _post(request)
-            if operacao == "minutas_analise":
-                LOGGER.info(
-                    "IA_PROVIDER etapa=fim operacao=%s modelo=%s tentativa=%s "
-                    "response_bytes=%s",
-                    operacao,
-                    modelo,
-                    estado["tentativas"],
-                    len(raw or b""),
-                )
             if operacao.startswith("relatorio_"):
                 LOGGER.info(
                     "RELATORIO_IA | etapa=provider_fim | operacao=%s | modelo=%s | bytes_resposta=%s",
@@ -1231,23 +1166,11 @@ def _executar(
                     len(raw or b""),
                 )
         except TimeoutError:
-            if _fallback_timeout_minutas(operacao, modelo, estado):
-                LOGGER.warning(
-                    "Análise de Minutas expirou no modelo principal; "
-                    "uma tentativa limitada usará o modelo reserva."
-                )
-                modelo = fallback_model
-                estado["fallback"] = True
-                estado["via_timeout"] = True
-                continue
+            # The call already waited TIMEOUT_SECONDS. Another round could
+            # hold the page for several minutes, so this failure is final.
             LOGGER.warning("Chamada ao %s expirou.", rotulo)
             _registrar_operacao(inicio, estado, False, "timeout")
-            message = (
-                MENSAGEM_TIMEOUT_MINUTAS_ANALISE
-                if operacao == "minutas_analise"
-                else "O serviço de IA não respondeu a tempo."
-            )
-            raise GeminiErro(message) from None
+            raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
         except urllib.error.HTTPError as exc:
             code, status, retry_after, cota_diaria = _detalhe_http(exc)
             estado["http_status"] = code
@@ -1309,28 +1232,10 @@ def _executar(
             raise GeminiErro(_mensagem_http(code, status)) from None
         except urllib.error.URLError as exc:
             if isinstance(getattr(exc, "reason", None), TimeoutError):
-                if _fallback_timeout_minutas(operacao, modelo, estado):
-                    LOGGER.warning(
-                        "Análise de Minutas expirou no modelo principal; "
-                        "uma tentativa limitada usará o modelo reserva."
-                    )
-                    modelo = fallback_model
-                    estado["fallback"] = True
-                    estado["via_timeout"] = True
-                    continue
                 LOGGER.warning("Chamada ao %s expirou.", rotulo)
                 _registrar_operacao(inicio, estado, False, "timeout")
-                message = (
-                    MENSAGEM_TIMEOUT_MINUTAS_ANALISE
-                    if operacao == "minutas_analise"
-                    else "O serviço de IA não respondeu a tempo."
-                )
-                raise GeminiErro(message) from None
-            if (
-                attempt < MAX_ATTEMPTS
-                and not estado["via_503"]
-                and not estado["via_timeout"]
-            ):
+                raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
+            if attempt < MAX_ATTEMPTS and not estado["via_503"]:
                 LOGGER.warning(
                     "Tentativa %s falhou sem conexão. Nova tentativa será realizada.",
                     attempt,
@@ -1463,7 +1368,7 @@ def _erro_servidor(code):
 def _deve_repetir(code, status, attempt, estado):
     if not _repetir_http(code, status):
         return False
-    if estado["via_503"] or estado["via_timeout"]:
+    if estado["via_503"]:
         return False
     if _erro_servidor(code) and not estado["via_quota"]:
         return attempt < SERVER_ATTEMPTS
@@ -1478,30 +1383,6 @@ def _fallback_503(code, modelo, estado):
         and modelo != estado["modelo_reserva"]
         and not estado["via_quota"]
         and not estado["via_503"]
-    )
-
-
-def _fallback_timeout_minutas(operacao, modelo, estado):
-    return (
-        operacao == "minutas_analise"
-        and modelo == estado["modelo_principal"]
-        and bool(estado["modelo_reserva"])
-        and modelo != estado["modelo_reserva"]
-        and not estado["fallback"]
-    )
-
-
-def _operation_timeout_seconds(operacao, estado):
-    if (
-        operacao != "minutas_analise"
-        or not estado["modelo_reserva"]
-        or estado["modelo_principal"] == estado["modelo_reserva"]
-    ):
-        return TIMEOUT_SECONDS
-    return (
-        MINUTAS_ANALYSIS_FALLBACK_TIMEOUT_SECONDS
-        if estado["via_timeout"]
-        else MINUTAS_ANALYSIS_PRIMARY_TIMEOUT_SECONDS
     )
 
 
@@ -1590,8 +1471,7 @@ def _retry_after_seconds(exc):
 
 
 def _post(request):
-    timeout = getattr(request, "_mpc_timeout_seconds", TIMEOUT_SECONDS)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
         return response.read(MAX_RESPONSE_BYTES + 1)
 
 
