@@ -13,6 +13,7 @@ from services.minutas_generation import (
     RAG_RECOVERY_VERSION,
     VALIDATION_POLICY_VERSION,
     MinutasGenerationError,
+    _resolved_header_metadata,
     MinutasGenerationService,
     _canonical_process_key,
     _candidate_support_check,
@@ -2078,14 +2079,14 @@ def test_unmatched_sanction_reasoning_is_preserved_without_invented_link():
     )
     rendered = MinutasGenerationService._structure_markdown(normalized)
 
-    assert sanction_text in normalized["fundamentacao_geral"]
-    assert sanction_text not in normalized["topicos_irregularidades"][0]["texto"]
-    assert sanction_text not in normalized["topicos_irregularidades"][1]["texto"]
+    assert sanction_text not in normalized["fundamentacao_geral"]
+    assert sanction_text in normalized["topicos_irregularidades"][0]["texto"]
+    assert sanction_text in normalized["topicos_irregularidades"][1]["texto"]
     assert sanction_text in rendered
+    assert rendered.index(sanction_text) > rendered.index("### ")
     assert "Análise sancionatória" not in rendered
     assert any("Aplique-se multa" in item for item in normalized["pedidos"])
-    assert any("não foi vinculada" in warning for warning in warnings)
-    assert any("sem vínculo único" in warning for warning in warnings)
+    assert any("irregularidades correspondentes" in warning for warning in warnings)
 
 
 def test_device_introduction_is_objective_and_follows_audit_position():
@@ -2231,6 +2232,33 @@ def test_recommendation_item_drops_nested_expedition_wrapper_without_changing_co
     assert "no sentido de que pela expedição" not in recommendations[0].casefold()
     assert "recomendações corretivas" not in recommendations[0].casefold()
 
+    nested = _draft_structure()
+    nested["pedidos"] = [
+        "Proponha-se a regularidade com ressalvas das contas.",
+        (
+            "4. Pela expedição de recomendações à gestão da Prefeitura Municipal "
+            "de Frei Martinho, no sentido de que:\n"
+            "a) 4. Pela expedição de RECOMENDAÇÕES CORRETIVAS à gestão da "
+            "Prefeitura Municipal de Frei Martinho para que:;\n"
+            "b) Adote rigoroso controle contábil dos convênios firmados;\n"
+            "c) Assegure o adimplemento das contribuições previdenciárias."
+        ),
+    ]
+    nested_normalized, _nested_warnings = MinutasGenerationService._normalize_structure(
+        nested, target
+    )
+    nested_item = next(
+        item for item in nested_normalized["pedidos"] if "recomend" in item.casefold()
+    )
+    assert nested_item.startswith("Pela expedição de recomendações")
+    assert "no sentido de que:" in nested_item
+    assert "a) Adote rigoroso controle contábil dos convênios firmados;" in nested_item
+    assert "b) Assegure o adimplemento das contribuições previdenciárias." in nested_item
+    assert "RECOMENDAÇÕES CORRETIVAS" not in nested_item
+    assert "para que:;" not in nested_item
+    assert not re.search(r"^\d+[.)]\s", nested_item, re.MULTILINE)
+    assert "4." not in nested_item
+
 
 def test_ementa_and_device_preliminary_opinion_divergence_is_warned_without_rewriting_merit():
     target = _record("target-taperoa", "TC 01653/26", "0165326")
@@ -2267,6 +2295,46 @@ def test_ementa_and_device_preliminary_opinion_divergence_is_warned_without_rewr
     )
     assert "com ressalvas" in normalized["ementa"].casefold()
     assert "com ressalvas" not in normalized["pedidos"][0].casefold()
+
+
+def test_header_metadata_reads_labeled_responsible_on_collapsed_tce_cover():
+    sources = [
+        {
+            "conteudo": [
+                {
+                    "texto": (
+                        "TRIBUNAL DE CONTAS DO ESTADO DA PARAIBA Processo TC: "
+                        "02659/25 Subcategoria: Prestacao de Contas Anual - PCA "
+                        "Jurisdicionado: Prefeitura Municipal de Frei Martinho "
+                        "Responsável: Sebastião Pinto Dantas Período: 01/01/2024 "
+                        "a 31/12/2024 Exercício: 2024 Relatorio de Auditoria das "
+                        "contas. O Prefeito Joao Ninguem foi citado em precedente."
+                    )
+                }
+            ]
+        }
+    ]
+    metadata = _resolved_header_metadata({"exercicio": 2024}, sources)
+    assert metadata["responsavel"] == "Sebastião Pinto Dantas"
+    assert metadata["origem"] == "Prefeitura Municipal de Frei Martinho"
+
+    gestor_only = _resolved_header_metadata(
+        {},
+        [
+            {
+                "conteudo": [
+                    {
+                        "texto": (
+                            "Jurisdicionado: Prefeitura Municipal de Frei Martinho "
+                            "Gestor: Sebastião Pinto Dantas Período: 01/01/2024 a "
+                            "31/12/2024"
+                        )
+                    }
+                ]
+            }
+        ],
+    )
+    assert gestor_only["responsavel"] == "Sebastião Pinto Dantas"
 
 
 def test_header_metadata_uses_only_unambiguous_target_extractions():

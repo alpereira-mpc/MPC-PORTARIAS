@@ -1,6 +1,7 @@
 from hashlib import sha256
 from io import BytesIO
 from zipfile import ZipFile
+import re
 
 import pytest
 from docx import Document
@@ -339,6 +340,7 @@ def test_docx_preserves_unmatched_sanction_reasoning_without_generic_chapter():
     assert "Aplique-se multa pela infração normativa individualizada." in body_text
     assert "18.1 Receita intraorçamentária" in body_text
     assert "18.2 Certificação dos conselhos" in body_text
+    assert body_text.index(sanction_text) > body_text.index("18.1 Receita intraorçamentária")
 
 
 def test_docx_preserves_formatting_and_groups_recommendations_in_one_item():
@@ -396,6 +398,60 @@ def test_docx_preserves_formatting_and_groups_recommendations_in_one_item():
     assert 'w:val="decimal"' in numbering
     assert 'w:val="lowerLetter"' in numbering
     assert 'w:val="%1)"' in numbering
+
+
+def test_docx_device_uses_automatic_numbering_without_literal_prefixes():
+    structure = _structure()
+    structure["pedidos"] = [
+        "2. 2. Pelo JULGAMENTO das contas com ressalvas.",
+        "3. 3. Pela APLICAÇÃO DE MULTA ao responsável.",
+        (
+            "4. Pela expedição de recomendações à gestão, no sentido de que:\n"
+            "a) 4. Pela expedição de RECOMENDAÇÕES CORRETIVAS para que:;\n"
+            "b) Adote rigoroso controle contábil dos convênios firmados;\n"
+            "c) Assegure o adimplemento das contribuições previdenciárias."
+        ),
+    ]
+    exported = _export(structure=structure)
+    document = Document(BytesIO(exported.content))
+    requests = [
+        paragraph
+        for paragraph in document.paragraphs
+        if paragraph.style.name == "Minuta Pedido"
+    ]
+    alineas = [
+        paragraph
+        for paragraph in document.paragraphs
+        if paragraph.style.name == "Minuta Alínea"
+    ]
+    body = "\n".join(paragraph.text for paragraph in document.paragraphs)
+
+    assert len(requests) >= 3
+    for paragraph in requests:
+        assert paragraph._p.pPr is not None and paragraph._p.pPr.numPr is not None
+        assert not re.match(r"^\s*\d+[.)]\s", paragraph.text)
+        assert "2. 2." not in paragraph.text
+        assert "3. 3." not in paragraph.text
+    assert any("JULGAMENTO das contas" in paragraph.text for paragraph in requests)
+    assert any("APLICAÇÃO DE MULTA" in paragraph.text for paragraph in requests)
+    assert any(
+        paragraph.text.startswith("Pela expedição de recomenda")
+        for paragraph in requests
+    )
+    assert len(alineas) == 2
+    for paragraph in alineas:
+        assert paragraph._p.pPr.numPr is not None
+        assert not re.match(r"^\s*(?:\d+[.)]|[a-z]\s*[).:-])\s", paragraph.text)
+        assert "RECOMENDAÇÕES CORRETIVAS" not in paragraph.text
+        assert "para que" not in paragraph.text.casefold()
+    assert any("Adote rigoroso controle" in paragraph.text for paragraph in alineas)
+    assert any("Assegure o adimplemento" in paragraph.text for paragraph in alineas)
+    assert "Análise sancionatória" not in body
+    assert "art. 37" in body
+    with ZipFile(BytesIO(exported.content)) as package:
+        numbering = package.read("word/numbering.xml").decode("utf-8")
+    assert 'w:val="decimal"' in numbering
+    assert 'w:val="lowerLetter"' in numbering
 
 
 def test_docx_keeps_already_consolidated_recommendation_idempotent():

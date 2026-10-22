@@ -650,6 +650,7 @@ def _capa_tce_responsavel(nome="Sebastião Pinto Dantas"):
         "Subcategoria: Prestacao de Contas Anual - PCA\n"
         "Jurisdicionado: Prefeitura Municipal de Frei Martinho\n"
         f"Responsavel: {nome}\n"
+        "Periodo: 01/01/2024 a 31/12/2024\n"
         "Exercicio: 2024\n"
         "Relatorio de Auditoria das contas do exercicio.\n"
         "O Prefeito Joao Ninguem foi citado em precedente de outro municipio.\n"

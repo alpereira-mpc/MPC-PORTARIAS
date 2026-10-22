@@ -916,7 +916,14 @@ def _inserir_pedidos(document, ancora, proto, modo, pedidos, fallback):
                 continue
             if modo in {"num", "letra"}:
                 text = _PREFIXO_ALINEA.sub("", text, count=1).strip()
-                text = re.sub(r"^\d{1,2}[.)]\s+", "", text).strip()
+                while re.match(r"^(?:\d{1,3}|[a-z])\s*[.)]\s+", text, re.IGNORECASE):
+                    text = re.sub(
+                        r"^(?:\d{1,3}|[a-z])\s*[.)]\s+",
+                        "",
+                        text,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    ).strip()
             if not text:
                 continue
             origem = proto if proto is not None else fallback
@@ -1247,13 +1254,34 @@ def _aplicar_paragrafos(document, target, structure, profile, header_lines):
             lines = [line.strip() for line in request.splitlines() if line.strip()]
             if not lines:
                 continue
-            paragraph = _escrever(document, prototypes["corpo"], lines[0])
+            heading = lines[0]
+            while re.match(r"^(?:\d{1,3}|[a-z])\s*[.)]\s+", heading, re.IGNORECASE):
+                heading = re.sub(
+                    r"^(?:\d{1,3}|[a-z])\s*[.)]\s+",
+                    "",
+                    heading,
+                    count=1,
+                    flags=re.IGNORECASE,
+                ).strip()
+            if not heading:
+                continue
+            paragraph = _escrever(document, prototypes["corpo"], heading)
             _apply_numbering(paragraph, number_id)
             alineas = []
             for line in lines[1:]:
                 match = _ALINEA.match(line)
                 if match:
-                    alineas.append(match.group(1).strip())
+                    body = match.group(1).strip()
+                    while re.match(r"^(?:\d{1,3}|[a-z])\s*[.)]\s+", body, re.IGNORECASE):
+                        body = re.sub(
+                            r"^(?:\d{1,3}|[a-z])\s*[.)]\s+",
+                            "",
+                            body,
+                            count=1,
+                            flags=re.IGNORECASE,
+                        ).strip()
+                    if body:
+                        alineas.append(body)
                     continue
                 _escrever(document, prototypes["corpo"], line)
             if alineas:

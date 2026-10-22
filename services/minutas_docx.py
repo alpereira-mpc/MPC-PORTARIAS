@@ -536,6 +536,14 @@ def _closing(value):
     return str(value or "").strip()
 
 
+def _strip_leading_device_marks(text):
+    current = str(text or "").strip()
+    prefix = re.compile(r"^(?:\d{1,3}|[a-z])\s*[.)]\s+", re.IGNORECASE)
+    while current and prefix.match(current):
+        current = prefix.sub("", current, count=1).strip()
+    return current
+
+
 def _add_requests(document, requests, numbering=None):
     numbering = numbering or {}
     decimal_id = _numbering_definition(
@@ -549,17 +557,22 @@ def _add_requests(document, requests, numbering=None):
         lines = [line.strip() for line in str(request).splitlines() if line.strip()]
         if not lines:
             continue
+        heading = _strip_leading_device_marks(lines[0])
+        if not heading:
+            continue
         paragraph = document.add_paragraph(style="Minuta Pedido")
         _apply_numbering(paragraph, decimal_id)
-        _add_text(paragraph, lines[0])
+        _add_text(paragraph, heading)
         alineas = []
         for line in lines[1:]:
             match = _ALINEA.match(line)
             if not match:
                 paragraph.add_run().add_break()
-                _add_text(paragraph, line)
+                _add_text(paragraph, _strip_leading_device_marks(line))
                 continue
-            alineas.append(match.group(1).strip())
+            body = _strip_leading_device_marks(match.group(1).strip())
+            if body:
+                alineas.append(body)
         if alineas:
             alpha_id = _numbering_definition(
                 document,

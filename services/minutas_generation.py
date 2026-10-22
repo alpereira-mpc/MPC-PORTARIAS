@@ -673,6 +673,7 @@ _HEADER_METADATA_LABELS = {
         "dirigente responsável",
         "dirigente responsavel",
         "ordenador de despesa",
+        "gestor",
     ),
 }
 _HEADER_METADATA_REJECTED = {
@@ -692,7 +693,7 @@ _CADASTRO_BREAK = re.compile(
     r"entidade(?:\s+fiscalizada)?|exerc[ií]cio(?:\s+das\s+contas|\s+financeiro)?|"
     r"auditor(?:es)?(?:\s+de\s+contas)?|respons[aá]vel(?:es)?|"
     r"processo(?:\s+tc)?|jurisdicionado|subcategoria|relator(?:es)?|"
-    r"origem|assunto|[oó]rg[aã]o)\s*:)"
+    r"per[ií]odo(?:\s+de\s+gest[aã]o)?|gestor|origem|assunto|[oó]rg[aã]o)\s*:)"
 )
 _RESPONSIBLE_NARRATIVE_PATTERNS = (
     re.compile(
@@ -718,6 +719,19 @@ def restaurar_linhas_cadastrais(text):
 
 def _header_metadata_value(field, value):
     candidate = re.sub(r"\s+", " ", str(value or "")).strip(" .;:-")
+    if field == "responsavel":
+        candidate = re.sub(
+            r"\s+(?:per[ií]odo|exerc[ií]cio|cpf|cnpj)\b.*$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        ).strip(" .;:-")
+        candidate = re.sub(
+            r"\s+\d{2}/\d{2}/\d{4}(?:\s*(?:a|at[eé]|[-–])\s*\d{2}/\d{2}/\d{4})?\s*$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        ).strip(" .;:-")
     normalized = _plain(candidate)
     if (
         not candidate
@@ -815,7 +829,7 @@ def _recommendation_clauses(request):
     clauses = []
     for line in str(request or "").splitlines():
         if re.search(
-            r"\bno\s+sentido\s+de(?:\s+que)?\s*:?\s*$",
+            r"\b(?:no\s+sentido\s+de(?:\s+que)?|para\s+que)\s*[:;]*\s*$",
             line,
             re.IGNORECASE,
         ):
@@ -863,19 +877,50 @@ def _recommendation_clauses(request):
 
 
 _RECOMMENDATION_WRAPPER_RE = re.compile(
-    r"^\s*(?:pela\s+)?expedi[çc][aã]o\s+de\s+"
+    r"^\s*(?:\d{1,3}\s*[.)]\s+)*(?:pela\s+)?expedi[çc][aã]o\s+de\s+"
     r"recomenda(?:[çc][aã]o|[çc][oõ]es)(?:\s+corretivas?)?\b"
-    r"(?:\s+(?:à|ao|a)\s+[^,]+)?\s*"
-    r"(?:,\s*)?(?:no\s+sentido\s+de(?:\s+que)?\s*)?:?\s*",
+    r"(?:\s+(?:à|ao|a)\s+[^,;:]+)?"
+    r"(?:\s*\([^)]*\))?\s*"
+    r"(?:,\s*)?(?:no\s+sentido\s+de(?:\s+que)?|para\s+que)?\s*:?\s*",
     re.IGNORECASE,
 )
 
 
 def _bare_recommendation_clause(clause):
-    text = re.sub(r"^\s*recomendar\s+", "", str(clause or ""), flags=re.IGNORECASE)
+    text = re.sub(r"^(?:\d{1,3}\s*[.)]\s+)+", "", str(clause or "")).strip()
+    text = re.sub(r"^\s*recomendar\s+", "", text, flags=re.IGNORECASE)
     text = _RECOMMENDATION_WRAPPER_RE.sub("", text, count=1)
     text = re.sub(r"^\s*recomendar\s+", "", text, flags=re.IGNORECASE)
-    return text.strip(" ;.")
+    return text.strip(" ;.:")
+
+
+_DEVICE_ITEM_PREFIX = re.compile(r"^(?:\d{1,3}|[a-z])\s*[.)]\s+", re.IGNORECASE)
+
+
+def _strip_leading_device_marks(text):
+    current = str(text or "").strip()
+    while current and _DEVICE_ITEM_PREFIX.match(current):
+        current = _DEVICE_ITEM_PREFIX.sub("", current, count=1).strip()
+    return current
+
+
+def _without_device_numbering(request):
+    lines = []
+    for index, line in enumerate(str(request or "").splitlines()):
+        text = line.strip()
+        if not text:
+            continue
+        alinea = re.match(r"^([a-z])\s*[).:-]\s*(.+)$", text, re.IGNORECASE)
+        if index and alinea:
+            body = _strip_leading_device_marks(alinea.group(2))
+            if not body:
+                continue
+            lines.append(f"{alinea.group(1).lower()}) {body}")
+            continue
+        text = _strip_leading_device_marks(text)
+        if text:
+            lines.append(text)
+    return "\n".join(lines)
 
 
 def _format_recommendation_item(clauses, origin=""):
@@ -1133,18 +1178,25 @@ def _integrar_sancoes(structure):
         )
         return structure, warnings
 
-    already_visible = _plain(text) in _visible_draft_plain(structure)
-    if not already_visible:
-        _append_visible_paragraph(
-            structure,
-            text,
-            paragrafos_key="fundamentacao_geral_paragrafos",
-            texto_key="fundamentacao_geral",
+    overlapping = [
+        topic
+        for topic in topics
+        if ids & _topic_irregularity_ids(topic)
+    ]
+    if overlapping:
+        for topic in overlapping:
+            _append_visible_paragraph(
+                topic, text, paragrafos_key="paragrafos", texto_key="texto"
+            )
+        warnings.append(
+            "A fundamentação sancionatória foi integrada aos tópicos das "
+            "irregularidades correspondentes, sem constituir capítulo autônomo."
         )
+        return structure, warnings
+
     warnings.append(
-        "A fundamentação sancionatória não foi vinculada a um único tópico de "
-        "irregularidade; o texto foi preservado para revisão humana, sem "
-        "individualizar penalidade."
+        "A fundamentação sancionatória não foi vinculada às irregularidades "
+        "correspondentes; revise a individualização antes da assinatura."
     )
     requests = [
         str(item)
@@ -3736,6 +3788,11 @@ class MinutasGenerationService:
                     "classificação das contas."
                 ]
             normalized["pedidos"] = _order_rpps_requests(safe_requests)
+        normalized["pedidos"] = [
+            cleaned
+            for item in normalized.get("pedidos", ())
+            if (cleaned := _without_device_numbering(item))
+        ]
         return normalized, warnings
 
     @staticmethod
