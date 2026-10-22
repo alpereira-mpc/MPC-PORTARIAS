@@ -629,31 +629,49 @@ def test_sugerir_metadados_instrucao_consensus_conflict_and_absence():
     assert absent["exercicio"] is None
 
 
-def test_instrucao_reconstitui_responsavel_do_cabecalho_colapsado_pelo_pdf():
-    document = _doc(
-        "frei.pdf",
+def _texto_docx(content):
+    from docx import Document
+    from docx.oxml.ns import qn
+
+    document = Document(BytesIO(content))
+    partes = ["\n".join(paragraph.text for paragraph in document.paragraphs)]
+    for section in document.sections:
+        for part in (section.header, section.footer):
+            partes.append(
+                "".join(node.text or "" for node in part._element.iter(qn("w:t")))
+            )
+    return "\n".join(partes)
+
+
+def _capa_tce_responsavel(nome="Sebastião Pinto Dantas"):
+    return (
         "TRIBUNAL DE CONTAS DO ESTADO DA PARAIBA\n"
         "Processo TC: 02659/25\n"
         "Subcategoria: Prestacao de Contas Anual - PCA\n"
         "Jurisdicionado: Prefeitura Municipal de Frei Martinho\n"
-        "Responsavel: Sebastiao Pinto Dantas\n"
+        f"Responsavel: {nome}\n"
         "Exercicio: 2024\n"
         "Relatorio de Auditoria das contas do exercicio.\n"
         "O Prefeito Joao Ninguem foi citado em precedente de outro municipio.\n"
-        "Pagamento sem cobertura documental no instituto de previdencia municipal",
-        "relatorio_inicial",
+        "Pagamento sem cobertura documental no instituto de previdencia municipal"
     )
-    assert "\n" not in document["conteudo"][0]["texto"]
-    assert "Responsavel: Sebastiao Pinto Dantas" in document["conteudo"][0]["texto"]
 
-    def analyze(context):
+
+def _fluxo_instrucao_pca(document, library=None):
+    from services.minutas_specialties import PREFEITURAS, SHARED_INSTRUCTION_MOTOR
+
+    library = library or _profiled_library(
+        PREFEITURAS, motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
+    )
+
+    def analyze(_context):
         return {"analise": _analysis(document)}
 
     def generate(_context):
         return {"estrutura": _structure()}
 
     service = MinutasGenerationService(
-        _library(), analyze=analyze, generate=generate, search=lambda *_a, **_k: {"resultados": []},
+        library, analyze=analyze, generate=generate, search=lambda *_a, **_k: {"resultados": []},
     )
     analyzed = service.analyze_instruction(
         [document],
@@ -669,13 +687,105 @@ def test_instrucao_reconstitui_responsavel_do_cabecalho_colapsado_pelo_pdf():
         exercicio=2024,
         origem="Prefeitura Municipal de Frei Martinho",
     )
-    assert generated["metadados_cabecalho"]["responsavel"] == "Sebastiao Pinto Dantas"
+    return library, analyzed, generated
+
+
+def test_instrucao_reconstitui_responsavel_do_cabecalho_colapsado_pelo_pdf():
+    document = _doc("frei.pdf", _capa_tce_responsavel(), "relatorio_inicial")
+    assert "\n" not in document["conteudo"][0]["texto"]
+    assert "Responsavel: Sebastião Pinto Dantas" in document["conteudo"][0]["texto"]
+
+    library, analyzed, generated = _fluxo_instrucao_pca(document)
+    assert generated["metadados_cabecalho"]["responsavel"] == "Sebastião Pinto Dantas"
     assert generated["metadados_cabecalho"]["origem"] == "Prefeitura Municipal de Frei Martinho"
-    assert "Responsável: Sebastiao Pinto Dantas" in generated["texto"]
+    assert "Responsável: Sebastião Pinto Dantas" in generated["texto"]
     assert "Não informado" not in generated["estrutura"]["identificacao_processual"]
-    assert "Municipal Sebastiao" not in generated["texto"]
+    assert "Municipal Sebastião" not in generated["texto"]
     assert "Joao Ninguem" not in generated["estrutura"]["identificacao_processual"]
-    assert analyzed["metadados_cabecalho"]["responsavel"] == "Sebastiao Pinto Dantas"
+    assert analyzed["metadados_cabecalho"]["responsavel"] == "Sebastião Pinto Dantas"
+    if not ELVIRA_TEMPLATE.is_file():
+        pytest.skip("modelo Word indisponível")
+    word = MinutasDocxService(library, template_path=ELVIRA_TEMPLATE).export_instruction(
+        analyzed, generated, processo="02659/25", exercicio=2024,
+        origem="Prefeitura Municipal de Frei Martinho",
+    )
+    visible = _texto_docx(word.content)
+    assert "Responsável: Sebastião Pinto Dantas" in visible
+    assert "Responsável: Não informado" not in visible
+    assert "Joao Ninguem" not in visible.split("Ementa:", 1)[0]
+
+
+def test_export_instruction_pca_keeps_documental_responsible_after_visual_postprocess(monkeypatch):
+    from docx import Document
+    from services import minutas_modelo_docx
+    from services.minutas_specialties import PREFEITURAS, SHARED_INSTRUCTION_MOTOR
+
+    document = _doc("frei.pdf", _capa_tce_responsavel(), "relatorio_inicial")
+    library = _profiled_library(
+        PREFEITURAS, motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
+    )
+    _library, analyzed, generated = _fluxo_instrucao_pca(document, library)
+    modelo = Document()
+    modelo.add_paragraph("Processo TC Nº 02529/25")
+    modelo.add_paragraph("Origem: Prefeitura Municipal de Joca Claudino")
+    modelo.add_paragraph("Responsável: Rinaldo Cipriano de Sousa")
+    modelo.add_paragraph("Natureza: Prestação de Contas Anuais - exercício 2023")
+    modelo.add_paragraph("Ementa: texto histórico do modelo.")
+    buffer = BytesIO()
+    modelo.save(buffer)
+    monkeypatch.setattr(
+        minutas_modelo_docx,
+        "resolver_para_exportacao",
+        lambda _library: {
+            "content": buffer.getvalue(),
+            "estado": "valido",
+            "id": "modelo-historico",
+            "versao": 1,
+            "sha256": "abc",
+            "procuradora_chave": "elvira samara",
+            "especialidade_id": PREFEITURAS,
+        },
+    )
+    word = MinutasDocxService(library, template_path=ELVIRA_TEMPLATE).export_instruction(
+        analyzed, generated, processo="02659/25", exercicio=2024,
+        origem="Prefeitura Municipal de Frei Martinho",
+    )
+    visible = _texto_docx(word.content)
+    assert "Responsável: Sebastião Pinto Dantas" in visible
+    assert "Responsável: Não informado" not in visible
+    assert "Rinaldo Cipriano de Sousa" not in visible
+    assert "Joca Claudino" not in visible.split("Ementa:", 1)[0]
+
+
+def test_export_instruction_pca_does_not_invent_responsible_when_identification_is_ambiguous():
+    from services.minutas_specialties import PREFEITURAS, SHARED_INSTRUCTION_MOTOR
+
+    document = _doc(
+        "frei.pdf",
+        "TRIBUNAL DE CONTAS DO ESTADO DA PARAIBA\n"
+        "Processo TC: 02659/25\n"
+        "Jurisdicionado: Prefeitura Municipal de Frei Martinho\n"
+        "Responsavel: Sebastião Pinto Dantas\n"
+        "Responsavel: Maria de Sousa Ferreira\n"
+        "Exercicio: 2024\n"
+        "Pagamento sem cobertura documental no instituto de previdencia municipal",
+        "relatorio_inicial",
+    )
+    library = _profiled_library(
+        PREFEITURAS, motor=SHARED_INSTRUCTION_MOTOR, estado="Em testes",
+    )
+    _library, analyzed, generated = _fluxo_instrucao_pca(document, library)
+    assert "responsavel" not in generated["metadados_cabecalho"]
+    if not ELVIRA_TEMPLATE.is_file():
+        pytest.skip("modelo Word indisponível")
+    word = MinutasDocxService(library, template_path=ELVIRA_TEMPLATE).export_instruction(
+        analyzed, generated, processo="02659/25", exercicio=2024,
+        origem="Prefeitura Municipal de Frei Martinho",
+    )
+    visible = _texto_docx(word.content)
+    assert "Responsável: Sebastião Pinto Dantas" not in visible
+    assert "Responsável: Maria de Sousa Ferreira" not in visible
+    assert "Responsável: Não informado" in visible
 
 
 def test_generator_tab_uses_instruction_flow_without_historical_mode(monkeypatch):

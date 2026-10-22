@@ -1048,6 +1048,7 @@ class MinutasDocxService:
                 (generated.get("metadados_cabecalho") or {}).get("periodo_fatos") or ""
             )
         profile, visual_base = self._presentation(target)
+        render_target = target
         if recurso:
             from services.minutas_recursos import header_lines, normalize_structure
             structure, _warnings = normalize_structure(
@@ -1079,7 +1080,10 @@ class MinutasDocxService:
             )
             structure = MinutasGenerationService._validate_structure(structure)
             lines = _draft_header_lines(header_target)
-        content, modelo = self._render(target, structure, profile, lines, visual_base)
+            render_target = header_target
+        content, modelo = self._render(
+            render_target, structure, profile, lines, visual_base
+        )
         return MinutaDocx(
             name=_filename(target),
             mime=DOCX_MIME,

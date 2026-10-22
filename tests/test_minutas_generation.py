@@ -2200,6 +2200,75 @@ def test_draft_header_removes_bureaucratic_phrases_and_groups_recommendations():
     assert renormalized["pedidos"] == structure["pedidos"]
 
 
+def test_recommendation_item_drops_nested_expedition_wrapper_without_changing_content():
+    target = _record("target-taperoa", "TC 01653/26", "0165326")
+    target.update(
+        origem="Prefeitura Municipal de Frei Martinho",
+        especialidade_id="elvira.pca.prefeituras",
+        subtipo="Prefeitura",
+    )
+    structure = _draft_structure()
+    structure["pedidos"] = [
+        "Proponha-se a regularidade com ressalvas das contas.",
+        (
+            "Pela expedição de recomendação à gestão da Prefeitura Municipal de "
+            "Frei Martinho, no sentido de que pela expedição de recomendações "
+            "corretivas documente as providências adotadas."
+        ),
+    ]
+
+    normalized, _warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+    recommendations = [
+        item for item in normalized["pedidos"] if "recomend" in item.casefold()
+    ]
+    assert len(recommendations) == 1
+    assert recommendations[0] == (
+        "Pela expedição de recomendação à gestão da Prefeitura Municipal de "
+        "Frei Martinho, no sentido de que documente as providências adotadas."
+    )
+    assert "no sentido de que pela expedição" not in recommendations[0].casefold()
+    assert "recomendações corretivas" not in recommendations[0].casefold()
+
+
+def test_ementa_and_device_preliminary_opinion_divergence_is_warned_without_rewriting_merit():
+    target = _record("target-taperoa", "TC 01653/26", "0165326")
+    target.update(
+        origem="Prefeitura Municipal de Frei Martinho",
+        especialidade_id="elvira.pca.prefeituras",
+        subtipo="Prefeitura",
+        exercicio=2024,
+    )
+    structure = _draft_structure()
+    structure["ementa"] = (
+        "PRESTAÇÃO DE CONTAS ANUAIS. PARECER PRÉVIO FAVORÁVEL À APROVAÇÃO DAS "
+        "CONTAS DE GOVERNO, COM RESSALVAS."
+    )
+    structure["pedidos"] = [
+        "Proponha-se a emissão de parecer favorável sobre as contas de governo."
+    ]
+    normalized, _warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+    assert "com ressalvas" in normalized["ementa"].casefold()
+    assert normalized["pedidos"][0] == (
+        "Pela emissão de parecer prévio favorável à aprovação das contas de governo "
+        "de Prefeitura Municipal de Frei Martinho, relativas ao exercício de 2024."
+    )
+    warnings = MinutasGenerationService._quality_warnings(
+        normalized,
+        {"irregularidades": []},
+        {"documentos_processo_alvo": [], "processo_alvo": {"numero": "02659/25"}},
+    )
+    assert any(
+        "ementa" in warning.casefold() and "parecer prévio" in warning.casefold()
+        for warning in warnings
+    )
+    assert "com ressalvas" in normalized["ementa"].casefold()
+    assert "com ressalvas" not in normalized["pedidos"][0].casefold()
+
+
 def test_header_metadata_uses_only_unambiguous_target_extractions():
     target, history, other, rows = _scenario()
     target_source = next(

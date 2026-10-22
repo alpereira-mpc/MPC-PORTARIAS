@@ -553,6 +553,23 @@ def _documented_government_scope(context):
     return False
 
 
+def _preliminary_opinion_outcome(text):
+    """Detecta parecer prévio favorável/contrário, com ou sem ressalvas."""
+    source = str(text or "")
+    if not re.search(r"\bparecer\s+pr[eé]vio\b", source, re.IGNORECASE):
+        return ""
+    normalized = _plain(source)
+    if "contrario" in normalized:
+        return "IRREGULARIDADE"
+    if "favoravel" not in normalized:
+        return ""
+    return (
+        "REGULARIDADE_COM_RESSALVAS"
+        if "ressalv" in normalized
+        else "REGULARIDADE"
+    )
+
+
 def _government_opinion_outcome(request):
     """Return an outcome only for an explicit government-accounts opinion."""
     text = str(request or "")
@@ -845,12 +862,27 @@ def _recommendation_clauses(request):
     return clauses
 
 
+_RECOMMENDATION_WRAPPER_RE = re.compile(
+    r"^\s*(?:pela\s+)?expedi[çc][aã]o\s+de\s+"
+    r"recomenda(?:[çc][aã]o|[çc][oõ]es)(?:\s+corretivas?)?\b"
+    r"(?:\s+(?:à|ao|a)\s+[^,]+)?\s*"
+    r"(?:,\s*)?(?:no\s+sentido\s+de(?:\s+que)?\s*)?:?\s*",
+    re.IGNORECASE,
+)
+
+
+def _bare_recommendation_clause(clause):
+    text = re.sub(r"^\s*recomendar\s+", "", str(clause or ""), flags=re.IGNORECASE)
+    text = _RECOMMENDATION_WRAPPER_RE.sub("", text, count=1)
+    text = re.sub(r"^\s*recomendar\s+", "", text, flags=re.IGNORECASE)
+    return text.strip(" ;.")
+
+
 def _format_recommendation_item(clauses, origin=""):
     cleaned = []
     seen = set()
     for clause in clauses:
-        text = re.sub(r"^\s*recomendar\s+", "", str(clause or ""), flags=re.IGNORECASE)
-        text = text.strip(" ;.")
+        text = _bare_recommendation_clause(clause)
         key = _normalized_support(text)
         if not key or key in seen:
             continue
@@ -4100,6 +4132,17 @@ class MinutasGenerationService:
             warnings.append(
                 "Possível inconsistência entre a ementa, a fundamentação e a conclusão "
                 "quanto ao resultado."
+            )
+        ementa_opinion = _preliminary_opinion_outcome(structure.get("ementa"))
+        device_opinions = {
+            outcome
+            for item in structure.get("pedidos") or ()
+            if (outcome := _preliminary_opinion_outcome(item))
+        }
+        if ementa_opinion and device_opinions and ementa_opinion not in device_opinions:
+            warnings.append(
+                "Possível inconsistência entre a ementa e o dispositivo quanto ao "
+                "parecer prévio; revise a conclusão sem alterar automaticamente o mérito."
             )
         return warnings
 
