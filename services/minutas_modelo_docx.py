@@ -211,15 +211,16 @@ _MESES = (
 
 
 def _eh_data(text):
-    plain = str(text or "").casefold()
-    return any(month in plain for month in _MESES)
+    """Linha curta de data. Menção a um mês no corpo não serve de protótipo."""
+    plain = " ".join(str(text or "").split())
+    return bool(plain) and len(plain) <= 140 and _DATA_CURTA.search(plain) is not None
 
 
 def _prototipos(document):
     samples = [
         (paragraph, _paragraph_metrics(paragraph))
         for paragraph in document.paragraphs
-        if str(paragraph.text or "").strip()
+        if str(paragraph.text or "").strip() and not _eh_faixa_paragrafo(paragraph._p)
     ]
     dated = next((item for item, _metrics in samples if _eh_data(item.text)), None)
     if dated is not None:
@@ -371,7 +372,9 @@ def _blocos(structure):
 
 _DATA_CURTA = re.compile(
     r"\d{1,2}\s+de\s+(?:janeiro|fevereiro|março|marco|abril|maio|junho|julho|"
-    r"agosto|setembro|outubro|novembro|dezembro)\s+de\s+\d{4}",
+    r"agosto|setembro|outubro|novembro|dezembro|"
+    r"jan\.|fev\.|mar\.|abr\.|mai\.|jun\.|jul\.|ago\.|set\.|out\.|nov\.|dez\.)"
+    r"\s+de\s+\d{4}",
     re.IGNORECASE,
 )
 _LINHA_PARECER = re.compile(r"^parecer\s*n[.ºo°]?\s*$", re.IGNORECASE)
@@ -481,6 +484,42 @@ def _eh_faixa(table):
     return bool(re.match(r"(parecer|voto|decis[aã]o)\b", text, re.IGNORECASE))
 
 
+def _paragrafo_sombreado(elemento):
+    properties = elemento.find(qn("w:pPr"))
+    if properties is None:
+        return False
+    shade = properties.find(qn("w:shd"))
+    if shade is None:
+        return False
+    fill = str(shade.get(qn("w:fill")) or "").upper()
+    return bool(fill) and fill not in {"AUTO", "FFFFFF", "NONE"}
+
+
+def _eh_faixa_paragrafo(child):
+    """Faixa PARECER desenhada como parágrafo sombreado ou com letras espaçadas."""
+    if child.tag != qn("w:p") or _tem_midia(child):
+        return False
+    plain = _texto(child).strip()
+    if not plain or len(plain) > 40:
+        return False
+    compacto = re.sub(r"[^0-9A-Za-zÀ-ÿ]+", "", plain).casefold()
+    if not compacto.startswith("parecer"):
+        return False
+    if re.search(r"p\s+a\s+r\s+e\s+c\s+e\s+r", plain, re.IGNORECASE):
+        return True
+    if compacto == "parecer" or _paragrafo_sombreado(child):
+        return True
+    return False
+
+
+def _titulo_sombreado(item):
+    return bool(
+        _paragrafo_sombreado(item)
+        and _runs_texto(item)
+        and all(_marca(run, "w:b") for run in _runs_texto(item))
+    )
+
+
 def _paragrafo_data(paragraph):
     text = _texto(paragraph).replace("\u00a0", " ")
     return bool(text) and len(text) <= 140 and not _tem_num(paragraph) and bool(
@@ -489,7 +528,7 @@ def _paragrafo_data(paragraph):
 
 
 def _mapear_regioes(document):
-    """Localiza as regiões de apresentação. Sem tabela estrutural, devolve None."""
+    """Localiza as regiões. Sem tabela, uma faixa PARECER em parágrafo também delimita."""
     children = _filhos(document)
     if not children:
         return None
@@ -502,6 +541,13 @@ def _mapear_regioes(document):
             estruturais.append((index, "ementa", child))
         elif _eh_faixa(child):
             estruturais.append((index, "faixa", child))
+    if not estruturais:
+        for index, child in enumerate(children):
+            if index > limite:
+                break
+            if _eh_faixa_paragrafo(child):
+                estruturais.append((index, "faixa", child))
+                break
     if not estruturais:
         return None
     data = next(
@@ -609,7 +655,10 @@ def _prototipos_regiao(meio, dispositivo, intro):
         and not _tem_num(item)
     ]
     relatorio = next(
-        (item for item in narrativa if len(_texto(item)) >= 80),
+        (
+            item for item in narrativa
+            if len(_texto(item)) >= 80 and not _titulo_sombreado(item)
+        ),
         narrativa[0] if narrativa else None,
     )
     estilo_relatorio = _estilo(relatorio) if relatorio is not None else ""
@@ -627,15 +676,23 @@ def _prototipos_regiao(meio, dispositivo, intro):
             item for item in narrativa
             if _estilo(item) == escolhido and item is not relatorio
         )
-    titulo = next(
-        (
-            item for item in narrativa
-            if len(_texto(item)) <= 140
-            and _runs_texto(item)
-            and all(_marca(run, "w:b") for run in _runs_texto(item))
-        ),
-        None,
-    )
+    candidatos_titulo = [
+        item for item in narrativa
+        if len(_texto(item)) <= 180
+        and _runs_texto(item)
+        and all(_marca(run, "w:b") for run in _runs_texto(item))
+    ]
+    titulo = next((item for item in candidatos_titulo if _paragrafo_sombreado(item)), None)
+    if titulo is None:
+        titulo = next(
+            (
+                item for item in narrativa
+                if _paragrafo_sombreado(item) and 8 < len(_texto(item)) <= 180
+            ),
+            None,
+        )
+    if titulo is None and candidatos_titulo:
+        titulo = candidatos_titulo[0]
     citacao = next(
         (
             item for item in narrativa
@@ -950,7 +1007,7 @@ def _neutralizar_faixa(table):
     text = _texto(table)
     if not re.search(r"\d", text):
         return
-    cleaned = re.sub(r"\s*\d[\d\s./-]*$", "", text).strip() or text
+    cleaned = re.sub(r"(?:\s*[/._-]\s*)?\d[\d\s./_-]*$", "", text).strip() or text
     paragraphs = list(table.iter(qn("w:p")))
     if not paragraphs:
         return
@@ -975,46 +1032,79 @@ def _valor_cabecalho(header_lines, prefixo):
     return ""
 
 
-def _trocar_apos_rotulo(texto, valor):
-    if ":" not in texto:
+_PROXIMO_ROTULO = (
+    r"processo|natureza|exerc[ií]cio|unidades?|jurisdicionad\w*|origem|entidade|"
+    r"respons[aá]vel|gestor"
+)
+
+
+def _trocar_rotulo(texto, rotulo, valor):
+    if not valor:
         return texto
-    rotulo = texto.split(":", 1)[0]
-    return f"{rotulo}: {valor}"
+    novo = re.sub(
+        rf"({rotulo}\s*:\s*)(.*?)(?=(?:{_PROXIMO_ROTULO})\s*:|$)",
+        lambda match: match.group(1) + valor,
+        texto,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        rf"({re.escape(valor)})((?:{_PROXIMO_ROTULO})\s*:)",
+        r"\1 \2",
+        novo,
+        count=1,
+        flags=re.IGNORECASE,
+    )
 
 
 def _atualizar_linha_identificacao(texto, target, header_lines, tem_exercicio):
-    """Troca só o valor da linha. O rótulo e a pontuação permanecem os do modelo."""
-    plain = str(texto or "").strip()
+    """Troca só o valor de um rótulo de identificação. Ementa e citação ficam intactas."""
+    plain = " ".join(str(texto or "").split())
     folded = plain.casefold()
+    if (
+        not plain
+        or len(plain) > 400
+        or folded.startswith("ementa")
+        or not re.match(
+            r"(?:processo|natureza|exerc[ií]cio|unidades?(?:\s+jurisdicionad[oa]s?)?|"
+            r"jurisdicionado|origem|entidade|respons[aá]vel|gestor)\b",
+            folded,
+        )
+    ):
+        return None
     target = target or {}
-    if re.search(r"\bprocesso\b", folded):
+    if re.match(r"processo\b", folded):
         process = _processo_identificacao(target)
         if not process:
             return None
         updated = re.sub(r"\d{2,}\s*/\s*\d{2,}", process, plain, count=1)
         return updated if updated != plain else None
-    if re.search(r"unidade|jurisdicion|origem", folded):
+    novo = plain
+    if re.search(r"jurisdicion|unidade|origem|entidade", folded):
         origin = str(target.get("origem") or "").strip() or _valor_cabecalho(header_lines, "origem")
-        return _trocar_apos_rotulo(plain, origin) if origin else None
-    if re.search(r"exerc[ií]cio", folded) and "natureza" not in folded:
-        exercise = str(target.get("exercicio") or "").strip()
-        return _trocar_apos_rotulo(plain, exercise) if exercise else None
+        novo = _trocar_rotulo(
+            novo,
+            r"(?:unidades?(?:\s+jurisdicionad[oa]s?)?|jurisdicionado|origem|entidade)",
+            origin,
+        )
+    if re.search(r"exerc[ií]cio", folded):
+        novo = _trocar_rotulo(novo, r"exerc[ií]cio", str(target.get("exercicio") or "").strip())
     if re.search(r"respons[aá]vel|gestor", folded):
         responsible = str(target.get("responsavel") or "").strip() or _valor_cabecalho(
             header_lines, "responsável"
         )
-        return _trocar_apos_rotulo(plain, responsible) if responsible else None
-    if "natureza" in folded:
+        novo = _trocar_rotulo(novo, r"(?:respons[aá]vel|gestor)", responsible)
+    if re.search(r"natureza\s*:", folded):
         value = _valor_cabecalho(header_lines, "natureza")
-        if tem_exercicio:
+        if tem_exercicio or re.search(r"exerc[ií]cio\s*:", folded):
             value = re.sub(
                 r"\s*[-–]\s*exerc[ií]cio\b.*$", "", value, flags=re.IGNORECASE,
             ).strip()
-        return _trocar_apos_rotulo(plain, value) if value else plain
-    return None
+        novo = _trocar_rotulo(novo, r"natureza", value)
+    return novo if novo != plain else None
 
 
-def _preencher_identificacao(regioes, header_lines, target):
+def _preencher_identificacao(regioes, header_lines, target, ementa=""):
     linhas = _linhas_cabecalho(header_lines, regioes["faixa"] is not None)
     identificacao = regioes["identificacao"]
     textos = [_texto(paragraph) for paragraph in identificacao]
@@ -1029,6 +1119,27 @@ def _preencher_identificacao(regioes, header_lines, target):
     if identificacao and atualizadas and all(item is not None for item in atualizadas):
         for paragraph, texto in zip(identificacao, atualizadas):
             _substituir_paragrafo(paragraph, texto)
+        return
+    removeu_ementa = False
+    for paragraph, novo in zip(identificacao, atualizadas):
+        if novo:
+            _substituir_paragrafo(paragraph, novo)
+            continue
+        bruto = _texto(paragraph).strip()
+        if bruto.casefold().startswith("ementa"):
+            _remover([paragraph])
+            removeu_ementa = True
+            continue
+        if len(bruto) > 180 and not re.match(
+            rf"(?:{_PROXIMO_ROTULO}|parecer)\b", bruto, re.IGNORECASE,
+        ):
+            texto = re.sub(r"\s+", " ", str(ementa or "")).strip()
+            if texto:
+                _substituir_paragrafo(paragraph, "Ementa: " + texto)
+            else:
+                _remover([paragraph])
+            removeu_ementa = True
+    if any(atualizadas) or removeu_ementa:
         return
     if not linhas:
         return
@@ -1103,7 +1214,9 @@ def _aplicar_regioes(document, regioes, target, structure, profile, header_lines
     _inserir_pecas(
         ancora, [item for item in pecas if item[0] == "encerramento"], copias,
     )
-    _preencher_identificacao(regioes, header_lines, target)
+    _preencher_identificacao(
+        regioes, header_lines, target, structure.get("ementa") or "",
+    )
     if regioes["ementa"] is not None:
         _preencher_ementa(regioes["ementa"], structure.get("ementa") or "")
     if regioes["faixa"] is not None:
@@ -1127,6 +1240,7 @@ def _aplicar_paragrafos(document, target, structure, profile, header_lines):
     prototypes = _prototipos(document)
     if prototypes["corpo"] is None:
         raise MinutasDocxError(MENSAGEM_MODELO_INVALIDO)
+    faixas = [deepcopy(child) for child in _filhos(document) if _eh_faixa_paragrafo(child)]
     _limpar_corpo(document)
     for line in header_lines:
         _escrever(document, prototypes["corpo"], line)
@@ -1171,6 +1285,16 @@ def _aplicar_paragrafos(document, target, structure, profile, header_lines):
         _escrever(document, prototypes["data"], _signature_date(target, profile))
     _escrever(document, prototypes["assinatura"], profile["nome"])
     _escrever(document, prototypes["cargo"], profile["cargo"])
+    if faixas:
+        ancora = next(
+            (item for item in document.paragraphs if item.text.strip().casefold().startswith("ementa")),
+            None,
+        )
+        if ancora is None and document.paragraphs:
+            ancora = document.paragraphs[0]
+        if ancora is not None:
+            for faixa in reversed(faixas):
+                ancora._p.addnext(faixa)
 
 
 def renderizar(content, target, structure, profile, header_lines):

@@ -870,14 +870,44 @@ class MinutasDocxService:
 
         modelo = resolver_para_exportacao(self.library)
         if modelo:
-            return renderizar(
-                modelo["content"], target, structure, profile, lines,
-            ), metadados_publicos(modelo)
-        if self.template_path:
-            profile["template"] = self.template_path
-        return _build_docx(
-            target, structure, profile, lines, self._merged_visual(visual_base),
-        ), None
+            content = renderizar(modelo["content"], target, structure, profile, lines)
+            origem_modelo = True
+            metadados = metadados_publicos(modelo)
+        else:
+            if self.template_path:
+                profile["template"] = self.template_path
+            content = _build_docx(
+                target, structure, profile, lines, self._merged_visual(visual_base),
+            )
+            origem_modelo = False
+            metadados = None
+        return self._complementar_pca(
+            content, structure, origem_modelo, target, profile,
+        ), metadados
+
+    def _complementar_pca(self, content, structure, origem_modelo, target, profile):
+        """Perfil de PCA de Prefeituras. Qualquer falha devolve o DOCX já gerado."""
+        try:
+            from services.minutas_pca_formato import (
+                complementar_minuta_pca,
+                eh_pca_prefeituras,
+            )
+
+            if not eh_pca_prefeituras(self.library):
+                return content
+            procurador = getattr(self.library, "procurador", None)
+            sigla = getattr(procurador, "sigla", None) or "ESPO"
+            data = _signature_date(target, profile)
+            return complementar_minuta_pca(
+                content,
+                sigla=sigla,
+                structure=structure,
+                origem_modelo=origem_modelo,
+                data_assinatura=data,
+                identificacao=target if isinstance(target, dict) else None,
+            )
+        except Exception:
+            return content
 
     def _active_visual(self):
         if self.template_path is not None:

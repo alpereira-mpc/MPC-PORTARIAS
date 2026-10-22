@@ -7,6 +7,7 @@ data/*
 exports/*
 !exports/.gitkeep
 tmp/
+REFERENCIAS_LOCAIS/
 *.log
 .streamlit/secrets.toml
 gmail_oauth_client.json
