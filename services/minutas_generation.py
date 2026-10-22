@@ -530,6 +530,29 @@ def _is_prefeituras_target(target):
     return str((target or {}).get("especialidade_id") or "") == "elvira.pca.prefeituras"
 
 
+def _documented_government_scope(context):
+    """Detecta competência de governo somente nas peças do processo atual."""
+    if not isinstance(context, dict):
+        return False
+    for source in context.get("documentos_processo_alvo") or ():
+        if not isinstance(source, dict):
+            continue
+        for unit in source.get("conteudo") or ():
+            if not isinstance(unit, dict):
+                continue
+            text = str(unit.get("texto") or "")
+            if re.search(r"\bcontas?\s+de\s+governo\b", text, re.IGNORECASE):
+                return True
+            if re.search(
+                r"\b(?:emiss[aã]o|emitir|compet[eê]ncia)\b.{0,100}"
+                r"\bparecer\s+pr[eé]vio\b",
+                text,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                return True
+    return False
+
+
 def _government_opinion_outcome(request):
     """Return an outcome only for an explicit government-accounts opinion."""
     text = str(request or "")
@@ -980,6 +1003,133 @@ def _sanitize_draft_structure(structure):
         if (cleaned := _without_bureaucratic_instruction(item))
     ]
     return sanitized
+
+
+def _titulo_sancionatorio(title):
+    normalized = re.sub(r"^[\d\W]+", "", _plain(title)).strip()
+    normalized = re.sub(r"^[ivxlcdm]+[.)\-:]\s*", "", normalized)
+    return bool(re.fullmatch(
+        r"(?:(?:da|das|do|dos) )?(?:analise sancionatoria|"
+        r"dosimetria(?: da sancao| das sancoes| da pena)?|"
+        r"aplicacao de (?:penalidades|sancoes|multas)|"
+        r"sancoes(?: e penalidades)?|responsabilizacao e sancoes|penalidades)",
+        normalized,
+    ))
+
+
+def _topic_irregularity_ids(topic):
+    return {
+        str(item)
+        for item in ((topic or {}).get("irregularidades_ids") or [])
+        if str(item).strip()
+    }
+
+
+def _append_visible_paragraph(target, text, *, paragrafos_key, texto_key):
+    paragraphs = list(
+        _paragraph_blocks(target.get(paragrafos_key), target.get(texto_key))
+    )
+    if _plain(text) in _plain(" ".join(paragraphs)):
+        return False
+    paragraphs.append(text)
+    target[paragrafos_key] = paragraphs
+    target[texto_key] = "\n\n".join(paragraphs)
+    return True
+
+
+def _visible_draft_plain(structure):
+    parts = [
+        str(structure.get("fundamentacao_geral") or ""),
+        str(structure.get("conclusao_pedidos") or ""),
+    ]
+    parts.extend(
+        str(item)
+        for item in (structure.get("fundamentacao_geral_paragrafos") or [])
+        if item
+    )
+    for topic in structure.get("topicos_irregularidades") or []:
+        if not isinstance(topic, dict):
+            continue
+        parts.append(str(topic.get("texto") or ""))
+        parts.extend(str(item) for item in (topic.get("paragrafos") or []) if item)
+    return _plain(" ".join(parts))
+
+
+def _integrar_sancoes(structure):
+    """Integra o controle sancionatório ao texto visível, sem capítulo autônomo."""
+    warnings = []
+    topics = [
+        topic
+        for topic in (structure.get("topicos_irregularidades") or [])
+        if isinstance(topic, dict)
+    ]
+    retitled = False
+    for topic in topics:
+        if not _titulo_sancionatorio(topic.get("titulo")):
+            continue
+        ids = sorted(_topic_irregularity_ids(topic))
+        topic["titulo"] = (
+            "Irregularidade " + ", ".join(ids) if ids else "Irregularidade"
+        )
+        retitled = True
+    if retitled:
+        warnings.append(
+            "Título genérico de análise sancionatória foi substituído para não "
+            "constituir capítulo autônomo; revise a individualização da sanção."
+        )
+
+    sanction = structure.get("analise_sancionatoria") or {}
+    if not isinstance(sanction, dict):
+        return structure, warnings
+    text = str(sanction.get("texto") or "").strip()
+    ids = {
+        str(item)
+        for item in (sanction.get("irregularidades_ids") or [])
+        if str(item).strip()
+    }
+    if not text:
+        return structure, warnings
+
+    matches = [
+        topic
+        for topic in topics
+        if ids and ids <= _topic_irregularity_ids(topic)
+    ]
+    if len(matches) == 1:
+        _append_visible_paragraph(
+            matches[0], text, paragrafos_key="paragrafos", texto_key="texto"
+        )
+        return structure, warnings
+
+    already_visible = _plain(text) in _visible_draft_plain(structure)
+    if not already_visible:
+        _append_visible_paragraph(
+            structure,
+            text,
+            paragrafos_key="fundamentacao_geral_paragrafos",
+            texto_key="fundamentacao_geral",
+        )
+    warnings.append(
+        "A fundamentação sancionatória não foi vinculada a um único tópico de "
+        "irregularidade; o texto foi preservado para revisão humana, sem "
+        "individualizar penalidade."
+    )
+    requests = [
+        str(item)
+        for item in (structure.get("pedidos") or [])
+        if str(item).strip()
+    ]
+    positive_multa = any(
+        _MULTA_REQUEST_RE.search(item) and not _NEGATIVE_REQUEST_RE.search(item)
+        for item in requests
+    )
+    if sanction.get("conclusao") == "MULTA_CABIVEL" or positive_multa:
+        warnings.append(
+            "Há pedido ou conclusão de multa sem vínculo único com a "
+            "irregularidade correspondente; revise a fundamentação antes da "
+            "assinatura."
+        )
+    return structure, warnings
 
 
 def _terms(value):
@@ -3315,7 +3465,7 @@ class MinutasGenerationService:
             not isinstance(sanction, dict)
             or sanction.get("conclusao") not in _SANCTION_CONCLUSIONS
             or sanction.get("dano_ao_erario") not in _DAMAGE_STATES
-            or not str(sanction.get("texto") or "").strip()
+            or not isinstance(sanction.get("texto"), str)
             or any(
                 not isinstance(sanction.get(field), list)
                 or any(not str(item or "").strip() for item in sanction[field])
@@ -3401,8 +3551,7 @@ class MinutasGenerationService:
 
     @staticmethod
     def _normalize_structure(structure, target, context=None):
-        normalized = _sanitize_draft_structure(structure)
-        warnings = []
+        normalized, warnings = _integrar_sancoes(_sanitize_draft_structure(structure))
         normalized["identificacao_processual"] = "\n".join(
             _draft_header_lines(target)
         )
@@ -3459,7 +3608,11 @@ class MinutasGenerationService:
                     "Prefeitura; foi preservada uma conclusão por competência "
                     "para revisão jurídica."
                 )
-            if account_requests and not government_requests:
+            if (
+                account_requests
+                and not government_requests
+                and _documented_government_scope(context)
+            ):
                 warnings.append(
                     "PCA de Prefeitura com conclusão apenas de gestão, sem suporte "
                     "documental explícito para parecer prévio sobre contas de governo; "
@@ -3588,10 +3741,6 @@ class MinutasGenerationService:
                     + "\n\n"
                     + topic_text
                 )
-        sanction = structure["analise_sancionatoria"]
-        sections.append(
-            "### Análise sancionatória\n\n" + str(sanction["texto"]).strip()
-        )
         request_texts = [request.strip() for request in structure["pedidos"]]
         request_keys = {_normalized_support(request) for request in request_texts}
         conclusion_lines = []

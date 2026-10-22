@@ -32,6 +32,8 @@ GEMINI_ENDPOINT = _endpoint(GEMINI_MODEL)
 TIMEOUT_SECONDS = 120
 MAX_ATTEMPTS = 3
 SERVER_ATTEMPTS = 4
+PRIMARY_503_ATTEMPTS = 2
+FALLBACK_503_ATTEMPTS = 2
 RETRY_DELAYS_SECONDS = (1, 2)
 SERVER_RETRY_DELAYS_SECONDS = (1, 2, 4)
 JITTER_MAX_SECONDS = 0.25
@@ -53,7 +55,7 @@ MENSAGEM_COTA_DIARIA = (
 )
 MENSAGEM_SOBRECARGA = (
     "O modelo de IA está temporariamente sobrecarregado. "
-    "Tente novamente em alguns minutos."
+    "Os documentos enviados foram preservados; tente analisar de novo em instantes."
 )
 _MODULO_OPERACAO = {
     "laboratorio_resumo": "laboratorio",
@@ -965,7 +967,7 @@ Produza uma verdadeira análise jurídica, sem apenas resumir ou copiar a Audito
 Não invente fatos, documentos, valores, datas, páginas, dispositivos legais, precedentes ou numeração oficial. Não atribua à Auditoria conclusões ausentes. Diferencie irregularidades, defesa, avaliação técnica e proposta de interpretação jurídica. Não transforme recomendações em sanções sem fundamentação. Preserve divergência fundamentada em relação à Auditoria.
 Distinga expressamente, quando cabíveis e apoiados nas fontes, ressalvas, recomendações, multas, imputação de débito e necessidade de complementação instrutória.
 Em PCA de Instituto Previdenciário (RPPS), trate as contas como contas de gestão sujeitas a julgamento pelo Tribunal. O primeiro pedido deve opinar pelo julgamento das contas como regulares, regulares com ressalva ou irregulares, conforme o art. 58 da Lei Complementar Estadual nº 192/2024 e os arts. 8º e 230 do Regimento Interno. Parecer prévio é próprio das contas de governo do Chefe do Poder Executivo, nos termos do art. 2º, I e II, da Lei Complementar Estadual nº 192/2024 e do art. 229 do Regimento Interno. Não use, no dispositivo de PCA de RPPS, "emissão de parecer prévio", "parecer prévio ou julgamento" nem fórmula ambígua equivalente. Não confunda o parecer ministerial, que contém a opinião do MPC, com o parecer prévio emitido pelo Tribunal.
-Preencha analise_sancionatoria em todos os casos, ainda que a conclusão seja pela não proposição de multa ou pela necessidade de revisão humana. Examine somente as irregularidades que permaneceram após a defesa e a análise final da Auditoria. Diferencie infração administrativa ou normativa, irregularidade das contas, dano ao erário comprovado e quantificado, déficit orçamentário ou atuarial, multa sancionatória por infração normativa e multa vinculada a débito efetivamente apurado. Considere a natureza e a gravidade da infração, os fundamentos normativos, a autoria, o nexo de responsabilidade, as circunstâncias do caso, a proporcionalidade e o devido processo legal, à luz dos arts. 98, 99 e 100 da Lei Complementar Estadual nº 192/2024 e dos arts. 292 e 295 do Regimento Interno. A hipótese do art. 100, I, da Lei Complementar Estadual nº 192/2024 exige infração a norma legal ou regulamentar de natureza contábil, financeira, orçamentária, operacional ou patrimonial. Não conclua pela multa automaticamente em razão da irregularidade das contas.
+Use analise_sancionatoria somente como registro estruturado de controle jurídico, nunca como capítulo do parecer. Seu texto deve reproduzir a fundamentação já integrada ao tópico das irregularidades_ids correspondentes; quando não houver questão sancionatória concreta, use texto vazio. Desenvolva responsabilidade, gravidade, consequências e eventual penalidade dentro da irregularidade pertinente. Não gere capítulos genéricos como Análise sancionatória, Dosimetria da sanção ou Aplicação de penalidades, nem importe essa organização de pareceres históricos. Se várias questões exigirem sanções, individualize a fundamentação em cada tópico e deixe texto vazio no registro de controle. Examine somente as irregularidades que permaneceram após a defesa e a análise final da Auditoria. Diferencie infração administrativa ou normativa, irregularidade das contas, dano ao erário comprovado e quantificado, déficit orçamentário ou atuarial, multa sancionatória por infração normativa e multa vinculada a débito efetivamente apurado. Considere a natureza e a gravidade da infração, os fundamentos normativos, a autoria, o nexo de responsabilidade, as circunstâncias do caso, a proporcionalidade e o devido processo legal, à luz dos arts. 98, 99 e 100 da Lei Complementar Estadual nº 192/2024 e dos arts. 292 e 295 do Regimento Interno. A hipótese do art. 100, I, da Lei Complementar Estadual nº 192/2024 exige infração a norma legal ou regulamentar de natureza contábil, financeira, orçamentária, operacional ou patrimonial. Não conclua pela multa automaticamente em razão da irregularidade das contas.
 Se houver fundamento suficiente e responsabilidade pessoal individualizada, use conclusao=MULTA_CABIVEL e inclua pedido autônomo de aplicação de multa depois do pedido de julgamento. Se autoria, nexo ou enquadramento legal permanecerem duvidosos, use conclusao=REVISAO_HUMANA_NECESSARIA, explique a dúvida e não invente responsável nem sanção. Se não houver suporte, use conclusao=MULTA_NAO_CABIVEL e fundamente. O MPC apenas opina; o Tribunal decide e fixa eventual sanção. Não calcule nem proponha valor, percentual, UFR-PB ou quantidade de multas.
 Só use dano_ao_erario=COMPROVADO_E_QUANTIFICADO e só proponha imputação de débito quando as fontes demonstrarem dano efetivo, valor quantificado e atribuição pessoal. Déficit orçamentário ou atuarial não equivale automaticamente a dano imputável. Os arts. 101 da Lei Complementar Estadual nº 192/2024 e 294 do Regimento Interno somente podem ser invocados nessa hipótese. O art. 295, II, do Regimento Interno contém remissão textual problemática ao parágrafo único do art. 62 da Lei Complementar Estadual nº 192/2024; não reproduza essa remissão nem a use como fundamento, sem alterar ou corrigir o texto normativo.
 No dispositivo, ordene, quando cabíveis: julgamento das contas; multa; imputação de débito; determinações e recomendações corretivas; comunicações, remessas ou juntadas. Não insira pedido sem suporte na fundamentação. Identifique o destinatário das determinações e recomendações, separando gestor ou Instituto, Prefeitura e outros órgãos. Não atribua ao gestor previdenciário obrigação exclusiva do Chefe do Executivo nem transfira automaticamente a responsabilidade deste. Distinga determinação de recomendação.
@@ -1131,6 +1133,7 @@ def _executar(
         "fallback": False,
         "via_quota": False,
         "via_503": False,
+        "via_timeout": False,
         "http_status": None,
         "viu_429": False,
         "viu_500": False,
@@ -1166,8 +1169,16 @@ def _executar(
                     len(raw or b""),
                 )
         except TimeoutError:
-            # The call already waited TIMEOUT_SECONDS. Another round could
-            # hold the page for several minutes, so this failure is final.
+            if _reservar_apos_falha(modelo, estado):
+                LOGGER.warning(
+                    "Timeout no modelo principal. Uma tentativa usará o modelo reserva."
+                )
+                LOGGER.warning("Fallback Gemini utilizado: %s.", fallback_model)
+                modelo = fallback_model
+                estado["fallback"] = True
+                estado["via_timeout"] = True
+                attempt = 1
+                continue
             LOGGER.warning("Chamada ao %s expirou.", rotulo)
             _registrar_operacao(inicio, estado, False, "timeout")
             raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
@@ -1232,10 +1243,20 @@ def _executar(
             raise GeminiErro(_mensagem_http(code, status)) from None
         except urllib.error.URLError as exc:
             if isinstance(getattr(exc, "reason", None), TimeoutError):
+                if _reservar_apos_falha(modelo, estado):
+                    LOGGER.warning(
+                        "Timeout no modelo principal. Uma tentativa usará o modelo reserva."
+                    )
+                    LOGGER.warning("Fallback Gemini utilizado: %s.", fallback_model)
+                    modelo = fallback_model
+                    estado["fallback"] = True
+                    estado["via_timeout"] = True
+                    attempt = 1
+                    continue
                 LOGGER.warning("Chamada ao %s expirou.", rotulo)
                 _registrar_operacao(inicio, estado, False, "timeout")
                 raise GeminiErro("O serviço de IA não respondeu a tempo.") from None
-            if attempt < MAX_ATTEMPTS and not estado["via_503"]:
+            if attempt < MAX_ATTEMPTS and not estado["via_503"] and not estado["via_timeout"]:
                 LOGGER.warning(
                     "Tentativa %s falhou sem conexão. Nova tentativa será realizada.",
                     attempt,
@@ -1368,6 +1389,13 @@ def _erro_servidor(code):
 def _deve_repetir(code, status, attempt, estado):
     if not _repetir_http(code, status):
         return False
+    if estado["via_timeout"]:
+        return False
+    if code == 503 or status == "UNAVAILABLE":
+        if estado["via_quota"]:
+            return attempt < MAX_ATTEMPTS
+        limite = FALLBACK_503_ATTEMPTS if estado["via_503"] else PRIMARY_503_ATTEMPTS
+        return attempt < limite
     if estado["via_503"]:
         return False
     if _erro_servidor(code) and not estado["via_quota"]:
@@ -1375,15 +1403,19 @@ def _deve_repetir(code, status, attempt, estado):
     return attempt < MAX_ATTEMPTS
 
 
-def _fallback_503(code, modelo, estado):
+def _reservar_apos_falha(modelo, estado):
     return (
-        code == 503
-        and modelo == estado["modelo_principal"]
+        modelo == estado["modelo_principal"]
         and bool(estado["modelo_reserva"])
         and modelo != estado["modelo_reserva"]
         and not estado["via_quota"]
         and not estado["via_503"]
+        and not estado["via_timeout"]
     )
+
+
+def _fallback_503(code, modelo, estado):
+    return code == 503 and _reservar_apos_falha(modelo, estado)
 
 
 def _categoria_http(code, cota_diaria):

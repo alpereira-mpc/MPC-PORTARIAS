@@ -75,47 +75,40 @@ def test_503_succeeds_on_the_first_retry(monkeypatch):
     assert GEMINI_FALLBACK_MODEL not in "".join(calls)
 
 
-def test_two_503_then_success(monkeypatch):
+def test_two_503_then_success_on_reserve(monkeypatch):
     calls, sleeps = _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 2))
-    assert resumir_documento_pdf(PDF) == "Objeto: exemplo."
-    assert len(calls) == 3
-    assert sleeps == [1, 2]
-    assert all(_primary(url) for url in calls)
-
-
-def test_three_503_then_success_on_the_fourth_attempt(monkeypatch):
-    calls, sleeps = _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 3))
-    assert resumir_documento_pdf(PDF) == "Objeto: exemplo."
-    assert len(calls) == 4
-    assert sleeps == [1, 2, 4]
-    assert all(_primary(url) for url in calls)
-
-
-def test_four_503_then_success_on_the_single_reserve_call(monkeypatch):
-    calls, sleeps = _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 4))
     summary = resumir_documento_pdf(PDF)
     assert summary == "Objeto: exemplo."
     assert summary.modelo == GEMINI_FALLBACK_MODEL
-    assert calls == [ai_service.GEMINI_ENDPOINT] * 4 + [RESERVE]
-    assert sleeps == [1, 2, 4]
+    assert calls == [ai_service.GEMINI_ENDPOINT, ai_service.GEMINI_ENDPOINT, RESERVE]
+    assert sleeps == [1]
 
 
-def test_four_503_and_reserve_503_stop(monkeypatch):
+def test_three_503_then_success_on_the_second_reserve_call(monkeypatch):
+    calls, sleeps = _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 3))
+    summary = resumir_documento_pdf(PDF)
+    assert summary == "Objeto: exemplo."
+    assert summary.modelo == GEMINI_FALLBACK_MODEL
+    assert calls == [ai_service.GEMINI_ENDPOINT] * 2 + [RESERVE, RESERVE]
+    assert sleeps == [1, 1]
+
+
+def test_persistent_503_stops_after_two_primary_and_two_reserve_calls(monkeypatch):
     calls, sleeps = _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 9))
     with pytest.raises(GeminiErro, match="sobrecarregado"):
         resumir_documento_pdf(PDF)
-    assert calls == [ai_service.GEMINI_ENDPOINT] * 4 + [RESERVE]
-    assert sleeps == [1, 2, 4]
-    assert calls.count(RESERVE) == 1
+    assert calls == [ai_service.GEMINI_ENDPOINT] * 2 + [RESERVE, RESERVE]
+    assert sleeps == [1, 1]
+    assert calls.count(RESERVE) == 2
 
 
-def test_reserve_is_not_called_again_and_does_not_return_to_the_primary(monkeypatch):
+def test_reserve_does_not_return_to_the_primary(monkeypatch):
     calls, _sleeps = _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 9))
     with pytest.raises(GeminiErro):
         resumir_documento_pdf(PDF)
     assert calls[-1] == RESERVE
-    assert calls.count(RESERVE) == 1
-    assert GEMINI_MODEL not in calls[-1] or GEMINI_FALLBACK_MODEL in calls[-1]
+    assert calls.count(RESERVE) == 2
+    assert all(GEMINI_FALLBACK_MODEL in url for url in calls[-2:])
 
 
 def test_400_does_not_retry_or_fall_back(monkeypatch):
@@ -196,8 +189,8 @@ def test_jitter_zero_keeps_the_backoff_schedule(monkeypatch):
     _key(monkeypatch)
     with pytest.raises(GeminiErro):
         resumir_documento_pdf(PDF)
-    assert sleeps == [1, 2, 4]
-    assert len(calls) == 5
+    assert sleeps == [1, 1]
+    assert len(calls) == 4
 
 
 def test_telemetry_records_first_try_retry_fallback_and_final_failure(
@@ -210,7 +203,7 @@ def test_telemetry_records_first_try_retry_fallback_and_final_failure(
     _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 1))
     resumir_documento_pdf(PDF)
 
-    _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 4))
+    _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 2))
     resumir_documento_pdf(PDF)
 
     _install(monkeypatch, _fail_times(503, "UNAVAILABLE", 9))
@@ -227,7 +220,7 @@ def test_telemetry_records_first_try_retry_fallback_and_final_failure(
     assert rows[1]["retry"] == 1
     assert rows[1]["viu_503"] == 1
     assert rows[1]["fallback"] == 0
-    assert rows[2]["tentativas"] == 5
+    assert rows[2]["tentativas"] == 3
     assert rows[2]["fallback"] == 1
     assert rows[2]["modelo_final"] == GEMINI_FALLBACK_MODEL
     assert rows[3]["sucesso"] == 0
@@ -334,6 +327,28 @@ def test_telemetry_schema_failure_does_not_block_initialization(tmp_path, monkey
     with store.connection(read_only=True) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert version == 2
+
+
+def test_timeout_on_primary_uses_the_reserve_once(monkeypatch):
+    def post(request, index):
+        if _primary(request.full_url):
+            raise TimeoutError()
+        return _summary()
+
+    calls, sleeps = _install(monkeypatch, post)
+    summary = resumir_documento_pdf(PDF)
+    assert summary == "Objeto: exemplo."
+    assert summary.modelo == GEMINI_FALLBACK_MODEL
+    assert calls == [ai_service.GEMINI_ENDPOINT, RESERVE]
+    assert sleeps == []
+
+
+def test_timeout_on_reserve_is_final(monkeypatch):
+    calls, sleeps = _install(monkeypatch, lambda request, index: (_ for _ in ()).throw(TimeoutError()))
+    with pytest.raises(GeminiErro, match="não respondeu a tempo"):
+        resumir_documento_pdf(PDF)
+    assert calls == [ai_service.GEMINI_ENDPOINT, RESERVE]
+    assert sleeps == []
 
 
 def test_500_retries_four_times_without_the_reserve(monkeypatch):

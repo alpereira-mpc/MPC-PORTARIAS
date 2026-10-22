@@ -1991,6 +1991,103 @@ def test_structured_paragraphs_are_used_without_breaking_legacy_structures():
     assert MinutasGenerationService._validate_structure(_draft_structure())
 
 
+def test_sanction_control_merges_into_matching_topic_without_autonomous_chapter():
+    target = _record("target-taperoa", "TC 01653/26", "0165326")
+    structure = _draft_structure()
+    sanction_text = structure["analise_sancionatoria"]["texto"]
+
+    normalized, _warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+    rendered = MinutasGenerationService._structure_markdown(normalized)
+
+    assert "Análise sancionatória" not in rendered
+    assert "### Análise sancionatória" not in rendered
+    assert sanction_text in rendered
+    assert sanction_text in normalized["topicos_irregularidades"][0]["texto"]
+    assert sanction_text in normalized["topicos_irregularidades"][0]["paragrafos"]
+    assert not any("não foi vinculada" in warning for warning in _warnings)
+
+    empty = _draft_structure()
+    empty["analise_sancionatoria"]["texto"] = ""
+    validated = MinutasGenerationService._validate_structure(empty)
+    empty_rendered = MinutasGenerationService._structure_markdown(validated)
+    assert validated["analise_sancionatoria"]["texto"] == ""
+    assert "Análise sancionatória" not in empty_rendered
+
+
+def test_generic_sanction_topic_title_is_replaced_and_content_is_kept():
+    target = _record("target-taperoa", "TC 01653/26", "0165326")
+    structure = _draft_structure()
+    topic_text = structure["topicos_irregularidades"][0]["texto"]
+    structure["topicos_irregularidades"][0]["titulo"] = "Análise sancionatória"
+
+    normalized, warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+    rendered = MinutasGenerationService._structure_markdown(normalized)
+
+    assert normalized["topicos_irregularidades"][0]["titulo"] == "Irregularidade IRR-1"
+    assert "Análise sancionatória" not in rendered
+    assert topic_text in rendered
+    assert any("capítulo autônomo" in warning for warning in warnings)
+
+
+def test_unmatched_sanction_reasoning_is_preserved_without_invented_link():
+    target = _record("target-taperoa", "TC 01653/26", "0165326")
+    structure = _draft_structure(ids=("18.1", "18.2"))
+    first, second = structure["topicos_irregularidades"][0], {
+        "titulo": "18.2 Certificação dos conselhos",
+        "irregularidades_ids": ["18.2"],
+        "avaliacoes_irregularidades": [
+            {
+                "irregularidade_id": "18.2",
+                "tratamento_ministerial_defesa": "MANTIDA_REJEICAO",
+                "fundamentos_divergencia": [],
+                "estado_saneamento": "ALEGADO_NAO_COMPROVADO",
+                "fontes_saneamento": [],
+            }
+        ],
+        "texto": "A certificação dos conselhos permanece controversa na instrução.",
+    }
+    first["irregularidades_ids"] = ["18.1"]
+    first["avaliacoes_irregularidades"] = [
+        item
+        for item in first["avaliacoes_irregularidades"]
+        if item["irregularidade_id"] == "18.1"
+    ]
+    structure["topicos_irregularidades"] = [first, second]
+    sanction_text = (
+        "A multa do art. 100 da LC nº 192/2024 depende de autoria e nexo "
+        "individualizados em cada irregularidade."
+    )
+    structure["analise_sancionatoria"].update(
+        conclusao="MULTA_CABIVEL",
+        irregularidades_ids=["18.1", "18.2"],
+        fundamentos_legais=["Art. 100, I, da LC nº 192/2024"],
+        responsaveis=["Gestor individualizado na fundamentação"],
+        texto=sanction_text,
+    )
+    structure["pedidos"] = [
+        "Proponha-se a irregularidade das contas submetidas a julgamento.",
+        "Aplique-se multa pela infração normativa individualizada.",
+    ]
+
+    normalized, warnings = MinutasGenerationService._normalize_structure(
+        structure, target
+    )
+    rendered = MinutasGenerationService._structure_markdown(normalized)
+
+    assert sanction_text in normalized["fundamentacao_geral"]
+    assert sanction_text not in normalized["topicos_irregularidades"][0]["texto"]
+    assert sanction_text not in normalized["topicos_irregularidades"][1]["texto"]
+    assert sanction_text in rendered
+    assert "Análise sancionatória" not in rendered
+    assert any("Aplique-se multa" in item for item in normalized["pedidos"])
+    assert any("não foi vinculada" in warning for warning in warnings)
+    assert any("sem vínculo único" in warning for warning in warnings)
+
+
 def test_device_introduction_is_objective_and_follows_audit_position():
     target = _record("target-taperoa", "TC 01653/26", "0165326")
     harmony, _warnings = MinutasGenerationService._normalize_structure(
@@ -2455,7 +2552,26 @@ def test_prefectures_management_only_does_not_invent_government_opinion():
 
     assert normalized["pedidos"] == structure["pedidos"]
     assert all("parecer prévio" not in item.casefold() for item in normalized["pedidos"])
-    assert any("apenas de gestão" in warning for warning in warnings)
+    assert not any("apenas de gestão" in warning for warning in warnings)
+
+    documented = {
+        "documentos_processo_alvo": [
+            {
+                "conteudo": [
+                    {
+                        "texto": (
+                            "Compete emitir parecer prévio sobre as contas de governo "
+                            "do Chefe do Poder Executivo."
+                        )
+                    }
+                ]
+            }
+        ]
+    }
+    _normalized, documented_warnings = MinutasGenerationService._normalize_structure(
+        structure, target, documented
+    )
+    assert any("apenas de gestão" in warning for warning in documented_warnings)
 
 
 def test_city_pca_keeps_only_one_conclusion_for_each_documented_competence():
@@ -2537,7 +2653,8 @@ def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
     assert "reúna todas as recomendações em um único item" in prompt
     assert "em harmonia com o entendimento do Órgão Técnico" in prompt
     assert "expedição de recomendação no sentido de Recomendar" in prompt
-    assert "Preencha analise_sancionatoria em todos os casos" in prompt
+    assert "nunca como capítulo do parecer" in prompt
+    assert "Análise sancionatória" in prompt
     assert "não reproduza essa remissão" in prompt
     assert "déficit orçamentário ou atuarial" in prompt
     assert "analise_sancionatoria" in schema["required"]

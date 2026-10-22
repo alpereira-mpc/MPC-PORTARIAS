@@ -747,18 +747,6 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
         )
         _add_body(document, responsibility["texto"], size=body_size)
 
-    sanction = structure.get("analise_sancionatoria")
-    if isinstance(sanction, dict) and str(sanction.get("texto") or "").strip():
-        heading = document.add_paragraph(style="Minuta Irregularidade")
-        _add_text(
-            heading,
-            "Análise sancionatória",
-            bold=True,
-            italic=True,
-            size=heading_size,
-        )
-        _add_body(document, sanction["texto"], size=body_size)
-
     conclusion = _conclusion(structure)
     if conclusion:
         _add_body(document, conclusion, size=body_size)

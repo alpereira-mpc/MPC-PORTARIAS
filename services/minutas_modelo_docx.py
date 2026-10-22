@@ -358,11 +358,6 @@ def _blocos(structure):
         pieces.append(("titulo", str(responsibility.get("titulo") or "Responsabilização administrativa")))
         for block in _blocks(responsibility["texto"]):
             pieces.append(("corpo", block))
-    sanction = structure.get("analise_sancionatoria")
-    if isinstance(sanction, dict) and str(sanction.get("texto") or "").strip():
-        pieces.append(("titulo", "Análise sancionatória"))
-        for block in _blocks(sanction["texto"]):
-            pieces.append(("corpo", block))
     conclusion = _conclusion(structure)
     if conclusion:
         for block in _blocks(conclusion):
@@ -877,11 +872,6 @@ def _pecas(structure):
             str(responsibility.get("titulo") or "Responsabilização administrativa"),
         ))
         for block in _blocks(responsibility.get("texto")):
-            pieces.append(("fundamentacao", block))
-    sanction = structure.get("analise_sancionatoria")
-    if isinstance(sanction, dict) and str(sanction.get("texto") or "").strip():
-        pieces.append(("titulo", "Análise sancionatória"))
-        for block in _blocks(sanction.get("texto")):
             pieces.append(("fundamentacao", block))
     conclusion = _conclusion(structure)
     if conclusion:

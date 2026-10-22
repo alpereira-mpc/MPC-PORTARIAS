@@ -420,7 +420,6 @@ def _mapa(structure):
         absorver(responsabilidade.get("texto"))
     sancao = structure.get("analise_sancionatoria")
     if isinstance(sancao, dict) and str(sancao.get("texto") or "").strip():
-        titulos.add(_norm("Análise sancionatória"))
         absorver(sancao.get("texto"))
     for block in _blocks(_conclusion(structure)):
         chave = _norm(block)

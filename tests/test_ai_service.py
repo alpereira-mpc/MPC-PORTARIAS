@@ -272,8 +272,8 @@ def test_http_errors_are_safe(monkeypatch, caplog, code, status, message):
         with pytest.raises(GeminiErro, match=message) as caught:
             resumir_documento_pdf(PDF)
     if code == 503:
-        assert len(calls) == 5
-        assert sleeps == [1, 2, 4]
+        assert len(calls) == 4
+        assert sleeps == [1, 1]
     elif code == 429:
         assert len(calls) == 3
         assert sleeps == [1, 2]
@@ -420,8 +420,8 @@ def test_503_three_times_reports_unavailability(monkeypatch, caplog):
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(GeminiErro, match="sobrecarregado") as caught:
             resumir_documento_pdf(PDF)
-    assert calls == [1, 1, 1, 1, 1]
-    assert sleeps == [1, 2, 4]
+    assert calls == [1, 1, 1, 1]
+    assert sleeps == [1, 1]
     assert "limite de uso" not in str(caught.value)
     assert KEY not in str(caught.value)
     assert KEY not in caplog.text
@@ -547,7 +547,7 @@ def test_timeout_is_not_retried(monkeypatch):
     monkeypatch.setattr(ai_service, "_post", post)
     with pytest.raises(GeminiErro, match="não respondeu a tempo"):
         resumir_documento_pdf(PDF)
-    assert calls == [1]
+    assert calls == [1, 1]
     assert sleeps == []
 
 
@@ -861,7 +861,7 @@ def test_oficio_extraction_retries_503_and_stops_on_timeout(monkeypatch, caplog)
     monkeypatch.setattr(ai_service, "_post", expire)
     with pytest.raises(GeminiErro, match="não respondeu a tempo"):
         extrair_dados_oficio_pdf(PDF)
-    assert attempts == [1]
+    assert attempts == [1, 1]
 
 
 def test_oficio_prompt_describes_subject_and_conditional_actions():
@@ -1027,10 +1027,10 @@ def test_503_retries_on_the_primary_model(monkeypatch):
     calls, sleeps = _install(monkeypatch, fail)
     with pytest.raises(GeminiErro, match="sobrecarregado"):
         resumir_documento_pdf(PDF)
-    assert calls == [ai_service.GEMINI_ENDPOINT] * 4 + [
+    assert calls == [ai_service.GEMINI_ENDPOINT] * 2 + [
         ai_service._endpoint(GEMINI_FALLBACK_MODEL)
-    ]
-    assert sleeps == [1, 2, 4]
+    ] * 2
+    assert sleeps == [1, 1]
 
 
 def test_temporary_429_does_not_call_the_reserve(monkeypatch):
@@ -1152,20 +1152,25 @@ def test_functional_http_errors_do_not_call_the_reserve(monkeypatch):
         assert sleeps == []
 
 
-def test_invalid_pdf_and_timeout_do_not_call_the_reserve(monkeypatch):
+def test_invalid_pdf_does_not_call_the_reserve(monkeypatch):
     calls, sleeps = _install(monkeypatch, lambda request, index: _summary())
     with pytest.raises(GeminiErro, match="não é um PDF válido"):
         resumir_documento_pdf(b"apenas texto")
     assert calls == []
     assert sleeps == []
 
+
+def test_timeout_calls_the_reserve_once(monkeypatch):
     def expire(request, index):
         raise TimeoutError()
 
     calls, sleeps = _install(monkeypatch, expire)
     with pytest.raises(GeminiErro, match="não respondeu a tempo"):
         resumir_documento_pdf(PDF)
-    assert calls == [ai_service.GEMINI_ENDPOINT]
+    assert calls == [
+        ai_service.GEMINI_ENDPOINT,
+        ai_service._endpoint(GEMINI_FALLBACK_MODEL),
+    ]
     assert sleeps == []
 
 

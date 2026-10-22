@@ -260,7 +260,7 @@ def test_docx_uses_original_logo_and_contains_only_target_content():
     assert "Responsável: Não informado" in body_text
     assert "ELVIRA SAMARA PEREIRA DE OLIVEIRA" in body_text
     assert "Procuradora-Geral do Ministério Público de Contas" in body_text
-    assert "Análise sancionatória" in body_text
+    assert "Análise sancionatória" not in body_text
     assert "Não há suporte suficiente para propor multa" in body_text
     assert "MINUTA EXPERIMENTAL — SUJEITA À REVISÃO HUMANA" in footer_text
     forbidden = ("bananeir", "02209/26", " ycn", "joão pessoa,")
@@ -276,6 +276,69 @@ def test_docx_uses_original_logo_and_contains_only_target_content():
     assert ">ycn<" not in xml_text
     assert "w:fldsimple" not in xml_text
     assert "logomarca do ministério público de contas da paraíba" in xml_text
+
+
+def test_docx_does_not_keep_generic_sanction_heading_from_free_topic_title():
+    structure = _structure()
+    structure["topicos_irregularidades"][0]["titulo"] = "Dosimetria da sanção"
+    exported = _export(structure=structure)
+    body_text = "\n".join(
+        paragraph.text for paragraph in Document(BytesIO(exported.content)).paragraphs
+    )
+
+    assert "Análise sancionatória" not in body_text
+    assert "Dosimetria da sanção" not in body_text
+    assert "Irregularidade 18.1" in body_text
+    assert "art. 37 da Constituição" in body_text
+    assert "Não há suporte suficiente para propor multa" in body_text
+
+
+def test_docx_preserves_unmatched_sanction_reasoning_without_generic_chapter():
+    structure = _structure()
+    structure["topicos_irregularidades"].append(
+        {
+            "titulo": "18.2 Certificação dos conselhos",
+            "irregularidades_ids": ["18.2"],
+            "avaliacoes_irregularidades": [
+                {
+                    "irregularidade_id": "18.2",
+                    "tratamento_ministerial_defesa": "MANTIDA_REJEICAO",
+                    "fundamentos_divergencia": [],
+                    "estado_saneamento": "ALEGADO_NAO_COMPROVADO",
+                    "fontes_saneamento": [],
+                }
+            ],
+            "texto": "A certificação dos conselhos permanece controversa na instrução.",
+        }
+    )
+    sanction_text = (
+        "A multa do art. 100 da LC nº 192/2024 depende de autoria e nexo "
+        "individualizados em cada irregularidade."
+    )
+    structure["analise_sancionatoria"].update(
+        {
+            "conclusao": "MULTA_CABIVEL",
+            "irregularidades_ids": ["18.1", "18.2"],
+            "fundamentos_legais": ["Art. 100, I, da LC nº 192/2024"],
+            "responsaveis": ["Gestor individualizado na fundamentação"],
+            "texto": sanction_text,
+        }
+    )
+    structure["pedidos"] = [
+        "Julgue-se o feito conforme a fundamentação.",
+        "Aplique-se multa pela infração normativa individualizada.",
+    ]
+    exported = _export(structure=structure)
+    body_text = "\n".join(
+        paragraph.text for paragraph in Document(BytesIO(exported.content)).paragraphs
+    )
+
+    assert "Análise sancionatória" not in body_text
+    assert "Dosimetria da sanção" not in body_text
+    assert sanction_text in body_text
+    assert "Aplique-se multa pela infração normativa individualizada." in body_text
+    assert "18.1 Receita intraorçamentária" in body_text
+    assert "18.2 Certificação dos conselhos" in body_text
 
 
 def test_docx_preserves_formatting_and_groups_recommendations_in_one_item():
