@@ -14,9 +14,6 @@ from services.minutas_extraction import EXTRACTOR_VERSION, MinutasExtractionServ
 from services.minutas_library import MinutasValidationError
 from services.minutas_orientacao import MAX_ORIENTACAO_JURIDICA_CHARS
 from services.minutas_search import MinutasSearchService
-from services.minutas_consistencia import (
-    integrar_sancoes, pendencias_identidade, resolver_responsavel, linha_do_exercicio,
-)
 
 
 MAX_CONTEXT_BYTES = ai_service.MINUTA_MAX_CONTEXT_BYTES
@@ -670,15 +667,12 @@ def _header_metadata_value(field, value):
     normalized = _plain(candidate)
     if (
         not candidate
-        or normalized in {"nao informado", "nao identificada", "nao identificado", "pendente"}
-        or len(candidate) > (1500 if field == "responsavel" else 220)
+        or len(candidate) > 220
         or any(term in normalized for term in _HEADER_METADATA_REJECTED[field])
     ):
         return ""
     if field == "responsavel" and (
-        len(candidate.split()) < 2 or any(
-            character.isdigit() for character in re.sub(r"\d{2}/\d{2}/\d{4}", "", candidate)
-        )
+        len(candidate.split()) < 2 or any(character.isdigit() for character in candidate)
     ):
         return ""
     return candidate
@@ -704,7 +698,6 @@ def _header_metadata_from_text(field, text):
 
 
 def _resolved_header_metadata(target, sources=(), analysis=None):
-    sources = list(sources)
     metadata = {}
     source_text = "\n".join(
         unit.get("texto", "")
@@ -717,18 +710,10 @@ def _resolved_header_metadata(target, sources=(), analysis=None):
         if structured:
             metadata[field] = structured
             continue
-        filtered_text = source_text
-        if field == "responsavel":
-            filtered_text = "\n".join(
-                line for line in source_text.splitlines()
-                if linha_do_exercicio(line, target.get("exercicio"))
-            )
-        candidates = _header_metadata_from_text(field, filtered_text)
+        candidates = _header_metadata_from_text(field, source_text)
         if len(candidates) == 1:
             metadata[field] = next(iter(candidates.values()))
             continue
-        if field == "responsavel":
-            continue  # A IA não arbitra identidades conflitantes.
         # A análise consolidada só desempata candidatos que já constem das
         # fontes do processo-alvo; nunca cria metadado a partir da IA.
         analysis_candidates = _header_metadata_from_text(
@@ -740,25 +725,11 @@ def _resolved_header_metadata(target, sources=(), analysis=None):
         }
         if len(confirmed) == 1:
             metadata[field] = next(iter(confirmed.values()))
-    responsible, pending, _evidence = resolver_responsavel(
-        target, sources, metadata.get("responsavel")
-    )
-    metadata.pop("responsavel", None)
-    if responsible:
-        metadata["responsavel"] = responsible
-    if pending:
-        metadata["pendencias_identificacao"] = pending
     return metadata
 
 
 def _target_with_header_metadata(target, metadata):
     resolved = dict(target)
-    if (not _header_metadata_value("responsavel", resolved.get("responsavel"))
-            or not linha_do_exercicio(resolved.get("responsavel"), resolved.get("exercicio"))):
-        resolved.pop("responsavel", None)
-    if (metadata or {}).get("pendencias_identificacao"):
-        resolved["pendencias_identificacao"] = metadata["pendencias_identificacao"]
-        resolved.pop("responsavel", None)
     for field in ("origem", "responsavel"):
         value = _header_metadata_value(field, (metadata or {}).get(field))
         if value:
@@ -3324,7 +3295,7 @@ class MinutasGenerationService:
             not isinstance(sanction, dict)
             or sanction.get("conclusao") not in _SANCTION_CONCLUSIONS
             or sanction.get("dano_ao_erario") not in _DAMAGE_STATES
-            or not isinstance(sanction.get("texto"), str)
+            or not str(sanction.get("texto") or "").strip()
             or any(
                 not isinstance(sanction.get(field), list)
                 or any(not str(item or "").strip() for item in sanction[field])
@@ -3411,20 +3382,7 @@ class MinutasGenerationService:
     @staticmethod
     def _normalize_structure(structure, target, context=None):
         normalized = _sanitize_draft_structure(structure)
-        try:
-            normalized = integrar_sancoes(normalized)
-        except ValueError as exc:
-            raise MinutasGenerationError(str(exc)) from exc
-        warnings = pendencias_identidade(normalized, target)
-        normalized["pendencias_identificacao"] = warnings.copy()
-        identity = dict(normalized.get("identidade_responsaveis") or {})
-        identity.update(valor=target.get("responsavel") or "", exercicio=target.get("exercicio"), pendencias=warnings.copy())
-        if context is not None:
-            _, _, evidence = resolver_responsavel(
-                target, context.get("documentos_processo_alvo", ()), None
-            )
-            identity["evidencias"] = evidence
-        normalized["identidade_responsaveis"] = identity
+        warnings = []
         normalized["identificacao_processual"] = "\n".join(
             _draft_header_lines(target)
         )
@@ -3610,6 +3568,10 @@ class MinutasGenerationService:
                     + "\n\n"
                     + topic_text
                 )
+        sanction = structure["analise_sancionatoria"]
+        sections.append(
+            "### Análise sancionatória\n\n" + str(sanction["texto"]).strip()
+        )
         request_texts = [request.strip() for request in structure["pedidos"]]
         request_keys = {_normalized_support(request) for request in request_texts}
         conclusion_lines = []
@@ -4529,7 +4491,6 @@ class MinutasGenerationService:
             "metadados_cabecalho": header_metadata,
             "fontes_alvo": prepared["fontes_alvo"],
             "advertencias_documentais": deepcopy(conference.get("pendencias") or []),
-            "advertencias_qualidade": _warnings,
             "referencias_historicas": len(context.get("referencias_historicas") or []),
             "referencias_juridicas_enviadas": len(
                 context.get("referencias_juridicas_recuperadas") or []

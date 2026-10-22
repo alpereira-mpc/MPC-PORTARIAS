@@ -33,7 +33,6 @@ from services.minutas_modelo_docx import (
 from services.minutas_modelos import MinutasModeloVisualService
 from services.minutas_orientacao import aplicar_bloco
 from services.minutas_procuradores import exigir_procurador
-from services.minutas_procuradores import PROCURADORES
 from services.minutas_specialties import CAMARAS, PREFEITURAS, SHARED_INSTRUCTION_MOTOR
 from tests.test_minutas_instrucao import _structure
 from tests.test_minutas_modelos import _install
@@ -141,7 +140,7 @@ def _exportar(library, processo="02659/25"):
         "fontes_versao": "v",
         "processo_alvo_id": f"instrucao-{key}",
         "estrutura": _structure(),
-        "metadados_cabecalho": {"responsavel": "Maria de Sousa"},
+        "metadados_cabecalho": {},
     }
     return MinutasDocxService(library).export_instruction(
         analyzed, generated, processo=processo, exercicio=2025, origem="Prefeitura Municipal de Exemplo",
@@ -151,27 +150,6 @@ def _exportar(library, processo="02659/25"):
 def _pacote(content, name):
     with ZipFile(BytesIO(content)) as package:
         return package.read(name).decode("utf-8")
-
-
-@pytest.mark.parametrize("procurador", PROCURADORES, ids=lambda p: p.sigla)
-def test_identidade_e_sancoes_nos_sete_perfis_preservam_modelo(ambiente, procurador):
-    store, storage = ambiente
-    library = _gabinete(store, storage, PREFEITURAS, procurador.sigla)
-    modelo = _modelo(
-        "perfil.docx", fonte="Georgia", esquerda=2.7, superior=3.1,
-        logo=PNG_A, largura=1100000,
-    )
-    MinutasModeloVisualService(library).save(PREFEITURAS, modelo)
-    exported = _exportar(library)
-    doc = Document(BytesIO(exported.content))
-    text = " ".join(t.text or "" for t in doc.element.iter(qn("w:t")))
-    assert "Maria de Sousa" in text
-    assert "Análise sancionatória" not in text
-    assert procurador.nome.upper() in text
-    assert doc.sections[0].left_margin.cm == pytest.approx(2.7, abs=0.02)
-    assert doc.sections[0].top_margin.cm == pytest.approx(3.1, abs=0.02)
-    assert _logotipos(exported.content) == [PNG_A]
-    assert doc.styles["Normal"].font.name == "Georgia"
 
 
 def _logotipos(content):
@@ -307,7 +285,7 @@ def test_especialidade_e_versao_nao_contaminam_outro_modelo(ambiente):
             "fontes_versao": "v",
             "processo_alvo_id": "instrucao-0210826",
             "estrutura": _structure(),
-            "metadados_cabecalho": {"responsavel": "Maria de Sousa"},
+            "metadados_cabecalho": {},
         },
         processo="02108/26",
         exercicio=2025,

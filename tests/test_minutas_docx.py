@@ -44,7 +44,6 @@ def _target(
         "numero_processo": process,
         "processo_chave": key,
         "exercicio": 2026,
-        "responsavel": "Maria de Sousa",
         "subtipo": "Instituto/Autarquia",
     }
     target.update(changes)
@@ -135,7 +134,7 @@ def _payload(target=None, *, sufficient=True, version=VERSION, warnings=()):
     target = target or _target()
     identity = {
         "processo_alvo_id": str(target["id"]),
-        "processo_alvo_chave": target["processo_chave"],
+        "processo_alvo_chave": "0165326",
         "procuradora_chave": target["procuradora_chave"],
     }
     analyzed = {
@@ -258,10 +257,10 @@ def test_docx_uses_original_logo_and_contains_only_target_content():
     assert "Parecer Nº" in body_text
     assert "MINUTA-TC-01653/26" not in body_text
     assert "Origem: Não informada" in body_text
-    assert "Responsável: Maria de Sousa" in body_text
+    assert "Responsável: Não informado" in body_text
     assert "ELVIRA SAMARA PEREIRA DE OLIVEIRA" in body_text
     assert "Procuradora-Geral do Ministério Público de Contas" in body_text
-    assert "Análise sancionatória" not in body_text
+    assert "Análise sancionatória" in body_text
     assert "Não há suporte suficiente para propor multa" in body_text
     assert "MINUTA EXPERIMENTAL — SUJEITA À REVISÃO HUMANA" in footer_text
     forbidden = ("bananeir", "02209/26", " ycn", "joão pessoa,")

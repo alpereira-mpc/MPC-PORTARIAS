@@ -37,8 +37,6 @@ def _pdf(*pages):
 
 
 def _doc(name, text, tipo, **extra):
-    if tipo == "relatorio_inicial":
-        text += "\nResponsável: Maria de Sousa"
     item = receber_pdf(name, _pdf(text), tipo)
     item.update(extra)
     return item

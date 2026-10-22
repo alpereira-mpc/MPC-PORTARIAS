@@ -358,6 +358,11 @@ def _blocos(structure):
         pieces.append(("titulo", str(responsibility.get("titulo") or "Responsabilização administrativa")))
         for block in _blocks(responsibility["texto"]):
             pieces.append(("corpo", block))
+    sanction = structure.get("analise_sancionatoria")
+    if isinstance(sanction, dict) and str(sanction.get("texto") or "").strip():
+        pieces.append(("titulo", "Análise sancionatória"))
+        for block in _blocks(sanction["texto"]):
+            pieces.append(("corpo", block))
     conclusion = _conclusion(structure)
     if conclusion:
         for block in _blocks(conclusion):
@@ -873,6 +878,11 @@ def _pecas(structure):
         ))
         for block in _blocks(responsibility.get("texto")):
             pieces.append(("fundamentacao", block))
+    sanction = structure.get("analise_sancionatoria")
+    if isinstance(sanction, dict) and str(sanction.get("texto") or "").strip():
+        pieces.append(("titulo", "Análise sancionatória"))
+        for block in _blocks(sanction.get("texto")):
+            pieces.append(("fundamentacao", block))
     conclusion = _conclusion(structure)
     if conclusion:
         for block in _blocks(conclusion):
@@ -1024,7 +1034,7 @@ def _valor_cabecalho(header_lines, prefixo):
 
 _PROXIMO_ROTULO = (
     r"processo|natureza|exerc[ií]cio|unidades?|jurisdicionad\w*|origem|entidade|"
-    r"respons[aá]ve(?:l|is)|gestor(?:es)?"
+    r"respons[aá]vel|gestor"
 )
 
 
@@ -1057,7 +1067,7 @@ def _atualizar_linha_identificacao(texto, target, header_lines, tem_exercicio):
         or folded.startswith("ementa")
         or not re.match(
             r"(?:processo|natureza|exerc[ií]cio|unidades?(?:\s+jurisdicionad[oa]s?)?|"
-            r"jurisdicionado|origem|entidade|respons[aá]ve(?:l|is)|gestor(?:es)?)\b",
+            r"jurisdicionado|origem|entidade|respons[aá]vel|gestor)\b",
             folded,
         )
     ):
@@ -1079,11 +1089,11 @@ def _atualizar_linha_identificacao(texto, target, header_lines, tem_exercicio):
         )
     if re.search(r"exerc[ií]cio", folded):
         novo = _trocar_rotulo(novo, r"exerc[ií]cio", str(target.get("exercicio") or "").strip())
-    if re.search(r"respons[aá]ve(?:l|is)|gestor(?:es)?", folded):
+    if re.search(r"respons[aá]vel|gestor", folded):
         responsible = str(target.get("responsavel") or "").strip() or _valor_cabecalho(
             header_lines, "responsável"
         )
-        novo = _trocar_rotulo(novo, r"(?:respons[aá]ve(?:l|is)|gestor(?:es)?)", responsible)
+        novo = _trocar_rotulo(novo, r"(?:respons[aá]vel|gestor)", responsible)
     if re.search(r"natureza\s*:", folded):
         value = _valor_cabecalho(header_lines, "natureza")
         if tem_exercicio or re.search(r"exerc[ií]cio\s*:", folded):
@@ -1098,20 +1108,6 @@ def _preencher_identificacao(regioes, header_lines, target, ementa=""):
     linhas = _linhas_cabecalho(header_lines, regioes["faixa"] is not None)
     identificacao = regioes["identificacao"]
     textos = [_texto(paragraph) for paragraph in identificacao]
-    # Alguns modelos só trazem processo/natureza/unidade/exercício. Acrescenta
-    # o dado obrigatório herdando exatamente o estilo do próprio gabinete.
-    responsible_line = next(
-        (line for line in linhas if line.startswith("Responsável:")
-         and "Não informado" not in line), ""
-    )
-    if (responsible_line and identificacao
-            and not any(re.search(r"\b(?:respons[aá]ve(?:l|is)|gestor)\b", text, re.I) for text in textos)):
-        novo = _clonar_paragrafo(
-            identificacao[-1], responsible_line, negrito=None, manter_numeracao=False,
-        )
-        identificacao[-1].addnext(novo)
-        identificacao.append(novo)
-        textos.append(responsible_line)
     tem_exercicio = any(
         re.search(r"exerc[ií]cio", texto, re.IGNORECASE) and "natureza" not in texto.casefold()
         for texto in textos
