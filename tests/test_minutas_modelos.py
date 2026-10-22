@@ -167,6 +167,7 @@ def test_exportacao_instrucao_camara_prioriza_modelo_da_especialidade(prepared):
     generated = {
         "fontes_versao": "v",
         "processo_alvo_id": "instrucao-0210826",
+        "metadados_cabecalho": {"responsavel": "Maria de Sousa"},
         "estrutura": _structure(),
     }
     fallback = MinutasDocxService(camaras).export_instruction(

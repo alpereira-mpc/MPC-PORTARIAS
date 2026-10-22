@@ -17,32 +17,81 @@ _ROLE = (r"(?:[Pp]refeit[oa](?:\s+[Mm]unicipal)?|[Pp]residente\s+da\s+"
          r"[Oo]rdenador(?:a)?\s+de\s+[Dd]espesas|[Gg]estor(?:a)?(?:\s+de\s+RPPS)?)")
 _NARRATIVE = re.compile(rf"(?:[Ss]r[a]?\.?\s+)?(?P<nome>{_NAME}),\s*(?P<cargo>(?i:{_ROLE}))\b")
 _ROLE_FIRST = re.compile(rf"(?i:{_ROLE})\s+(?:[Ss]r[a]?\.?\s+)?(?P<nome>{_NAME})(?=[,.;\n]|$)")
-_LABEL = re.compile(r"\b(?:respons[aá]ve(?:l|is)|gestor(?:a)?\s+respons[aá]vel|"
-                    r"dirigente\s+respons[aá]vel|ordenador(?:a)?\s+de\s+despesas?)\s*[:\-–—]\s*(.+)$", re.I)
+_LABEL = re.compile(r"\b(?:respons[aá]ve(?:l|is)(?:\s+pelas\s+contas)?|"
+                    r"gestor(?:a)?\s+respons[aá]vel|dirigente\s+respons[aá]vel|"
+                    r"ordenador(?:a)?\s+de\s+despesas?)\s*[:\-–—]\s*(?P<valor>[^.\n]+)", re.I)
+_RESPONSIBILITY = re.compile(
+    rf"\b(?:contas(?:\s+anuais)?\s+(?:sob\s+a\s+)?responsabilidade|"
+    rf"sob\s+a\s+responsabilidade|gest[aã]o)\s+d(?:e|o|a)\s+"
+    rf"(?:(?i:{_ROLE})\s+)?(?:[Ss]r[a]?\.?\s+)?(?P<nome>{_NAME})"
+    rf"(?=[,.;\n]|$)",
+)
 _PERIOD = re.compile(r"\b\d{2}/\d{2}/\d{4}\s*(?:a|até|[-–])\s*\d{2}/\d{2}/\d{4}\b")
+_SCOPED_YEAR = re.compile(
+    r"\b(?:exerc[ií]cio(?:\s+financeiro)?|gest[aã]o|contas(?:\s+anuais)?)"
+    r"\s*(?:de|do|da|relativ[ao]s?\s+(?:ao\s+)?)?\s*((?:19|20)\d{2})\b",
+    re.I,
+)
+
+
+def _relation_context(text, start, end):
+    left = max(text.rfind(separator, 0, start) for separator in (".", ";", "\n"))
+    boundaries = [
+        position for separator in (".", ";", "\n")
+        if (position := text.find(separator, end)) >= 0
+    ]
+    right = min(boundaries) if boundaries else len(text)
+    return text[max(left + 1, start - 220):min(right, end + 220)]
+
+
+def _relation_matches_exercise(text, start, end, exercise):
+    if not exercise:
+        return True
+    nearby = _relation_context(text, start, end)
+    scoped_years = set(_SCOPED_YEAR.findall(nearby))
+    periods = _PERIOD.findall(nearby)
+    if periods:
+        scoped_years.update(re.findall(r"\b(?:19|20)\d{2}\b", " ".join(periods)))
+    return not scoped_years or str(exercise) in scoped_years
+
+
+def _relation_is_current_or_former(text, start):
+    prefix = chave(text[max(0, start - 24):start])
+    return bool(re.search(r"(?:^|\s)(?:atual|ex[- ]gestor|ex[- ]prefeito|ex[- ])\s*$", prefix))
 
 
 def candidatos(text, exercise=None):
     """Somente relações explícitas nome/cargo; preserva o período literal."""
     result = []
     for line in re.split(r"\n|(?<!Sr\.)(?<!Sra\.)(?<=[.])\s+(?=[A-ZÀ-Ý])", str(text or "")):
-        if not linha_do_exercicio(line, exercise):
-            continue
-        period = _PERIOD.search(line)
-        label = _LABEL.search(line)
-        values = []
-        if label:
-            value = _PERIOD.sub("", label[1]).strip(" ()-–;.")
+        relations = []
+        for label in _LABEL.finditer(line):
+            value = _PERIOD.sub("", label["valor"]).strip(" ()-–;.")
             value = re.sub(r"\s*\(?exerc[ií]cio\s*(?:de\s*)?\d{4}\)?", "", value, flags=re.I)
             for part in re.split(r"\s*;\s*", value):
-                part = re.sub(r"^(?:Sr[a]?\.?\s+)", "", part)
+                part = re.sub(r"^(?:Sr[a]?\.?\s+)", "", part).strip()
                 if re.fullmatch(_NAME, part):
-                    values.append(part)
-        values.extend(match["nome"] for match in _NARRATIVE.finditer(line))
-        values.extend(match["nome"] for match in _ROLE_FIRST.finditer(line))
-        for value in values:
+                    relations.append((part, label.start(), label.end(), ";" in label["valor"]))
+        for pattern in (_NARRATIVE, _ROLE_FIRST, _RESPONSIBILITY):
+            for match in pattern.finditer(line):
+                relations.append((match["nome"], match.start(), match.end(), False))
+        seen = set()
+        for value, start, end, collective in relations:
+            identity = (chave(value), start)
+            if (identity in seen
+                    or _relation_is_current_or_former(line, start)
+                    or re.search(
+                        r"\b(?:auditor|procurador|relator|analista|advogado|defensor)\b",
+                        chave(value),
+                    )):
+                continue
+            seen.add(identity)
+            if not _relation_matches_exercise(line, start, end, exercise):
+                continue
+            nearby = _relation_context(line, start, end)
+            period = _PERIOD.search(nearby)
             result.append({"nome": value, "periodo": period[0] if period else "",
-                           "trecho": line.strip(), "coletivo": bool(label and ";" in label[1])})
+                           "trecho": nearby.strip(), "coletivo": collective})
     return result
 
 
@@ -82,7 +131,9 @@ def resolver_responsavel(target, sources, fallback):
         return "; ".join(values), [], records
     if len(names) == 1 and periods:
         return "; ".join(dict.fromkeys(f"{r['nome']} ({r['periodo']})" for r in records if r["periodo"])), [], records
-    return explicit or next(iter(names.values()), fallback or ""), [], records
+    # O fallback textual só auxilia a coleta; a identidade precisa estar nos
+    # metadados explícitos ou em uma relação documental validada acima.
+    return explicit or next(iter(names.values()), ""), [], records
 
 
 def titulo_sancionatorio(title):

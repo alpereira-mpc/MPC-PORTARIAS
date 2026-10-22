@@ -34,6 +34,106 @@ PROMPT_MARK = "Não faça inferências jurídicas além do conteúdo apresentado
 RESERVE = ai_service._endpoint(GEMINI_FALLBACK_MODEL)
 
 
+def test_minutas_analysis_timeout_uses_one_bounded_reserve_attempt(
+    monkeypatch, caplog
+):
+    calls = []
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append((request.full_url, request._mpc_timeout_seconds))
+        if len(calls) == 1:
+            raise TimeoutError()
+        return b"resposta-reserva"
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    secret = "nome-pessoal-que-nao-pode-ser-logado"
+    with caplog.at_level("INFO", logger="mpc.ai"):
+        raw, model = ai_service._executar(
+            lambda key, selected: ai_service._request_texto(
+                '{"documento":"' + secret + '"}', key, "prompt", selected
+            ),
+            "análise probatória da minuta",
+            "minutas_analise",
+            primary_model=GEMINI_MODEL,
+            fallback_model=GEMINI_FALLBACK_MODEL,
+        )
+
+    assert raw == b"resposta-reserva"
+    assert model == GEMINI_FALLBACK_MODEL
+    assert calls == [
+        (ai_service._endpoint(GEMINI_MODEL), ai_service.MINUTAS_ANALYSIS_PRIMARY_TIMEOUT_SECONDS),
+        (ai_service._endpoint(GEMINI_FALLBACK_MODEL), ai_service.MINUTAS_ANALYSIS_FALLBACK_TIMEOUT_SECONDS),
+    ]
+    assert sum(timeout for _url, timeout in calls) < ai_service.TIMEOUT_SECONDS
+    assert "request_bytes=" in caplog.text
+    assert secret not in caplog.text
+
+
+def test_minutas_analysis_stops_after_reserve_timeout_and_records_it(
+    store, monkeypatch
+):
+    calls = []
+    _key(monkeypatch)
+    _persist(monkeypatch, store)
+
+    def post(request):
+        calls.append(request.full_url)
+        raise TimeoutError()
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with pytest.raises(GeminiErro, match="documentos e metadados foram preservados"):
+        ai_service._executar(
+            lambda key, selected: ai_service._request_texto(
+                "{}", key, "prompt", selected
+            ),
+            "análise probatória da minuta",
+            "minutas_analise",
+            primary_model=GEMINI_MODEL,
+            fallback_model=GEMINI_FALLBACK_MODEL,
+        )
+
+    assert calls == [
+        ai_service._endpoint(GEMINI_MODEL),
+        ai_service._endpoint(GEMINI_FALLBACK_MODEL),
+    ]
+    row = _rows(store)[0]
+    assert row["categoria_erro"] == "timeout"
+    assert row["tentativas"] == 2
+    assert row["fallback"] == 1
+    assert row["http_status"] is None
+
+
+def test_minutas_timeout_reserve_failure_does_not_start_retry_chain(monkeypatch):
+    calls = []
+    sleeps = _no_sleep(monkeypatch)
+    _key(monkeypatch)
+
+    def post(request):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise TimeoutError()
+        raise _http_error(request.full_url, 503, "UNAVAILABLE")
+
+    monkeypatch.setattr(ai_service, "_post", post)
+    with pytest.raises(GeminiErro, match="sobrecarregado"):
+        ai_service._executar(
+            lambda key, selected: ai_service._request_texto(
+                "{}", key, "prompt", selected
+            ),
+            "análise probatória da minuta",
+            "minutas_analise",
+            primary_model=GEMINI_MODEL,
+            fallback_model=GEMINI_FALLBACK_MODEL,
+        )
+
+    assert calls == [
+        ai_service._endpoint(GEMINI_MODEL),
+        ai_service._endpoint(GEMINI_FALLBACK_MODEL),
+    ]
+    assert sleeps == []
+
+
 def _fail_times(code, status, successes_after):
     def post(request, index):
         if index <= successes_after:

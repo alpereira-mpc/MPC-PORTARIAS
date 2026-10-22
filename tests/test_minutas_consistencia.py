@@ -53,6 +53,41 @@ def test_pdf_extraido_relatorio_normalizacao_e_docx_sem_metadado_manual():
     assert "02659/25" in rendered
 
 
+def test_pagina_extensa_nao_descarta_gestor_por_ano_e_papeis_distantes():
+    text = (
+        "Processo TC 02659/25, autuado em 2025; "
+        "o Auditor Pedro da Silva examinou as peças e o Advogado José da Costa apresentou defesa; "
+        "as contas anuais sob a responsabilidade do Sr. Sebastião Pinto Dantas, "
+        "Prefeito Municipal no exercício de 2024; "
+        "Atual Prefeita Ana de Sousa no exercício de 2025; "
+        + "informação processual extensa " * 180
+    )
+    metadata = _resolved_header_metadata(
+        {"exercicio": 2024}, [fonte(text)],
+    )
+    assert metadata["responsavel"] == "Sebastião Pinto Dantas"
+
+
+def test_periodo_documental_divergente_continua_bloqueado():
+    text = "João da Silva, Prefeito Municipal no exercício de 2023."
+    metadata = _resolved_header_metadata({"exercicio": 2024}, [fonte(text)])
+    assert not metadata.get("responsavel")
+
+
+def test_pendencia_de_identidade_nao_e_repetida_como_advertencia():
+    from services.minutas_ia_ui import _generated_review_items, _identity_pending
+
+    pending = "Identifique o responsável pelas contas antes de exportar."
+    result = {
+        "estrutura": {"pendencias_identificacao": [pending, pending]},
+        "advertencias_qualidade": [pending, "Conferir outro fundamento."],
+    }
+    assert _identity_pending(result) == [pending]
+    assert _generated_review_items(result) == [
+        ("Advertência de qualidade", "Conferir outro fundamento."),
+    ]
+
+
 def test_multiplos_e_sucessivos_preservam_periodos_sem_escolha_por_ia():
     text = ("Responsável: Ana de Sousa (01/01/2025 a 30/06/2025)\n"
             "Responsável: João da Silva (01/07/2025 a 31/12/2025)")
@@ -81,6 +116,9 @@ def test_exercicio_gestor_atual_e_papeis_processuais_nao_substituem_responsavel(
                      "Advogado: José da Silva.\n"
                      "Ana de Sousa, Prefeita Municipal no exercício de 2025.")]
     assert _resolved_header_metadata({"exercicio": 2025}, sources)["responsavel"] == "Ana de Sousa"
+    assert not _resolved_header_metadata(
+        {"exercicio": 2024}, [fonte("Atual Prefeito Pedro de Sousa no exercício de 2025.")]
+    ).get("responsavel")
 
 
 def test_sem_fonte_nao_aproveita_nome_do_corpo_ou_do_rag():

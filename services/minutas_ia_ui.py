@@ -202,11 +202,20 @@ def _aviso_orientacao_anterior(resultado, texto_confirmado):
         )
 
 
+def _identity_pending(result):
+    structure = result.get("estrutura") if isinstance(result, dict) else None
+    values = structure.get("pendencias_identificacao") if isinstance(structure, dict) else ()
+    return list(dict.fromkeys(
+        str(value or "").strip() for value in (values or ()) if str(value or "").strip()
+    ))
+
+
 def _generated_review_items(result):
     items = []
+    identity_pending = set(_identity_pending(result))
     for warning in result.get("advertencias_qualidade") or ():
         text = str(warning or "").strip()
-        if text:
+        if text and text not in identity_pending:
             items.append(("Advertência de qualidade", text))
     for issue in result.get("advertencias_documentais") or ():
         if not isinstance(issue, dict):
@@ -1994,6 +2003,10 @@ def _instruction_panel(generator, service, identity=None):
         )
     analyze_label = "Analisar fundamentos com IA" if retirement else "Analisar fundamentos"
     if st.button(analyze_label, key="minutas_instrucao_analisar", disabled=not documents):
+        # Não deixe uma análise/minuta anterior parecer resultado da tentativa
+        # que acabou de iniciar. PDFs e metadados permanecem na sessão.
+        st.session_state.pop("minutas_instrucao_analise", None)
+        st.session_state.pop("minutas_instrucao_minuta", None)
         try:
             with st.spinner(
                 "Analisando os fundamentos da aposentadoria..."
@@ -2005,7 +2018,6 @@ def _instruction_panel(generator, service, identity=None):
                     modalidade_recurso=modalidade_recurso,
                     materia_originaria=materia_originaria, data_decisao=data_decisao,
                 )
-            st.session_state.pop("minutas_instrucao_minuta", None)
         except Exception as exc:
             _error(exc)
     analyzed = st.session_state.get("minutas_instrucao_analise")
@@ -2345,8 +2357,14 @@ def _historical_generator_panel(store, identity):
         "sem caráter de manifestação oficial."
     )
     section_label("Minuta gerada")
-    quality_warnings = result.get("advertencias_qualidade") or ()
-    if quality_warnings:
+    identity_pending = _identity_pending(result)
+    quality_warnings = [
+        warning for warning in (result.get("advertencias_qualidade") or ())
+        if str(warning or "").strip() not in identity_pending
+    ]
+    if identity_pending:
+        st.error(" ".join(identity_pending))
+    elif quality_warnings:
         st.info("Geração concluída com pontos disponíveis para conferência facultativa. Minuta pronta para revisão humana.")
     else:
         st.success(
@@ -2363,28 +2381,29 @@ def _historical_generator_panel(store, identity):
             wrap_lines=True,
             height=320,
         )
-    try:
-        word = _cached_docx(
-            service,
-            generator,
-            target["id"],
-            analysis,
-            result,
-            docx_cache_key,
-        )
-    except Exception as exc:
-        _error(exc)
-    else:
-        st.caption("DOCX disponível para download após a geração.")
-        st.download_button(
-            "Baixar minuta em Word",
-            data=word.content,
-            file_name=word.name,
-            mime=word.mime,
-            key=f"minutas_generation_docx_{target['id']}",
-            icon=":material/download:",
-            on_click="ignore",
-        )
+    if not identity_pending:
+        try:
+            word = _cached_docx(
+                service,
+                generator,
+                target["id"],
+                analysis,
+                result,
+                docx_cache_key,
+            )
+        except Exception as exc:
+            _error(exc)
+        else:
+            st.caption("DOCX disponível para download após a geração.")
+            st.download_button(
+                "Baixar minuta em Word",
+                data=word.content,
+                file_name=word.name,
+                mime=word.mime,
+                key=f"minutas_generation_docx_{target['id']}",
+                icon=":material/download:",
+                on_click="ignore",
+            )
     with st.expander("Validação e fontes utilizadas"):
         details = [
             f"Modelo: {result.get('modelo') or '—'}",
