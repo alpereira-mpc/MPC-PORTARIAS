@@ -629,6 +629,55 @@ def test_sugerir_metadados_instrucao_consensus_conflict_and_absence():
     assert absent["exercicio"] is None
 
 
+def test_instrucao_reconstitui_responsavel_do_cabecalho_colapsado_pelo_pdf():
+    document = _doc(
+        "frei.pdf",
+        "TRIBUNAL DE CONTAS DO ESTADO DA PARAIBA\n"
+        "Processo TC: 02659/25\n"
+        "Subcategoria: Prestacao de Contas Anual - PCA\n"
+        "Jurisdicionado: Prefeitura Municipal de Frei Martinho\n"
+        "Responsavel: Sebastiao Pinto Dantas\n"
+        "Exercicio: 2024\n"
+        "Relatorio de Auditoria das contas do exercicio.\n"
+        "O Prefeito Joao Ninguem foi citado em precedente de outro municipio.\n"
+        "Pagamento sem cobertura documental no instituto de previdencia municipal",
+        "relatorio_inicial",
+    )
+    assert "\n" not in document["conteudo"][0]["texto"]
+    assert "Responsavel: Sebastiao Pinto Dantas" in document["conteudo"][0]["texto"]
+
+    def analyze(context):
+        return {"analise": _analysis(document)}
+
+    def generate(_context):
+        return {"estrutura": _structure()}
+
+    service = MinutasGenerationService(
+        _library(), analyze=analyze, generate=generate, search=lambda *_a, **_k: {"resultados": []},
+    )
+    analyzed = service.analyze_instruction(
+        [document],
+        processo="02659/25",
+        exercicio=2024,
+        origem="Prefeitura Municipal de Frei Martinho",
+    )
+    generated = gerar_instrucao(
+        service,
+        [document],
+        analyzed,
+        processo="02659/25",
+        exercicio=2024,
+        origem="Prefeitura Municipal de Frei Martinho",
+    )
+    assert generated["metadados_cabecalho"]["responsavel"] == "Sebastiao Pinto Dantas"
+    assert generated["metadados_cabecalho"]["origem"] == "Prefeitura Municipal de Frei Martinho"
+    assert "Responsável: Sebastiao Pinto Dantas" in generated["texto"]
+    assert "Não informado" not in generated["estrutura"]["identificacao_processual"]
+    assert "Municipal Sebastiao" not in generated["texto"]
+    assert "Joao Ninguem" not in generated["estrutura"]["identificacao_processual"]
+    assert analyzed["metadados_cabecalho"]["responsavel"] == "Sebastiao Pinto Dantas"
+
+
 def test_generator_tab_uses_instruction_flow_without_historical_mode(monkeypatch):
     from streamlit.testing.v1 import AppTest
     from services import minutas_ia_ui

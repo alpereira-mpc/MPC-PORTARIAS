@@ -646,20 +646,34 @@ _HEADER_METADATA_REJECTED = {
     ),
     "responsavel": ("auditor", "procurador", "relator", "analista", "advogado", "defensor"),
 }
+_CADASTRO_BREAK = re.compile(
+    r"(?i)\s+(?=(?:gestor\s+respons[aá]vel|dirigente\s+respons[aá]vel|"
+    r"ordenador\s+de\s+despesa|unidade\s+gestora|"
+    r"entidade(?:\s+fiscalizada)?|exerc[ií]cio(?:\s+das\s+contas|\s+financeiro)?|"
+    r"auditor(?:es)?(?:\s+de\s+contas)?|respons[aá]vel(?:es)?|"
+    r"processo(?:\s+tc)?|jurisdicionado|subcategoria|relator(?:es)?|"
+    r"origem|assunto|[oó]rg[aã]o)\s*:)"
+)
 _RESPONSIBLE_NARRATIVE_PATTERNS = (
     re.compile(
         r"\bsob\s+a\s+responsabilidade\s+d[ao]\s+"
-        r"(?:(?:[Pp]refeit[oa]|[Gg]estor(?:a)?)\s+(?:[Ss]r(?:a)?\.?\s*)?"
+        r"(?:(?:[Pp]refeit[oa]|[Gg]estor(?:a)?)(?:\s+[Mm]unicipal)?\s+"
+        r"(?:[Ss]r(?:a)?\.?\s*)?"
         r"|[Ss]r(?:a)?\.?\s+|(?![Pp]refeit[oa]\b|[Gg]estor(?:a)?\b|[Ss]r(?:a)?\b))"
         r"(?P<value>[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]+(?:\s+[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]+){1,5})"
         r"(?=[,.;\n]|$)"
     ),
     re.compile(
-        r"\b(?:[Pp]refeit[oa]|[Gg]estor(?:a)?\s+respons[aá]vel)\s+"
+        r"\b(?:[Pp]refeit[oa]|[Gg]estor(?:a)?\s+respons[aá]vel)(?:\s+[Mm]unicipal)?\s+"
         r"(?:[Ss]r(?:a)?\.?\s*)?(?P<value>[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]+"
         r"(?:\s+[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]+){1,5})(?=[,.;\n]|$)"
     ),
 )
+
+
+def restaurar_linhas_cadastrais(text):
+    """Recoloca rótulos cadastrais em linhas próprias após a extração colapsar a página."""
+    return _CADASTRO_BREAK.sub("\n", str(text or ""))
 
 
 def _header_metadata_value(field, value):
@@ -679,18 +693,24 @@ def _header_metadata_value(field, value):
 
 
 def _header_metadata_from_text(field, text):
-    labels = "|".join(re.escape(label) for label in _HEADER_METADATA_LABELS[field])
+    restored = restaurar_linhas_cadastrais(text)
+    labels = "|".join(
+        re.escape(label)
+        for label in sorted(_HEADER_METADATA_LABELS[field], key=len, reverse=True)
+    )
     pattern = re.compile(
         rf"(?im)^\s*(?:{labels})\s*[:\-–—]\s*(?P<value>[^\n]+)$"
     )
     candidates = {}
-    for match in pattern.finditer(str(text or "")):
+    for match in pattern.finditer(restored):
         value = _header_metadata_value(field, match.group("value"))
         if value:
             candidates.setdefault(_normalized_support(value), value)
+    if candidates:
+        return candidates
     if field == "responsavel":
         for pattern in _RESPONSIBLE_NARRATIVE_PATTERNS:
-            for match in pattern.finditer(str(text or "")):
+            for match in pattern.finditer(restored):
                 value = _header_metadata_value(field, match.group("value"))
                 if value:
                     candidates.setdefault(_normalized_support(value), value)

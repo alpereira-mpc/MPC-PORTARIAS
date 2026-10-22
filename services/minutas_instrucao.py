@@ -257,19 +257,13 @@ def montar_contexto(documentos, *, processo="", exercicio=None, origem="", budge
             "advertencias": review["advertencias"], "omissoes": omissions}
 
 
-_CADASTRO_BREAK = re.compile(
-    r"(?i)\s+(?=(?:processo(?:\s+tc)?|subcategoria|jurisdicionado|origem|"
-    r"entidade(?:\s+fiscalizada)?|respons[aá]vel(?:es)?|relator(?:es)?|"
-    r"auditor(?:es)?(?:\s+de\s+contas)?|assunto|"
-    r"exerc[ií]cio(?:\s+das\s+contas|\s+financeiro)?)\s*:)"
-)
-
-
 def _cadastro_text(document):
+    from services.minutas_generation import restaurar_linhas_cadastrais
+
     raw = "\n".join(
         str(unit.get("texto") or "") for unit in (document or {}).get("conteudo") or ()
     )
-    return _CADASTRO_BREAK.sub("\n", raw)
+    return restaurar_linhas_cadastrais(raw)
 
 
 def sugerir_metadados_instrucao(documentos):

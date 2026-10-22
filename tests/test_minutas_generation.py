@@ -2243,6 +2243,42 @@ def test_header_metadata_recovers_explicit_narrative_responsible_from_target_sou
     assert "Responsável: Giovana Leite Cavalcanti Olimpio" in result["texto"]
 
 
+def test_header_metadata_reads_collapsed_cover_and_ignores_other_mayors():
+    target, history, other, rows = _scenario()
+    target["subtipo"] = "Prefeitura"
+    target["origem"] = ""
+    target_source = next(
+        row for row in rows if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
+    )
+    target_text = (
+        "TRIBUNAL DE CONTAS DO ESTADO DA PARAIBA Processo TC: 02659/25 "
+        "Subcategoria: Prestacao de Contas Anual - PCA "
+        "Jurisdicionado: Prefeitura Municipal de Frei Martinho "
+        "Responsavel: Sebastiao Pinto Dantas Exercicio: 2024 "
+        "Relatorio de Auditoria das contas. "
+        "O Prefeito Joao Ninguem foi citado em precedente de outro municipio."
+    )
+    target_source["texto_integral"] = target_text
+    target_source["unidades_json"] = json.dumps(
+        [{"pagina": 1, "texto": target_text}], ensure_ascii=False
+    )
+    service = MinutasGenerationService(
+        Library([target, history, other], rows),
+        analyze=_analysis_result,
+        generate=_draft_result,
+    )
+    result = _gerar(service, target["id"], service.analyze(target["id"]))
+
+    assert result["metadados_cabecalho"] == {
+        "origem": "Prefeitura Municipal de Frei Martinho",
+        "responsavel": "Sebastiao Pinto Dantas",
+    }
+    assert "Responsável: Sebastiao Pinto Dantas" in result["texto"]
+    assert "Municipal Sebastiao" not in result["texto"]
+    assert "Joao Ninguem" not in result["estrutura"]["identificacao_processual"]
+    assert "Não informado" not in result["estrutura"]["identificacao_processual"]
+
+
 @pytest.mark.parametrize(
     "subtype",
     (
