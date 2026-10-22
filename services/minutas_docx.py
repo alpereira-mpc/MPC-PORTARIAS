@@ -747,18 +747,6 @@ def _build_docx(target, structure, profile, header_lines, visual=None):
         )
         _add_body(document, responsibility["texto"], size=body_size)
 
-    sanction = structure.get("analise_sancionatoria")
-    if isinstance(sanction, dict) and str(sanction.get("texto") or "").strip():
-        heading = document.add_paragraph(style="Minuta Irregularidade")
-        _add_text(
-            heading,
-            "Análise sancionatória",
-            bold=True,
-            italic=True,
-            size=heading_size,
-        )
-        _add_body(document, sanction["texto"], size=body_size)
-
     conclusion = _conclusion(structure)
     if conclusion:
         _add_body(document, conclusion, size=body_size)
@@ -868,6 +856,12 @@ class MinutasDocxService:
             resolver_para_exportacao,
         )
 
+        is_pca = "analise_sancionatoria" in structure
+        if is_pca:
+            pending = structure.get("pendencias_identificacao") or []
+            if pending:
+                raise MinutasDocxError(" ".join(pending))
+
         modelo = resolver_para_exportacao(self.library)
         if modelo:
             content = renderizar(modelo["content"], target, structure, profile, lines)
@@ -881,9 +875,34 @@ class MinutasDocxService:
             )
             origem_modelo = False
             metadados = None
-        return self._complementar_pca(
+        content = self._complementar_pca(
             content, structure, origem_modelo, target, profile,
-        ), metadados
+        )
+        if is_pca:
+            self._conferir_identificacao_docx(content, lines)
+        return content, metadados
+
+    @staticmethod
+    def _conferir_identificacao_docx(content, lines):
+        from services.minutas_consistencia import chave, titulo_sancionatorio
+
+        expected = next((line for line in lines if line.startswith("Responsável:")), "")
+        if not expected or chave(expected) == "responsavel: nao informado":
+            raise MinutasDocxError("Confirme o responsável pelas contas antes de exportar.")
+        document = Document(BytesIO(content))
+        # Inclui tabelas e caixas de texto, além de cabeçalhos/rodapés.
+        roots = [document.element]
+        roots.extend(part._element for section in document.sections for part in (
+            section.header, section.footer, section.first_page_header,
+            section.first_page_footer, section.even_page_header, section.even_page_footer,
+        ))
+        texts = ["".join(t.text or "" for t in p.iter(qn("w:t"))) for root in roots for p in root.iter(qn("w:p"))]
+        name = expected.split(":", 1)[1].strip()
+        combined = chave(" ".join(texts))
+        if not re.search(r"(?:responsave(?:l|is)|gestor(?:es)?)\s*:?\s*" + re.escape(chave(name)), combined) or re.search(r"respons[aá]vel\s*:\s*n[aã]o informado", combined):
+            raise MinutasDocxError("O DOCX não preservou a identificação do responsável. Revise o modelo antes de exportar.")
+        if any(titulo_sancionatorio(text) for text in texts):
+            raise MinutasDocxError("O DOCX contém capítulo sancionatório autônomo; revise o conteúdo e gere novamente.")
 
     def _complementar_pca(self, content, structure, origem_modelo, target, profile):
         """Perfil de PCA de Prefeituras. Qualquer falha devolve o DOCX já gerado."""
@@ -1091,6 +1110,7 @@ class MinutasDocxService:
             )
             structure = MinutasGenerationService._validate_structure(structure)
             lines = _draft_header_lines(header_target)
+            target = header_target
         content, modelo = self._render(target, structure, profile, lines, visual_base)
         return MinutaDocx(
             name=_filename(target),

@@ -2215,6 +2215,7 @@ def test_header_metadata_supports_another_jurisdiction_type():
 
 def test_header_metadata_recovers_explicit_narrative_responsible_from_target_sources():
     target, history, other, rows = _scenario()
+    target["exercicio"] = 2025
     target["subtipo"] = "Prefeitura"
     target_source = next(
         row for row in rows if row["referencia_id"] == target["id"] and row["papel"] == "auditoria"
@@ -2335,6 +2336,7 @@ def test_rpps_orders_relief_and_rejects_debit_without_quantified_harm():
 
 def test_city_pca_orders_two_existing_competences_without_inventing_them():
     target, _history, _other, _rows = _scenario()
+    target["responsavel"] = "Maria de Sousa"
     target["subtipo"] = "Prefeitura"
     target["especialidade_id"] = "elvira.pca.prefeituras"
     target["origem"] = "Prefeitura Municipal de São Bentinho"
@@ -2389,6 +2391,8 @@ def test_city_pca_orders_two_existing_competences_without_inventing_them():
 )
 def test_prefectures_government_opinion_is_normalized_deterministically(device_request, expected):
     target, _history, _other, _rows = _scenario()
+    target["responsavel"] = "Maria de Sousa"
+    target["responsavel"] = "Maria de Sousa"
     target.update(
         especialidade_id="elvira.pca.prefeituras",
         subtipo="Prefeitura",
@@ -2501,7 +2505,7 @@ def test_drafting_contract_avoids_automatic_negative_requests_and_uses_rag():
     assert "reúna todas as recomendações em um único item" in prompt
     assert "em harmonia com o entendimento do Órgão Técnico" in prompt
     assert "expedição de recomendação no sentido de Recomendar" in prompt
-    assert "Preencha analise_sancionatoria em todos os casos" in prompt
+    assert "nunca como capítulo do parecer" in prompt
     assert "não reproduza essa remissão" in prompt
     assert "déficit orçamentário ou atuarial" in prompt
     assert "analise_sancionatoria" in schema["required"]
